@@ -5,12 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import {
-  assertAgentDeviceVersion,
-  deviceSelectionArgs,
-  runAgentDevice,
-  selectedDeviceName
-} from './agent-device-runtime.mjs';
+import { assertAgentDeviceVersion, runAgentDevice, selectedDeviceName } from './agent-device-runtime.mjs';
 import { isSensitiveReplay, runSensitiveReplay } from './sensitive-replay.mjs';
 
 const scriptPath = fileURLToPath(import.meta.url);
@@ -155,10 +150,9 @@ function recoverOwnedReplayRecording(device, replaySession) {
     throw new Error('设备存在不属于本次 Replay 的录屏 manifest；已保留进程和 scratch。');
   }
   for (const sessionName of new Set(recoverySessions)) {
-    runAgentDevice(
-      ['record', 'stop', '--session', sessionName, '--platform', 'android', ...deviceSelectionArgs(device.name)],
-      { cwd: rootDir }
-    );
+    runAgentDevice(['record', 'stop', '--session', sessionName, '--platform', 'android', '--serial', device.id], {
+      cwd: rootDir
+    });
   }
   if (
     readAndroidRecordingManifests(device.id).length > 0 ||
@@ -334,7 +328,7 @@ export async function runDeviceReplay({
         const result = runSensitiveReplay({
           replayFile,
           replaySession,
-          deviceName: device.name,
+          deviceSerial: device.id,
           appPackage,
           artifactsDir: replayArtifactsDir,
           junitPath,
@@ -350,7 +344,8 @@ export async function runDeviceReplay({
             replayFile,
             '--session',
             replaySession,
-            ...deviceSelectionArgs(device.name),
+            '--serial',
+            device.id,
             '--retries',
             '0',
             '--fail-fast',

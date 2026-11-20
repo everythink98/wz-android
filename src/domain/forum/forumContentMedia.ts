@@ -54,10 +54,10 @@ export const FORUM_CONTENT_BLOCK_TAGS = new Set([
 ]);
 
 export type ForumImagePreviewDescriptor = {
+  readonly alt?: string;
   readonly readingOrigin?: { topicId: string; floor: number };
   readonly dataOriginal?: string;
   readonly dataSource?: string;
-  readonly displayCandidateKind?: 'data-original' | 'data-src' | 'src';
   readonly height?: string;
   readonly lightboxOriginal?: string;
   readonly originalSource?: string;
@@ -534,7 +534,7 @@ function upgradeBlockImageSources(
     if (inlineImages.has(image)) return;
     const displaySource = fallbackForumBodyImageSource(attributes, resolveImageUrl);
     const lightboxHref = lightboxHrefByImage.get(image) || '';
-    const originalUri = originalForumImageSource(attributes, lightboxHref, resolveImageUrl);
+    const originalUri = selectImageOriginalSource(attributes, lightboxHref, resolveImageUrl);
     if (originalUri && originalUri !== displaySource?.uri) {
       image.setAttribute?.(ORIGINAL_IMAGE_SOURCE_ATTR, originalUri);
       attributes[ORIGINAL_IMAGE_SOURCE_ATTR] = originalUri;
@@ -562,41 +562,36 @@ function forumImagePreviewDescriptorFromAttributes(
   attributes: Record<string, string | undefined>,
   lightboxOriginal = '',
   resolveImageUrl: ForumImageUrlResolver = analyzeForumImageUrl,
-  preparedFallbackSource: ReturnType<typeof fallbackForumBodyImageSource> | undefined = undefined
+  fallbackSource = fallbackForumBodyImageSource(attributes, resolveImageUrl)
 ): ForumImagePreviewDescriptor | null {
-  const fallbackSource = preparedFallbackSource || fallbackForumBodyImageSource(attributes, resolveImageUrl);
   const source = resolveImageUrl(fallbackSource?.uri || forumImageAttributeValue(attributes, 'src')).normalized;
   const sourceSet = forumImageAttributeValue(attributes, 'srcset');
   const dataSource = resolveImageUrl(forumImageAttributeValue(attributes, 'data-src')).normalized;
   const dataOriginal = resolveImageUrl(forumImageAttributeValue(attributes, 'data-original')).normalized;
   const originalSource = resolveImageUrl(forumImageAttributeValue(attributes, ORIGINAL_IMAGE_SOURCE_ATTR)).normalized;
   const normalizedLightboxOriginal = resolveImageUrl(lightboxOriginal).normalized;
+  const alt = forumImageAttributeValue(attributes, 'alt');
   const width = forumImageAttributeValue(attributes, 'width');
   const height = forumImageAttributeValue(attributes, 'height');
   const referrerPolicy = normalizeMediaReferrerPolicy(forumImageAttributeValue(attributes, 'referrerpolicy'));
-  const displayCandidateKind = forumImageAttributeValue(attributes, DISPLAY_CANDIDATE_KIND_ATTR);
   if (!source && !sourceSet && !dataSource && !dataOriginal && !originalSource && !normalizedLightboxOriginal) {
     return null;
   }
   return {
     source,
+    ...(alt ? { alt } : {}),
     ...(sourceSet ? { sourceSet } : {}),
     ...(dataSource ? { dataSource } : {}),
     ...(dataOriginal ? { dataOriginal } : {}),
     ...(originalSource ? { originalSource } : {}),
     ...(normalizedLightboxOriginal ? { lightboxOriginal: normalizedLightboxOriginal } : {}),
-    ...(displayCandidateKind === 'src' ||
-    displayCandidateKind === 'data-src' ||
-    displayCandidateKind === 'data-original'
-      ? { displayCandidateKind }
-      : {}),
     ...(width ? { width } : {}),
     ...(height ? { height } : {}),
     ...(referrerPolicy ? { referrerPolicy } : {})
   };
 }
 
-function fallbackForumBodyImageSource(
+export function fallbackForumBodyImageSource(
   attributes: Record<string, string | undefined>,
   resolveImageUrl: ForumImageUrlResolver = analyzeForumImageUrl
 ) {
@@ -616,19 +611,26 @@ function fallbackForumBodyImageSource(
   return null;
 }
 
-function originalForumImageSource(
+export function selectImageOriginalSource(
   attributes: Record<string, string | undefined>,
-  linkedUrl: string,
+  linkedUrl = '',
   resolveImageUrl: ForumImageUrlResolver = analyzeForumImageUrl
 ) {
-  return firstAllowedForumImageSource(
+  const explicit = firstAllowedForumImageSource(
     [
       linkedUrl,
-      forumImageAttributeValue(attributes, 'data-original'),
-      bestSrcsetImageUrlFromCandidates(
-        parseSrcsetCandidates(forumImageAttributeValue(attributes, 'srcset')),
-        (url) => resolveImageUrl(url).allowed
-      ),
+      forumImageAttributeValue(attributes, ORIGINAL_IMAGE_SOURCE_ATTR),
+      forumImageAttributeValue(attributes, 'data-original')
+    ],
+    resolveImageUrl
+  );
+  if (explicit) return explicit;
+  return firstAllowedForumImageSource(
+    [
+      bestSrcsetImageUrlFromCandidates(parseSrcsetCandidates(forumImageAttributeValue(attributes, 'srcset')), (url) => {
+        const candidate = resolveImageUrl(url);
+        return candidate.allowed && !candidate.placeholder;
+      }),
       forumImageAttributeValue(attributes, 'data-src'),
       forumImageAttributeValue(attributes, 'src')
     ],

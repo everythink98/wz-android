@@ -14,7 +14,7 @@ import Animated, { useAnimatedStyle, useSharedValue, type SharedValue } from 're
 import { scheduleOnRN } from 'react-native-worklets';
 import { GripVertical, ListTree } from 'lucide-react-native';
 import { sourceCatalog, type Source } from '@/domain/forum/sourceCatalog';
-import type { ContentSourcePreference } from '@/domain/reader/contentSourcePreferences';
+import type { ContentSourceEdit, ContentSourcePreference } from '@/domain/reader/contentSourcePreferences';
 import { ExpandablePanel } from '@/ui/controls/ExpandableControls';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
@@ -31,15 +31,6 @@ type DragPreview = {
 type DragSession = DragPreview & {
   preferences: ContentSourcePreference[];
 };
-
-function reorderedPreferences(preferences: ContentSourcePreference[], from: number, to: number) {
-  if (from === to) return preferences;
-  const next = [...preferences];
-  const [moved] = next.splice(from, 1);
-  if (!moved) return preferences;
-  next.splice(to, 0, moved);
-  return next;
-}
 
 function nearestCenterIndex(centers: number[], value: number) {
   'worklet';
@@ -134,7 +125,7 @@ export function ContentSourcesPanel({
 }: {
   expanded: boolean;
   preferences: ContentSourcePreference[];
-  onChange: (preferences: ContentSourcePreference[]) => void;
+  onChange: (edit: ContentSourceEdit) => void;
   onExpandedChange: (expanded: boolean) => void;
 }) {
   const { styles, theme } = useReaderThemeStyles(createMoreScreenStyles);
@@ -233,12 +224,12 @@ export function ContentSourcesPanel({
       ? dragPreview
       : null;
 
-  const move = (index: number, offset: -1 | 1) => {
+  const move = (source: Source, offset: -1 | 1) => {
     if (!expandedRef.current) return;
     const current = preferencesRef.current;
-    const nextIndex = index + offset;
-    if (nextIndex < 0 || nextIndex >= current.length) return;
-    onChangeRef.current(reorderedPreferences(current, index, nextIndex));
+    const index = current.findIndex((preference) => preference.source === source);
+    if (index < 0 || !current[index + offset]) return;
+    onChangeRef.current({ kind: 'move-source', source, offset });
   };
 
   const beginDrag = (source: Source, expectedOriginIndex: number, centers: number[], generation: number) => {
@@ -274,6 +265,7 @@ export function ContentSourcesPanel({
     if (!expandedRef.current || screenReaderEnabledRef.current !== false || dragGenerationRef.current !== generation)
       return;
     const session = dragSessionRef.current;
+    const target = session?.preferences[targetIndex]?.source;
     const currentPreferenceIdentity = preferencesRef.current
       .map(({ source: currentSource, enabled }) => `${currentSource}:${enabled}`)
       .join('|');
@@ -283,20 +275,25 @@ export function ContentSourcesPanel({
       session.source !== source ||
       session.preferences.map(({ source: currentSource, enabled }) => `${currentSource}:${enabled}`).join('|') !==
         currentPreferenceIdentity ||
-      targetIndex < 0 ||
-      targetIndex >= session.preferences.length ||
+      !target ||
       targetIndex === session.originIndex
     ) {
       cancelDrag();
       return;
     }
-    onChangeRef.current(reorderedPreferences(session.preferences, session.originIndex, targetIndex));
+    onChangeRef.current({
+      kind: 'drop-source',
+      source,
+      target,
+      fromOrder: session.preferences.map((preference) => preference.source)
+    });
   };
   const visibleHostSources = usePreferenceNativeOrder ? preferences.map(({ source }) => source) : hostSources;
 
   return (
     <ExpandablePanel
       quiet
+      testID="more-content-sources"
       title="内容源"
       meta={`${enabledCount}/${preferences.length} 已启用`}
       icon={ListTree}
@@ -370,8 +367,8 @@ export function ContentSourcesPanel({
             ...(last ? [] : [{ name: 'moveDown', label: '下移' }])
           ];
           const handleAccessibilityAction = (event: AccessibilityActionEvent) => {
-            if (event.nativeEvent.actionName === 'moveUp') move(index, -1);
-            if (event.nativeEvent.actionName === 'moveDown') move(index, 1);
+            if (event.nativeEvent.actionName === 'moveUp') move(preference.source, -1);
+            if (event.nativeEvent.actionName === 'moveDown') move(preference.source, 1);
           };
           return (
             <SortableRow
@@ -400,7 +397,6 @@ export function ContentSourcesPanel({
             >
               <View style={styles.contentSourceCopy}>
                 <Text style={styles.menuLabel}>{label}</Text>
-                <Text style={styles.meta}>{preference.enabled ? '已启用' : '已停用'}</Text>
               </View>
               <View style={styles.contentSourceActions}>
                 <Switch
@@ -411,11 +407,7 @@ export function ContentSourcesPanel({
 
                   onValueChange={(enabled) => {
                     if (!expandedRef.current) return;
-                    onChange(
-                      preferences.map((candidate) =>
-                        candidate.source === preference.source ? { ...candidate, enabled } : candidate
-                      )
-                    );
+                    onChangeRef.current({ kind: 'set-source-enabled', source: preference.source, enabled });
                   }}
                 />
                 <PanGestureBoundary config={dragGestureConfig}>

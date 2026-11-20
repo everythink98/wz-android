@@ -52,7 +52,11 @@ export function Avatar({
   const mediaContext = useForumMediaRequestContext(contentSource);
 
   return (
-    <View style={[styles.avatar, tiny ? styles.tiny : small ? styles.small : large ? styles.large : styles.topic]}>
+    <View
+      accessible={false}
+      importantForAccessibility="no-hide-descendants"
+      style={[styles.avatar, tiny ? styles.tiny : small ? styles.small : large ? styles.large : styles.topic]}
+    >
       <Text style={[styles.text, large && styles.largeText, (small || tiny) && styles.smallText]}>
         {avatarInitial(name)}
       </Text>

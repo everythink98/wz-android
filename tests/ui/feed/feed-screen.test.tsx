@@ -14,7 +14,6 @@ import { defaultScheduler, notifyManager } from '@tanstack/react-query';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { setStartupTimingRecorder, type StartupPhase } from '@/platform/diagnostics/startupTiming';
 import { createTheme } from '@/ui/theme/tokens';
-import { createTestStyles as createStyles } from '../styleFixture';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { defaultFeedFilters } from '@/domain/forum/feedOptions';
 import type { ReadingFilter } from '@/domain/forum/feed';
@@ -203,7 +202,7 @@ jest.mock('lucide-react-native', () => {
   const ReactModule = require('react') as typeof React;
   const { View: NativeView } = require('react-native') as typeof import('react-native');
   return {
-    ChevronDown: () => null,
+    ListFilter: () => null,
     SquarePen: () => null,
     Eye: () => ReactModule.createElement(NativeView, { accessibilityLabel: '浏览统计图标' }),
     MessageCircle: () => ReactModule.createElement(NativeView, { accessibilityLabel: '回复统计图标' })
@@ -226,7 +225,6 @@ jest.mock('@/ui/avatar/Avatar', () => {
 const readerData = createEmptyReaderData();
 const defaultEnabledFeedSources = projectContentSourcePreferences(readerData.settings.contentSources).enabledSources;
 const theme = createTheme(readerData.settings);
-const styles = createStyles(theme, readerData.settings, 800);
 const topicStateIndex = createTopicListItemStateIndex(readerData);
 const topic: Topic = {
   source: 'v2ex',
@@ -328,6 +326,7 @@ function ControllerFeed({
     feedFilter: controller.feedFilter,
     enabledFeedSources: controller.enabledFeedSources,
     loadMoreFailureSignal: controller.activeFeedState.loadMoreFailureSignal,
+    loadMoreErrorMessage: controller.activeFeedState.loadMoreErrorMessage,
     loadingMore: controller.activeFeedState.loadingMore,
     refreshing: controller.activeFeedState.refreshing,
     readingFilter: controller.readingFilter,
@@ -351,7 +350,14 @@ describe('feed initial content readiness', () => {
       expect(phases).not.toContain('feed-terminal');
       expect(onInitialContentReady).not.toHaveBeenCalled();
       expect(view.queryByText('已经到底了')).toBeNull();
-      expect(view.getByText('正在读取其他来源...')).toBeTruthy();
+      expect(view.getByText('加载其他来源')).toBeTruthy();
+      await view.rerender(
+        renderFeed(false, [topic], { feedOutcomeKind: undefined, onInitialContentReady, refreshing: true })
+      );
+      expect(view.getByLabelText('列表，支持下拉刷新').props.refreshControl.props.refreshing).toBe(true);
+      expect(view.getByText(topic.title)).toBeTruthy();
+      expect(view.queryByText('加载其他来源')).toBeNull();
+      expect(view.queryByText('已经到底了')).toBeNull();
       await view.rerender(renderFeed(false, [topic], { feedOutcomeKind: 'data', onInitialContentReady }));
       expect(phases.at(-1)).toBe('feed-terminal');
       expect(phases.filter((phase) => phase === 'feed-terminal')).toHaveLength(1);
@@ -711,7 +717,7 @@ describe('Feed loading', () => {
 
     expect(view.getByTestId('feed-source-all').props.accessibilityState).toMatchObject({ selected: true });
     expect(view.getByLabelText('未读')).toBeTruthy();
-    expect(incomingScene.getByText('正在读取主题...')).toBeTruthy();
+    expect(incomingScene.getByText('加载中')).toBeTruthy();
     expect(incomingScene.getByText('问与答', { includeHiddenElements: true })).toBeTruthy();
 
     await act(async () => mockPagerPosition.setValue(0.9));
@@ -726,7 +732,7 @@ describe('Feed loading', () => {
     expect(view.getByLabelText('问与答')).toBeTruthy();
     expect(view.getByLabelText('问与答').props.accessibilityState).toMatchObject({ disabled: false });
     expect(view.queryByLabelText('未读')).toBeNull();
-    expect(incomingScene.getByText('正在读取主题...')).toBeTruthy();
+    expect(incomingScene.getByText('加载中')).toBeTruthy();
     expect(onFeedSourceChange).toHaveBeenCalledTimes(1);
     expect(onFeedSourceChange).toHaveBeenCalledWith('v2ex');
     await act(async () => mockTabViewProps?.onIndexChange(1));
@@ -750,7 +756,7 @@ describe('Feed loading', () => {
     const view = await render(renderFeed(false, [topic], { onFeedSourceChange }));
     const incomingScene = () => within(view.getByTestId('mock-feed-scene-v2ex'));
 
-    expect(incomingScene().getByText('正在读取主题...')).toBeTruthy();
+    expect(incomingScene().getByText('加载中')).toBeTruthy();
     expect(view.queryByText('正在切换来源...')).toBeNull();
     expect(mockTabViewProps).toMatchObject({
       animationEnabled: false,
@@ -763,7 +769,7 @@ describe('Feed loading', () => {
 
     expect(onFeedSourceChange).toHaveBeenCalledTimes(1);
     expect(onFeedSourceChange).toHaveBeenCalledWith('v2ex');
-    expect(incomingScene().getByText('正在读取主题...')).toBeTruthy();
+    expect(incomingScene().getByText('加载中')).toBeTruthy();
   });
 
   it('projects saved sorting per scene and blocks inactive filters while closing menus on swipe', async () => {
@@ -814,7 +820,7 @@ describe('Feed loading', () => {
     );
     const incomingScene = within(view.getByTestId('mock-feed-scene-v2ex'));
 
-    expect(incomingScene.getByText('正在读取主题...')).toBeTruthy();
+    expect(incomingScene.getByText('加载中')).toBeTruthy();
     expect(incomingScene.queryByText('V2EX 新请求主题', { includeHiddenElements: true })).toBeNull();
     expect(mockFlashListMountCount).toBe(1);
 
@@ -823,7 +829,7 @@ describe('Feed loading', () => {
     expect(onFeedSourceChange).toHaveBeenCalledTimes(1);
     expect(onFeedSourceChange).toHaveBeenCalledWith('v2ex');
     expect(mockFlashListMountCount).toBe(1);
-    expect(incomingScene.getByText('正在读取主题...')).toBeTruthy();
+    expect(incomingScene.getByText('加载中')).toBeTruthy();
 
     await view.rerender(
       renderFeed(false, [freshV2exTopic], {
@@ -846,12 +852,12 @@ describe('Feed loading', () => {
 
     expect(indicators('all')).toEqual([true]);
     expect(indicators('v2ex')).toEqual([]);
-    expect(within(view.getByTestId('mock-feed-scene-v2ex')).getByText('正在读取主题...')).toBeTruthy();
+    expect(within(view.getByTestId('mock-feed-scene-v2ex')).getByText('加载中')).toBeTruthy();
 
     await view.rerender(renderFeed(true, [], { active: false }));
     expect(indicators('all')).toEqual([]);
     expect(indicators('v2ex')).toEqual([]);
-    expect(within(view.getByTestId('mock-feed-scene-all')).getByText('正在读取主题...')).toBeTruthy();
+    expect(within(view.getByTestId('mock-feed-scene-all')).getByText('加载中')).toBeTruthy();
 
     await view.rerender(renderFeed(true, [], { feedSource: 'v2ex' }));
     expect(indicators('all')).toEqual([]);
@@ -876,7 +882,7 @@ describe('Feed loading', () => {
       })
     );
 
-    expect(within(view.getByTestId('mock-feed-scene-v2ex')).getByText('正在读取主题...')).toBeTruthy();
+    expect(within(view.getByTestId('mock-feed-scene-v2ex')).getByText('加载中')).toBeTruthy();
     expect(mockFlashListMountCount).toBe(1);
 
     await view.rerender(
@@ -902,8 +908,9 @@ describe('Feed loading', () => {
     expect(within(view.getByTestId('mock-feed-scene-v2ex')).getByText('V2EX 已加载主题')).toBeTruthy();
   });
 
-  it('keeps the complete rich TopicCard presentation in Feed', async () => {
+  it('opens a Feed topic from its title and keeps its source, access rules and reading metadata visible', async () => {
     jest.replaceProperty(Platform, 'OS', 'android');
+    const onOpenTopic = jest.fn();
     const richTopic: Topic = {
       source: 'linuxdo',
       id: 'rich-feed-topic',
@@ -927,6 +934,7 @@ describe('Feed loading', () => {
     };
     const view = await render(
       renderFeed(false, [richTopic], {
+        onOpenTopic,
         topicStateIndex: {
           favorites: {
             'linuxdo:rich-feed-topic': { topic: richTopic, savedAt: '2026-07-14T00:00:00.000Z' }
@@ -940,12 +948,10 @@ describe('Feed loading', () => {
     );
     const activeScene = within(view.getByTestId('mock-feed-scene-all'));
 
-    const source = activeScene.getByText('linux.do');
-    expect(source.props.style).toEqual(expect.arrayContaining([styles.topicSourceBadge]));
-    expect(activeScene.getByText('开发调优')).toHaveStyle(styles.topicCategoryBadge);
-    expect(activeScene.getByText('需 Lv2')).toHaveStyle(styles.topicAccessBadge);
-    expect(activeScene.getByText('Android').props.style).toEqual(expect.arrayContaining([styles.topicTagText]));
-    expect(activeScene.getByText('Android').parent?.props.style).toEqual(expect.arrayContaining([styles.topicTagPill]));
+    expect(activeScene.getByText('linux.do')).toBeTruthy();
+    expect(activeScene.getByText('开发调优')).toBeTruthy();
+    expect(activeScene.getByText('需 Lv2')).toBeTruthy();
+    expect(activeScene.getByText('Android')).toBeTruthy();
     expect(activeScene.getByText('测试')).toBeTruthy();
     expect(activeScene.getByText('回归')).toBeTruthy();
     expect(activeScene.queryByText('第四个标签')).toBeNull();
@@ -958,10 +964,11 @@ describe('Feed loading', () => {
     expect(activeScene.getByText('23')).toBeTruthy();
     expect(activeScene.getByText('456')).toBeTruthy();
     expect(activeScene.getByText('宽松密度下显示的主题摘要')).toBeTruthy();
-    const card = activeScene.getByTestId('feed-topic-first');
-    expect(StyleSheet.flatten(card.props.style)).toMatchObject({ gap: 10, paddingHorizontal: 16, paddingBottom: 14 });
+    const card = activeScene.getByRole('button', { name: /^完整列表样式/ });
     expect(StyleSheet.flatten(card.props.style).opacity).toBeUndefined();
     expect(card.props.nativeBackgroundAndroid).toBeUndefined();
+    await fireEvent.press(card);
+    expect(onOpenTopic.mock.calls).toEqual([[richTopic]]);
   });
 
   it('keeps a distant source-bar target lightweight until its data arrives', async () => {
@@ -988,7 +995,7 @@ describe('Feed loading', () => {
 
     expect(onFeedSourceChange).toHaveBeenCalledTimes(1);
     expect(onFeedSourceChange).toHaveBeenCalledWith('all');
-    expect(within(view.getByTestId('mock-feed-scene-all')).getByText('正在读取主题...')).toBeTruthy();
+    expect(within(view.getByTestId('mock-feed-scene-all')).getByText('加载中')).toBeTruthy();
     expect(mockFlashListMountCount).toBe(mountsBeforeSelection);
     await view.rerender(
       renderFeed(false, [sourceTopic('v2ex', 'all-fresh', '全部新请求主题')], {
@@ -1031,12 +1038,12 @@ describe('Feed loading', () => {
     const view = await render(renderFeed(true, []));
     const activeScene = () => within(view.getByTestId('mock-feed-scene-all'));
 
-    expect(activeScene().getByText('正在读取主题...')).toBeTruthy();
+    expect(activeScene().getByText('加载中')).toBeTruthy();
     expect(activeScene().queryByLabelText('列表，无下拉刷新')).toBeNull();
 
     await view.rerender(renderFeed(false, [topic]));
 
-    expect(activeScene().queryByText('正在读取主题...')).toBeNull();
+    expect(activeScene().queryByText('加载中')).toBeNull();
     expect(activeScene().getByLabelText('列表，支持下拉刷新')).toBeTruthy();
   });
 
@@ -1333,8 +1340,8 @@ describe('Feed loading', () => {
         onLoadMore
       })
     );
-    expect(view.getByLabelText('正在加载...').props.accessibilityState.disabled).toBe(true);
-    await fireEvent.press(view.getByLabelText('正在加载...'));
+    expect(view.getByLabelText('加载更多中').props.accessibilityState.disabled).toBe(true);
+    await fireEvent.press(view.getByLabelText('加载更多中'));
     expect(onLoadMore).toHaveBeenCalledTimes(1);
 
     await view.rerender(
@@ -1425,6 +1432,10 @@ describe('Feed loading', () => {
         }
         notifyManager.setScheduler(defaultScheduler);
         await act(async () => notifications.splice(0).forEach((notify) => notify()));
+        if (outcome === 'failure') {
+          expect(view.getByText(/第二页快速失败/)).toBeTruthy();
+          expect(view.getByRole('button', { name: '重试加载第 2 页' })).toBeTruthy();
+        }
         if (outcome === 'success') await fireEvent.press(view.getByText('加载第 3 页'));
         else {
           await fireEvent(view.getByLabelText('列表，支持下拉刷新'), 'scrollBeginDrag');

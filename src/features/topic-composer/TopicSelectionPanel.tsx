@@ -1,8 +1,9 @@
 import { useMemo } from 'react';
 import { FlatList, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
-import { Button, Chip, List, Searchbar } from 'react-native-paper';
-import { CheckCircle2, CheckSquare2, Circle, Search, Square, X } from 'lucide-react-native';
+import { Chip, List, Searchbar } from 'react-native-paper';
+import { CheckCircle2, CheckSquare2, Circle, Plus, Search, Square, X } from 'lucide-react-native';
 import type { TopicTag } from '@/domain/forum/topicComposer';
+import { AppButton } from '@/ui/controls/ButtonControls';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { readerRadii, type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 import type { useTopicComposerController } from './useTopicComposerController';
@@ -46,12 +47,16 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     check: { width: 24, alignItems: 'center', alignSelf: 'center' },
     chips: { flexGrow: 0, flexShrink: 0 },
     chipRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-    chip: { minHeight: 48, justifyContent: 'center', backgroundColor: theme.primarySoft },
+    chip: {
+      minHeight: 48,
+      justifyContent: 'center',
+      backgroundColor: theme.primarySoft,
+      borderRadius: readerRadii.control
+    },
     chipText: { marginRight: 56 },
     chipClose: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center' },
     empty: { paddingVertical: 24, textAlign: 'center' },
-    footer: { borderTopColor: theme.line, borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 12 },
-    done: { minHeight: 48, justifyContent: 'center' }
+    footer: { borderTopColor: theme.line, borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 12 }
   });
 }
 
@@ -63,16 +68,22 @@ export function TopicSelectionPanel({
   error,
   hint,
   tagSearch,
+  onChangeDraft,
+  onChangeCategory,
+  onRetryTags,
   onSelectCategory,
   onClose
 }: {
   mode: 'categories' | 'tags';
-  controller: ReturnType<typeof useTopicComposerController>;
+  controller: Pick<ReturnType<typeof useTopicComposerController>, 'draft' | 'context' | 'busy'>;
   query: string;
   onQueryChange: (query: string) => void;
   error?: string;
   hint?: string;
-  tagSearch: ReturnType<typeof useTopicTagSearch>;
+  tagSearch: Omit<ReturnType<typeof useTopicTagSearch>, 'retry'>;
+  onChangeDraft: ReturnType<typeof useTopicComposerController>['change'];
+  onChangeCategory: (id: string) => void;
+  onRetryTags: () => void;
   onSelectCategory: () => void;
   onClose: () => void;
 }) {
@@ -93,9 +104,7 @@ export function TopicSelectionPanel({
         <Text accessibilityLiveRegion="polite" style={styles.muted}>
           请先选择版块，再选择标签
         </Text>
-        <Button disabled={c.busy} onPress={onSelectCategory}>
-          先选择版块
-        </Button>
+        <AppButton variant="primary" label="先选择版块" disabled={c.busy} onPress={onSelectCategory} />
       </View>
     );
   }
@@ -104,7 +113,7 @@ export function TopicSelectionPanel({
   const categories = context?.categories || [];
   const term = query.trim().toLocaleLowerCase();
   const changeTag = (tag: TopicTag) =>
-    c.change((value) => {
+    onChangeDraft((value) => {
       if (value.source !== 'linuxdo' || c.busy) return value;
       const selected = value.tags.some((item) => item.name === tag.name);
       if (!selected && value.tags.length >= maxTags) return value;
@@ -199,7 +208,7 @@ export function TopicSelectionPanel({
                   </View>
                 )}
                 onPress={() => {
-                  void c.changeCategory(item.id);
+                  onChangeCategory(item.id);
                   onClose();
                 }}
               />
@@ -251,9 +260,7 @@ export function TopicSelectionPanel({
               <Text accessibilityRole="alert" style={styles.error}>
                 {tagSearchError}
               </Text>
-              <Button disabled={c.busy} onPress={tagSearch.retry}>
-                重试读取标签
-              </Button>
+              <AppButton compact label="重试读取标签" disabled={c.busy} onPress={onRetryTags} />
             </>
           ) : null}
           {tagRulesCurrent && (tagResult?.forbidden || tagResult?.forbiddenMessage) ? (
@@ -299,29 +306,22 @@ export function TopicSelectionPanel({
             }}
             ListFooterComponent={
               canCreate ? (
-                <Button
+                <AppButton
+                  icon={Plus}
+                  variant="primary"
                   accessibilityLabel={`创建标签“${query.trim()}”`}
+                  label={`创建标签“${query.trim()}”`}
                   disabled={c.busy}
                   onPress={() => {
                     changeTag({ name: query.trim() });
                     onQueryChange('');
                   }}
-                >
-                  创建标签“{query.trim()}”
-                </Button>
+                />
               ) : null
             }
           />
           <View style={styles.footer}>
-            <Button
-              mode="contained"
-              disabled={c.busy}
-              onPress={onClose}
-              contentStyle={styles.done}
-              labelStyle={[styles.text, { color: theme.onPrimary }]}
-            >
-              完成
-            </Button>
+            <AppButton variant="solid" label="完成" disabled={c.busy} onPress={onClose} />
           </View>
         </>
       )}

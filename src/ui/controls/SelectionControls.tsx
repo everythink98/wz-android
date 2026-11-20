@@ -16,7 +16,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontFamily = fontFamilyValue(settings.fontFamily);
   const fontSize = createReaderFontSizer(settings);
   return StyleSheet.create({
-    pillRail: { gap: 2, paddingRight: 18, paddingVertical: 0 },
+    pillRail: { gap: 2, paddingRight: 0, paddingVertical: 0 },
     pill: {
       minHeight: 40,
       justifyContent: 'center',
@@ -29,7 +29,11 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     },
     touchTarget: { minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
     subtabTarget: { paddingHorizontal: 10 },
-    subtabScroll: { marginLeft: -10 },
+    subtabScroll: { marginHorizontal: -10 },
+    tabScroll: {
+      borderBottomColor: theme.line,
+      borderBottomWidth: StyleSheet.hairlineWidth
+    },
     pillActive: {
       backgroundColor: theme.mist,
       borderColor: 'transparent'
@@ -43,7 +47,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       fontWeight: '500'
     },
     pillTextActive: { color: theme.primary, fontWeight: '600' },
-    subtabRail: { gap: 0, paddingRight: 18, paddingVertical: 0 },
+    subtabRail: { gap: 0, paddingRight: 0, paddingVertical: 0 },
     wrappingRail: { flexDirection: 'row', flexWrap: 'wrap', paddingRight: 0, rowGap: 4 },
     subtab: {
       borderRadius: 0,
@@ -68,9 +72,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     subtabTextActive: { color: theme.primary, fontWeight: '600' },
     tabRail: {
       gap: 22,
-      borderBottomColor: theme.line,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      paddingRight: 18
+      paddingRight: 0
     },
     tab: {
       borderRadius: 0,
@@ -164,7 +166,11 @@ export function PillRail({
     </TouchableRipple>
   ));
   if (layout === 'wrap')
-    return <View style={[railStyle, styles.wrappingRail, isSubtabs && styles.subtabScroll]}>{content}</View>;
+    return (
+      <View style={[railStyle, styles.wrappingRail, isSubtabs && styles.subtabScroll, isTabs && styles.tabScroll]}>
+        {content}
+      </View>
+    );
   return (
     <ScrollView
       overScrollMode="never"
@@ -173,7 +179,7 @@ export function PillRail({
       showsHorizontalScrollIndicator={false}
       fadingEdgeLength={0}
       contentContainerStyle={railStyle}
-      style={isSubtabs ? styles.subtabScroll : undefined}
+      style={[isSubtabs && styles.subtabScroll, isTabs && styles.tabScroll]}
     >
       {content}
     </ScrollView>

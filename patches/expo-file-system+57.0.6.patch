@@ -1,5 +1,5 @@
 diff --git a/node_modules/expo-file-system/android/src/main/java/expo/modules/filesystem/FileSystemDownloadTask.kt b/node_modules/expo-file-system/android/src/main/java/expo/modules/filesystem/FileSystemDownloadTask.kt
-index 44dd86d..7499051 100644
+index 44dd86d..6629530 100644
 --- a/node_modules/expo-file-system/android/src/main/java/expo/modules/filesystem/FileSystemDownloadTask.kt
 +++ b/node_modules/expo-file-system/android/src/main/java/expo/modules/filesystem/FileSystemDownloadTask.kt
 @@ -6,6 +6,7 @@ import com.facebook.react.modules.network.OkHttpClientProvider
@@ -21,7 +21,7 @@ index 44dd86d..7499051 100644
  import java.net.URI
  import java.net.URLConnection
  import java.util.concurrent.TimeUnit
-@@ -42,7 +40,8 @@ class DownloadTaskOptions : Record {
+@@ -42,31 +40,44 @@ class DownloadTaskOptions : Record {
   */
  class FileSystemDownloadTask : SharedObject() {
    companion object {
@@ -31,71 +31,146 @@ index 44dd86d..7499051 100644
        .connectTimeout(60, TimeUnit.SECONDS)
        .readTimeout(60, TimeUnit.SECONDS)
        .writeTimeout(60, TimeUnit.SECONDS)
-@@ -51,9 +50,8 @@ class FileSystemDownloadTask : SharedObject() {
+       .build()
+   }
  
-   private var call: Call? = null
- 
+-  private var call: Call? = null
+-
 -  @Volatile private var isPausing = false
 -
 -  @Volatile private var isCancelling = false
+-  private var destinationFile: UnifiedFileInterface? = null
 +  private enum class StopRequest { NONE, PAUSE, CANCEL }
-+  @Volatile private var stopRequest = StopRequest.NONE
-   private var destinationFile: UnifiedFileInterface? = null
++  private class Transfer {
++    @Volatile var call: Call? = null
++    @Volatile var stopRequest = StopRequest.NONE
++    @Volatile var destinationFile: UnifiedFileInterface? = null
++    @Volatile var bytesWritten = 0L
++    var lastProgressTime = 0L
++
++    fun stop(request: StopRequest) {
++      stopRequest = request
++      call?.cancel()
++    }
++  }
  
-   @Volatile private var bytesWritten = 0L
-@@ -61,8 +59,7 @@ class FileSystemDownloadTask : SharedObject() {
+-  @Volatile private var bytesWritten = 0L
+-  private var lastProgressTime: Long = 0
++  @Volatile private var nextTransfer = Transfer()
    private val progressThrottleInterval = 100.milliseconds
  
-   suspend fun start(url: URI, to: FileSystemPath, options: DownloadTaskOptions?): String? {
+-  suspend fun start(url: URI, to: FileSystemPath, options: DownloadTaskOptions?): String? {
 -    isPausing = false
 -    isCancelling = false
-+    stopRequest = StopRequest.NONE
-     bytesWritten = 0L
+-    bytesWritten = 0L
++  // A synchronous stop can arrive before the coroutine starts. Its callbacks keep that stop on settlement.
++  private suspend inline fun runTransfer(operation: (Transfer) -> String?): String? {
++    val transfer = nextTransfer
++    return try {
++      operation(transfer)
++    } finally {
++      nextTransfer = Transfer()
++    }
++  }
  
++  suspend fun start(url: URI, to: FileSystemPath, options: DownloadTaskOptions?): String? = runTransfer { transfer ->
      val destination = resolveDownloadDestination(to, url)
-@@ -80,7 +77,7 @@ class FileSystemDownloadTask : SharedObject() {
+-    destinationFile = destination
++    transfer.destinationFile = destination
+ 
+     val requestBuilder = Request.Builder().url(url.toString())
+ 
+@@ -76,12 +87,12 @@ class FileSystemDownloadTask : SharedObject() {
+ 
+     val request = requestBuilder.build()
+ 
+-    return downloadToFile(request, destination, false, 0)
++    downloadToFile(transfer, request, destination, false, 0)
    }
  
    fun pause(): Map<String, String> {
 -    isPausing = true
-+    stopRequest = StopRequest.PAUSE
-     call?.cancel()
+-    call?.cancel()
++    val transfer = nextTransfer
++    transfer.stop(StopRequest.PAUSE)
      // Use the file's on-disk length rather than the in-memory bytesWritten counter,
      // which may be ahead of what was actually flushed. A too-low offset is safe because
-@@ -94,11 +91,10 @@ class FileSystemDownloadTask : SharedObject() {
+     // resume() truncates the file to the offset before appending — we just re-download
+@@ -89,22 +100,19 @@ class FileSystemDownloadTask : SharedObject() {
+     // would extend the file with zeros, corrupting the download.
+     // For SAF-backed files, DocumentFile.length() metadata may lag behind the actual
+     // written bytes, but this is still safe — worst case we re-download a small amount.
+-    val resumeData = destinationFile?.length()?.takeIf { it > 0 } ?: bytesWritten
++    val resumeData = transfer.destinationFile?.length()?.takeIf { it > 0 } ?: transfer.bytesWritten
+     return mapOf("resumeData" to resumeData.toString())
    }
  
-   suspend fun resume(url: URI, to: FileSystemPath, resumeData: String, options: DownloadTaskOptions?): String? {
+-  suspend fun resume(url: URI, to: FileSystemPath, resumeData: String, options: DownloadTaskOptions?): String? {
 -    isPausing = false
 -    isCancelling = false
-+    stopRequest = StopRequest.NONE
- 
+-
++  suspend fun resume(url: URI, to: FileSystemPath, resumeData: String, options: DownloadTaskOptions?): String? = runTransfer { transfer ->
      val offset = try {
 -      resumeData.toLong()
 +      resumeData.toLong().also { if (it < 0) throw NumberFormatException() }
      } catch (e: NumberFormatException) {
        throw InvalidResumeDataException()
      }
-@@ -120,8 +116,7 @@ class FileSystemDownloadTask : SharedObject() {
+-    bytesWritten = offset
++    transfer.bytesWritten = offset
+     val destination = resolveDownloadDestination(to, url)
+-    destinationFile = destination
++    transfer.destinationFile = destination
+ 
+     val requestBuilder = Request.Builder().url(url.toString())
+ 
+@@ -116,20 +124,19 @@ class FileSystemDownloadTask : SharedObject() {
+ 
+     val request = requestBuilder.build()
+ 
+-    return downloadToFile(request, destination, true, offset)
++    downloadToFile(transfer, request, destination, true, offset)
    }
  
    fun cancel() {
 -    isPausing = false
 -    isCancelling = true
-+    stopRequest = StopRequest.CANCEL
-     call?.cancel()
+-    call?.cancel()
++    nextTransfer.stop(StopRequest.CANCEL)
    }
  
-@@ -152,133 +147,50 @@ class FileSystemDownloadTask : SharedObject() {
+   override fun sharedObjectDidRelease() {
+-    call?.cancel()
++    cancel()
+   }
  
-       call = client.newCall(request)
+   private suspend fun downloadToFile(
++    transfer: Transfer,
+     request: Request,
+     destination: UnifiedFileInterface,
+     isResume: Boolean,
+@@ -150,141 +157,65 @@ class FileSystemDownloadTask : SharedObject() {
+         }
+       }
  
-+      if (stopRequest != StopRequest.NONE) {
-+        safeResume(null)
-+        return@suspendCancellableCoroutine
+-      call = client.newCall(request)
++      val call = client.newCall(request)
++      transfer.call = call
+ 
+-      call?.enqueue(object : Callback {
++      when (transfer.stopRequest) {
++        StopRequest.PAUSE -> {
++          safeResume(null)
++          return@suspendCancellableCoroutine
++        }
++        StopRequest.CANCEL -> {
++          safeResumeWithException(DownloadCancelledException())
++          return@suspendCancellableCoroutine
++        }
++        StopRequest.NONE -> Unit
 +      }
 +
-       call?.enqueue(object : Callback {
++      call.enqueue(object : Callback {
          override fun onFailure(call: Call, e: IOException) {
 -          if (isPausing) {
 -            safeResume(null)
@@ -103,7 +178,7 @@ index 44dd86d..7499051 100644
 -            safeResumeWithException(DownloadCancelledException())
 -          } else {
 -            safeResumeWithException(UnableToDownloadException(e.message ?: "Download failed"))
-+          when (stopRequest) {
++          when (transfer.stopRequest) {
 +            StopRequest.PAUSE -> safeResume(null)
 +            StopRequest.CANCEL -> safeResumeWithException(DownloadCancelledException())
 +            StopRequest.NONE -> safeResumeWithException(UnableToDownloadException(e.message ?: "Download failed"))
@@ -126,17 +201,15 @@ index 44dd86d..7499051 100644
 -              safeResumeWithException(UnableToDownloadException(e.message ?: "Download failed"))
 +          try {
 +            val written = writeDownloadResponse(response, destination, isResume, offset,
-+              stopped = { stopRequest != StopRequest.NONE },
-+              progress = { count, total -> bytesWritten = count; emitProgress(count, total) }
++              stopped = { transfer.stopRequest != StopRequest.NONE },
++              progress = { count, total -> emitProgress(transfer, count, total) }
 +            )
 +            if (written != null) {
-+              lastProgressTime = 0
-+              bytesWritten = written
-+              emitProgress(written, written)
++              emitProgress(transfer, written, written)
 +            }
 +            safeResume(if (written == null) null else destination.uri.toString())
 +          } catch (e: Exception) {
-+            when (stopRequest) {
++            when (transfer.stopRequest) {
 +              StopRequest.PAUSE -> safeResume(null)
 +              StopRequest.CANCEL -> safeResumeWithException(DownloadCancelledException())
 +              StopRequest.NONE -> safeResumeWithException(if (e is CodedException) e else UnableToDownloadException(e.message ?: "Download failed"))
@@ -147,8 +220,9 @@ index 44dd86d..7499051 100644
  
        continuation.invokeOnCancellation {
 -        if (!isPausing) {
-+        if (stopRequest != StopRequest.PAUSE) {
-           cancel()
+-          cancel()
++        if (transfer.stopRequest != StopRequest.PAUSE) {
++          transfer.stop(StopRequest.CANCEL)
          }
        }
      }
@@ -243,10 +317,20 @@ index 44dd86d..7499051 100644
 -    }
 -  }
 -
-   private fun emitProgress(bytesWritten: Long, totalBytes: Long) {
+-  private fun emitProgress(bytesWritten: Long, totalBytes: Long) {
++  private fun emitProgress(transfer: Transfer, bytesWritten: Long, totalBytes: Long) {
++    transfer.bytesWritten = bytesWritten
      val currentTime = System.currentTimeMillis()
-     val shouldEmit = currentTime - lastProgressTime >= progressThrottleInterval.inWholeMilliseconds || bytesWritten == totalBytes
-@@ -305,18 +217,6 @@ val URI.filename: String
+-    val shouldEmit = currentTime - lastProgressTime >= progressThrottleInterval.inWholeMilliseconds || bytesWritten == totalBytes
++    val shouldEmit = currentTime - transfer.lastProgressTime >= progressThrottleInterval.inWholeMilliseconds || bytesWritten == totalBytes
+ 
+     if (shouldEmit) {
+-      lastProgressTime = currentTime
++      transfer.lastProgressTime = currentTime
+       emit(
+         "progress",
+         mapOf(
+@@ -305,18 +236,6 @@ val URI.filename: String
      return filename.ifBlank { "download" }
    }
  
@@ -347,10 +431,10 @@ index 0000000..85732b9
 +}
 diff --git a/node_modules/expo-file-system/android/src/test/java/expo/modules/filesystem/DownloadResponseTest.kt b/node_modules/expo-file-system/android/src/test/java/expo/modules/filesystem/DownloadResponseTest.kt
 new file mode 100644
-index 0000000..2c4cb9c
+index 0000000..e767cee
 --- /dev/null
 +++ b/node_modules/expo-file-system/android/src/test/java/expo/modules/filesystem/DownloadResponseTest.kt
-@@ -0,0 +1,215 @@
+@@ -0,0 +1,261 @@
 +package expo.modules.filesystem
 +
 +import android.net.Uri
@@ -471,6 +555,52 @@ index 0000000..2c4cb9c
 +  @Test fun resumesOnlyTheRemainingBytes() = withPartial { file ->
 +    assertEquals(payload.size.toLong(), transfer(file, file.length()))
 +    assertArrayEquals(payload, file.readBytes())
++  }
++
++  @Test fun preservesPauseBeforeDownloadCoroutineRuns() = verifyQueuedPause(false)
++
++  @Test fun preservesPauseBeforeResumeCoroutineRuns() = verifyQueuedPause(true)
++
++  private fun verifyQueuedPause(resume: Boolean) = withPartial { file ->
++    if (!resume) file.writeBytes(byteArrayOf())
++    val original = file.readBytes()
++    val offset = original.size
++    val destination = FileSystemFile(Uri.fromFile(file))
++    FileSystemPath::class.java.getDeclaredField("fileAdapter").apply { isAccessible = true }
++      .set(destination, JavaFile(Uri.fromFile(file)))
++    val attempts = java.util.concurrent.atomic.AtomicInteger()
++    val client = OkHttpClient.Builder().addInterceptor { chain ->
++      attempts.incrementAndGet()
++      val response = Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
++        .code(if (resume) 206 else 200).message("Fixture")
++        .body(payload.copyOfRange(offset, payload.size).toResponseBody())
++      if (resume) response.header("Content-Range", "bytes $offset-${payload.lastIndex}/${payload.size}")
++      response.build()
++    }.build()
++    try {
++      OkHttpClientProvider.setOkHttpClientFactory { client }
++      val task = FileSystemDownloadTask()
++      val url = URI("http://127.0.0.1:9/app.apk")
++      suspend fun invoke() =
++        if (resume) task.resume(url, destination, offset.toString(), null) else task.start(url, destination, null)
++      try {
++        // The JS pause method is synchronous while the preceding native invocation is queued.
++        task.pause()
++        assertNull(runBlocking { invoke() })
++        assertEquals(0, attempts.get())
++        assertArrayEquals(original, file.readBytes())
++
++        assertNotNull(runBlocking { invoke() })
++        assertEquals(1, attempts.get())
++        assertArrayEquals(payload, file.readBytes())
++      } finally {
++        task.sharedObjectDidRelease()
++      }
++    } finally {
++      OkHttpClientProvider.setOkHttpClientFactory(null)
++      client.connectionPool.evictAll()
++      client.dispatcher.executorService.shutdown()
++    }
 +  }
 +
 +  @Test fun latestStopRequestDeterminesPauseOrCancellationWithoutChangingThePartialFile() = withPartial { file ->

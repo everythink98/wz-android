@@ -777,8 +777,9 @@ describe('source gateway reads', () => {
 
   function sharedReadingFixture() {
     let account = { id: 'alice', epoch: 1 };
+    const queryClient = new QueryClient();
     const reading = createDiscourseReadingRuntime({
-      queryClient: new QueryClient(),
+      queryClient,
       scope: () => `${account.id}:${account.epoch}`,
       send: async () => undefined
     });
@@ -811,6 +812,7 @@ describe('source gateway reads', () => {
       })
     });
     return {
+      queryClient,
       reading,
       gateway,
       requests,
@@ -821,6 +823,42 @@ describe('source gateway reads', () => {
       }
     };
   }
+
+  it('publishes one complete reading update and returns public topics in the requested order', async () => {
+    const { reading, gateway, requests, queryClient } = sharedReadingFixture();
+    const publishedSizes: number[] = [];
+    const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
+      if (event.type === 'updated') publishedSizes.push(Object.keys(reading.state()).length);
+    });
+    const ids = Array.from({ length: 50 }, (_, index) => String(index + 1));
+    try {
+      const result = gateway.getReadingBatch(ids);
+      await vi.waitFor(() => expect(requests).toHaveLength(1));
+      const publicIds = ids.slice(0, -2);
+      const topics = publicIds.map((id) => ({ id, last_read_post_number: 3 })).reverse();
+      requests[0].response.resolve(
+        Response.json({
+          topic_list: {
+            topics: [
+              ...topics,
+              { id: '49', archetype: 'private_message', last_read_post_number: 4 },
+              { id: '2', highest_post_number: 80 }
+            ]
+          }
+        })
+      );
+      const snapshots = await result;
+      expect(snapshots.map(({ topicId }) => topicId)).toEqual(publicIds);
+      expect(snapshots[1]?.lastReadPostNumber).toBe(3);
+      expect(reading.state()['2'].server).toMatchObject({ lastReadPostNumber: 3, highestPostNumber: 80 });
+      expect(reading.state()['49']).toBeUndefined();
+      expect(reading.state()['50']).toBeUndefined();
+      expect(publishedSizes).toEqual([publicIds.length]);
+    } finally {
+      unsubscribe();
+      reading.dispose();
+    }
+  });
 
   it('cancels a later reading waiter without changing another reader or the shared request', async () => {
     const { reading, gateway, requests, fetcher } = sharedReadingFixture();
@@ -967,47 +1005,43 @@ describe('source gateway reads', () => {
     }
   });
 
-  it.each(['linuxdo', 'all'] as const)(
-    'requests one account recheck for a parsed %s search login failure',
-    async (source) => {
-      const requestAccountRecheck = vi.fn();
-      const onSessionExpired = vi.fn();
-      const fetcher = vi.fn(async (input: string) =>
-        input.includes('/session/csrf')
-          ? new Response(JSON.stringify({ csrf: 'token' }))
-          : new Response(JSON.stringify({ errors: ['您需要登录才能执行此操作。'] }), { status: 403 })
-      );
-      const gateway = createReadGateway({
-        fetcher,
-        anonymousFetcher: fetcher,
-        getEnabledSources: () => ['linuxdo'],
-        nodeSeekUserAgent: () => 'test-agent',
-        requestAccountRecheck,
-        onSessionExpired,
-        readSessionRuntimeSnapshot: (site) => ({
-          source: site,
-          authenticated: true,
-          identityTrust: 'confirmed',
-          identityKey: `${site}:7`,
-          sessionEpoch: 4,
-          authSurfaceOpen: false,
-          sourceEnabled: true
-        })
-      });
-      const read = gateway.searchTopics({ source, query: 'AI' });
-      const expected = {
-        kind: 'login-required',
-        reason: 'account-recheck-required',
-        message: '您需要登录才能执行此操作。'
-      };
-      if (source === 'all') await expect(read).resolves.toMatchObject({ errors: { linuxdo: expected } });
-      else await expect(read).rejects.toMatchObject(expected);
-      expect(requestAccountRecheck).toHaveBeenCalledTimes(1);
-      expect(requestAccountRecheck).toHaveBeenCalledWith('linuxdo', 4, expect.stringMatching(/^trace-/));
-      expect(onSessionExpired).not.toHaveBeenCalled();
-      expect(fetcher).toHaveBeenCalledTimes(2);
-    }
-  );
+  it('requests one account recheck for a parsed search login failure', async () => {
+    const requestAccountRecheck = vi.fn();
+    const onSessionExpired = vi.fn();
+    const fetcher = vi.fn(async (input: string) =>
+      input.includes('/session/csrf')
+        ? new Response(JSON.stringify({ csrf: 'token' }))
+        : new Response(JSON.stringify({ errors: ['您需要登录才能执行此操作。'] }), { status: 403 })
+    );
+    const gateway = createReadGateway({
+      fetcher,
+      anonymousFetcher: fetcher,
+      getEnabledSources: () => ['linuxdo'],
+      nodeSeekUserAgent: () => 'test-agent',
+      requestAccountRecheck,
+      onSessionExpired,
+      readSessionRuntimeSnapshot: (site) => ({
+        source: site,
+        authenticated: true,
+        identityTrust: 'confirmed',
+        identityKey: `${site}:7`,
+        sessionEpoch: 4,
+        authSurfaceOpen: false,
+        sourceEnabled: true
+      })
+    });
+    const read = gateway.searchTopics({ source: 'linuxdo', query: 'AI' });
+    const expected = {
+      kind: 'login-required',
+      reason: 'account-recheck-required',
+      message: '您需要登录才能执行此操作。'
+    };
+    await expect(read).rejects.toMatchObject(expected);
+    expect(requestAccountRecheck).toHaveBeenCalledTimes(1);
+    expect(requestAccountRecheck).toHaveBeenCalledWith('linuxdo', 4, expect.stringMatching(/^trace-/));
+    expect(onSessionExpired).not.toHaveBeenCalled();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
 
   it('reads a partial yaohuo topic seed without duplicating the replies request', async () => {
     const topic: Topic = {

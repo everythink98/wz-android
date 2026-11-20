@@ -12,7 +12,7 @@ const nodeImageApiKeyWriteGate = createCredentialWriteGate();
 type CredentialPersistenceState = { phase: 'stable' } | { phase: 'restore-required'; previousValue: string | null };
 let credentialPersistence: CredentialPersistenceState = { phase: 'stable' };
 
-type NodeImageApiKeyCredential = Readonly<{
+export type NodeImageApiKeyCredential = Readonly<{
   version: 1;
   apiKey: string;
   ownership: Readonly<{ kind: 'unverified' }> | Readonly<{ kind: 'verified'; identityKey: string }>;
@@ -80,7 +80,7 @@ async function restoreNodeImageCredential() {
 }
 
 export function nodeImageApiKeyUseStatus(
-  credential: NodeImageApiKeyCredential | null,
+  credential: Pick<NodeImageApiKeyCredential, 'ownership'> | null,
   identityKey: string
 ): NodeImageApiKeyUseStatus {
   if (!credential) return 'missing';
@@ -133,10 +133,6 @@ export async function loadNodeImageApiKeyCredential() {
       throw error;
     }
   }
-}
-
-export async function loadNodeImageApiKey() {
-  return (await loadNodeImageApiKeyCredential())?.apiKey || '';
 }
 
 export async function saveNodeImageApiKeyForGeneration(

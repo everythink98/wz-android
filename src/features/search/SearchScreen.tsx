@@ -3,8 +3,20 @@ import { AppSwitch } from '@/ui/controls/InputControls';
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import { createSearchStyles, type SearchStyles } from './styles';
-import { SearchFilterSheet } from './SearchFilterSheet';
-import { memo, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import type { SearchFilterPlacement } from './SearchFilterSheet';
+import {
+  Fragment,
+  memo,
+  useCallback,
+  useContext,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentRef,
+  type ReactNode,
+  type RefObject
+} from 'react';
 import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
 import {
   Keyboard,
@@ -17,34 +29,26 @@ import {
   type ViewProps
 } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem, type ViewToken } from '@shopify/flash-list';
-import { ChevronRight, History, Search, X } from 'lucide-react-native';
-import type {
-  Category,
-  DiscourseTagOption,
-  DiscourseUserOption,
-  FeedSource,
-  Source,
-  Topic
-} from '@/domain/forum/models';
-import type { DiscourseSource } from '@/domain/forum/sourceCatalog';
+import { ChevronRight, ExternalLink, History, Search, Sparkles, X } from 'lucide-react-native';
+import type { FeedSource, Source, Topic } from '@/domain/forum/models';
 import { topicKey } from '@/domain/reader/readerData';
 import { sourceLabel } from '@/domain/forum/presentation';
-import { buildSearchListItems, searchGroupEmptyText, type SearchGroup, type SearchListItem } from './listItems';
-import type { LinuxDoAiSearchState } from './aiSearch';
 import {
-  searchFilterForSource,
-  searchFilterSummary,
-  type SearchFilterState,
-  type SourceSearchFilter
-} from '@/domain/forum/searchFilters';
+  buildSearchListItems,
+  searchGroupEmptyText,
+  searchGroupRetryPage,
+  type SearchGroup,
+  type SearchListItem
+} from './listItems';
+import type { LinuxDoAiSearchState } from './aiSearch';
+import { type SourceSearchFilter } from '@/domain/forum/searchFilters';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
-import { AuthNoticeBox, EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
+import { AuthNoticeBox, EmptyText, LoadingState, RecoverableEmptyState } from '@/ui/controls/FeedbackStates';
 import { PillRail } from '@/ui/controls/SelectionControls';
 import { MemoizedTopicCard } from '@/ui/topic/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
-import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 
 type SearchPageAttempt = {
@@ -84,31 +88,37 @@ function SearchInputField({
   onQueryChange: (value: string) => void;
   onSearch: () => void;
 }) {
+  const inputRef = useRef<ComponentRef<typeof Searchbar>>(null);
   const submitDisabled = busy || !query.trim();
   const submitSearch = () => {
     if (!submitDisabled) onSearch();
   };
   return (
-    <View style={styles.searchInputRow}>
-      <Searchbar
-        testID="search-query"
-        accessibilityLabel="搜索关键词"
-        searchAccessibilityLabel="搜索"
-        icon={() => <Search size={18} color={theme.muted} strokeWidth={1.9} accessible={false} />}
-        style={styles.searchInputShell}
-        inputStyle={styles.searchInput}
-        value={query}
-        onChange={recordUserInteraction}
-        onChangeText={onQueryChange}
-        placeholder="输入关键词"
-        placeholderTextColor={theme.muted}
-        autoCapitalize="none"
-        autoCorrect={false}
-        returnKeyType="search"
-        onSubmitEditing={submitSearch}
-        onIconPress={submitSearch}
-        right={() =>
-          query ? (
+    <Searchbar
+      ref={inputRef}
+      testID="search-query"
+      accessibilityLabel="搜索关键词"
+      searchAccessibilityLabel="聚焦搜索关键词"
+      icon={() => <Search size={18} color={theme.muted} strokeWidth={1.9} accessible={false} />}
+      clearIcon={() => null}
+      style={styles.searchInputShell}
+      inputStyle={styles.searchInput}
+      value={query}
+      onChange={recordUserInteraction}
+      onChangeText={onQueryChange}
+      placeholder="输入关键词"
+      placeholderTextColor={theme.muted}
+      autoCapitalize="none"
+      autoCorrect={false}
+      returnKeyType="search"
+      onSubmitEditing={submitSearch}
+      onIconPress={() => {
+        recordUserInteraction();
+        inputRef.current?.focus();
+      }}
+      right={() => (
+        <View style={styles.searchInputActions}>
+          {query ? (
             <IconButton
               label="清空搜索关键词"
               icon={X}
@@ -117,18 +127,21 @@ function SearchInputField({
               ghost
               onPress={() => onQueryChange('')}
             />
-          ) : null
-        }
-      />
-      <AppButton
-        testID="search-submit"
-        accessibilityLabel="提交搜索"
-        label="搜索"
-        variant="primary"
-        disabled={submitDisabled}
-        onPress={submitSearch}
-      />
-    </View>
+          ) : null}
+          <View style={styles.searchSubmitSlot}>
+            <AppButton
+              testID="search-submit"
+              accessibilityLabel="提交搜索"
+              size="lg"
+              label="搜索"
+              variant="ghost"
+              disabled={submitDisabled}
+              onPress={submitSearch}
+            />
+          </View>
+        </View>
+      )}
+    />
   );
 }
 function LinuxDoAiControl({
@@ -149,43 +162,47 @@ function LinuxDoAiControl({
   const disabled = state.status !== 'ready';
   const statusText =
     state.status === 'loading'
-      ? 'AI 结果加载中'
+      ? '加载中'
       : state.status === 'ready'
         ? `${state.count} 条 AI 结果`
         : state.message || '';
   return (
-    <View style={styles.searchFilterEntry}>
+    <View style={styles.searchFilterTrigger}>
       <View style={styles.searchFilterEntryIcon}>
-        <Text style={styles.searchFilterOptionTextActive}>✦</Text>
+        {state.status === 'loading' ? (
+          <ActivityIndicator animating={active} size={16} color={theme.primary} />
+        ) : (
+          <Sparkles size={16} color={theme.primary} strokeWidth={1.8} accessible={false} />
+        )}
       </View>
       <Text style={styles.searchFilterEntryText}>AI 搜索</Text>
       <Text numberOfLines={1} style={styles.searchFilterEntrySummary}>
         {statusText}
       </Text>
-      {state.status === 'loading' ? <ActivityIndicator animating={active} size="small" color={theme.primary} /> : null}
-      {state.status === 'error' ? <AppButton compact label="重试 AI 搜索" variant="ghost" onPress={onRetry} /> : null}
-      <AppSwitch
-        accessibilityLabel="AI 搜索"
-        accessibilityState={{ checked: state.enabled, disabled }}
-        disabled={disabled}
-        value={state.enabled}
-        onValueChange={onToggle}
-      />
+      {state.status === 'error' ? (
+        <AppButton compact label="重试" accessibilityLabel="重试 AI 搜索" onPress={onRetry} />
+      ) : (
+        <AppSwitch
+          accessibilityLabel="AI 搜索"
+          accessibilityState={{ checked: state.enabled, disabled }}
+          disabled={disabled}
+          value={state.enabled}
+          onValueChange={onToggle}
+        />
+      )}
     </View>
   );
 }
 
 export const SearchScreen = memo(function SearchScreen({
   active = true,
+  isRouteFocused,
   busy,
-  categories,
-  sessionEpochs,
-  requestsEnabled,
-  searchCandidateReadPlanScopes,
+  renderFilters,
   query,
+  readScope,
   recentSearches,
   topicStateIndex,
-  searchFilters,
   searchGroups,
   expectedSearchSources,
   externalSearchSources = [],
@@ -204,21 +221,17 @@ export const SearchScreen = memo(function SearchScreen({
   onRetryLinuxDoAiSearch,
   onSearch,
   onSearchFilterApply,
-  onSearchDiscourseTags,
-  onSearchDiscourseUsers,
   onToggleLinuxDoAiSearch,
   onSearchSourceChange
 }: {
   active?: boolean;
+  isRouteFocused?: () => boolean;
   busy: boolean;
-  categories: Category[];
-  sessionEpochs: ForumSessionEpochs;
-  requestsEnabled: boolean;
-  searchCandidateReadPlanScopes: { tags: string; users: string };
+  renderFilters: (placement: SearchFilterPlacement) => ReactNode;
   query: string;
+  readScope: string;
   recentSearches: string[];
   topicStateIndex: TopicListItemStateIndex;
-  searchFilters: SearchFilterState;
   searchGroups: SearchGroup[];
   expectedSearchSources: readonly Source[];
   externalSearchSources?: readonly Source[];
@@ -237,19 +250,6 @@ export const SearchScreen = memo(function SearchScreen({
   onRetryLinuxDoAiSearch: () => void;
   onSearch: (queryOverride?: string) => void;
   onSearchFilterApply: (source: Source, filter: SourceSearchFilter) => void;
-  onSearchDiscourseTags: (options: {
-    source?: DiscourseSource;
-    query: string;
-    categoryId?: string;
-    selectedTags: string[];
-    signal?: AbortSignal;
-  }) => Promise<DiscourseTagOption[]>;
-  onSearchDiscourseUsers: (options: {
-    source?: DiscourseSource;
-    term: string;
-    categoryId?: string;
-    signal?: AbortSignal;
-  }) => Promise<DiscourseUserOption[]>;
   onToggleLinuxDoAiSearch: () => void;
   onSearchSourceChange: (source: FeedSource) => void;
 }) {
@@ -278,8 +278,8 @@ export const SearchScreen = memo(function SearchScreen({
   const allSourcesDisabled = expectedSearchSources.length === 0;
   const visibleSearchSource =
     searchSource === 'all' || expectedSearchSources.includes(searchSource) ? searchSource : 'all';
-  const externalSearchSelected =
-    visibleSearchSource !== 'all' && externalSearchSources.includes(visibleSearchSource as Source);
+  const filterSource =
+    visibleSearchSource !== 'all' && !externalSearchSources.includes(visibleSearchSource) ? visibleSearchSource : null;
   const resetPaginationFeedback = useCallback(() => {
     pageAuthority.current = { phase: 'empty', permission: 'unarmed' };
     setCompletedPagination('none');
@@ -290,7 +290,7 @@ export const SearchScreen = memo(function SearchScreen({
   const submitSearch = useCallback(
     (queryOverride?: string) => {
       const nextQuery = (queryOverride ?? query).trim();
-      if (busy || !nextQuery) {
+      if (isRouteFocused?.() === false || busy || !nextQuery) {
         return;
       }
       resetPaginationFeedback();
@@ -302,17 +302,24 @@ export const SearchScreen = memo(function SearchScreen({
         onSearch(nextQuery);
       }
     },
-    [busy, onSearch, query, resetPaginationFeedback, scrollSearchToTop]
+    [busy, isRouteFocused, onSearch, query, resetPaginationFeedback, scrollSearchToTop]
   );
   const changeSearchSource = useCallback(
     (value: string) => {
-      if (value === visibleSearchSource) return;
+      if (isRouteFocused?.() === false || value === visibleSearchSource) return;
       if (value !== 'all' && !expectedSearchSources.includes(value as Source)) return;
       resetPaginationFeedback();
       scrollSearchToTop();
       onSearchSourceChange(value as FeedSource);
     },
-    [expectedSearchSources, onSearchSourceChange, resetPaginationFeedback, scrollSearchToTop, visibleSearchSource]
+    [
+      expectedSearchSources,
+      isRouteFocused,
+      onSearchSourceChange,
+      resetPaginationFeedback,
+      scrollSearchToTop,
+      visibleSearchSource
+    ]
   );
   const applySearchFilter = useCallback(
     (source: Source, filter: SourceSearchFilter) => {
@@ -328,13 +335,14 @@ export const SearchScreen = memo(function SearchScreen({
         <MemoizedTopicCard
           highlightQuery={query}
           readerState={getTopicListItemStateFromIndex(topicStateIndex, item)}
+          showSource={visibleSearchSource === 'all'}
           testID={testID}
           topic={item}
           onOpenTopic={onOpenTopic}
         />
       </View>
     ),
-    [onOpenTopic, query, styles, theme, topicStateIndex]
+    [onOpenTopic, query, styles, topicStateIndex, visibleSearchSource]
   );
   const visibleSearchGroups = useMemo(
     () =>
@@ -347,11 +355,10 @@ export const SearchScreen = memo(function SearchScreen({
     [expectedSearchSources, searchGroups, visibleSearchSource]
   );
   const paginationBusy = busy || visibleSearchGroups.some((group) => group.loading || group.loadingMore);
-  const paginationContext = `${submittedQuery}\u0000${visibleSearchSource}`;
   useLayoutEffect(() => {
     pageAuthority.current = { phase: 'empty', permission: 'unarmed' };
     setCompletedPagination('none');
-  }, [paginationContext]);
+  }, [readScope]);
   useLayoutEffect(() => {
     const pendingAutoLoad = pageAuthority.current;
     if (pendingAutoLoad.phase !== 'empty') {
@@ -365,7 +372,7 @@ export const SearchScreen = memo(function SearchScreen({
       if (paginationCompleted) {
         setCompletedPagination({
           phase: 'completed',
-          context: paginationContext,
+          context: readScope,
           source: pendingAutoLoad.source,
           page: pendingAutoLoad.page,
           previousItemCount: pendingAutoLoad.previousItemCount
@@ -380,21 +387,13 @@ export const SearchScreen = memo(function SearchScreen({
       groups: visibleSearchGroups,
       onLoadMore: onLoadMoreSearchSource
     };
-  }, [onLoadMoreSearchSource, paginationBusy, paginationContext, visibleSearchGroups]);
+  }, [onLoadMoreSearchSource, paginationBusy, readScope, visibleSearchGroups]);
   const searchTerm = query.trim();
   const hasInputValue = query.length > 0;
   const hasSearchTerm = searchTerm.length > 0;
   const hasSubmittedQuery = hasSearchTerm && submittedQuery === searchTerm;
   const showSearchGroups = hasSubmittedQuery && visibleSearchGroups.length > 0;
   const showIdleRecentSearches = !allSourcesDisabled && !hasInputValue && recentSearches.length > 0;
-  const searchFilterEntrySummary =
-    visibleSearchSource !== 'all'
-      ? searchFilterSummary(
-          visibleSearchSource as Source,
-          searchFilterForSource(searchFilters, visibleSearchSource as Source),
-          categories
-        )
-      : '';
   const listItems = useMemo(() => {
     if (showIdleRecentSearches) {
       return [
@@ -409,11 +408,7 @@ export const SearchScreen = memo(function SearchScreen({
       groups: visibleSearchGroups,
       mode: visibleSearchSource === 'all' ? 'overview' : 'source'
     });
-    if (
-      completedPagination === 'none' ||
-      completedPagination.context !== paginationContext ||
-      visibleSearchSource === 'all'
-    ) {
+    if (completedPagination === 'none' || completedPagination.context !== readScope || visibleSearchSource === 'all') {
       return items;
     }
     const completedGroup = visibleSearchGroups.find((group) => group.source === completedPagination.source);
@@ -435,7 +430,7 @@ export const SearchScreen = memo(function SearchScreen({
     return [...items.slice(0, pageStatusIndex), pageStatus, ...items.slice(pageStatusIndex)];
   }, [
     completedPagination,
-    paginationContext,
+    readScope,
     recentSearches,
     showIdleRecentSearches,
     showSearchGroups,
@@ -520,7 +515,7 @@ export const SearchScreen = memo(function SearchScreen({
   );
   useLayoutEffect(() => {
     pageAuthority.current.permission = 'unarmed';
-  }, [query, submittedQuery, visibleSearchSource]);
+  }, [query]);
   const renderSearchListItem = useCallback<ListRenderItem<SearchListItem>>(
     ({ index, item }) => {
       if (item.type === 'recentHeader') {
@@ -565,7 +560,9 @@ export const SearchScreen = memo(function SearchScreen({
               accessibilityRole="button"
               accessibilityLabel={`删除最近搜索 ${item.query}`}
               style={styles.removableChipClose}
-              onPress={() => onRemoveRecentSearch(item.query)}
+              onPress={() => {
+                if (isRouteFocused?.() !== false) onRemoveRecentSearch(item.query);
+              }}
             >
               {Platform.OS === 'android' ? (
                 <NativeRecentIcon
@@ -590,8 +587,9 @@ export const SearchScreen = memo(function SearchScreen({
           <Pressable
             testID={`search-overview-source-${item.group.source}`}
             accessibilityLabel={`查看 ${item.group.label} 全部搜索结果`}
+            accessibilityValue={{ text: item.meta }}
             accessibilityRole="button"
-            accessibilityState={{ disabled: !canOpenSource }}
+            accessibilityState={{ disabled: !canOpenSource, busy: Boolean(item.group.loading) }}
             disabled={!canOpenSource}
             style={styles.searchGroupHeader}
             onPress={() => changeSearchSource(item.group.source)}
@@ -610,15 +608,15 @@ export const SearchScreen = memo(function SearchScreen({
         );
       }
       if (item.type === 'externalSearch') {
+        const overview = visibleSearchSource === 'all';
         return (
-          <View style={styles.searchFilterEntry}>
-            <View style={styles.searchFilterEntryIcon}>
-              <Search size={17} color={theme.primary} strokeWidth={1.9} />
-            </View>
-            <Text style={styles.searchFilterEntrySummary}>打开主题后，可从浏览器菜单选择“在阅坛中打开当前主题”</Text>
+          <View style={overview ? styles.searchFilterEntry : styles.sectionHeader}>
+            {overview ? <Text style={[styles.searchFilterEntryText, styles.flex]}>{item.group.label}</Text> : null}
             <AppButton
               compact
-              label={visibleSearchSource === 'all' ? '去 Google 搜索' : '再次去 Google 搜索'}
+              icon={ExternalLink}
+              label={overview ? '去 Google 搜索' : '再次去 Google 搜索'}
+              accessibilityLabel={`在 Google 搜索 ${item.group.label}`}
               testID={`search-external-${item.group.source}`}
               onPress={() => onOpenExternalSearch(item.url)}
             />
@@ -626,20 +624,17 @@ export const SearchScreen = memo(function SearchScreen({
         );
       }
       if (item.type === 'groupError') {
-        const paginationError = Boolean(item.group.nextPage);
-        const retryPage = paginationError ? item.group.nextPage : null;
+        const retryPage = searchGroupRetryPage(item.group);
         return (
           <View style={styles.errorBox}>
             <Text style={styles.errorText}>{item.group.error}</Text>
             <AppButton
-              label={paginationError ? `重试加载 ${item.group.label}` : `重试 ${item.group.label}`}
+              label={retryPage ? `重试加载 ${item.group.label}` : `重试 ${item.group.label}`}
               variant="ghost"
-              disabled={busy || (paginationError && !retryPage)}
+              disabled={busy}
               onPress={() => {
-                if (paginationError) {
-                  if (retryPage) {
-                    onLoadMoreSearchSource(item.group.source, retryPage);
-                  }
+                if (retryPage) {
+                  onLoadMoreSearchSource(item.group.source, retryPage);
                   return;
                 }
                 onRetrySearchSource(item.group.source);
@@ -656,7 +651,7 @@ export const SearchScreen = memo(function SearchScreen({
         return <AuthNoticeBox notice={authNotice} />;
       }
       if (item.type === 'groupLoading') {
-        return <LoadingState text={`${item.group.label} 搜索中...`} />;
+        return <LoadingState compact text={item.group.items.length ? '刷新中' : `${item.group.label} 搜索中`} />;
       }
       if (item.type === 'groupEmpty') {
         const nextPage = item.group.hasMore && !item.group.error ? item.group.nextPage : null;
@@ -717,6 +712,7 @@ export const SearchScreen = memo(function SearchScreen({
     [
       busy,
       changeSearchSource,
+      isRouteFocused,
       onLoadMoreSearchSource,
       onOpenExternalSearch,
       onRemoveRecentSearch,
@@ -758,14 +754,18 @@ export const SearchScreen = memo(function SearchScreen({
     [styles]
   );
   const aiControlActive = linuxDoAiVisible && active;
-  const filterRequestsEnabled = visibleSearchSource !== 'all' && !externalSearchSelected && requestsEnabled;
+  const filterEntry = useMemo(
+    () =>
+      filterSource && (
+        <Fragment key={filterSource}>
+          {renderFilters({ source: filterSource, onApply: applySearchFilter, styles, theme })}
+        </Fragment>
+      ),
+    [applySearchFilter, filterSource, renderFilters, styles, theme]
+  );
   const header = useMemo(
     () => (
       <View style={[styles.stack, styles.listHeader]}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>搜索</Text>
-          {busy ? <ActivityIndicator color={theme.primary} /> : null}
-        </View>
         <SearchInputField
           busy={busy}
           query={query}
@@ -774,67 +774,41 @@ export const SearchScreen = memo(function SearchScreen({
           onQueryChange={onQueryChange}
           onSearch={() => submitSearch()}
         />
-        <PillRail
-          compactTabs
-          variant="tabs"
-          items={enabledSearchSourceItems}
-          value={visibleSearchSource}
-          testIDPrefix="search-source"
-          onChange={changeSearchSource}
-        />
-        {visibleSearchSource !== 'all' && !externalSearchSelected ? (
-          <SearchFilterSheet
-            categories={categories}
-            readPlanScopes={searchCandidateReadPlanScopes}
-            sessionEpochs={sessionEpochs}
-            requestsEnabled={filterRequestsEnabled}
-            source={visibleSearchSource as Source}
-            searchFilters={searchFilters}
-            summary={searchFilterEntrySummary}
-            styles={styles}
-            theme={theme}
-            onSearchDiscourseTags={onSearchDiscourseTags}
-            onSearchDiscourseUsers={onSearchDiscourseUsers}
-            onApply={applySearchFilter}
+        <View style={styles.searchScopeBar}>
+          <PillRail
+            compactTabs
+            variant="tabs"
+            items={enabledSearchSourceItems}
+            value={visibleSearchSource}
+            testIDPrefix="search-source"
+            onChange={changeSearchSource}
           />
-        ) : null}
-        {linuxDoAiVisible ? (
-          <LinuxDoAiControl
-            active={aiControlActive}
-            state={linuxDoAiState}
-            styles={styles}
-            theme={theme}
-            onRetry={onRetryLinuxDoAiSearch}
-            onToggle={onToggleLinuxDoAiSearch}
-          />
-        ) : null}
+          {filterEntry}
+          {linuxDoAiVisible ? (
+            <LinuxDoAiControl
+              active={aiControlActive}
+              state={linuxDoAiState}
+              styles={styles}
+              theme={theme}
+              onRetry={onRetryLinuxDoAiSearch}
+              onToggle={onToggleLinuxDoAiSearch}
+            />
+          ) : null}
+        </View>
       </View>
     ),
     [
       aiControlActive,
-      applySearchFilter,
       busy,
-      categories,
       changeSearchSource,
       enabledSearchSourceItems,
-      externalSearchSelected,
-      filterRequestsEnabled,
-      expectedSearchSources,
-      hasInputValue,
-      hasSearchTerm,
-      hasSubmittedQuery,
       linuxDoAiState,
       linuxDoAiVisible,
       onQueryChange,
       onRetryLinuxDoAiSearch,
       onToggleLinuxDoAiSearch,
-      onSearchDiscourseTags,
-      onSearchDiscourseUsers,
       query,
-      searchCandidateReadPlanScopes,
-      searchFilters,
-      searchFilterEntrySummary,
-      sessionEpochs,
+      filterEntry,
       styles,
       submitSearch,
       theme,
@@ -873,21 +847,14 @@ export const SearchScreen = memo(function SearchScreen({
         ListFooterComponent={null}
         ListEmptyComponent={
           allSourcesDisabled ? (
-            <View>
-              <EmptyText text="尚未启用内容源" />
-              <AppButton label="前往更多管理" onPress={onManageContentSources} />
-            </View>
+            <RecoverableEmptyState
+              message="尚未启用内容源"
+              actionLabel="前往更多管理"
+              onAction={onManageContentSources}
+            />
           ) : showSearchGroups ? null : searchBusy && hasSubmittedQuery ? (
-            <LoadingState text="正在搜索..." />
-          ) : !hasInputValue ? (
-            showIdleRecentSearches ? null : (
-              <EmptyText text="输入关键词后开始搜索" />
-            )
-          ) : !hasSearchTerm ? (
-            <EmptyText text="输入关键词后开始搜索" />
-          ) : !hasSubmittedQuery ? (
-            <EmptyText text="按键盘上的搜索键开始" />
-          ) : (
+            <LoadingState text="搜索中" />
+          ) : !hasSubmittedQuery ? null : (
             <EmptyText text="暂无搜索结果" />
           )
         }

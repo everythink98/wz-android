@@ -182,8 +182,8 @@ function parseV2exAtomFeed(xml: string, username: string, avatar?: string) {
       if (!id || !title) {
         return null;
       }
-      const createdAt = toIsoString(entry.published) || toIsoString(entry.updated) || new Date().toISOString();
-      const updatedAt = toIsoString(entry.updated) || createdAt;
+      const updatedAt = toIsoString(entry.updated);
+      const createdAt = toIsoString(entry.published) || updatedAt;
       const content = isRecord(entry.content)
         ? String(entry.content['#cdata'] || entry.content['#text'] || '')
         : String(entry.content || '');
@@ -198,7 +198,7 @@ function parseV2exAtomFeed(xml: string, username: string, avatar?: string) {
         category,
         url: safeTopicUrl(id, href),
         createdAt,
-        lastReplyAt: updatedAt,
+        lastReplyAt: updatedAt || createdAt || undefined,
         replyCount: Number.parseInt(href.match(/#reply(\d+)/)?.[1] || '0', 10) || 0,
         excerpt: textExcerpt(content)
       };

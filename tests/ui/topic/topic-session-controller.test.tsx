@@ -513,7 +513,12 @@ describe('topic query controller', () => {
         kind: 'reply',
         target: expect.objectContaining({ commentId: 121, floor: 21 })
       });
-      const repliesKey = forumQueryKeys.replies(hook.result.current.controller.topicQueryKey, order, 'authenticated:0');
+      const repliesKey = forumQueryKeys.replies(
+        hook.result.current.controller.topicQueryKey,
+        order,
+        'authenticated:0',
+        order === 'oldest' ? hook.result.current.controller.replyWindowOwner : undefined
+      );
       expect(appQueryClient.getQueryData(repliesKey)).toBeDefined();
       hook.unmount();
       if (order === 'oldest') await waitFor(() => expect(appQueryClient.getQueryData(repliesKey)).toBeUndefined());
@@ -620,7 +625,7 @@ describe('topic query controller', () => {
         scope: () => 'alice',
         send: async () => undefined
       });
-      reading.observe({ topicId: '1', lastReadPostNumber: 100, highestPostNumber: 200 }, reading.startRequest());
+      reading.observe([{ topicId: '1', lastReadPostNumber: 100, highestPostNumber: 200 }], reading.startRequest());
       let finish!: (detail: TopicDetail) => void;
       const getTopic = jest.fn<TestGetTopic>(
         () =>
@@ -714,7 +719,7 @@ describe('topic query controller', () => {
         send: async () => undefined
       });
       const getTopic = jest.fn<TestGetTopic>(async () => {
-        reading.observe({ topicId: '1', lastReadPostNumber: 180, highestPostNumber: 200 }, reading.startRequest());
+        reading.observe([{ topicId: '1', lastReadPostNumber: 180, highestPostNumber: 200 }], reading.startRequest());
         return { ...firstDetail, ...topic, replies: [], replyCount: 199 };
       });
       const getTopicReading = jest.fn<ReadGateway['getTopicReading']>();
@@ -784,7 +789,7 @@ describe('topic query controller', () => {
       readGateway: {
         reading,
         getTopic: async () => {
-          reading.observe({ topicId: '1', lastReadPostNumber: 180, highestPostNumber: 200 }, reading.startRequest());
+          reading.observe([{ topicId: '1', lastReadPostNumber: 180, highestPostNumber: 200 }], reading.startRequest());
           return { ...firstDetail, ...topic, replies: [], replyCount: 199 };
         },
         getReplies
@@ -826,7 +831,7 @@ describe('topic query controller', () => {
       const getReplies = jest.fn<TestGetReplies>(() => pending.promise);
       const getTopic: jest.Mock<TestGetTopic> = jest.fn<TestGetTopic>(async () => {
         if (outcome === 'failed' && getTopic.mock.calls.length === 2) throw new Error('offline');
-        reading.observe({ topicId: '1', lastReadPostNumber: 180, highestPostNumber: 200 }, reading.startRequest());
+        reading.observe([{ topicId: '1', lastReadPostNumber: 180, highestPostNumber: 200 }], reading.startRequest());
         return {
           ...firstDetail,
           ...topic,
@@ -872,13 +877,13 @@ describe('topic query controller', () => {
       send: async () => undefined
     });
     const getTopic = jest.fn<TestGetTopic>(async () => {
-      reading.observe({ topicId: '1', lastReadPostNumber: 20, highestPostNumber: 200 }, reading.startRequest());
+      reading.observe([{ topicId: '1', lastReadPostNumber: 20, highestPostNumber: 200 }], reading.startRequest());
       return { ...firstDetail, ...topic, replies: [], replyCount: 199 };
     });
     let lastReadPostNumber = 20;
     const getTopicReading = jest.fn<ReadGateway['getTopicReading']>(async () => {
       const snapshot = { topicId: '1', lastReadPostNumber, highestPostNumber: 200 };
-      reading.observe(snapshot, reading.startRequest());
+      reading.observe([snapshot], reading.startRequest());
       return snapshot;
     });
     const getReplies = jest.fn<TestGetReplies>(async ({ position }) => ({
@@ -930,7 +935,7 @@ describe('topic query controller', () => {
           const request = reading.startRequest();
           finishRegistration = () => {
             const snapshot = { topicId: '1', lastReadPostNumber: 180, highestPostNumber: 200 };
-            reading.observe(snapshot, request);
+            reading.observe([snapshot], request);
             resolve(snapshot);
           };
         })
@@ -988,7 +993,7 @@ describe('topic query controller', () => {
         send: async () => undefined
       });
       const getTopic = jest.fn<TestGetTopic>(async () => {
-        reading.observe({ topicId: '1', lastReadPostNumber: 80, highestPostNumber: 100 }, reading.startRequest());
+        reading.observe([{ topicId: '1', lastReadPostNumber: 80, highestPostNumber: 100 }], reading.startRequest());
         return {
           ...firstDetail,
           ...topic,
@@ -1005,7 +1010,7 @@ describe('topic query controller', () => {
           lastReadPostNumber: entry === 'server-reset' ? 0 : 80,
           highestPostNumber: 100
         };
-        reading.observe(snapshot, reading.startRequest());
+        reading.observe([snapshot], reading.startRequest());
         return snapshot;
       });
       const getReplies: jest.Mock<TestGetReplies> = jest.fn<TestGetReplies>(async ({ position }) => {
@@ -1079,7 +1084,7 @@ describe('topic query controller', () => {
           new Promise((resolve) => {
             finish = () => {
               const snapshot = { topicId: '1', lastReadPostNumber: 100, highestPostNumber: 200 };
-              reading.observe(snapshot, reading.startRequest());
+              reading.observe([snapshot], reading.startRequest());
               resolve(snapshot);
             };
           })
@@ -1213,7 +1218,7 @@ describe('topic query controller', () => {
     await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(detail));
     expect(getTopic).toHaveBeenCalledWith(
       expect.objectContaining({ source: 'linuxdo' }),
-      expect.objectContaining({ readPlanScope: 'public:omit' })
+      expect.objectContaining({ plan: expect.objectContaining({ cacheScope: 'public:omit' }) })
     );
   });
 
@@ -1267,6 +1272,221 @@ describe('topic query controller', () => {
       await act(async () => second.unmount());
     }
   );
+
+  it.each([
+    { focusOrder: 'before', parentFloor: 20 },
+    { focusOrder: 'after', parentFloor: 20 },
+    { focusOrder: 'before', parentFloor: 1 },
+    { focusOrder: 'after', parentFloor: 1 }
+  ])(
+    'preserves the parent reply window at floor $parentFloor when focus returns $focusOrder a same-topic child unmounts',
+    async ({ focusOrder, parentFloor }) => {
+      let focused = true;
+      const parentReply =
+        parentFloor === 1 ? firstReply : { ...firstReply, floor: parentFloor, commentId: parentFloor };
+      const childReply = { ...firstReply, floor: 80, commentId: 80 };
+      const getTopic = jest.fn<TestGetTopic>(async () => ({
+        ...firstDetail,
+        replyCount: 100,
+        replyHasMore: false,
+        replyCompleteness: 'complete'
+      }));
+      const getReplies = jest.fn<TestGetReplies>(async ({ position }) => {
+        const floor = position.kind === 'target' ? position.target.floor : undefined;
+        return {
+          items: [floor === 20 ? parentReply : floor === 80 ? childReply : firstReply],
+          completeness: 'complete',
+          currentPage: floor === 20 ? 2 : floor === 80 ? 8 : 1,
+          currentOffset: null,
+          hasMore: false,
+          nextPage: null,
+          totalCount: 100
+        };
+      });
+      const readGateway = { getTopic, getReplies };
+      const parent = await renderTopicController({
+        getActive: () => focused,
+        location:
+          parentFloor === 1 ? undefined : { kind: 'reply', target: { floor: parentFloor, commentId: parentFloor } },
+        readGateway
+      });
+      let child: Awaited<ReturnType<typeof renderTopicController>> | undefined;
+      try {
+        await waitFor(() => expect(parent.result.current.controller.topicReplies).toEqual([parentReply]));
+        focused = false;
+        await parent.rerender(undefined);
+        child = await renderTopicController({
+          location: { kind: 'reply', target: { floor: 80, commentId: 80 } },
+          readGateway
+        });
+        await waitFor(() => expect(child?.result.current.controller.topicReplies).toEqual([childReply]));
+        expect(child.result.current.controller.topicQueryKey).toEqual(parent.result.current.controller.topicQueryKey);
+        const returnFocus = async () => {
+          focused = true;
+          await parent.rerender(undefined);
+        };
+        if (focusOrder === 'before') {
+          await returnFocus();
+          expect(parent.result.current.controller.topicReplies).toEqual([parentReply]);
+        }
+        await child.unmount();
+        child = undefined;
+        if (focusOrder === 'after') await returnFocus();
+        expect(parent.result.current.controller.topicReplies).toEqual([parentReply]);
+        expect(getReplies.mock.calls.map(([request]) => request.position.kind)).toEqual(
+          parentFloor === 1 ? ['target'] : ['target', 'target']
+        );
+      } finally {
+        await child?.unmount();
+        await parent.unmount();
+      }
+    }
+  );
+
+  it.each([
+    { timing: 'before the child closes', childReadIsLate: false },
+    { timing: 'after a newer edit in the parent', childReadIsLate: true }
+  ])('keeps same-topic windows current when an edit is read back $timing', async ({ childReadIsLate }) => {
+    const topic = { ...firstTopic, source: 'linuxdo' as const, url: 'https://linux.do/t/topic/1' };
+    const parentReply = { ...firstReply, floor: 20, commentId: 20 };
+    const childReply = { ...firstReply, floor: 22, commentId: 22 };
+    const sharedReply = { ...firstReply, floor: 21, commentId: 21, contentHtml: '<p>old body</p>' };
+    const editedReply = {
+      ...sharedReply,
+      contentHtml: '<p>server edited <strong>body</strong></p>',
+      contentMarkdown: 'server edited **body**'
+    };
+    const newerReply = { ...sharedReply, contentHtml: '<p>latest body</p>', contentMarkdown: 'latest body' };
+    const releaseChildRead = Promise.withResolvers<void>();
+    const getTopic = jest.fn<TestGetTopic>(async () => ({
+      ...firstDetail,
+      ...topic,
+      replyCount: 100,
+      replies: [{ ...sharedReply, likeCount: 2 }]
+    }));
+    const getReplies = jest.fn<TestGetReplies>(async ({ position }) => {
+      const openingWindow =
+        position.kind === 'target' ? position.target.floor === 20 : position.kind === 'cursor' && position.page === 2;
+      const currentPage = openingWindow ? 2 : 3;
+      if (childReadIsLate && position.kind === 'cursor' && !openingWindow) await releaseChildRead.promise;
+      return {
+        items: openingWindow
+          ? [parentReply, position.kind === 'cursor' ? newerReply : { ...sharedReply, liked: true, likeCount: 7 }]
+          : [position.kind === 'cursor' ? editedReply : { ...sharedReply, likeCount: 3 }, childReply],
+        completeness: 'complete',
+        currentPage,
+        currentOffset: (currentPage - 1) * 10,
+        previousPage: currentPage - 1,
+        previousOffset: (currentPage - 2) * 10,
+        hasMore: true,
+        nextPage: currentPage + 1,
+        nextOffset: currentPage * 10,
+        totalCount: 100
+      };
+    });
+    const readGateway = { getTopic, getReplies };
+    let parentFocused = true;
+    const parent = await renderTopicController({
+      topic,
+      readGateway,
+      getActive: () => parentFocused,
+      location: { kind: 'reply', target: { floor: 20 } }
+    });
+    let child: Awaited<ReturnType<typeof renderTopicController>> | undefined;
+    try {
+      await waitFor(() =>
+        expect(parent.result.current.controller.topicReplies.map(({ floor }) => floor)).toEqual([20, 21])
+      );
+      const before = parent.result.current.controller.replyPreviousCursor;
+      parentFocused = false;
+      await parent.rerender(undefined);
+      child = await renderTopicController({ topic, readGateway, location: { kind: 'reply', target: { floor: 22 } } });
+      await waitFor(() =>
+        expect(child?.result.current.controller.topicReplies.map(({ floor }) => floor)).toEqual([21, 22])
+      );
+      const detailKey = child.result.current.controller.topicQueryKey;
+      const previousDetailReadAt = 123_456;
+      const quotePlan = createSessionReadPlan({
+        getIdentityBarriers: () => [],
+        getSessionEpochs: () => initialForumSessionEpochs,
+        getSourceEnabled: () => true
+      })('linuxdo', 'reply');
+      const quoteKey = forumQueryKeys.reply({
+        source: 'linuxdo',
+        topicId: topic.id,
+        postNumber: 21,
+        scope: initialForumSessionEpochs,
+        readPlanScope: quotePlan.cacheScope
+      });
+      await act(async () => {
+        appQueryClient.setQueryData(detailKey, appQueryClient.getQueryData(detailKey), {
+          updatedAt: previousDetailReadAt
+        });
+        appQueryClient.setQueryData(quoteKey, { ...sharedReply, likeCount: 5 }, { updatedAt: previousDetailReadAt });
+        await appQueryClient.invalidateQueries({ queryKey: detailKey, exact: true, refetchType: 'none' });
+      });
+      const refreshEdit = (controller: ReturnType<typeof useTopicController>, contentMarkdown: string) =>
+        controller.refreshTopicReplies({
+          kind: 'edited',
+          silent: true,
+          target: { kind: 'comment-id', commentId: 21 },
+          contentMarkdown
+        });
+      let pendingChildRefresh: ReturnType<typeof refreshEdit> | undefined;
+      if (childReadIsLate) {
+        await act(async () => {
+          pendingChildRefresh = refreshEdit(child!.result.current.controller, 'server edited __body__');
+        });
+        await waitFor(() =>
+          expect(getReplies).toHaveBeenCalledWith(
+            expect.objectContaining({ position: { kind: 'cursor', page: 3, offset: 20 } }),
+            expect.anything()
+          )
+        );
+      } else {
+        await act(async () => {
+          await expect(refreshEdit(child!.result.current.controller, 'server edited __body__')).resolves.toBe(
+            'completed'
+          );
+        });
+        expect(child.result.current.controller.topicReplies[0]).toMatchObject({ ...editedReply, likeCount: 3 });
+      }
+      await child.unmount();
+      child = undefined;
+      parentFocused = true;
+      await parent.rerender(undefined);
+      if (childReadIsLate) {
+        await act(async () => {
+          await expect(refreshEdit(parent.result.current.controller, 'latest body')).resolves.toBe('completed');
+          releaseChildRead.resolve();
+          await expect(pendingChildRefresh).resolves.toBe('stale');
+        });
+      }
+      await waitFor(() =>
+        expect(parent.result.current.controller.topicReplies).toEqual([
+          parentReply,
+          { ...(childReadIsLate ? newerReply : editedReply), liked: true, likeCount: 7 }
+        ])
+      );
+      expect(parent.result.current.controller.replyPreviousCursor).toEqual(before);
+      expect(appQueryClient.getQueryState<TopicDetail>(detailKey)).toMatchObject({
+        data: { replies: [{ ...(childReadIsLate ? newerReply : editedReply), likeCount: 2 }] },
+        dataUpdatedAt: previousDetailReadAt,
+        isInvalidated: true
+      });
+      expect(appQueryClient.getQueryState(quoteKey)).toMatchObject({
+        data: { ...(childReadIsLate ? newerReply : editedReply), likeCount: 5 },
+        dataUpdatedAt: previousDetailReadAt
+      });
+      expect(getReplies.mock.calls.map(([request]) => request.position.kind)).toEqual(
+        childReadIsLate ? ['target', 'target', 'cursor', 'cursor'] : ['target', 'target', 'cursor']
+      );
+    } finally {
+      releaseChildRead.resolve();
+      await child?.unmount();
+      await parent.unmount();
+    }
+  });
 
   it('does not reseed old embedded replies after closing a located reply window', async () => {
     const updatedReply = { ...firstReply, contentHtml: '<p>updated first reply</p>' };
@@ -1528,6 +1748,7 @@ describe('topic query controller', () => {
       await appQueryClient
         .fetchQuery({
           queryKey: hook.result.current.controller.topicQueryKey,
+          queryFn: ({ signal }) => getTopic({ source: topic.source, id: topic.id, topic, signal }),
           staleTime: 0
         })
         .catch(() => undefined);
@@ -1634,6 +1855,7 @@ describe('topic query controller', () => {
       await appQueryClient
         .fetchQuery({
           queryKey: previous.result.current.controller.topicQueryKey,
+          queryFn: ({ signal }) => getTopic({ source: topic.source, id: topic.id, topic, signal }),
           staleTime: 0
         })
         .catch(() => undefined);
@@ -1702,12 +1924,14 @@ describe('topic query controller', () => {
     await waitFor(() => expect(getReplies).toHaveBeenCalledTimes(1));
     expect(getReplies).toHaveBeenCalledWith(
       expect.objectContaining({ position: { kind: 'start' }, source: 'yaohuo' }),
-      expect.objectContaining({ readPlanScope: expect.stringContaining('authenticated:') })
+      expect.objectContaining({
+        plan: expect.objectContaining({ cacheScope: expect.stringContaining('authenticated:') })
+      })
     );
     await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([firstReply]));
   });
 
-  it('exposes a non-V2EX partial reply window without disabling server order', async () => {
+  it('exposes a non-V2EX partial reply window without another request', async () => {
     const detail: TopicDetail = {
       ...firstDetail,
       replyCount: 2,
@@ -1727,7 +1951,6 @@ describe('topic query controller', () => {
 
     await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([firstReply]));
     expect(hook.result.current.controller.replyRowsPartial).toBe(true);
-    expect(hook.result.current.controller.replyCollectionComplete).toBe(true);
     expect(getReplies).not.toHaveBeenCalled();
   });
 
@@ -2046,7 +2269,6 @@ describe('topic query controller', () => {
       });
       await waitFor(() => expect(hook.result.current.controller.topicReplies).toHaveLength(147));
       expect(hook.result.current.controller.topicReplies.at(-1)?.floor).toBe(147);
-      expect(hook.result.current.controller.replyCollectionComplete).toBe(true);
       expect(hook.result.current.controller.replyHasMore).toBe(false);
       expect(hook.result.current.controller.replyRowsPartial).toBe(false);
 
@@ -2108,7 +2330,6 @@ describe('topic query controller', () => {
     await waitFor(() => expect(hook.result.current.controller.topicReplies).toHaveLength(146));
     expect(hook.result.current.controller.topicReplies.at(-1)?.floor).toBe(146);
     expect(hook.result.current.controller.replyRowsPartial).toBe(true);
-    expect(hook.result.current.controller.replyCollectionComplete).toBe(true);
     expect(hook.result.current.controller.topicDetail?.replyCount).toBe(147);
     expect(getReplies).toHaveBeenCalledTimes(1);
   });
@@ -2159,7 +2380,6 @@ describe('topic query controller', () => {
       });
       expect(getReplies).toHaveBeenCalledTimes(1);
       expect(hook.result.current.controller.topicReplies).toHaveLength(100);
-      expect(hook.result.current.controller.replyCollectionComplete).toBe(true);
       expect(hook.result.current.controller.topicError).toBeNull();
     } finally {
       jest.useRealTimers();
@@ -2203,7 +2423,6 @@ describe('topic query controller', () => {
       await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([recovered]));
       expect(getReplies).toHaveBeenCalledTimes(1);
       expect(hook.result.current.controller.repliesLoading).toBe(false);
-      expect(hook.result.current.controller.replyCollectionComplete).toBe(true);
 
       await act(async () => {
         await jest.advanceTimersByTimeAsync(60_000);
@@ -2213,6 +2432,175 @@ describe('topic query controller', () => {
       jest.useRealTimers();
     }
   });
+
+  it('refreshes only the V2EX start window after loading a later page and keeps both on failure', async () => {
+    const replies = Array.from({ length: 147 }, (_, index) => ({
+      ...firstReply,
+      floor: index + 1,
+      commentId: index + 101
+    }));
+    const topic = { ...firstTopic, source: 'v2ex' as const, url: 'https://www.v2ex.com/t/1', replyCount: 147 };
+    const detail: TopicDetail = {
+      ...firstDetail,
+      ...topic,
+      replies: replies.slice(0, 100),
+      replyCompleteness: 'complete',
+      replyHasMore: true,
+      replyNextPage: 2,
+      replyNextOffset: null
+    };
+    const getTopic = jest.fn<TestGetTopic>(async () => detail);
+    const getReplies = jest.fn<TestGetReplies>(async ({ position }) => {
+      const second = position.kind === 'cursor' && position.page === 2;
+      return {
+        items: second ? replies.slice(100) : detail.replies.map((reply) => ({ ...reply, contentHtml: '<p>fresh</p>' })),
+        completeness: 'complete',
+        currentPage: second ? 2 : 1,
+        previousPage: second ? 1 : null,
+        hasMore: !second,
+        nextPage: second ? null : 2,
+        totalCount: 147
+      };
+    });
+    const hook = await renderTopicController({ readGateway: { getTopic, getReplies }, topic });
+    await waitFor(() => expect(hook.result.current.controller.topicReplies).toHaveLength(100));
+    await act(async () => {
+      await expect(hook.result.current.controller.loadMoreReplies({ silent: true })).resolves.toBe('completed');
+    });
+    await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual(replies));
+    getReplies.mockClear();
+    getReplies.mockRejectedValueOnce(new Error('offline'));
+
+    await act(async () => {
+      await expect(hook.result.current.controller.refreshTopicReplies()).resolves.toBe('failed');
+    });
+    expect(hook.result.current.controller.topicReplies).toEqual(replies);
+    expect(hook.result.current.controller.repliesError?.message).toBe('offline');
+    await act(async () => {
+      await expect(hook.result.current.controller.retryReplies()).resolves.toBe('completed');
+    });
+    expect(getReplies.mock.calls.map(([request]) => request.position)).toEqual([{ kind: 'start' }, { kind: 'start' }]);
+    await waitFor(() => expect(hook.result.current.controller.topicReplies).toHaveLength(100));
+    expect(hook.result.current.controller.topicDetail?.contentHtml).toBe(detail.contentHtml);
+    expect(hook.result.current.controller.topicReplies[0].contentHtml).toBe('<p>fresh</p>');
+    expect(hook.result.current.controller.repliesError).toBeNull();
+    expect(hook.result.current.controller.replyHasMore).toBe(true);
+    expect(getTopic).toHaveBeenCalledTimes(1);
+  });
+
+  it('restarts a centered newest window and discards the outgoing adjacent read', async () => {
+    const opening = { ...firstReply, floor: 1 };
+    const target = { ...firstReply, floor: 35, commentId: 35 };
+    const tail = { ...firstReply, floor: 80, commentId: 80 };
+    const updatedTail = { ...tail, floor: 81, commentId: 81 };
+    const getTopic = jest.fn<TestGetTopic>(async () => ({
+      ...firstDetail,
+      replies: [opening],
+      replyCount: 80,
+      replyCompleteness: 'complete',
+      replyHasMore: true,
+      replyNextPage: 2
+    }));
+    const adjacent = Promise.withResolvers<RepliesResponse>();
+    const refresh = Promise.withResolvers<RepliesResponse>();
+    const getReplies = jest
+      .fn<TestGetReplies>()
+      .mockResolvedValueOnce({ items: [tail], currentPage: 8, hasMore: true, nextPage: 7 })
+      .mockResolvedValueOnce({ items: [target], currentPage: 4, previousPage: 5, hasMore: true, nextPage: 3 })
+      .mockImplementationOnce(() => adjacent.promise)
+      .mockImplementationOnce(() => refresh.promise);
+    const hook = await renderTopicController({ readGateway: { getTopic, getReplies } });
+    await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([opening]));
+    await act(async () => hook.result.current.session.commands.view.changeReplyOrder('newest'));
+    await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([tail]));
+    await act(async () => {
+      await expect(hook.result.current.controller.locateReply({ floor: 35 }, { silent: true })).resolves.toBe(
+        'completed'
+      );
+    });
+    await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([target]));
+
+    let loadMore: Promise<LinuxDoReadResumeOutcome>;
+    await act(async () => {
+      loadMore = hook.result.current.controller.loadMoreReplies({ silent: true });
+    });
+    await waitFor(() => expect(getReplies).toHaveBeenCalledTimes(3));
+    const adjacentSignal = getReplies.mock.calls[2][0].signal;
+    let refreshWindow: Promise<LinuxDoReadResumeOutcome>;
+    await act(async () => {
+      refreshWindow = hook.result.current.controller.refreshTopicReplies();
+    });
+    await waitFor(() => expect(getReplies).toHaveBeenCalledTimes(4));
+    expect(adjacentSignal?.aborted).toBe(true);
+    expect(hook.result.current.controller.topicReplies).toEqual([target]);
+    await act(async () => {
+      await hook.result.current.controller.loadPreviousReplies({ silent: true });
+      await hook.result.current.controller.loadMoreReplies({ silent: true });
+    });
+    expect(getReplies.mock.calls.map(([request]) => [request.order, request.position.kind])).toEqual([
+      ['newest', 'start'],
+      ['newest', 'target'],
+      ['newest', 'cursor'],
+      ['newest', 'start']
+    ]);
+    await act(async () => {
+      refresh.resolve({ items: [updatedTail], currentPage: 9, hasMore: true, nextPage: 8 });
+      await expect(refreshWindow).resolves.toBe('completed');
+      adjacent.resolve({ items: [{ ...target, floor: 25 }], currentPage: 3, hasMore: true, nextPage: 2 });
+      await loadMore;
+    });
+    await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([updatedTail]));
+    expect(hook.result.current.controller.replyNextPage).toBe(8);
+    expect(hook.result.current.controller.replyHasPrevious).toBe(false);
+    expect(getTopic).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['v2ex', 'nodeseek', 'yaohuo'] as const)(
+    'counts one local visit per %s entry while updating the history summary on refresh',
+    async (source) => {
+      const topic = { ...firstTopic, source };
+      const detail: TopicDetail = {
+        ...firstDetail,
+        ...topic,
+        replyCompleteness: 'complete',
+        replyHasMore: false
+      };
+      const latest = { ...firstReply, floor: 2, commentId: 11 };
+      const commitReaderData = jest.fn<Parameters<typeof useTopicController>[0]['commitReaderData']>();
+      const getTopic = jest.fn<TestGetTopic>(async () => detail);
+      const getReplies = jest.fn<TestGetReplies>(async () => ({
+        items: [firstReply, latest],
+        completeness: 'complete',
+        currentPage: 1,
+        hasMore: false,
+        nextPage: null,
+        totalCount: 2
+      }));
+      const options = { readGateway: { getTopic, getReplies }, topic, commitReaderData };
+      const recordedCommands = () => commitReaderData.mock.calls.map(([command]) => command);
+      const hook = await renderTopicController(options);
+      await waitFor(() => expect(recordedCommands().map(({ type }) => type)).toEqual(['visit']));
+      await act(async () => {
+        await expect(hook.result.current.controller.refreshTopicReplies()).resolves.toBe('completed');
+      });
+      await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([firstReply, latest]));
+      expect(getTopic).toHaveBeenCalledTimes(1);
+      expect(recordedCommands().map(({ type }) => type)).toEqual(['visit', 'topic-summary']);
+      expect(recordedCommands()[1]).toMatchObject({ type: 'topic-summary', topic: { replyCount: 2 } });
+
+      getTopic.mockResolvedValue({ ...detail, title: 'Updated title', replyCount: 2, replies: [firstReply, latest] });
+      await act(async () => {
+        await expect(hook.result.current.controller.refreshWholeTopic()).resolves.toBe('completed');
+      });
+      await waitFor(() => expect(hook.result.current.controller.topicDetail?.title).toBe('Updated title'));
+      expect(recordedCommands().map(({ type }) => type)).toEqual(['visit', 'topic-summary', 'topic-summary']);
+      await hook.unmount();
+
+      const reentered = await renderTopicController(options);
+      await waitFor(() => expect(recordedCommands().filter(({ type }) => type === 'visit')).toHaveLength(2));
+      await reentered.unmount();
+    }
+  );
 
   it('keeps an explicit full refresh on the refreshed V2EX page window', async () => {
     const prefix = [{ ...firstReply, floor: 1, commentId: 101 }];
@@ -2230,7 +2618,6 @@ describe('topic query controller', () => {
     const hook = await renderTopicController({ readGateway: { getTopic, getReplies }, topic });
 
     await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual(prefix));
-    expect(hook.result.current.controller.replyCollectionComplete).toBe(true);
     expect(getTopic).toHaveBeenCalledTimes(1);
     expect(getReplies).not.toHaveBeenCalled();
 
@@ -2241,7 +2628,6 @@ describe('topic query controller', () => {
     expect(getTopic).toHaveBeenCalledTimes(2);
     expect(getReplies).not.toHaveBeenCalled();
     expect(hook.result.current.controller.topicReplies).toEqual(prefix);
-    expect(hook.result.current.controller.replyCollectionComplete).toBe(true);
   });
 
   it('rejects an unconfirmed tail without applying it and retries the same order', async () => {
@@ -2342,7 +2728,6 @@ describe('topic query controller', () => {
     await act(async () => {
       hook.result.current.session.commands.composer.changeContent('保留的本地草稿');
       hook.result.current.session.commands.view.changeReplyFilter('author');
-      hook.result.current.session.commands.view.rememberScrollY(280);
     });
     scope = { ...scope, nodeseek: 1 };
     await act(async () => {
@@ -3240,7 +3625,6 @@ describe('topic query controller', () => {
       await pendingReplies.promise;
     });
     await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([target]));
-    await waitFor(() => expect(hook.result.current.controller.replyCollectionComplete).toBe(true));
     expect(getReplies).toHaveBeenCalledTimes(1);
   });
 
@@ -3800,6 +4184,8 @@ describe('topic query controller', () => {
       await expect(hook.result.current.controller.locateReply({ floor: 50 }, { silent: true })).resolves.toBe(
         'completed'
       );
+    });
+    await act(async () => {
       await expect(hook.result.current.controller.refreshWholeTopic()).resolves.toBe('failed');
     });
 
@@ -3956,6 +4342,103 @@ describe('topic query controller', () => {
     expect(getReply).toHaveBeenCalledTimes(1);
   });
 
+  it('only prefetches currently visible quote authors after an account change', async () => {
+    let epochs = initialForumSessionEpochs;
+    let active = true;
+    const topic = { ...firstTopic, source: 'linuxdo' as const, url: 'https://linux.do/t/1' };
+    const detail = { ...firstDetail, ...topic };
+    const getReply = jest.fn<TestGetReply>(async ({ floor }) => ({
+      author: '昵称',
+      floor,
+      contentHtml: '<p>正文</p>',
+      createdAt: ''
+    }));
+    const hook = await renderTopicController({
+      topic,
+      getActive: () => active,
+      getSessionEpochs: () => epochs,
+      readGateway: {
+        getTopic: jest.fn<TestGetTopic>(async () => {
+          if (epochs.linuxdo === 1) throw new Error('主题不可见');
+          return detail;
+        }),
+        getReply
+      }
+    });
+    const readAuthor = (postNumber: number) =>
+      hook.result.current.controller.toggleTopicBodyQuote({
+        instanceKey: 'author:linuxdo:200:' + postNumber,
+        prefetch: 'author',
+        reference: { source: 'linuxdo', topicId: '200', postNumber }
+      });
+    await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(detail));
+    const earlierViewport = hook.result.current.controller.toggleTopicBodyQuote;
+    await act(async () => {
+      for (const floor of [2, 3, 4]) await readAuthor(floor);
+    });
+    await waitFor(() => expect(Object.keys(hook.result.current.controller.loadedQuotedReplies)).toHaveLength(3));
+    active = false;
+    await hook.rerender(undefined);
+    epochs = { ...epochs, linuxdo: epochs.linuxdo + 1 };
+    await hook.rerender(undefined);
+    active = true;
+    await hook.rerender(undefined);
+    await waitFor(() => expect(hook.result.current.controller.topicError).toBeTruthy());
+    expect(getReply).toHaveBeenCalledTimes(3);
+    expect(hook.result.current.controller.loadedQuotedReplies).toEqual({});
+    epochs = { ...epochs, linuxdo: epochs.linuxdo + 1 };
+    await hook.rerender(undefined);
+    await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(detail));
+    await act(() => readAuthor(4));
+    await waitFor(() =>
+      expect(Object.keys(hook.result.current.controller.loadedQuotedReplies)).toEqual(['linuxdo:200:4'])
+    );
+    await act(async () => {
+      await earlierViewport({
+        instanceKey: 'author:linuxdo:200:5',
+        prefetch: 'author',
+        reference: { source: 'linuxdo', topicId: '200', postNumber: 5 }
+      });
+    });
+    expect(Object.keys(hook.result.current.controller.loadedQuotedReplies)).toEqual(['linuxdo:200:4']);
+    expect(getReply).toHaveBeenCalledTimes(4);
+  });
+
+  it('keeps a nickname-only floor out of image previews until the reader opens its quote', async () => {
+    const linuxTopic = { ...firstTopic, source: 'linuxdo' as const, url: 'https://linux.do/t/1' };
+    const linuxDetail = { ...firstDetail, ...linuxTopic };
+    const reference = { source: 'linuxdo' as const, topicId: '200', postNumber: 7 };
+    const referenceKey = 'linuxdo:200:7';
+    const quoted: Reply = {
+      author: '昵称',
+      floor: 7,
+      contentHtml: '<img src="https://img.example/foreign.png">',
+      createdAt: ''
+    };
+    const getReply = jest.fn<TestGetReply>(async () => quoted);
+    const hook = await renderTopicController({
+      topic: linuxTopic,
+      readGateway: { getTopic: jest.fn<TestGetTopic>(async () => linuxDetail), getReply }
+    });
+    await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(linuxDetail));
+    await act(() =>
+      hook.result.current.controller.toggleTopicBodyQuote({
+        instanceKey: 'author:' + referenceKey,
+        prefetch: 'author',
+        reference
+      })
+    );
+    await waitFor(() => expect(hook.result.current.controller.loadedQuotedReplies[referenceKey]).toEqual(quoted));
+    expect(hook.result.current.controller.authorOnlyQuotedReferences?.has(referenceKey)).toBe(true);
+    const openQuote = () =>
+      hook.result.current.controller.toggleTopicBodyQuote({ instanceKey: 'reply:1:' + referenceKey, reference });
+    await act(openQuote);
+    expect(hook.result.current.controller.authorOnlyQuotedReferences?.has(referenceKey)).toBeFalsy();
+    await act(openQuote);
+    expect(hook.result.current.controller.authorOnlyQuotedReferences?.has(referenceKey)).toBeFalsy();
+    expect(getReply).toHaveBeenCalledTimes(1);
+  });
+
   it('prefetches an accepted answer without expanding a quote or notifying', async () => {
     const solvedTopic: Topic = {
       ...firstTopic,
@@ -4005,7 +4488,7 @@ describe('topic query controller', () => {
     await act(async () => {
       await hook.result.current.controller.toggleTopicBodyQuote({
         instanceKey,
-        prefetch: true,
+        prefetch: 'accepted-answer',
         reference: { source: 'linuxdo', topicId: '206', postNumber: 9 }
       });
     });
@@ -4058,7 +4541,7 @@ describe('topic query controller', () => {
     await act(async () => {
       await hook.result.current.controller.toggleTopicBodyQuote({
         instanceKey,
-        prefetch: true,
+        prefetch: 'accepted-answer',
         reference: { source: 'linuxdo', topicId: '207', postNumber: 9 }
       });
     });
@@ -4130,7 +4613,7 @@ describe('topic query controller', () => {
       await act(async () => {
         await hook.result.current.controller.toggleTopicBodyQuote({
           instanceKey: acceptedInstanceKey,
-          prefetch: true,
+          prefetch: 'accepted-answer',
           reference
         });
       });
@@ -4250,6 +4733,100 @@ describe('topic query controller', () => {
     expect(quoteSignal?.aborted).toBe(true);
     expect(unrelatedSignal?.aborted).toBe(false);
     await appQueryClient.cancelQueries({ queryKey: unrelatedKey, exact: true });
+  });
+
+  it('keeps an explicit refresh running when another route for the same topic loses focus', async () => {
+    let focused = true;
+    const topic = { ...firstTopic, source: 'linuxdo' as const, url: 'https://linux.do/t/1' };
+    const detail = { ...firstDetail, ...topic };
+    const updated = { ...detail, contentHtml: '<p>Updated opening</p>' };
+    const pending = Promise.withResolvers<TopicDetail>();
+    const reading = createDiscourseReadingRuntime({
+      queryClient: appQueryClient,
+      scope: () => 'alice',
+      send: async () => undefined
+    });
+    const getTopic = jest.fn<TestGetTopic>().mockResolvedValue(detail);
+    const getTopicReading = jest.fn<ReadGateway['getTopicReading']>().mockResolvedValue({
+      topicId: topic.id,
+      lastReadPostNumber: 0,
+      highestPostNumber: 0
+    });
+    const getReplies = jest.fn<TestGetReplies>().mockResolvedValue({
+      items: [],
+      currentPage: 1,
+      hasMore: false,
+      nextPage: null
+    });
+    const readGateway = { reading, getTopic, getTopicReading, getReplies };
+    const first = await renderTopicController({ topic, getActive: () => focused, readGateway });
+    await waitFor(() => expect(first.result.current.controller.readingEntry.ready).toBe(true));
+    const second = await renderTopicController({ topic, readGateway });
+    try {
+      await waitFor(() => expect(second.result.current.controller.readingEntry.ready).toBe(true));
+      let signal: AbortSignal | undefined;
+      getTopic.mockImplementationOnce((request) => {
+        signal = request.signal;
+        return pending.promise;
+      });
+      await act(() => {
+        void second.result.current.controller.refreshWholeTopic();
+      });
+      await waitFor(() => expect(signal).toBeDefined());
+
+      focused = false;
+      await first.rerender(undefined);
+      expect(signal?.aborted).toBe(false);
+      await act(() => pending.resolve(updated));
+      await waitFor(() => expect(second.result.current.controller.topicDetail?.contentHtml).toBe(updated.contentHtml));
+    } finally {
+      await act(() => pending.resolve(updated));
+      await second.unmount();
+      await first.unmount();
+      reading.dispose();
+    }
+  });
+
+  it('preserves a shared quote read when another topic loses focus', async () => {
+    let focused = true;
+    const reference = { source: 'linuxdo' as const, topicId: '2679944', postNumber: 2 };
+    const quoted: Reply = { author: 'carol', floor: 2, contentHtml: '<p>quoted</p>', createdAt: '' };
+    const pending = Promise.withResolvers<Reply>();
+    const getReply = jest.fn<TestGetReply>(() => pending.promise);
+    const linuxTopic = { ...firstTopic, source: 'linuxdo' as const, url: 'https://linux.do/t/1' };
+    const child = { ...linuxTopic, id: '2', url: 'https://linux.do/t/2' };
+    const getTopic = jest.fn<TestGetTopic>(async ({ id }) => ({
+      ...firstDetail,
+      ...(id === child.id ? child : linuxTopic)
+    }));
+    const first = await renderTopicController({
+      getActive: () => focused,
+      topic: linuxTopic,
+      readGateway: { getTopic, getReply }
+    });
+    const second = await renderTopicController({ topic: child, readGateway: { getTopic, getReply } });
+    try {
+      await act(async () => {
+        await first.result.current.controller.toggleTopicBodyQuote({ instanceKey: 'first', reference });
+      });
+      await waitFor(() => expect(getReply).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        await second.result.current.controller.toggleTopicBodyQuote({ instanceKey: 'second', reference });
+      });
+      expect(getReply).toHaveBeenCalledTimes(1);
+      const signal = getReply.mock.calls[0][0].signal;
+      focused = false;
+      await first.rerender(undefined);
+      expect(signal?.aborted).toBe(false);
+      await act(() => pending.resolve(quoted));
+      await waitFor(() =>
+        expect(second.result.current.controller.loadedQuotedReplies['linuxdo:2679944:2']?.author).toBe('carol')
+      );
+    } finally {
+      await act(() => pending.resolve(quoted));
+      await second.unmount();
+      await first.unmount();
+    }
   });
 
   it('deduplicates cross-topic reply quotes by their complete reference', async () => {

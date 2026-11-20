@@ -3,6 +3,29 @@ import type { Fetcher } from '@/platform/network/request';
 import { withHtmlDecodedInputBudget, withHtmlWorkBudget } from '../../../tests/helpers/htmlWorkBudget';
 
 describe('NodeSeek reader', () => {
+  it('preserves an undated topic and its visible source time across list shapes', async () => {
+    const { embeddedTopics, parseHtmlTopics } = await import('./feedParser');
+    const { parseNodeSeekPageDocument } = await import('./protocol');
+    const rendered = parseHtmlTopics(
+      parseNodeSeekPageDocument(
+        '<li class="post-list-item"><a href="/post-12-1">Topic</a><span class="info-last-comment-time"><time>2 天前</time></span></li>'
+      )
+    );
+    const link = parseHtmlTopics(parseNodeSeekPageDocument('<main><a href="/post-12-1">Topic</a></main>'));
+    const embedded = embeddedTopics({ posts: [{ postId: 12, title: 'Topic' }] });
+    for (const [topic] of [rendered, link, embedded]) {
+      expect(topic.createdAt).toBe('');
+      expect(topic.lastReplyAt).toBeUndefined();
+    }
+    expect(rendered[0].displayTimeText).toBe('2 天前');
+    const dated = parseHtmlTopics(
+      parseNodeSeekPageDocument(
+        '<li class="post-list-item"><a href="/post-13-1">Topic</a><span class="info-last-comment-time"><time>2025-02-01T00:00:00Z</time></span></li>'
+      )
+    );
+    expect(dated[0].lastReplyAt).toBe('2025-02-01T00:00:00.000Z');
+  });
+
   it('keeps an escaped permission example literal after reading a rendered feed row', async () => {
     const [
       { parseHtml },

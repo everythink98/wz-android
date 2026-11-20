@@ -3,10 +3,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { File, Paths } from 'expo-file-system';
-import { openDatabaseAsync, SQLiteDatabase } from 'expo-sqlite';
+import { deleteDatabaseAsync, openDatabaseAsync, SQLiteDatabase } from 'expo-sqlite';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Text, ToastAndroid, View } from 'react-native';
-import { createEmptyReaderData, type ReaderData } from '@/domain/reader/readerData';
+import { createEmptyReaderData, MAX_HISTORY_RECORDS, type ReaderData } from '@/domain/reader/readerData';
 import type { ForumNotification, NotificationMarkResult } from '@/domain/notifications/models';
 import {
   accountSessionSnapshotFromObservation,
@@ -20,7 +20,7 @@ import {
 } from '@/features/notifications/NotificationRoute';
 import { defaultNotificationState, NOTIFICATION_STORAGE_KEY } from '@/platform/notifications/notificationStore';
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
-import { readReaderSnapshot } from '@/platform/storage/readerDatabase';
+import { readReaderMeta, readReaderSnapshot } from '@/platform/storage/readerDatabase';
 import { loadReaderState } from '@/platform/storage/readerDataStore';
 import { diagnosticBuildContext } from '@/platform/diagnostics/nativeDiagnosticJournal';
 import { createNotificationGateway } from '@/sources/notificationGateway';
@@ -45,7 +45,7 @@ function receipt(mode: string, token: string, data: object) {
 async function snapshot() {
   const db = await openDatabaseAsync('reader-data.db', { useNewConnection: true });
   try {
-    return await readReaderSnapshot(db);
+    return (await readReaderMeta(db)) ? await readReaderSnapshot(db) : null;
   } finally {
     await db.closeAsync();
   }
@@ -72,12 +72,13 @@ export function AcceptanceProof({ mode, token }: { mode: string; token: string }
   }, [mode, token]);
   if (error) return <Text>{error}</Text>;
   if (!ready) return <Text>准备隔离验收</Text>;
-  if (mode === 'recovery') return <RecoveryProof token={token} />;
+  if (mode === 'recovery' || mode === 'cold-recovery') return <RecoveryProof token={token} mode={mode} />;
   if (mode === 'notification') return <NotificationProof token={token} />;
   return <Text>SQLite 27 个边界组合通过，原资料已恢复</Text>;
 }
 
-function RecoveryProof({ token }: { token: string }) {
+function RecoveryProof({ token, mode }: { token: string; mode: 'recovery' | 'cold-recovery' }) {
+  const cold = mode === 'cold-recovery';
   const [AppRoot] = useState(() => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports -- Only this mode owns the production splash lifecycle.
     return (require('@/app/AppRoot') as typeof import('@/app/AppRoot')).AppRoot;
@@ -87,25 +88,32 @@ function RecoveryProof({ token }: { token: string }) {
   const [notice, setNotice] = useState('');
   const { current: control } = useRef({
     original: undefined as ReaderData | undefined,
-    notifications: null as string | null,
+    notifications: '',
+    notificationIntentChecks: 0,
+    restoredHistoryCount: 0,
     failures: 0,
+    legacyReads: 0,
     invalidImports: 0,
     hosts: [] as string[],
     stages: [] as string[]
   });
   const save = useCallback(
     (checkpoint: string) =>
-      receipt('recovery', token, {
+      receipt(mode, token, {
         checkpoint,
         failures: control.failures,
+        legacyReads: control.legacyReads,
+        notificationIntentChecks: control.notificationIntentChecks,
+        restoredHistoryCount: control.restoredHistoryCount,
         invalidImports: control.invalidImports,
         hosts: control.hosts,
         stages: control.stages
       }),
-    [control, token]
+    [control, mode, token]
   );
   useEffect(() => {
     const originalRead = SQLiteDatabase.prototype.getFirstAsync;
+    const originalLegacyRead = AsyncStorage.getItem;
     const originalToast = ToastAndroid.show;
     // Latch the actual production toast so replay can observe short-lived feedback.
     ToastAndroid.show = (message, duration) => {
@@ -116,20 +124,16 @@ function RecoveryProof({ token }: { token: string }) {
       originalToast(message, duration);
     };
     void (async () => {
-      await loadReaderState();
-      control.original = await snapshot();
-      control.notifications = await AsyncStorage.getItem(NOTIFICATION_STORAGE_KEY);
-      // Fail the next production bootstrap read, then allow actual import SQL.
-      SQLiteDatabase.prototype.getFirstAsync = function (
-        this: SQLiteDatabase,
-        ...args: Parameters<typeof originalRead>
-      ) {
-        if (String(args[0]).includes('FROM reader_meta') && control.failures === 0) {
-          control.failures++;
-          return Promise.reject(new Error('隔离验收：读取暂时失败'));
-        }
-        return originalRead.apply(this, args);
-      } as typeof originalRead;
+      const notifications = defaultNotificationState();
+      notifications.globalEnabled = true;
+      notifications.hasOptedIn = true;
+      notifications.sources.nodeseek.intentEnabled = true;
+      control.notifications = JSON.stringify(notifications);
+      await AsyncStorage.setItem(NOTIFICATION_STORAGE_KEY, control.notifications);
+      check(
+        (await AsyncStorage.getItem(NOTIFICATION_STORAGE_KEY)) === control.notifications,
+        'Could not seed the isolated notification opt-in'
+      );
       globalThis.fetch = async (input) => {
         const host = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url)
           .hostname;
@@ -158,9 +162,63 @@ function RecoveryProof({ token }: { token: string }) {
         },
         savedAt: '2026-09-17T00:00:00Z'
       };
+      if (cold) {
+        const legacy = createEmptyReaderData();
+        const favorite = backup.favorites['v2ex:917'];
+        legacy.history['v2ex:916'] = {
+          ...favorite,
+          topic: { ...favorite.topic, id: '916', url: 'https://www.v2ex.com/t/916', title: '迁移前的阅读历史' },
+          visitCount: 7
+        };
+        const savedAt = '2025-01-01T00:00:00Z';
+        backup.history['v2ex:916'] = { ...legacy.history['v2ex:916'], savedAt, visitCount: 1 };
+        for (let index = 0; index <= MAX_HISTORY_RECORDS; index++) {
+          const id = String(10_000 + index);
+          backup.history[`v2ex:${id}`] = {
+            topic: {
+              source: 'v2ex',
+              id,
+              title: id,
+              author: 'fixture',
+              url: `https://www.v2ex.com/t/${id}`,
+              createdAt: ''
+            },
+            savedAt
+          };
+        }
+        control.original = legacy;
+        // The runner has checkpointed the isolated fixture. Leave only pre-migration reader data at bootstrap.
+        await deleteDatabaseAsync('reader-data.db');
+        await AsyncStorage.setMany({
+          'reader-data': JSON.stringify(legacy),
+          'reader-settings': JSON.stringify(legacy.settings)
+        });
+        AsyncStorage.getItem = (key) => {
+          if (key === 'reader-data' && ++control.legacyReads === 1) {
+            control.failures++;
+            return Promise.reject(new Error('隔离验收：旧资料读取暂时失败'));
+          }
+          return originalLegacyRead.call(AsyncStorage, key);
+        };
+      } else {
+        await loadReaderState();
+        const baseline = await snapshot();
+        check(baseline, 'Missing migrated reader baseline');
+        control.original = baseline;
+        SQLiteDatabase.prototype.getFirstAsync = function (
+          this: SQLiteDatabase,
+          ...args: Parameters<typeof originalRead>
+        ) {
+          if (String(args[0]).includes('FROM reader_meta') && control.failures === 0) {
+            control.failures++;
+            return Promise.reject(new Error('隔离验收：读取暂时失败'));
+          }
+          return originalRead.apply(this, args);
+        } as typeof originalRead;
+      }
       for (const [name, content] of [
         ['acceptance-valid.json', JSON.stringify(backup)],
-        ['acceptance-invalid.json', JSON.stringify({ ...backup, version: -1 })]
+        ['acceptance-invalid.json', JSON.stringify({ version: -1, settings: backup.settings })]
       ]) {
         const file = new File(Paths.cache, name);
         file.create({ overwrite: true });
@@ -169,26 +227,57 @@ function RecoveryProof({ token }: { token: string }) {
       setMounted(true);
       setStatus('恢复模式验收');
       save('ready');
-    })().catch((error: unknown) => setStatus(String(error)));
+    })().catch((error: unknown) => {
+      setStatus(String(error));
+      save('failed');
+    });
     return () => {
       SQLiteDatabase.prototype.getFirstAsync = originalRead;
+      AsyncStorage.getItem = originalLegacyRead;
       ToastAndroid.show = originalToast;
     };
-  }, [control, save]);
+  }, [cold, control, save]);
   const inspect = async (restored: boolean) => {
     check(control.failures === 1, 'Bootstrap fault was not exercised');
     const actual = await snapshot();
     const sourceHosts = control.hosts.filter((host) => /nodeseek|linux\.do|yaohuo|v2ex/.test(host));
     if (!restored) {
       check(sourceHosts.length === 0, 'Recovery started source business requests');
-      check(JSON.stringify(actual) === JSON.stringify(control.original), 'Recovery changed stored data');
+      if (cold) {
+        const stored = await AsyncStorage.getMany(['reader-data', 'reader-settings']);
+        check(actual === null && control.legacyReads === 1, 'Cold recovery committed or retried before valid import');
+        check(stored['reader-data'] === JSON.stringify(control.original), 'Recovery changed legacy records');
+        check(
+          stored['reader-settings'] === JSON.stringify(control.original?.settings),
+          'Recovery changed legacy settings'
+        );
+      } else {
+        check(JSON.stringify(actual) === JSON.stringify(control.original), 'Recovery changed stored data');
+      }
       check(
         (await AsyncStorage.getItem(NOTIFICATION_STORAGE_KEY)) === control.notifications,
         'Recovery cleared notification intent'
       );
-      control.stages.push('recovery-preserved');
+      control.notificationIntentChecks++;
+      control.stages.push(control.invalidImports === 1 ? 'invalid-import-preserved' : 'recovery-preserved');
     } else {
-      check(actual.favorites['v2ex:917'], 'Imported record missing');
+      check(actual?.favorites['v2ex:917'], 'Imported record missing');
+      if (cold) {
+        const record = actual.history['v2ex:916'];
+        check(record?.topic.title === '迁移前的阅读历史' && record.visitCount === 7, 'Cold import lost legacy history');
+        control.restoredHistoryCount = Object.keys(actual.history).length;
+        check(control.restoredHistoryCount === MAX_HISTORY_RECORDS + 2, 'Cold import truncated exported history');
+        for (let index = 0; index <= MAX_HISTORY_RECORDS; index++) {
+          const id = String(10_000 + index);
+          check(actual.history[`v2ex:${id}`]?.topic.id === id, 'Cold import lost a backed-up topic');
+        }
+        const stored = await AsyncStorage.getMany(['reader-data', 'reader-settings']);
+        check(
+          control.legacyReads >= 2 && stored['reader-data'] === null && stored['reader-settings'] === null,
+          'Cold import did not reread and clean legacy data'
+        );
+        control.stages.push('cold-legacy-merged');
+      }
       check(
         actual.settings.contentSources
           .filter((item) => item.enabled)
@@ -209,7 +298,8 @@ function RecoveryProof({ token }: { token: string }) {
     check(
       control.original &&
         control.invalidImports === 1 &&
-        control.stages.filter((stage) => stage === 'recovery-preserved').length >= 2 &&
+        control.stages.includes('recovery-preserved') &&
+        control.stages.includes('invalid-import-preserved') &&
         control.stages.includes('restored-v2ex-only'),
       'Missing recovery/failed-import/success evidence'
     );
@@ -376,7 +466,8 @@ function NotificationProof({ token }: { token: string }) {
   const detailKey = forumQueryKeys.notificationDetail({
     source: 'nodeseek',
     identityKey: 'nodeseek:917',
-    notificationId: item.id
+    notificationId: item.id,
+    sessionEpoch: runtime.sessionEpochs.nodeseek
   });
   return (
     <View style={{ flex: 1 }}>

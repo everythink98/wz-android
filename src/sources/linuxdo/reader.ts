@@ -21,7 +21,7 @@ import type {
   Topic,
   TopicDetail
 } from '@/domain/forum/models';
-import { isRecord, parsePositiveInteger, textContentFromHtml } from '@/domain/forum/html';
+import { isRecord, parsePositiveInteger, recordText, textContentFromHtml } from '@/domain/forum/html';
 import { discoursePostPolicy } from '@/sources/discourse/policy';
 import { accessRequirementFromObject, accessRequirementFromText } from '@/domain/forum/accessRequirements';
 import { isCloudflareChallengeResponse, LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
@@ -43,6 +43,7 @@ import {
   assertDiscourseTopicIdentity,
   discourseCategories,
   discourseOriginalPoster,
+  discourseDisplayName,
   discoursePolls,
   discoursePostFields,
   discourseRepliesInStreamOrder,
@@ -206,7 +207,6 @@ export function linuxDoLevelLabel(raw?: Record<string, unknown>) {
 export function normalizeTopic(
   raw: unknown,
   categoryMap = new Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>(),
-  author?: string | null,
   authorData?: Record<string, unknown>
 ): Topic | null {
   if (!isRecord(raw)) {
@@ -224,7 +224,12 @@ export function normalizeTopic(
     category?.accessRequirement
   );
   const createdBy = isRecord(raw.details) && isRecord(raw.details.created_by) ? raw.details.created_by : {};
-  const authorName = author || String(createdBy.username || (author === null ? '' : raw.last_poster_username) || '');
+  const creatorUsername = recordText(createdBy, 'username');
+  const username = (authorData && recordText(authorData, 'username')) || creatorUsername;
+  const authorName =
+    discourseDisplayName(authorData) ||
+    (username.toLowerCase() === creatorUsername.toLowerCase() ? discourseDisplayName(createdBy) : '') ||
+    username;
   const authorAvatar = avatarUrl(authorData?.avatar_template || createdBy.avatar_template);
   const authorLevelLabel = linuxDoLevelLabel(authorData) || linuxDoLevelLabel(createdBy);
   const reading = discourseReadingFromJson(raw);
@@ -234,9 +239,9 @@ export function normalizeTopic(
     ...(raw.archetype === 'private_message' ? { isPrivateMessage: true } : {}),
     ...(reading ? { reading } : {}),
     author: authorName,
-    authorId: authorName || undefined,
+    authorId: username || undefined,
     authorAvatar,
-    authorUrl: authorName ? userUrl(authorName) : undefined,
+    authorUrl: username ? userUrl(username) : undefined,
     category: category?.name || UNCATEGORIZED_CATEGORY_NAME,
     url: `${BASE_URL}/t/${raw.slug || fields.id}/${fields.id}`,
     createdAt,
@@ -317,9 +322,8 @@ function normalizePost(raw: unknown, topicId?: string): Reply | null {
     ...replyFields,
     policy: discoursePostPolicy(raw),
     ...(typeof raw.read === 'boolean' ? { serverRead: raw.read } : {}),
-    authorId: fields.author || undefined,
     authorAvatar: avatarUrl(raw.avatar_template),
-    authorUrl: fields.author ? userUrl(fields.author) : undefined,
+    authorUrl: fields.authorId ? userUrl(fields.authorId) : undefined,
     contentHtml: prepared.preparedContent.contentHtml,
     preparedContent: prepared.preparedContent,
     ...(prepared.quotedPosts.length ? { quotedPosts: prepared.quotedPosts } : {}),
@@ -335,6 +339,27 @@ function normalizePost(raw: unknown, topicId?: string): Reply | null {
     ...(authorLevelLabel ? { authorLevelLabel } : {}),
     ...(polls ? { polls } : {})
   };
+}
+
+export function linuxDoEditedReplyFromAction(result: unknown, topicId: string, commentId: number): Reply | null {
+  if (!isRecord(result) || !isRecord(result.post)) return null;
+  const post = result.post;
+  if (
+    post.id !== commentId ||
+    String(post.topic_id) !== topicId ||
+    typeof post.post_number !== 'number' ||
+    !Number.isSafeInteger(post.post_number) ||
+    post.post_number <= 1 ||
+    typeof post.cooked !== 'string' ||
+    !post.cooked.trim()
+  )
+    return null;
+  try {
+    return normalizePost(post, topicId);
+  } catch {
+    // A body that cannot be rendered does not undo the confirmed write.
+    return null;
+  }
 }
 
 function removeReplyEdit(reply: Reply) {
@@ -491,7 +516,7 @@ export async function getLinuxDoFeed(
     const items = topics
       .map((topic) => {
         const authorData = isRecord(topic) ? discourseOriginalPoster(topic, users) : undefined;
-        return normalizeTopic(topic, categoryMap, String(authorData?.username || ''), authorData);
+        return normalizeTopic(topic, categoryMap, authorData);
       })
       .filter(Boolean) as Topic[];
     const droppedCount = scan.droppedCount + Math.max(0, topics.length - items.length);
@@ -577,8 +602,7 @@ export async function getLinuxDoTopic(
         title: '受限帖子',
         author: '',
         url: `${BASE_URL}/t/${id}`,
-        createdAt: new Date().toISOString(),
-        lastReplyAt: new Date().toISOString(),
+        createdAt: '',
         replyCount: 0,
         contentHtml,
         replies: [],
@@ -614,7 +638,7 @@ export async function getLinuxDoTopic(
     throw new Error('linux.do 主题正文解析失败');
   }
   const categoryMap = await categoryMapForTopics(data, [data], categoryMapFromData(data), options);
-  const topic = normalizeTopic(data, categoryMap, firstPostFields.author, isRecord(firstPost) ? firstPost : undefined);
+  const topic = normalizeTopic(data, categoryMap, firstPostRecord);
   if (!topic) {
     throw new Error('linux.do 主题不存在');
   }

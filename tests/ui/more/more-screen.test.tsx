@@ -3,11 +3,15 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, waitFor, within } from '../render';
 import { renderHook as renderNativeHook } from '@testing-library/react-native';
 import { useDiagnosticLogController } from '@/features/more/useDiagnosticLogController';
+import { useReaderRuntime } from '@/app/useReaderRuntime';
+import { useReaderSettingsController } from '@/features/more/useReaderSettingsController';
 import * as diagnosticFileStore from '@/platform/diagnostics/diagnosticFileStore';
 import React, { type ComponentProps, Profiler, useLayoutEffect, useState } from 'react';
 import { createRoot } from 'test-renderer';
-import { StyleSheet, View } from 'react-native';
+import { Alert, Linking, StyleSheet, Text, View } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
 import { emptyCredentialSummaries } from '@/platform/storage/credentialVault';
+import { clearNodeImageApiKey, NODEIMAGE_API_KEY_STORAGE_KEY } from '@/sources/nodeimage/credentials';
 import { createEmptyNetworkProxyState } from '@/platform/network/networkProxy';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { MoreScreen as MoreScreenView } from '@/features/more/MoreScreen';
@@ -18,20 +22,54 @@ import { createTheme, readerRadii } from '@/ui/theme/tokens';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { createAppQueryClient } from '@/platform/query/serverState';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import type { NodeSeekAccountOverview } from '@/domain/forum/accountData';
+import type { NodeSeekAccountOverview, NodeSeekAttendanceBoard } from '@/domain/forum/accountData';
 import { LinuxDoCreditError } from '@/domain/forum/linuxDoCredit';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 import { NavigationBackdropProvider, NavigationGlass } from '@/ui/navigation/NavigationGlass';
-import { createEmptyReaderState } from '@/domain/reader/readerRecordState';
+import {
+  createEmptyReaderState,
+  projectReaderCommand,
+  type ReaderChange,
+  type ReaderCommand
+} from '@/domain/reader/readerRecordState';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import type { MainTabParamList } from '@/ui/navigation/appRouteTypes';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import type { MainTabParamList, RootStackParamList } from '@/ui/navigation/appRouteTypes';
+import { navigationRef } from '@/app/appNavigation';
+import { useAppDeepLinkNavigation } from '@/app/useAppDeepLinkNavigation';
 import { MoreRoute, MoreRouteRuntimeProvider, type MoreRouteRuntimeValue } from '@/features/more/MoreRoute';
+import { useNodeSeekCheckInController } from '@/features/account/useNodeSeekCheckInController';
+import { prepareRequestToSend, type Fetcher } from '@/platform/network/request';
 import {
   CURRENT_APP_VERSION,
   CURRENT_ANDROID_VERSION_CODE,
   formatAppUpdateDownloadProgress
 } from '@/platform/update/appUpdate';
+
+const mockLoadSourceSettings = jest.fn<() => Promise<ReturnType<typeof createEmptyReaderState>>>();
+const mockCommitSourceSettings = jest.fn<(command: ReaderCommand) => Promise<ReaderChange>>();
+jest.mock('@/platform/storage/readerDataStore', () => ({
+  loadReaderState: () => mockLoadSourceSettings(),
+  subscribeReaderStorageFreeze: () => jest.fn(),
+  commitReaderCommand: (command: ReaderCommand) => mockCommitSourceSettings(command)
+}));
+
+const mockSaveBackupDocument =
+  jest.fn<(name: string, json: string) => Promise<{ status: 'saved'; byteCount: number }>>();
+const mockReadBackupDocument = jest.fn<(uri: string, maxBytes: number) => Promise<string>>();
+const mockChooseBackupDocument = jest.fn<() => Promise<{ canceled: false; assets: { uri: string; size: number }[] }>>();
+jest.mock('expo', () => {
+  const actual = jest.requireActual<typeof import('expo')>('expo');
+  return {
+    ...actual,
+    requireOptionalNativeModule: (name: string) =>
+      name === 'BackupExport'
+        ? { saveBackupDocument: mockSaveBackupDocument, readBackupDocument: mockReadBackupDocument }
+        : actual.requireOptionalNativeModule(name)
+  };
+});
+jest.mock('expo-document-picker', () => ({ getDocumentAsync: () => mockChooseBackupDocument() }));
 
 describe('diagnostic export observation lifetime', () => {
   it.each(['success', 'failure'] as const)(
@@ -248,6 +286,7 @@ jest.mock('lucide-react-native', () => {
   const Icon = () => null;
   return {
     Activity: Icon,
+    ArrowDownToLine: Icon,
     ArrowLeft: Icon,
     Bell: Icon,
     Bug: Icon,
@@ -258,10 +297,15 @@ jest.mock('lucide-react-native', () => {
     ChevronRight: Icon,
     ChevronUp: Icon,
     DatabaseBackup: Icon,
+    Download: Icon,
     Image: Icon,
     Info: Icon,
     GripVertical: Icon,
     History: Icon,
+    Pause: Icon,
+    Pencil: Icon,
+    Play: Icon,
+    Plus: Icon,
     RefreshCw: Icon,
     Server: Icon,
     Settings: Icon,
@@ -308,6 +352,81 @@ function MoreScreen(props: ComponentProps<typeof MoreScreenView>) {
   );
 }
 
+async function renderPersistedContentSources(failFirst = false) {
+  const notify = jest.fn<(message: string) => void>();
+  let stored = createEmptyReaderState();
+  let writes = 0;
+  let settled = Promise.resolve();
+  mockLoadSourceSettings.mockResolvedValue(stored);
+  mockCommitSourceSettings.mockReset();
+  mockCommitSourceSettings.mockImplementation((command) => {
+    const operation = settled.then(() => {
+      if (++writes === 1 && failFirst) throw new Error('设置写入未完成');
+      stored = projectReaderCommand(stored, command);
+      return { membership: [], counts: {}, changed: [], settings: stored.settings };
+    });
+    settled = operation.then(
+      () => undefined,
+      () => undefined
+    );
+    return operation;
+  });
+
+  function ContentSourceReader() {
+    const reader = useReaderRuntime({ notify });
+    const { updateSettings } = useReaderSettingsController({ commitReaderData: reader.commitReaderData });
+    return reader.readerStatus === 'ready' ? (
+      <MoreScreen
+        {...moreProps({ utilities: { settings: { value: reader.readerData.settings, update: updateSettings } } })}
+        contentSourcesExpanded
+      />
+    ) : null;
+  }
+  const client = createAppQueryClient();
+  const view = await render(
+    <QueryClientProvider client={client}>
+      <ContentSourceReader />
+    </QueryClientProvider>
+  );
+  return { view, notify, storedSources: () => stored.settings.contentSources };
+}
+
+describe('content source settings persisted through ReaderRuntime', () => {
+  it.each([false, true])('keeps queued switches independent when the first save fails: %s', async (failFirst) => {
+    const { view, storedSources, notify } = await renderPersistedContentSources(failFirst);
+    const labels = ['V2EX', 'linux.do', 'NodeSeek', '妖火'];
+    await view.findByLabelText('V2EX 内容源开关');
+    const changes = labels.map((label) => view.getByLabelText(`${label} 内容源开关`).props.onChange);
+    await act(async () => {
+      for (const change of changes) change({ nativeEvent: { value: false } });
+    });
+    expect(mockCommitSourceSettings).toHaveBeenCalledTimes(4);
+    expect(storedSources().map(({ enabled }) => enabled)).toEqual([failFirst, false, false, false]);
+    expect(labels.map((label) => view.getByLabelText(`${label} 内容源开关`).props.value)).toEqual([
+      failFirst,
+      false,
+      false,
+      false
+    ]);
+    if (failFirst) expect(notify).toHaveBeenCalledWith('设置写入未完成');
+    else expect(notify).not.toHaveBeenCalled();
+  });
+
+  it('moves the source named by a queued TalkBack action after another move changes its position', async () => {
+    mockScreenReaderInitialState = true;
+    const { view, storedSources } = await renderPersistedContentSources();
+    const v2ex = await view.findByLabelText('拖动排序：V2EX，第 1 项，共 4 项');
+    const queuedMove = view.getByLabelText('拖动排序：linux.do，第 2 项，共 4 项').props.onAccessibilityAction;
+    await fireEvent(v2ex, 'accessibilityAction', { nativeEvent: { actionName: 'moveDown' } });
+    await waitFor(() => expect(view.getByLabelText('拖动排序：linux.do，第 1 项，共 4 项')).toBeTruthy());
+    await act(async () => {
+      queuedMove({ nativeEvent: { actionName: 'moveDown' } });
+    });
+    expect(mockCommitSourceSettings).toHaveBeenCalledTimes(2);
+    expect(storedSources().map(({ source }) => source)).toEqual(['v2ex', 'linuxdo', 'nodeseek', 'yaohuo']);
+  });
+});
+
 type MoreScreenProps = ComponentProps<typeof MoreScreen>;
 type MoreScreenOverrides = {
   account?: {
@@ -340,7 +459,13 @@ function moreProps(overrides: MoreScreenOverrides = {}): MoreScreenProps {
     read: {
       sessionEpochs: initialForumSessionEpochs,
       gateway: {
-        getReadPlan: () => ({ state: 'blocked', reason: 'login-required', cacheScope: 'blocked:login-required' }),
+        getReadPlan: (source, operation) => ({
+          source,
+          operation,
+          state: 'blocked',
+          reason: 'login-required',
+          cacheScope: 'blocked:login-required'
+        }),
         getUserDetails: async () => {
           throw new Error('资料未提供');
         },
@@ -393,6 +518,7 @@ function moreProps(overrides: MoreScreenOverrides = {}): MoreScreenProps {
       },
       nodeImageKey: {
         authorize: jest.fn(),
+        authorized: false,
         busy: false,
         clear: jest.fn(),
         save: jest.fn(),
@@ -426,6 +552,7 @@ function moreProps(overrides: MoreScreenOverrides = {}): MoreScreenProps {
     update: {
       phase: 'idle',
       artifact: null,
+      restoreFailed: false,
       progress: null,
       info: null,
       message: '当前版本 1.3.63',
@@ -443,7 +570,7 @@ function moreProps(overrides: MoreScreenOverrides = {}): MoreScreenProps {
       },
       backup: {
         recovery: false,
-        busy: false,
+        operation: 'idle',
         exportFile: jest.fn(),
         importFile: jest.fn(),
         ...overrides.utilities?.backup
@@ -480,7 +607,230 @@ function moreProps(overrides: MoreScreenOverrides = {}): MoreScreenProps {
   };
 }
 
+function createMoreRouteRuntime(props = moreProps()): MoreRouteRuntimeValue {
+  return {
+    account: props.account,
+    diagnostics: {
+      getCurrentScreen: () => 'more',
+      metadata: { appVersion: CURRENT_APP_VERSION, versionCode: CURRENT_ANDROID_VERSION_CODE }
+    },
+    notify: jest.fn(),
+    library: props.utilities.library,
+    proxy: {
+      activeProfile: props.utilities.proxy.activeProfile,
+      applyError: '',
+      applyStatus: 'disabled',
+      proxyState: props.utilities.proxy.state,
+      summary: props.utilities.proxy.summary,
+      deleteProxyProfile: props.utilities.proxy.deleteProfile,
+      selectProxyProfile: props.utilities.proxy.selectProfile,
+      setProxyEnabled: props.utilities.proxy.setEnabled,
+      testProxyProfile: jest.fn(async () => ({ ok: true, latencyMs: 10 })),
+      upsertProxyProfile: jest.fn(async () => undefined)
+    },
+    reader: {
+      status: 'ready',
+      commit: jest.fn(),
+      data: createEmptyReaderState(),
+      importBackup: jest.fn(async () => undefined),
+      exportBackup: jest.fn(async () => '')
+    },
+    update: {
+      phase: 'downloading',
+      artifact: null,
+      restoreFailed: false,
+      appUpdateBusy: true,
+      appUpdateDownloadProgress: formatAppUpdateDownloadProgress('2.0.0', 0, 100),
+      appUpdateInfo: null,
+      appUpdateMessage: '正在下载',
+      checkAppUpdate: jest.fn(async () => undefined),
+      startAppUpdateDownload: jest.fn(async () => undefined),
+      pauseAppUpdateDownload: jest.fn(async () => undefined),
+      resumeAppUpdateDownload: jest.fn(async () => undefined),
+      installAppUpdate: jest.fn(async () => undefined)
+    }
+  };
+}
+
+async function renderWarmMore(Provider: React.ComponentType<{ children: React.ReactNode }>) {
+  const queryClient = createAppQueryClient();
+  const defaults = queryClient.getDefaultOptions();
+  queryClient.setDefaultOptions({ ...defaults, mutations: { ...defaults.mutations, gcTime: Infinity } });
+  const subscription = Linking.addEventListener('url', () => {});
+  const addEventListener = jest.fn<typeof Linking.addEventListener>(() => subscription);
+  const linking = { addEventListener, getInitialURL: async () => null };
+  const Tab = createBottomTabNavigator<MainTabParamList>();
+  const Stack = createNativeStackNavigator<RootStackParamList>();
+  function Tabs() {
+    return (
+      <Tab.Navigator screenOptions={{ headerShown: false }}>
+        <Tab.Screen name="more" component={MoreRoute} />
+      </Tab.Navigator>
+    );
+  }
+  function Routes() {
+    const onReady = useAppDeepLinkNavigation(linking);
+    return (
+      <NavigationContainer ref={navigationRef} onReady={onReady}>
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="MainTabs" component={Tabs} />
+          <Stack.Screen name="Topic">{() => <Text>通过链接打开的主题</Text>}</Stack.Screen>
+        </Stack.Navigator>
+      </NavigationContainer>
+    );
+  }
+  const view = await render(
+    <QueryClientProvider client={queryClient}>
+      <Provider>
+        <Routes />
+      </Provider>
+    </QueryClientProvider>
+  );
+  const followLink = () => {
+    const [[, onUrl]] = addEventListener.mock.calls;
+    onUrl({ url: 'https://linux.do/t/topic/123' });
+    expect(navigationRef.getCurrentRoute()?.name).toBe('Topic');
+  };
+  const dispose = async () => {
+    await view.unmount();
+    queryClient.clear();
+  };
+  return { view, followLink, dispose };
+}
 describe('More screen state and actions', () => {
+  it.each(['导出备份文件', '选择备份文件恢复'] as const)(
+    'ignores a queued %s after a warm link and completes a chooser started while focused',
+    async (label) => {
+      const content = '{"version":2}';
+      const uri = 'content://fixture/reader-backup';
+      const save = Promise.withResolvers<{ status: 'saved'; byteCount: number }>();
+      const choose = Promise.withResolvers<{ canceled: false; assets: { uri: string; size: number }[] }>();
+      mockSaveBackupDocument.mockReset().mockReturnValue(save.promise);
+      mockChooseBackupDocument.mockReset().mockReturnValue(choose.promise);
+      mockReadBackupDocument.mockReset().mockResolvedValue(content);
+      const runtime = createMoreRouteRuntime();
+      runtime.reader.exportBackup = jest.fn(async () => content);
+      const { view, followLink, dispose } = await renderWarmMore(({ children }) => (
+        <MoreRouteRuntimeProvider value={runtime}>{children}</MoreRouteRuntimeProvider>
+      ));
+      try {
+        await fireEvent.press(view.getByLabelText('展开备份 / 恢复'));
+        const queued = view.getByLabelText(label);
+        await act(async () => {
+          followLink();
+          await fireEvent.press(queued);
+        });
+        expect(mockSaveBackupDocument).not.toHaveBeenCalled();
+        expect(mockChooseBackupDocument).not.toHaveBeenCalled();
+
+        await act(() => navigationRef.goBack());
+        await fireEvent.press(view.getByLabelText(label));
+        if (label === '导出备份文件') {
+          await waitFor(() =>
+            expect(mockSaveBackupDocument).toHaveBeenCalledWith(expect.stringMatching(/\.json$/), content)
+          );
+        } else {
+          expect(mockChooseBackupDocument).toHaveBeenCalledTimes(1);
+        }
+        await act(async () => {
+          followLink();
+          save.resolve({ status: 'saved', byteCount: content.length });
+          choose.resolve({ canceled: false, assets: [{ uri, size: content.length }] });
+        });
+        if (label === '选择备份文件恢复') {
+          expect(mockReadBackupDocument).toHaveBeenCalledWith(uri, expect.any(Number));
+          expect(runtime.reader.importBackup).toHaveBeenCalledWith(content);
+        }
+        await waitFor(() =>
+          expect(runtime.notify).toHaveBeenCalledWith(
+            label === '导出备份文件' ? '备份已保存到所选位置' : '备份已恢复，本机资料已合并'
+          )
+        );
+      } finally {
+        save.resolve({ status: 'saved', byteCount: content.length });
+        choose.resolve({ canceled: false, assets: [{ uri, size: content.length }] });
+        await dispose();
+      }
+    }
+  );
+
+  it('ignores queued diagnostic sharing after a warm link and settles an export started while focused', async () => {
+    const settled = Promise.withResolvers<void>();
+    const exportLog = jest.spyOn(diagnosticFileStore, 'exportDiagnosticLog').mockReturnValue(settled.promise);
+    const runtime = createMoreRouteRuntime();
+    const { view, followLink, dispose } = await renderWarmMore(({ children }) => (
+      <MoreRouteRuntimeProvider value={runtime}>{children}</MoreRouteRuntimeProvider>
+    ));
+    try {
+      const queued = view.getByTestId('more-diagnostics');
+      await act(async () => {
+        followLink();
+        await fireEvent.press(queued);
+      });
+      expect(exportLog).not.toHaveBeenCalled();
+
+      await act(() => navigationRef.goBack());
+      await act(() => {
+        void fireEvent.press(view.getByTestId('more-diagnostics'));
+      });
+      expect(exportLog).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        followLink();
+        settled.resolve();
+      });
+      expect(runtime.notify).toHaveBeenCalledWith('诊断日志已生成');
+      expect(exportLog).toHaveBeenCalledTimes(1);
+    } finally {
+      settled.resolve();
+      exportLog.mockRestore();
+      await dispose();
+    }
+  });
+
+  it('ignores a queued install after a warm link and permits a fresh install after returning', async () => {
+    const installAppUpdate = jest.fn(async () => undefined);
+    const runtime = createMoreRouteRuntime();
+    runtime.update = {
+      ...runtime.update,
+      phase: 'idle',
+      appUpdateBusy: false,
+      appUpdateDownloadProgress: null,
+      appUpdateMessage: '',
+      installAppUpdate,
+      artifact: {
+        kind: 'verified',
+        bytes: 200,
+        update: {
+          version: '9.0.0',
+          versionName: '9.0.0',
+          versionCode: CURRENT_ANDROID_VERSION_CODE + 1,
+          packageName: 'com.everythink.wzandroid',
+          sha256: 'a'.repeat(64),
+          signerSha256: 'b'.repeat(64),
+          apkUrl: 'https://github.com/everythink98/wz-android/releases/download/v9.0.0/app-arm64-v8a-release.apk',
+          notes: ''
+        }
+      }
+    };
+    const { view, followLink, dispose } = await renderWarmMore(({ children }) => (
+      <MoreRouteRuntimeProvider value={runtime}>{children}</MoreRouteRuntimeProvider>
+    ));
+    try {
+      const queued = view.getByLabelText('安装');
+      await act(async () => {
+        followLink();
+        await fireEvent.press(queued);
+      });
+      expect(installAppUpdate).not.toHaveBeenCalled();
+
+      await act(() => navigationRef.goBack());
+      await fireEvent.press(view.getByLabelText('安装'));
+      expect(installAppUpdate).toHaveBeenCalledTimes(1);
+    } finally {
+      await dispose();
+    }
+  });
+
   it('samples scrolling content below a separately measured glass header', async () => {
     const view = await render(
       <NavigationBackdropProvider>
@@ -508,59 +858,17 @@ describe('More screen state and actions', () => {
     expect(view.getByTestId('account-site-nodeseek')).toBeTruthy();
     expect(view.queryByLabelText('展开账号中心')).toBeNull();
     expect(view.queryByLabelText('收起账号中心')).toBeNull();
-    expect(view.getByText('设置')).toBeTruthy();
+    expect(view.getByTestId('more-content-sources')).toBeTruthy();
+    expect(view.getByTestId('more-appearance')).toBeTruthy();
     expect(view.getByRole('button', { name: '收藏' })).toBeTruthy();
     expect(view.getByRole('button', { name: '关注' })).toBeTruthy();
     expect(view.getByRole('button', { name: '历史' })).toBeTruthy();
   });
 
   it('updates download progress without rerunning unrelated account and proxy layout consumers', async () => {
-    const props = moreProps();
-    const reader = createEmptyReaderState();
     const queryClient = createAppQueryClient();
-    const runtime: MoreRouteRuntimeValue = {
-      account: props.account,
-      diagnostics: {
-        getCurrentScreen: () => 'more',
-        metadata: { appVersion: CURRENT_APP_VERSION, versionCode: CURRENT_ANDROID_VERSION_CODE }
-      },
-      notify: jest.fn(),
-      library: props.utilities.library,
-      proxy: {
-        activeProfile: null,
-        applyError: '',
-        applyStatus: 'disabled',
-        proxyState: props.utilities.proxy.state,
-        summary: props.utilities.proxy.summary,
-        deleteProxyProfile: props.utilities.proxy.deleteProfile,
-        selectProxyProfile: props.utilities.proxy.selectProfile,
-        setProxyEnabled: props.utilities.proxy.setEnabled,
-        testProxyProfile: jest.fn(async () => ({ ok: true, latencyMs: 10 })),
-        upsertProxyProfile: jest.fn(async () => undefined)
-      },
-      reader: {
-        status: 'ready',
-        commit: jest.fn(),
-        data: reader,
-        dataRef: { current: reader },
-        importBackup: jest.fn(async () => undefined),
-        exportBackup: jest.fn(async () => '')
-      },
-      update: {
-        phase: 'downloading',
-        artifact: null,
-        appUpdateBusy: true,
-        appUpdateDownloading: true,
-        appUpdateDownloadProgress: formatAppUpdateDownloadProgress('2.0.0', 0, 100),
-        appUpdateInfo: null,
-        appUpdateMessage: '正在下载',
-        checkAppUpdate: jest.fn(async () => undefined),
-        startAppUpdateDownload: jest.fn(async () => undefined),
-        pauseAppUpdateDownload: jest.fn(async () => undefined),
-        resumeAppUpdateDownload: jest.fn(async () => undefined),
-        installAppUpdate: jest.fn(async () => undefined)
-      }
-    };
+    const runtime = createMoreRouteRuntime();
+    const reader = runtime.reader.data;
     const Tab = createBottomTabNavigator<MainTabParamList>();
     const navigator = (
       <NavigationContainer>
@@ -576,7 +884,7 @@ describe('More screen state and actions', () => {
     );
     const view = await render(screen(runtime));
     await fireEvent.press(view.getByLabelText('展开外观'));
-    expect(view.getByText('字号 100%')).toBeTruthy();
+    expect(view.getByText('100%')).toBeTruthy();
     expect(mockWindowDimensionsCalls).toBeGreaterThanOrEqual(2);
     const beforeProgress = mockWindowDimensionsCalls;
 
@@ -590,7 +898,7 @@ describe('More screen state and actions', () => {
           }
         })
       );
-      expect(view.getByRole('progressbar').props.accessibilityValue.now).toBe(percent);
+      expect(view.getByRole('button', { name: '暂停下载' }).props.accessibilityValue.now).toBe(percent);
     }
     expect(mockWindowDimensionsCalls - beforeProgress).toBe(0);
 
@@ -600,8 +908,280 @@ describe('More screen state and actions', () => {
         reader: { ...runtime.reader, data: { ...reader, settings: { ...reader.settings, fontScale: 1.15 } } }
       })
     );
-    expect(view.getByText('字号 115%')).toBeTruthy();
+    expect(view.getByText('115%')).toBeTruthy();
   });
+
+  it.each(['获取 / 恢复授权', '清除 Key', '保存 Key'] as const)(
+    'ignores a queued NodeImage %s after opening a warm deep link and keeps a new action available',
+    async (action) => {
+      const fixtureKey = 'synthetic-local-credential';
+      let savedKey: string | null = fixtureKey;
+      const nativeDelete = jest.spyOn(SecureStore, 'deleteItemAsync').mockImplementation(async (storageKey) => {
+        if (storageKey === NODEIMAGE_API_KEY_STORAGE_KEY) savedKey = null;
+      });
+      const authorize = jest.fn(async () => undefined);
+      const save = jest.fn(async (_value: string) => undefined);
+      const runtime = createMoreRouteRuntime(
+        moreProps({
+          account: {
+            center: { nodeImageKey: { authorized: true, saved: true, authorize, clear: clearNodeImageApiKey, save } }
+          }
+        })
+      );
+      const { view, followLink, dispose } = await renderWarmMore(({ children }) => (
+        <MoreRouteRuntimeProvider value={runtime}>{children}</MoreRouteRuntimeProvider>
+      ));
+      async function showKeyAction() {
+        if (!view.queryByLabelText('站点设置')) await fireEvent.press(view.getByTestId('account-site-nodeseek'));
+        if (!view.queryByRole('button', { name: /^NodeImage 授权/ })) {
+          await fireEvent.press(view.getByLabelText('站点设置'));
+        }
+        if (!view.queryByRole('button', { name: '清除 Key' })) {
+          await fireEvent.press(view.getByRole('button', { name: /^NodeImage 授权/ }));
+        }
+        if (action === '保存 Key') {
+          if (!view.queryByLabelText('NodeImage API Key 输入')) {
+            await fireEvent.press(view.getByLabelText('手动粘贴备用'));
+          }
+          await fireEvent.changeText(view.getByLabelText('NodeImage API Key 输入'), fixtureKey);
+        }
+      }
+      try {
+        await showKeyAction();
+        await act(async () => {
+          followLink();
+          await fireEvent.press(view.getByRole('button', { name: action, includeHiddenElements: true }));
+        });
+        expect(nativeDelete).not.toHaveBeenCalled();
+        expect(savedKey).toBe(fixtureKey);
+        expect(authorize).not.toHaveBeenCalled();
+        expect(save).not.toHaveBeenCalled();
+
+        await act(() => navigationRef.goBack());
+        await showKeyAction();
+        await fireEvent.press(view.getByRole('button', { name: action }));
+        if (action === '清除 Key') {
+          await waitFor(() => expect(nativeDelete).toHaveBeenCalledWith(NODEIMAGE_API_KEY_STORAGE_KEY));
+          expect(savedKey).toBeNull();
+        } else if (action === '保存 Key') expect(save).toHaveBeenCalledWith(fixtureKey);
+        else expect(authorize).toHaveBeenCalledTimes(1);
+      } finally {
+        await dispose();
+        nativeDelete.mockRestore();
+      }
+    }
+  );
+
+  it.each([
+    { label: '普通签到', random: false },
+    { label: '随机签到', random: true }
+  ])(
+    'does not send a queued $label after a warm deep link and sends a fresh choice once',
+    async ({ label, random }) => {
+      const user = {
+        source: 'nodeseek' as const,
+        id: '42',
+        username: 'alice',
+        url: 'https://www.nodeseek.com/space/42'
+      };
+      const ticket = { source: user.source, identityKey: 'nodeseek:42', sessionEpoch: 0 };
+      const sessions = projectTestAccountSessions(
+        createSiteSessionStates({
+          nodeseek: { site: 'nodeseek', status: 'logged-in', isVerifying: false, cookieSummary: [], currentUser: user }
+        })
+      );
+      const props = moreProps({ account: { read: { sessions } } });
+      const fetcher = jest.fn<Fetcher>(async (_input, init) => {
+        prepareRequestToSend(init);
+        return Response.json({ success: true });
+      });
+      const readAttendance = async (): Promise<NodeSeekAttendanceBoard> => ({
+        source: 'nodeseek',
+        userId: user.id,
+        list: [],
+        record: fetcher.mock.calls.length
+          ? { id: '1', memberId: user.id, dayId: 8, gain: 2, createdAt: '2026-11-20T00:00:00.000Z' }
+          : null,
+        order: null,
+        total: 0
+      });
+      props.account.read.gateway = {
+        ...props.account.read.gateway,
+        getReadPlan: (source, operation) => ({
+          source,
+          operation,
+          state: 'ready',
+          lane: 'authenticated',
+          transport: 'managed-session',
+          cacheScope: 'authenticated:0'
+        }),
+        getUserDetails: async () => user,
+        getNodeSeekAccountOverview: async () => ({ source: 'nodeseek', userId: user.id, profile: user, coin: 5 }),
+        getNodeSeekAttendanceBoard: readAttendance
+      };
+      const runtime = createMoreRouteRuntime(props);
+      function AttendanceRuntime({ children }: { children: React.ReactNode }) {
+        const controller = useNodeSeekCheckInController({
+          currentSessionTicket: ticket,
+          ensureWritableSession: async () => ticket,
+          fetcher,
+          isWritableSessionTicketCurrent: (candidate) => candidate === ticket,
+          getNodeSeekUserAgent: () => 'fixture',
+          notify: runtime.notify,
+          onSessionExpired: () => {},
+          readAttendance
+        });
+        const account = runtime.account;
+        return (
+          <MoreRouteRuntimeProvider
+            value={{
+              ...runtime,
+              account: {
+                ...account,
+                center: {
+                  ...account.center,
+                  nodeSeek: {
+                    busy: controller.busy,
+                    state: controller.state,
+                    checkIn: controller.checkIn,
+                    observeBoard: (board) => controller.observeBoard(board, ticket)
+                  }
+                }
+              }
+            }}
+          >
+            {children}
+          </MoreRouteRuntimeProvider>
+        );
+      }
+      const { view, followLink, dispose } = await renderWarmMore(AttendanceRuntime);
+      try {
+        expect(await view.findByLabelText(label)).toBeEnabled();
+        await act(async () => {
+          followLink();
+          await fireEvent.press(view.getByLabelText(label, { includeHiddenElements: true }));
+        });
+        expect(fetcher).not.toHaveBeenCalled();
+
+        await act(() => navigationRef.goBack());
+        await fireEvent.press(await view.findByLabelText(label));
+        await waitFor(() => expect(view.getByText('今日已签到 · 获得 2 鸡腿')).toBeTruthy());
+        expect(fetcher).toHaveBeenCalledTimes(1);
+        expect(fetcher).toHaveBeenCalledWith(
+          `https://www.nodeseek.com/api/attendance?random=${random}`,
+          expect.objectContaining({ method: 'POST' })
+        );
+      } finally {
+        await dispose();
+      }
+    }
+  );
+  it.each(['selected', 'draft', 'save'] as const)(
+    'rejects a late %s proxy action after a warm topic link',
+    async (mode) => {
+      const profile = {
+        id: 'fixture-proxy',
+        name: '测试代理',
+        protocol: 'http' as const,
+        host: 'proxy.example.test',
+        port: 8080
+      };
+      const deleteProfile = jest.fn(async (_id: string) => undefined);
+      const upsertProfile = jest.fn(async () => undefined);
+      const write = mode === 'save' ? upsertProfile : deleteProfile;
+      const runtime = createMoreRouteRuntime(
+        moreProps({
+          utilities: {
+            proxy: {
+              activeProfile: profile,
+              state: { activeId: profile.id, enabled: false, profiles: [profile] },
+              deleteProfile
+            }
+          }
+        })
+      );
+      runtime.proxy.upsertProxyProfile = upsertProfile;
+      const queryClient = createAppQueryClient();
+      const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+      let openLink: ((event: { url: string }) => void) | undefined;
+      const linking: NonNullable<Parameters<typeof useAppDeepLinkNavigation>[0]> = {
+        getInitialURL: async () => null,
+        addEventListener: (type, listener) => {
+          openLink = listener;
+          return Linking.addEventListener(type, listener);
+        }
+      };
+      const Tab = createBottomTabNavigator<MainTabParamList>();
+      const Stack = createNativeStackNavigator<RootStackParamList>();
+      function Tabs() {
+        return (
+          <Tab.Navigator screenOptions={{ headerShown: false }}>
+            <Tab.Screen name="more" component={MoreRoute} />
+          </Tab.Navigator>
+        );
+      }
+      function Routes() {
+        useAppDeepLinkNavigation(linking);
+        return (
+          <NavigationContainer ref={navigationRef}>
+            <Stack.Navigator screenOptions={{ headerShown: false }}>
+              <Stack.Screen name="MainTabs" component={Tabs} />
+              <Stack.Screen name="Topic">{() => <Text>通过链接打开的主题</Text>}</Stack.Screen>
+            </Stack.Navigator>
+          </NavigationContainer>
+        );
+      }
+      const view = await render(
+        <QueryClientProvider client={queryClient}>
+          <MoreRouteRuntimeProvider value={runtime}>
+            <Routes />
+          </MoreRouteRuntimeProvider>
+        </QueryClientProvider>
+      );
+      async function prepareAction() {
+        await fireEvent.press(view.getByTestId('more-proxy'));
+        if (mode === 'save') {
+          await fireEvent.press(view.getByText('添加代理'));
+          await fireEvent.changeText(view.getByLabelText('名称'), '新代理');
+          await fireEvent.changeText(view.getByLabelText('服务器'), 'proxy.example.test');
+          await fireEvent.changeText(view.getByLabelText('端口'), '8080');
+          return () => fireEvent.press(view.getByLabelText('确定', { includeHiddenElements: true }));
+        }
+        if (mode === 'selected') {
+          await fireEvent(view.getByText(profile.name), 'longPress');
+          await fireEvent.press(view.getByLabelText('删除选中的代理'));
+        } else {
+          await fireEvent.press(view.getByLabelText('编辑代理'));
+          await fireEvent.press(view.getByRole('button', { name: '删除' }));
+        }
+        const confirm = alert.mock.calls.at(-1)?.[2]?.find((action) => action.style === 'destructive')?.onPress;
+        if (!confirm) throw new Error('Missing destructive proxy confirmation');
+        return confirm;
+      }
+      try {
+        const oldAction = await prepareAction();
+        expect(write).not.toHaveBeenCalled();
+        await act(async () => {
+          openLink?.({ url: 'https://linux.do/t/topic/123' });
+          expect(navigationRef.getCurrentRoute()?.name).toBe('Topic');
+          await oldAction();
+        });
+        expect(view.getByText('通过链接打开的主题')).toBeTruthy();
+        expect(write).not.toHaveBeenCalled();
+        await act(() => navigationRef.goBack());
+        const currentAction = await prepareAction();
+        if (mode !== 'save') await act(async () => oldAction());
+        expect(write).not.toHaveBeenCalled();
+        await act(async () => currentAction());
+        expect(write).toHaveBeenCalledTimes(1);
+        if (mode === 'save') expect(upsertProfile).toHaveBeenCalledWith(expect.objectContaining({ name: '新代理' }));
+        else expect(deleteProfile).toHaveBeenCalledWith(profile.id);
+      } finally {
+        alert.mockRestore();
+        await view.unmount();
+      }
+    }
+  );
 
   it('keeps appearance content measurable while collapsed and discards unfinished font-size previews', async () => {
     const updateSettings = jest.fn();
@@ -632,30 +1212,30 @@ describe('More screen state and actions', () => {
     await fireEvent.press(view.getByLabelText('展开外观'));
     expect(view.getByTestId('appearance-font-scale-slider')).toBe(slider);
     await fireEvent(slider, 'valueChange', 1.15);
-    expect(view.getByText('字号 115%')).toBeTruthy();
+    expect(view.getByText('115%')).toBeTruthy();
     expect(updateSettings).not.toHaveBeenCalled();
 
     await fireEvent.press(view.getByLabelText('收起外观'));
     expect(view.getByTestId('appearance-font-scale-slider', { includeHiddenElements: true })).toBe(slider);
     expect(view.queryByLabelText('增大字号')).toBeNull();
-    expect(view.getByText('字号 100%', { includeHiddenElements: true })).toBeTruthy();
+    expect(view.getByText('100%', { includeHiddenElements: true })).toBeTruthy();
     await fireEvent.press(view.getByLabelText('增大字号', { includeHiddenElements: true }));
     await act(async () => {
       slider.props.onRNCSliderValueChange({ nativeEvent: { value: 1.3 } });
       slider.props.onRNCSliderSlidingComplete({ nativeEvent: { value: 1.3 } });
     });
-    expect(view.getByText('字号 100%', { includeHiddenElements: true })).toBeTruthy();
+    expect(view.getByText('100%', { includeHiddenElements: true })).toBeTruthy();
     expect(updateSettings).not.toHaveBeenCalled();
 
     await fireEvent.press(view.getByLabelText('展开外观'));
     expect(view.getByTestId('appearance-font-scale-slider')).toBe(slider);
-    expect(view.getByText('字号 100%')).toBeTruthy();
+    expect(view.getByText('100%')).toBeTruthy();
     await fireEvent(view.getByTestId('appearance-font-scale-slider'), 'slidingComplete', 1.1);
     expect(updateSettings.mock.calls).toEqual([[{ fontScale: 1.1 }]]);
     await fireEvent.press(view.getByLabelText('收起外观'));
-    expect(view.getByText('字号 110%', { includeHiddenElements: true })).toBeTruthy();
+    expect(view.getByText('110%', { includeHiddenElements: true })).toBeTruthy();
     await fireEvent.press(view.getByLabelText('展开外观'));
-    expect(view.getByText('字号 110%')).toBeTruthy();
+    expect(view.getByText('110%')).toBeTruthy();
     await fireEvent.press(view.getByLabelText('增大字号'));
     expect(updateSettings.mock.calls).toEqual([[{ fontScale: 1.1 }], [{ fontScale: 1.15 }]]);
   });
@@ -705,7 +1285,9 @@ describe('More screen state and actions', () => {
     const getTransactions = jest.fn<MoreScreenProps['account']['read']['gateway']['getLinuxDoCreditTransactions']>();
     props.account.read.gateway = {
       ...props.account.read.gateway,
-      getReadPlan: () => ({
+      getReadPlan: (source, operation) => ({
+        source,
+        operation,
         state: 'ready',
         lane: 'authenticated',
         transport: 'managed-session',
@@ -731,7 +1313,9 @@ describe('More screen state and actions', () => {
     });
     props.account.read.gateway = {
       ...props.account.read.gateway,
-      getReadPlan: () => ({
+      getReadPlan: (source, operation) => ({
+        source,
+        operation,
         state: 'ready',
         lane: 'authenticated',
         transport: 'managed-session',
@@ -781,21 +1365,21 @@ describe('More screen state and actions', () => {
           (instance) => instance.props.accessibilityRole === 'progressbar' && instance.props.accessibilityState?.busy
         ) ?? [];
       await fireEvent.press(view.getByText('linux.do 等级'));
-      const reading = view.getByText('正在读取当前账号统计。');
+      const reading = view.getByText('加载中');
       expect(animatingIndicators().length).toBeGreaterThan(0);
 
       if (hidden === 'collapsed') await fireEvent.press(view.getByText('linux.do 等级'));
       else await view.rerender(<MoreScreen {...props} account={{ ...props.account, active: false }} />);
 
-      expect(view.getByText('正在读取当前账号统计。', { includeHiddenElements: true })).toBe(reading);
-      if (hidden === 'collapsed') expect(view.queryByText('正在读取当前账号统计。')).toBeNull();
+      expect(view.getByText('加载中', { includeHiddenElements: true })).toBe(reading);
+      if (hidden === 'collapsed') expect(view.queryByText('加载中')).toBeNull();
       expect(props.account.center.linuxDoLevel.busy).toBe(true);
       expect(animatingIndicators()).toHaveLength(0);
       if (hidden === 'inactive') expect(view.getByLabelText('刷新中').props.accessibilityState.disabled).toBe(true);
 
       if (hidden === 'collapsed') await fireEvent.press(view.getByText('linux.do 等级'));
       else await view.rerender(<MoreScreen {...props} />);
-      expect(view.getByText('正在读取当前账号统计。')).toBe(reading);
+      expect(view.getByText('加载中')).toBe(reading);
       expect(animatingIndicators().length).toBeGreaterThan(0);
       expect(props.account.center.linuxDoLevel.refresh).not.toHaveBeenCalled();
     }
@@ -931,7 +1515,9 @@ describe('More screen state and actions', () => {
       });
       props.account.read.gateway = {
         ...props.account.read.gateway,
-        getReadPlan: () => ({
+        getReadPlan: (source, operation) => ({
+          source,
+          operation,
           state: 'ready',
           lane: 'authenticated',
           transport: 'managed-session',
@@ -1190,7 +1776,9 @@ describe('More screen state and actions', () => {
     });
     props.account.read.gateway = {
       ...props.account.read.gateway,
-      getReadPlan: () => ({
+      getReadPlan: (source, operation) => ({
+        source,
+        operation,
         state: 'ready',
         lane: 'authenticated',
         transport: 'managed-session',
@@ -1259,7 +1847,9 @@ describe('More screen state and actions', () => {
     const props = moreProps({ account: { read: { sessions: accountSessions('42') } } });
     props.account.read.gateway = {
       ...props.account.read.gateway,
-      getReadPlan: () => ({
+      getReadPlan: (source, operation) => ({
+        source,
+        operation,
         state: 'ready',
         lane: 'authenticated',
         transport: 'managed-session',
@@ -1350,7 +1940,9 @@ describe('More screen state and actions', () => {
     });
     props.account.read.gateway = {
       ...props.account.read.gateway,
-      getReadPlan: () => ({
+      getReadPlan: (source, operation) => ({
+        source,
+        operation,
         state: 'ready',
         lane: 'authenticated',
         transport: 'managed-session',
@@ -1443,7 +2035,9 @@ describe('More screen state and actions', () => {
             ...props.account.read,
             gateway: {
               ...props.account.read.gateway,
-              getReadPlan: () => ({
+              getReadPlan: (source, operation) => ({
+                source,
+                operation,
                 state: 'blocked',
                 reason: 'source-disabled',
                 cacheScope: 'blocked:source-disabled'
@@ -1467,7 +2061,9 @@ describe('More screen state and actions', () => {
       });
       props.account.read.gateway = {
         ...props.account.read.gateway,
-        getReadPlan: () => ({
+        getReadPlan: (source, operation) => ({
+          source,
+          operation,
           state: 'ready',
           lane: 'authenticated',
           transport: 'managed-session',
@@ -1503,7 +2099,9 @@ describe('More screen state and actions', () => {
     });
     props.account.read.gateway = {
       ...props.account.read.gateway,
-      getReadPlan: () => ({
+      getReadPlan: (source, operation) => ({
+        source,
+        operation,
         state: 'ready',
         lane: 'authenticated',
         transport: 'managed-session',
@@ -1626,11 +2224,10 @@ describe('More screen state and actions', () => {
         reopenedHandle.props.onGestureFinalize({ canceled: false });
       });
       expect(updateSettings).toHaveBeenCalledWith({
-        contentSources: [
-          readerData.settings.contentSources[1],
-          readerData.settings.contentSources[0],
-          ...readerData.settings.contentSources.slice(2)
-        ]
+        kind: 'drop-source',
+        source: 'v2ex',
+        target: 'linuxdo',
+        fromOrder: sources
       });
     }
   );
@@ -1667,11 +2264,10 @@ describe('More screen state and actions', () => {
       });
       expect(updateSettings).toHaveBeenCalledTimes(1);
       expect(updateSettings).toHaveBeenCalledWith({
-        contentSources: [
-          readerData.settings.contentSources[1],
-          readerData.settings.contentSources[0],
-          ...readerData.settings.contentSources.slice(2)
-        ]
+        kind: 'drop-source',
+        source: 'v2ex',
+        target: 'linuxdo',
+        fromOrder: sources
       });
     }
   );
@@ -1732,12 +2328,9 @@ describe('More screen state and actions', () => {
 
     await fireEvent(firstHandle, 'accessibilityAction', { nativeEvent: { actionName: 'moveDown' } });
     expect(updateSettings).toHaveBeenCalledWith({
-      contentSources: [
-        { source: 'linuxdo', enabled: true },
-        { source: 'v2ex', enabled: true },
-        { source: 'nodeseek', enabled: true },
-        { source: 'yaohuo', enabled: true }
-      ]
+      kind: 'move-source',
+      source: 'v2ex',
+      offset: 1
     });
     expect(command).not.toHaveBeenCalled();
     expect(JSON.stringify(persistedPreferences)).toBe(persistedSnapshot);
@@ -1745,12 +2338,9 @@ describe('More screen state and actions', () => {
     updateSettings.mockClear();
     await fireEvent(view.getByLabelText('V2EX 内容源开关'), 'valueChange', false);
     expect(updateSettings).toHaveBeenCalledWith({
-      contentSources: [
-        { source: 'v2ex', enabled: false },
-        { source: 'linuxdo', enabled: true },
-        { source: 'nodeseek', enabled: true },
-        { source: 'yaohuo', enabled: true }
-      ]
+      kind: 'set-source-enabled',
+      source: 'v2ex',
+      enabled: false
     });
     expect(view.getByLabelText('V2EX 内容源开关').props.accessibilityState.checked).toBe(true);
 
@@ -1811,8 +2401,7 @@ describe('More screen state and actions', () => {
       );
     }
 
-    await fireEvent.press(view.getByLabelText('展开问题诊断'));
-    expect(view.getByText(/日志只保存在本机并经过脱敏/)).toBeTruthy();
+    expect(view.getByTestId('more-diagnostics')).toBeTruthy();
     await fireEvent.press(view.getByLabelText('展开备份 / 恢复'));
     expect(view.getByLabelText('导出备份文件')).toBeTruthy();
   });
@@ -1855,12 +2444,10 @@ describe('More screen state and actions', () => {
     expect(mockScheduleOnRN).toHaveBeenCalledTimes(3);
     expect(updateSettings).toHaveBeenCalledTimes(1);
     expect(updateSettings).toHaveBeenCalledWith({
-      contentSources: [
-        { source: 'linuxdo', enabled: true },
-        { source: 'nodeseek', enabled: true },
-        { source: 'v2ex', enabled: true },
-        { source: 'yaohuo', enabled: true }
-      ]
+      kind: 'drop-source',
+      source: 'v2ex',
+      target: 'nodeseek',
+      fromOrder: ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo']
     });
 
     updateSettings.mockClear();
@@ -1878,12 +2465,10 @@ describe('More screen state and actions', () => {
     });
     expect(updateSettings).toHaveBeenCalledTimes(1);
     expect(updateSettings).toHaveBeenLastCalledWith({
-      contentSources: [
-        { source: 'linuxdo', enabled: true },
-        { source: 'nodeseek', enabled: true },
-        { source: 'yaohuo', enabled: true },
-        { source: 'v2ex', enabled: true }
-      ]
+      kind: 'drop-source',
+      source: 'v2ex',
+      target: 'yaohuo',
+      fromOrder: ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo']
     });
 
     updateSettings.mockClear();
@@ -1990,7 +2575,12 @@ describe('More screen state and actions', () => {
       reverseHandle.props.onGestureUpdate({ translationY: -56 });
       reverseHandle.props.onGestureFinalize({ canceled: false });
     });
-    expect(updateSettings).toHaveBeenCalledWith({ contentSources: readerData.settings.contentSources });
+    expect(updateSettings).toHaveBeenCalledWith({
+      kind: 'drop-source',
+      source: 'v2ex',
+      target: 'linuxdo',
+      fromOrder: reorderedContentSources.map(({ source }) => source)
+    });
 
     await view.rerender(
       <MoreScreen
@@ -2352,9 +2942,15 @@ describe('More screen state and actions', () => {
         })}
       />
     );
-    expect(view.getByText('正在下载 1.4.0')).toBeTruthy();
+    expect(view.getByText('1 KB / 2 KB')).toBeTruthy();
     expect(view.getByText('50%')).toBeTruthy();
-    expect(view.getByLabelText('下载中').props.accessibilityState.disabled).toBe(true);
+    expect(view.queryByLabelText('下载中')).toBeNull();
+    const pause = view.getByRole('button', { name: '暂停下载' });
+    expect(pause.props.accessibilityState.disabled).toBe(false);
+    expect(pause.props.accessibilityValue).toMatchObject({ now: 50, text: '1 KB / 2 KB，50%' });
+    const height = StyleSheet.flatten(pause.props.style).minHeight;
+    const hitSlop = pause.props.hitSlop;
+    expect(height + (hitSlop?.top ?? 0) + (hitSlop?.bottom ?? 0)).toBeGreaterThanOrEqual(48);
   });
 
   it('routes proxy, diagnostic and backup actions and exposes their busy gates', async () => {
@@ -2374,9 +2970,7 @@ describe('More screen state and actions', () => {
     await fireEvent.press(view.getByText('服务器代理'));
     expect(onShowNetworkProxyPanelChange).toHaveBeenCalledWith(true);
 
-    await fireEvent.press(view.getByLabelText('展开问题诊断'));
-    expect(view.getByText(/日志只保存在本机并经过脱敏/)).toBeTruthy();
-    await fireEvent.press(view.getByLabelText('生成并分享诊断日志'));
+    await fireEvent.press(view.getByTestId('more-diagnostics'));
     expect(onExportDiagnosticLog).toHaveBeenCalledTimes(1);
 
     await fireEvent.press(view.getByLabelText('展开备份 / 恢复'));
@@ -2389,16 +2983,24 @@ describe('More screen state and actions', () => {
       <MoreScreen
         {...moreProps({
           utilities: {
-            backup: { busy: true, exportFile: onExportBackupFile, importFile: onImportBackupFile },
+            backup: { operation: 'export', exportFile: onExportBackupFile, importFile: onImportBackupFile },
             diagnostics: { busy: true, exportLog: onExportDiagnosticLog }
           }
         })}
       />
     );
-    expect(view.getByLabelText('正在生成').props.accessibilityState.disabled).toBe(true);
-    expect(view.getByLabelText('处理中').props.accessibilityState.disabled).toBe(true);
+    expect(view.getByLabelText('问题诊断，正在生成').props.accessibilityState).toMatchObject({
+      busy: true,
+      disabled: true
+    });
+    await fireEvent.press(view.getByTestId('more-diagnostics'));
+    expect(onExportDiagnosticLog).toHaveBeenCalledTimes(1);
+    expect(view.getByLabelText('导出中').props.accessibilityState).toMatchObject({
+      busy: true,
+      disabled: true
+    });
     expect(view.getByLabelText('选择备份文件恢复').props.accessibilityState.disabled).toBe(true);
-    await fireEvent.press(view.getByLabelText('处理中'));
+    await fireEvent.press(view.getByLabelText('导出中'));
     await fireEvent.press(view.getByLabelText('选择备份文件恢复'));
     expect(onExportBackupFile).toHaveBeenCalledTimes(1);
     expect(onImportBackupFile).toHaveBeenCalledTimes(1);

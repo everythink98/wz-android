@@ -2,7 +2,7 @@ import type { Source } from '@/domain/forum/models';
 
 // Shapes are copied from sourceUserRead's existing four-site parser evidence.
 // Empty arrays and 503 responses below are explicit boundary/fault injection cases.
-export function userResponses(source: Source, empty: boolean) {
+function userResponses(source: Source, empty: boolean) {
   switch (source) {
     case 'nodeseek':
       return {
@@ -16,6 +16,7 @@ export function userResponses(source: Source, empty: boolean) {
     case 'linuxdo':
       return {
         details: JSON.stringify({ user_summary: { user: { id: 7, username: 'alice' } } }),
+        nickname: JSON.stringify({ user: { id: 7, username: 'alice', name: 'Alice 昵称' } }),
         topics: JSON.stringify({
           topic_list: {
             topics: empty
@@ -53,8 +54,36 @@ export function userResponses(source: Source, empty: boolean) {
   }
 }
 
+const activityEndpoints: Record<string, 'details' | 'nickname' | 'topics' | 'replies' | 'atom'> = {
+  '/api/account/getInfo/7': 'details',
+  '/api/content/list-discussions': 'topics',
+  '/api/content/list-comments': 'replies',
+  '/u/alice/summary.json': 'details',
+  '/u/alice.json': 'nickname',
+  '/topics/created-by/alice.json': 'topics',
+  '/user_actions.json': 'replies',
+  '/api/members/show.json': 'details',
+  '/member/alice/topics': 'topics',
+  '/member/alice/replies': 'replies',
+  '/feed/member/alice.xml': 'atom',
+  '/bbs/userinfo.aspx': 'details',
+  '/bbs/book_list.aspx': 'topics',
+  '/bbs/book_re_my.aspx': 'replies'
+};
+
 export function laneFor(url: string) {
-  if (/getInfo|summary\.json|members\/show|userinfo\.aspx/.test(url)) return 'details';
-  if (/list-comments|user_actions|\/replies|book_re_my/.test(url)) return 'replies';
-  return 'topics';
+  const path = new URL(url).pathname;
+  const lane = activityEndpoints[path];
+  if (!lane) throw new Error(`Unexpected user activity fixture path: ${path}`);
+  return lane;
+}
+
+export function createUserActivityResponse(source: Source, empty: boolean) {
+  const responses = userResponses(source, empty);
+  return (url: string, failure?: 'topics' | 'replies') => {
+    const lane = laneFor(url);
+    if ((lane === 'atom' ? 'topics' : lane) === failure) return new Response('activity unavailable', { status: 503 });
+    if (lane === 'atom') return new Response('<feed xmlns="http://www.w3.org/2005/Atom"></feed>');
+    return new Response(responses[lane]);
+  };
 }

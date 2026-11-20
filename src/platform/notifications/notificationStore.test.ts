@@ -14,12 +14,15 @@ vi.mock('@react-native-async-storage/async-storage', () => ({
 import {
   advanceNotificationDelivery,
   clearNotificationSourceForContentDisable,
+  confirmDisabledNotificationDismissal,
   defaultNotificationState,
   loadNotificationState,
   normalizeNotificationState,
   recordNotificationDelivery,
+  recordNotificationSnapshot,
   saveNotificationState,
-  setGlobalNotificationIntent
+  setGlobalNotificationIntent,
+  setSourceNotificationIntent
 } from './notificationStore';
 import { notificationSources } from '@/domain/forum/sourceCatalog';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
@@ -27,14 +30,15 @@ import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 beforeEach(() => storage.clear());
 
 describe('notification delivery state', () => {
-  it('records invalid stored JSON while preserving the existing in-memory default fallback', async () => {
+  it('rejects invalid stored JSON and blocks writes without exposing the saved value', async () => {
     storage.set('wz.notifications.v1', 'PRIVATE_CORRUPT_JSON');
     const lines: string[] = [];
     setDiagnosticWriter((line) => {
       lines.push(line);
     });
     try {
-      expect(await loadNotificationState()).toEqual(defaultNotificationState());
+      await expect(loadNotificationState()).rejects.toThrow('通知存储格式损坏');
+      await expect(setGlobalNotificationIntent(true)).rejects.toThrow('通知存储格式损坏');
     } finally {
       setDiagnosticWriter(null);
     }
@@ -50,6 +54,30 @@ describe('notification delivery state', () => {
     expect(notificationSources.map((source) => state.sources[source].intentEnabled)).toEqual(
       notificationSources.map(() => true)
     );
+  });
+
+  it('leaves the saved unread state intact if authority changes during the queued read', async () => {
+    await recordNotificationSnapshot('nodeseek', 'nodeseek:7', 2, '2026-08-03');
+    const reading = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    vi.mocked(AsyncStorage.getItem).mockImplementationOnce(async (key) => {
+      reading.resolve();
+      await release.promise;
+      return storage.get(key) || null;
+    });
+    const writes = vi.mocked(AsyncStorage.setItem).mock.calls.length;
+    let canCommit = true;
+    const old = recordNotificationSnapshot('nodeseek', 'nodeseek:7', 97, '2026-08-04', () => canCommit);
+    try {
+      await reading.promise;
+      canCommit = false;
+      release.resolve();
+      expect((await old).sources.nodeseek.unreadCount).toBe(2);
+      expect(AsyncStorage.setItem).toHaveBeenCalledTimes(writes);
+    } finally {
+      release.resolve();
+      await old;
+    }
   });
 
   it('builds a silent baseline, delivers only new ids, and caps retained ids at 200', () => {
@@ -156,6 +184,68 @@ describe('notification delivery state', () => {
     });
     expect(advanceNotificationDelivery(disabled.sources.nodeseek, 'nodeseek:7', ['while-disabled']).newIds).toEqual([]);
   });
+
+  it.each(['global', 'source'] as const)(
+    'keeps the disabled %s baseline clear when an old delivery rolls back',
+    async (scope) => {
+      const state = defaultNotificationState();
+      state.globalEnabled = true;
+      state.hasOptedIn = true;
+      state.sources.nodeseek = {
+        intentEnabled: true,
+        identityKey: 'nodeseek:7',
+        baselineReady: true,
+        deliveredIds: ['old'],
+        notificationIdentifier: 'old-id'
+      };
+      await saveNotificationState(state);
+      const delivered = await recordNotificationDelivery(
+        'nodeseek',
+        'nodeseek:7',
+        ['new'],
+        { lastSuccessAt: '2026-11-20T00:00:00Z' },
+        { expectedNewIds: ['new'], previousIdentifier: 'old-id', notificationIdentifier: 'staged-id' }
+      );
+      expect(delivered.committed).toBe(true);
+      const setEnabled =
+        scope === 'global'
+          ? setGlobalNotificationIntent
+          : (enabled: boolean) => setSourceNotificationIntent('nodeseek', enabled);
+      await setEnabled(false);
+      await delivered.rollback();
+      expect((await loadNotificationState()).sources.nodeseek).toMatchObject({
+        baselineReady: false,
+        deliveredIds: [],
+        notificationIdentifier: 'staged-id'
+      });
+      await setEnabled(true);
+      await delivered.rollback();
+      expect((await loadNotificationState()).sources.nodeseek).toMatchObject({
+        baselineReady: false,
+        deliveredIds: []
+      });
+    }
+  );
+
+  it.each(['current', 'identity changed', 'slot changed'] as const)(
+    'clears a disabled digest only for the matching persisted owner: %s',
+    async (owner) => {
+      const state = defaultNotificationState();
+      state.hasOptedIn = true;
+      state.sources.nodeseek = {
+        intentEnabled: true,
+        identityKey: owner === 'identity changed' ? 'nodeseek:8' : 'nodeseek:7',
+        baselineReady: false,
+        deliveredIds: [],
+        notificationIdentifier: owner === 'slot changed' ? 'new-id' : 'old-id'
+      };
+      await saveNotificationState(state);
+      await confirmDisabledNotificationDismissal('nodeseek', 'nodeseek:7', 'old-id');
+      expect((await loadNotificationState()).sources.nodeseek.notificationIdentifier).toBe(
+        owner === 'current' ? undefined : state.sources.nodeseek.notificationIdentifier
+      );
+    }
+  );
 
   it('does not record or deliver after the user disables the source during a background run', async () => {
     const state = defaultNotificationState();

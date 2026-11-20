@@ -51,8 +51,8 @@ function normalizeTopic(raw: Record<string, unknown>): Topic | null {
   const op = isRecord(raw.op) ? raw.op : {};
   const category = isRecord(raw.category) ? raw.category : isRecord(raw.node) ? raw.node : {};
   const authorId = String(op.userId || op.user_id || op.id || raw.authorId || raw.author_id || '').trim();
-  const createdAt = nodeSeekCreatedAt(raw) || new Date().toISOString();
-  const lastReplyAt = toIsoString(raw.updatedDate || raw.lastReplyAt) || createdAt;
+  const createdAt = nodeSeekCreatedAt(raw);
+  const lastReplyAt = toIsoString(raw.updatedDate || raw.lastReplyAt) || createdAt || undefined;
   const categoryId = typeof category.key === 'string' ? category.key : undefined;
   const categoryName =
     typeof category.name === 'string'
@@ -117,7 +117,10 @@ export function parseHtmlTopics(document: NodeSeekPageDocument) {
     const categoryId = categoryHref.match(/\/categories\/([^/?#]+)/)?.[1];
     const categoryName = elementText(categoryLink) || undefined;
     const lastReplyTime = row.querySelector('.info-last-comment-time time');
-    const lastReplyAt = toIsoString(lastReplyTime?.getAttribute('datetime') || lastReplyTime?.getAttribute('title'));
+    const visibleTime = elementText(lastReplyTime);
+    const lastReplyAt =
+      toIsoString(lastReplyTime?.getAttribute('datetime') || lastReplyTime?.getAttribute('title')) ||
+      (/^\d{4}[-/]/.test(visibleTime) ? toIsoString(visibleTime) : '');
     const accessRequirement = nodeSeekAccessRequirementFromListRow(row, title);
     renderedItems.push({
       source: 'nodeseek',
@@ -130,8 +133,9 @@ export function parseHtmlTopics(document: NodeSeekPageDocument) {
       categoryId,
       category: categoryName,
       url: nodeSeekSearchTopicUrl(id, href),
-      createdAt: lastReplyAt || new Date().toISOString(),
-      lastReplyAt: lastReplyAt || new Date().toISOString(),
+      createdAt: lastReplyAt,
+      lastReplyAt: lastReplyAt || undefined,
+      displayTimeText: lastReplyAt ? undefined : visibleTime || undefined,
       replyCount: integerFromElement(row.querySelector('.info-comments-count')),
       viewCount: integerFromElement(row.querySelector('.info-views')),
       excerpt: '',
@@ -162,8 +166,7 @@ export function parseHtmlTopics(document: NodeSeekPageDocument) {
       title,
       author: '',
       url: nodeSeekSearchTopicUrl(id, href),
-      createdAt: new Date().toISOString(),
-      lastReplyAt: new Date().toISOString(),
+      createdAt: '',
       replyCount: parsePositiveInteger(text.match(/回复\s*(\d+)/)?.[1]),
       excerpt: textExcerptFromPlainText(text),
       ...(accessRequirement ? { accessRequirement } : {})

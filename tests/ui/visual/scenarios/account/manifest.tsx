@@ -142,6 +142,7 @@ function NodeSeekServicesScenario() {
   const { theme } = useReaderThemeStyles(createMoreScreenStyles);
   return (
     <NodeSeekServicesPanel
+      apiKeyAuthorized={false}
       apiKeyBusy={false}
       apiKeySaved={false}
       recoveryThreshold={2}

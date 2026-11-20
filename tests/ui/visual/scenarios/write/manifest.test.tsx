@@ -66,19 +66,20 @@ describe('write visual scenarios', () => {
     await yaohuo.unmount();
 
     const pending = await renderScenario('write.composer.yaohuo.pending');
-    expect(pending.getByLabelText('发送中…').props.accessibilityState.disabled).toBe(true);
+    expect(pending.getByLabelText('发送中').props.accessibilityState.disabled).toBe(true);
     expect(pending.getByPlaceholderText('输入回复内容').props.editable).toBe(false);
     await pending.unmount();
   });
 
   it('renders available, confirmed, and read-only poll states with TopicPolls', async () => {
     const available = await renderScenario('write.poll.nodeseek.available');
-    expect(available.getByText('可投票')).toBeTruthy();
+    expect(available.queryByText('可投票')).toBeNull();
     expect(available.getByLabelText('提交投票').props.accessibilityState.disabled).toBe(true);
     await available.unmount();
 
     const voted = await renderScenario('write.poll.nodeseek.voted');
-    expect(voted.getAllByText('已投票')).not.toHaveLength(0);
+    expect(voted.getByText('已投票')).toBeTruthy();
+    expect(voted.queryByLabelText('提交投票')).toBeNull();
     expect(voted.getByText('7 人参与')).toBeTruthy();
     await voted.unmount();
 

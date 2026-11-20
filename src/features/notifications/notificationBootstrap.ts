@@ -47,9 +47,6 @@ export function createNotificationBootstrap() {
       permission = granted ? 'granted' : 'denied';
       feedback = { kind: 'clear' };
     },
-    requestedPermission(granted: boolean) {
-      permission = granted ? 'granted' : 'denied';
-    },
     failedPermission() {
       permission = 'unavailable';
       feedback = { kind: 'failed', message: '系统通知权限读取失败，请重试；站内消息仍可使用。' };

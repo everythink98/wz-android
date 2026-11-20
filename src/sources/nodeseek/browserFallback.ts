@@ -252,7 +252,7 @@ export function createNodeSeekWebViewFallbackFetcher({
       canContainCloudflareChallengePage(response.headers) &&
       !(owner === 'account-overview'
         ? nodeSeekCurrentUserFromConfig(extractNodeSeekEmbeddedData(text))
-        : hasNodeSeekAccountEvidenceHtml(text, url)) &&
+        : hasNodeSeekAccountEvidenceHtml(text, response.url || url)) &&
       allowWebViewFallback(url)
     ) {
       return fetchNodeSeekThroughWebView(webViewFetcher, url, init, 'invalid_response', response.status);

@@ -53,80 +53,71 @@ function SettingsPanel({
 }) {
   return (
     <View style={styles.appearanceSettings}>
-      <View style={styles.appearanceSection}>
-        <Text style={styles.appearanceSectionTitle}>显示</Text>
-        <SegmentedSetting
-          title="主题"
-          items={[
-            { value: 'light', label: '浅色' },
-            { value: 'dark', label: '深色' }
-          ]}
-          value={settings.theme}
-          styles={styles}
-          onChange={(value) => onUpdateSettings({ theme: value as ReaderSettings['theme'] })}
-        />
-      </View>
-
-      <View style={styles.appearanceSection}>
-        <Text style={styles.appearanceSectionTitle}>阅读</Text>
-        <FontScaleSetting
-          active={active}
-          value={settings.fontScale}
-          styles={styles}
-          theme={theme}
-          onChange={(fontScale) => onUpdateSettings({ fontScale })}
-        />
-        <SegmentedSetting
-          divided
-          title="行距"
-          items={[
-            { value: 'compact', label: '紧凑' },
-            { value: 'standard', label: '标准' },
-            { value: 'loose', label: '宽松' }
-          ]}
-          value={settings.lineHeight}
-          styles={styles}
-          onChange={(value) => onUpdateSettings({ lineHeight: value as ReaderSettings['lineHeight'] })}
-        />
-        <SegmentedSetting
-          divided
-          title="正文宽度"
-          items={[
-            { value: 'narrow', label: '窄' },
-            { value: 'standard', label: '标准' },
-            { value: 'wide', label: '宽' }
-          ]}
-          value={settings.contentWidth}
-          styles={styles}
-          onChange={(value) => onUpdateSettings({ contentWidth: value as ReaderSettings['contentWidth'] })}
-        />
-        <SegmentedSetting
-          divided
-          title="字体"
-          items={[
-            { value: 'sans', label: '无衬线' },
-            { value: 'serif', label: '衬线' }
-          ]}
-          value={settings.fontFamily}
-          styles={styles}
-          onChange={(value) => onUpdateSettings({ fontFamily: value as ReaderSettings['fontFamily'] })}
-        />
-      </View>
-
-      <View style={styles.appearanceSection}>
-        <Text style={styles.appearanceSectionTitle}>列表</Text>
-        <SegmentedSetting
-          title="列表密度"
-          items={[
-            { value: 'compact', label: '紧凑' },
-            { value: 'standard', label: '标准' },
-            { value: 'loose', label: '宽松' }
-          ]}
-          value={settings.listDensity}
-          styles={styles}
-          onChange={(value) => onUpdateSettings({ listDensity: value as ReaderSettings['listDensity'] })}
-        />
-      </View>
+      <SegmentedSetting
+        title="主题"
+        items={[
+          { value: 'light', label: '浅色' },
+          { value: 'dark', label: '深色' }
+        ]}
+        value={settings.theme}
+        styles={styles}
+        onChange={(value) => onUpdateSettings({ theme: value as ReaderSettings['theme'] })}
+      />
+      <FontScaleSetting
+        divided
+        active={active}
+        value={settings.fontScale}
+        styles={styles}
+        theme={theme}
+        onChange={(fontScale) => onUpdateSettings({ fontScale })}
+      />
+      <SegmentedSetting
+        divided
+        title="行距"
+        items={[
+          { value: 'compact', label: '紧凑' },
+          { value: 'standard', label: '标准' },
+          { value: 'loose', label: '宽松' }
+        ]}
+        value={settings.lineHeight}
+        styles={styles}
+        onChange={(value) => onUpdateSettings({ lineHeight: value as ReaderSettings['lineHeight'] })}
+      />
+      <SegmentedSetting
+        divided
+        title="正文宽度"
+        items={[
+          { value: 'narrow', label: '窄' },
+          { value: 'standard', label: '标准' },
+          { value: 'wide', label: '宽' }
+        ]}
+        value={settings.contentWidth}
+        styles={styles}
+        onChange={(value) => onUpdateSettings({ contentWidth: value as ReaderSettings['contentWidth'] })}
+      />
+      <SegmentedSetting
+        divided
+        title="字体"
+        items={[
+          { value: 'sans', label: '无衬线' },
+          { value: 'serif', label: '衬线' }
+        ]}
+        value={settings.fontFamily}
+        styles={styles}
+        onChange={(value) => onUpdateSettings({ fontFamily: value as ReaderSettings['fontFamily'] })}
+      />
+      <SegmentedSetting
+        divided
+        title="列表密度"
+        items={[
+          { value: 'compact', label: '紧凑' },
+          { value: 'standard', label: '标准' },
+          { value: 'loose', label: '宽松' }
+        ]}
+        value={settings.listDensity}
+        styles={styles}
+        onChange={(value) => onUpdateSettings({ listDensity: value as ReaderSettings['listDensity'] })}
+      />
     </View>
   );
 }
@@ -154,6 +145,7 @@ function SegmentedSetting({
           const selected = item.value === value;
           return (
             <Pressable
+              accessibilityLabel={`${title}：${item.label}`}
               accessibilityRole="button"
               accessibilityState={{ selected }}
               key={item.value}
@@ -175,12 +167,14 @@ function SegmentedSetting({
 
 function FontScaleSetting({
   active,
+  divided = false,
   styles,
   theme,
   value,
   onChange
 }: {
   active: boolean;
+  divided?: boolean;
   styles: MoreScreenStyles;
   theme: ReaderTheme;
   value: number;
@@ -204,10 +198,10 @@ function FontScaleSetting({
   };
 
   return (
-    <View style={styles.appearanceFontScaleBlock}>
+    <View style={[styles.appearanceFontScaleBlock, divided && styles.appearanceSettingRowDivided]}>
       <View style={styles.appearanceFontScaleHeader}>
         <Text style={styles.appearanceSettingLabel}>字号</Text>
-        <Text style={styles.appearanceFontScaleValue}>字号 {percent}%</Text>
+        <Text style={styles.appearanceFontScaleValue}>{percent}%</Text>
       </View>
       <View style={styles.appearanceSliderRow}>
         <Pressable

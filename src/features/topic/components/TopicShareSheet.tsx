@@ -1,9 +1,20 @@
-import { ActivityIndicator, Button } from 'react-native-paper';
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, PixelRatio, Platform, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator } from 'react-native-paper';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  AccessibilityInfo,
+  Modal,
+  PixelRatio,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+  type ImageURISource
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NavigationBackdropProvider, NavigationBackdropTarget } from '@/ui/navigation/NavigationGlass';
-import { ArrowLeft, Download, Share2, X } from 'lucide-react-native';
+import { ArrowLeft, Check, Download, Share2, X } from 'lucide-react-native';
 import { Image, type ImageRef } from 'expo-image';
 import RenderHTML, {
   defaultHTMLElementModels,
@@ -18,6 +29,11 @@ import type { TopicDetail } from '@/domain/forum/models';
 import { normalizeMediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
 import { formatDateTime, sourceLabel } from '@/domain/forum/presentation';
 import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
+import {
+  cachedCompatibleSvgArtifact,
+  recoverCompatibleSvgArtifact,
+  refreshCompatibleSvgPoster
+} from '@/platform/media/compatibleImageSources';
 import { captureLongTopicImage } from '@/platform/media/topicShareCapture';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import { errorMessage } from '@/platform/network/errors';
@@ -28,8 +44,9 @@ import { ForumContentWidthBoundary, useForumContentWidth } from '@/ui/content/Fo
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import {
   createReaderFontSizer,
-  readerRadii,
   createTheme,
+  fontFamilyValue,
+  readerRadii,
   type ReaderStyleSettings,
   type ReaderTheme
 } from '@/ui/theme/tokens';
@@ -39,6 +56,7 @@ import { shareTopicImageFile } from '../shareTopicImageFile';
 
 type ImageProgress = {
   completed: ReadonlySet<number>;
+  decodeSize: { maxWidth: number; maxHeight: number };
   mediaContext: ForumMediaRequestContext;
   nodeSeekUserAgent?: string;
   onComplete: (index: number) => void;
@@ -54,17 +72,62 @@ const tableModels = {
   td: defaultHTMLElementModels.td.extend({ getUADerivedStyleFromAttributes: () => ({}) })
 };
 
+const MAX_SHARE_IMAGE_HEIGHT = 10_000;
+const MAX_SHARE_IMAGE_WIDTH = 1440;
+// The preview retains every drawable for capture. At four bytes per pixel this budgets 192 MiB across them.
+const MAX_SHARE_DECODE_PIXELS = 48 * 1024 * 1024;
+
+function shareImageDecodeSize(imageCount: number): ImageProgress['decodeSize'] {
+  const pixelsPerImage = Math.max(1, Math.floor(MAX_SHARE_DECODE_PIXELS / Math.max(1, imageCount)));
+  const maxWidth = Math.min(MAX_SHARE_IMAGE_WIDTH, Math.floor(Math.sqrt(pixelsPerImage)));
+  return { maxWidth, maxHeight: Math.min(MAX_SHARE_IMAGE_HEIGHT, Math.floor(pixelsPerImage / maxWidth)) };
+}
+
+type ShareImageAsset = { image: ImageRef; dimensions?: { width: number; height: number } };
+
+async function decodeShareImage(
+  source: ImageURISource & { uri: string },
+  declaredSvg: boolean,
+  decodeSize: ImageProgress['decodeSize'],
+  signal: AbortSignal
+): Promise<ShareImageAsset> {
+  let artifact = cachedCompatibleSvgArtifact(source);
+  if (!artifact && declaredSvg && Platform.OS === 'android') {
+    artifact = await recoverCompatibleSvgArtifact(source, { signal }).catch(() => null);
+    if (signal.aborted) throw new Error('图片加载已取消');
+  }
+  if (!artifact) {
+    try {
+      return { image: await Image.loadAsync(source, decodeSize) };
+    } catch (error) {
+      if (signal.aborted || declaredSvg || Platform.OS !== 'android') throw error;
+      artifact = await recoverCompatibleSvgArtifact(source, { signal });
+      if (!artifact || signal.aborted) throw error;
+    }
+  }
+  try {
+    return { image: await Image.loadAsync(artifact.posterSource, decodeSize), dimensions: artifact.dimensions };
+  } catch (error) {
+    if (signal.aborted) throw error;
+    const refreshed = await refreshCompatibleSvgPoster(artifact, { signal });
+    return { image: await Image.loadAsync(refreshed.posterSource, decodeSize), dimensions: refreshed.dimensions };
+  }
+}
+
 function ShareImage({ tnode }: { tnode: TNode }) {
   const progress = useContext(ImageProgressContext);
   const contentWidth = useForumContentWidth();
-  const [image, setImage] = useState<ImageRef | null>(null);
+  const [asset, setAsset] = useState<ShareImageAsset | null>(null);
+  const observed = useRef({ loaded: false, displayed: false });
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [containerWidth, setContainerWidth] = useState(0);
   const [enabled, setEnabled] = useState(false);
   const index = Number(tnode.attributes['data-share-image-index']);
   const uri = tnode.attributes.src;
+  const declaredSvg = tnode.attributes['data-share-svg'] === 'true' || /\.svg(?:[?#]|$)/i.test(uri);
   const referrerPolicy = normalizeMediaReferrerPolicy(tnode.attributes.referrerpolicy);
   const mediaContext = progress?.mediaContext;
+  const decodeSize = progress?.decodeSize;
   const nodeSeekUserAgent = progress?.nodeSeekUserAgent;
   const onStart = progress?.onStart;
   const onError = progress?.onError;
@@ -72,59 +135,86 @@ function ShareImage({ tnode }: { tnode: TNode }) {
     if (progress && index < progress.completed.size + 4) setEnabled(true);
   }, [index, progress]);
   useEffect(() => {
-    if (!enabled || !mediaContext) return;
-    let current = true;
+    if (!enabled || !mediaContext || !decodeSize) return;
+    const controller = new AbortController();
     let decoded: ImageRef | undefined;
-    setImage(null);
+    observed.current = { loaded: false, displayed: false };
+    setAsset(null);
     onStart?.(index);
-    // shortcut: cap very tall decodes for memory; use region decoding if full detail of tall images is required.
-    void Image.loadAsync(
+    void decodeShareImage(
       { uri, ...imageSourceFromUrl(uri, { mediaContext, nodeSeekUserAgent, referrerPolicy }) },
-      { maxWidth: 1440, maxHeight: 10_000 }
+      declaredSvg,
+      decodeSize,
+      controller.signal
     ).then(
       (loaded) => {
-        if (!current) loaded.release();
+        if (controller.signal.aborted) loaded.image.release();
         else {
-          decoded = loaded;
-          setImage(loaded);
+          decoded = loaded.image;
+          setAsset(loaded);
         }
       },
       () => {
-        if (current) onError?.();
+        if (!controller.signal.aborted) onError?.();
       }
     );
     return () => {
-      current = false;
+      controller.abort();
       decoded?.release();
     };
-  }, [enabled, index, mediaContext, nodeSeekUserAgent, onError, onStart, referrerPolicy, uri]);
+  }, [declaredSvg, decodeSize, enabled, index, mediaContext, nodeSeekUserAgent, onError, onStart, referrerPolicy, uri]);
   if (!progress) return null;
-  const requestedHeight = Number(tnode.attributes['data-share-height']);
+  const heightLimit = Math.min(Number(tnode.attributes['data-share-height']) || Infinity, MAX_SHARE_IMAGE_HEIGHT);
+  const aspect = size.width ? size.height / size.width : 0;
+  const decodedToBudget =
+    !asset?.dimensions &&
+    ((progress.decodeSize.maxWidth < MAX_SHARE_IMAGE_WIDTH && size.width >= progress.decodeSize.maxWidth - 1) ||
+      (progress.decodeSize.maxHeight < MAX_SHARE_IMAGE_HEIGHT && size.height >= progress.decodeSize.maxHeight - 1));
+  // A raster resized by the decoder still fills its allotted column using the original aspect ratio.
+  const layoutWidth = Number(tnode.attributes['data-share-width']) || (decodedToBudget ? 0 : size.width);
   const width = Math.min(
-    Math.min(containerWidth || contentWidth, contentWidth),
-    Number(tnode.attributes['data-share-width']) || size.width || progress.width,
-    requestedHeight && size.height ? (requestedHeight * size.width) / size.height : Infinity
+    containerWidth || contentWidth,
+    contentWidth,
+    layoutWidth || progress.width,
+    aspect > 0 ? heightLimit / aspect : Infinity
   );
-  const height = size.width ? (width * size.height) / size.width : 120;
+  const height = aspect > 0 ? Math.min(width * aspect, heightLimit) : 120;
   const inline = tnode.tagName === INLINE_FORUM_IMAGE_TAG;
   const sticker = tnode.tagName === FORUM_STICKER_TAG;
   const renderedImage = (
     <Image
       accessibilityLabel={tnode.attributes.alt || '正文图片'}
-      source={image}
+      source={asset?.image ?? null}
       style={{ width, height }}
       contentFit="contain"
       transition={0}
       autoplay={false}
-      onLoadStart={() => progress.onStart(index)}
+      onLoadStart={() => {
+        // A native relayout can redisplay the same decoded image without reporting its dimensions again.
+        observed.current.displayed = false;
+        progress.onStart(index);
+      }}
       onLoad={({ source }) => {
-        if (source.width <= 0 || source.height <= 0 || (progress.width * source.height) / source.width > 10_000) {
+        if (!asset) return;
+        const dimensions = asset.dimensions || source;
+        if (
+          !Number.isFinite(source.width) ||
+          !Number.isFinite(source.height) ||
+          source.width <= 0 ||
+          source.height <= 0
+        ) {
           progress.onError();
           return;
         }
-        setSize({ width: source.width, height: source.height });
+        setSize(dimensions);
+        observed.current.loaded = true;
+        if (observed.current.displayed) progress.onComplete(index);
       }}
-      onDisplay={() => progress.onComplete(index)}
+      onDisplay={() => {
+        if (!asset) return;
+        observed.current.displayed = true;
+        if (observed.current.loaded) progress.onComplete(index);
+      }}
       onError={progress.onError}
     />
   );
@@ -155,11 +245,9 @@ const ShareTableCell: CustomBlockRenderer = ({ TDefaultRenderer, ...props }) => 
 const defaultTextProps = { selectable: false };
 const renderersProps = { a: { onPress: () => undefined } };
 
-type ShareCaptureRun = { preview: number; abort: AbortController };
-
 /** Admission and cancellation belong to one export; preview readiness remains an independent native observation. */
 class TopicShareCaptureSession {
-  private run: ShareCaptureRun | null = null;
+  private run: AbortController | null = null;
   private mounted = true;
   private preview = 0;
   private ready = false;
@@ -180,7 +268,7 @@ class TopicShareCaptureSession {
     this.ready = ready;
   }
   invalidateCapture() {
-    this.run?.abort.abort();
+    this.run?.abort();
   }
 
   retryPreview() {
@@ -191,21 +279,21 @@ class TopicShareCaptureSession {
 
   claim(action: 'share' | 'save') {
     if (!this.ready || !this.mounted || this.run) return null;
-    const run: ShareCaptureRun = { preview: this.preview, abort: new AbortController() };
+    const run = new AbortController();
     this.run = run;
     this.publishOperation(action);
     return run;
   }
 
-  owns(run: ShareCaptureRun) {
-    return this.mounted && this.run === run && run.preview === this.preview;
+  owns(run: AbortController) {
+    return this.run === run && !run.signal.aborted;
   }
 
-  canCapture(run: ShareCaptureRun) {
+  canCapture(run: AbortController) {
     return this.owns(run) && this.ready;
   }
 
-  finish(run: ShareCaptureRun) {
+  finish(run: AbortController) {
     if (this.run !== run) return;
     this.run = null;
     if (this.mounted) this.publishOperation(null);
@@ -277,7 +365,7 @@ export function TopicShareSheet({
   const [attempt, setAttempt] = useState(0);
   const [completed, setCompleted] = useState<ReadonlySet<number>>(new Set());
   const [height, setHeight] = useState(0);
-  const [imageError, setImageError] = useState('');
+  const [imageProblem, setImageProblem] = useState<'failed' | 'timeout' | null>(null);
   const [shareError, setShareError] = useState('');
   const document = useMemo(() => {
     try {
@@ -287,6 +375,7 @@ export function TopicShareSheet({
     }
   }, [topic]);
   const imageCount = document.kind === 'ready' ? document.imageCount : 0;
+  const decodeSize = useMemo(() => shareImageDecodeSize(imageCount), [imageCount]);
   const source = useMemo(() => ({ html: document.kind === 'ready' ? document.html : '' }), [document]);
   const onImageComplete = useCallback(
     (index: number) => {
@@ -309,11 +398,12 @@ export function TopicShareSheet({
     [attempt, capture]
   );
   const onImageError = useCallback(() => {
-    if (capture.acceptsPreview(attempt)) setImageError('有图片未能加载，请重试。');
+    if (capture.acceptsPreview(attempt)) setImageProblem('failed');
   }, [attempt, capture]);
   const progress = useMemo(
     () => ({
       completed,
+      decodeSize,
       mediaContext,
       nodeSeekUserAgent,
       onComplete: onImageComplete,
@@ -321,24 +411,30 @@ export function TopicShareSheet({
       onError: onImageError,
       width: contentWidth
     }),
-    [completed, contentWidth, mediaContext, nodeSeekUserAgent, onImageComplete, onImageError, onImageStart]
+    [completed, contentWidth, decodeSize, mediaContext, nodeSeekUserAgent, onImageComplete, onImageError, onImageStart]
   );
-  useEffect(() => {
+  useLayoutEffect(() => {
     capture.mount();
     return () => capture.close();
   }, [capture]);
   useEffect(() => {
-    if (completed.size >= imageCount) return;
+    if (completed.size >= imageCount) {
+      if (imageProblem === 'timeout') setImageProblem(null);
+      return;
+    }
+    if (imageProblem) return;
     const timeout = setTimeout(() => {
-      if (capture.acceptsPreview(attempt)) setImageError('图片加载超时，请重试。');
+      if (capture.acceptsPreview(attempt)) setImageProblem((current) => current || 'timeout');
     }, 30_000);
     return () => clearTimeout(timeout);
-  }, [attempt, capture, completed.size, imageCount]);
+  }, [attempt, capture, completed.size, imageCount, imageProblem]);
 
   const density = PixelRatio.get();
   // Android always redraws at export resolution; view-shot retains the full native bitmap on other platforms.
   const needsBoundedCapture = width * height * density * density > 24_000_000 || height * density > 32_000;
   const tooLarge = Platform.OS !== 'android' && needsBoundedCapture;
+  const imageError =
+    imageProblem === 'failed' ? '有图片未能加载，请重试。' : imageProblem === 'timeout' ? '图片加载超时，请重试。' : '';
   const error =
     document.kind === 'error'
       ? document.message
@@ -364,16 +460,14 @@ export function TopicShareSheet({
     setAttempt(nextAttempt);
     setCompleted(new Set());
     setHeight(0);
-    setImageError('');
+    setImageProblem(null);
     setShareError('');
     setSaved(false);
   };
   const exportImage = async (action: 'share' | 'save') => {
-    if (!ready) return;
     const run = capture.claim(action);
     if (!run) return;
     setShareError('');
-    const { abort } = run;
     let uri: string | undefined;
     let release: (() => void) | undefined;
     try {
@@ -381,7 +475,7 @@ export function TopicShareSheet({
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
       if (!capture.canCapture(run)) return;
       if (Platform.OS === 'android') {
-        const captured = await captureLongTopicImage(scrollRef.current, abort.signal);
+        const captured = await captureLongTopicImage(scrollRef.current, run.signal);
         uri = captured.uri;
         release = captured.release;
       } else {
@@ -405,7 +499,10 @@ export function TopicShareSheet({
         await imageSave.saveLocalImageFileToLibrary(uri, () => {
           if (!capture.owns(run)) throw new Error('图片保存已取消');
         });
-        if (capture.owns(run)) setSaved(true);
+        if (capture.owns(run)) {
+          setSaved(true);
+          AccessibilityInfo.announceForAccessibility('已保存到相册');
+        }
       }
     } catch (cause) {
       if (capture.owns(run)) setShareError(`${action === 'share' ? '分享' : '保存'}失败：${errorMessage(cause)}`);
@@ -434,7 +531,7 @@ export function TopicShareSheet({
               <Text accessibilityRole="header" style={styles.heading}>
                 正文长图
               </Text>
-              <Text style={styles.subtitle}>完整主帖{imageCount ? ` · ${imageCount} 张图片` : ''}</Text>
+              {imageCount ? <Text style={styles.subtitle}>{imageCount} 张图片</Text> : null}
             </View>
             {onBack ? (
               <IconButton icon={X} label="关闭" iconOnly ghost onPress={close} />
@@ -487,58 +584,47 @@ export function TopicShareSheet({
                   </View>
                 </ScrollView>
               ) : null}
+              {!error && !shareError && !ready ? (
+                <View pointerEvents="none" style={styles.statusOverlay}>
+                  <ActivityIndicator accessible={false} size={15} color={theme.primary} />
+                  <Text accessibilityLiveRegion="polite" style={styles.status}>
+                    {imageCount ? `加载图片 ${completed.size}/${imageCount}` : '生成预览中'}
+                  </Text>
+                </View>
+              ) : null}
             </View>
           </NavigationBackdropTarget>
           <View testID="topic-share-actions" style={styles.actions}>
             {error || shareError ? (
-              <Text accessibilityRole="alert" style={styles.error}>
-                {error || shareError}
-              </Text>
-            ) : null}
-            {imageError && !tooLarge ? <AppButton label="重新加载图片" onPress={retry} /> : null}
-            {!error && !shareError ? (
-              <View style={styles.statusRow}>
-                {!ready || operation ? (
-                  <ActivityIndicator accessible={false} size="small" color={theme.primary} />
-                ) : null}
-                <Text accessibilityLiveRegion="polite" style={[styles.status, saved && styles.success]}>
-                  {operation === 'save'
-                    ? '正在保存…'
-                    : operation === 'share'
-                      ? '正在准备分享…'
-                      : !ready
-                        ? imageCount
-                          ? `正在加载图片 ${completed.size}/${imageCount}`
-                          : '正在排版…'
-                        : saved
-                          ? '已保存到相册'
-                          : '上下滑动预览，导出包含完整正文'}
+              <View style={styles.errorRow}>
+                <Text accessibilityRole="alert" style={styles.error}>
+                  {error || shareError}
                 </Text>
+                {imageError && !tooLarge ? <AppButton compact label="重新加载图片" onPress={retry} /> : null}
               </View>
             ) : null}
             <View style={[styles.actionRow, stackActions && styles.stackedActions]}>
-              <Button
-                mode="outlined"
-                icon={({ color, size }) => <Download color={color} size={size} />}
-                style={[styles.actionButton, stackActions && styles.stackedButton]}
-                contentStyle={styles.buttonContent}
-                labelStyle={styles.buttonLabel}
-                disabled={!ready || operation !== null || saved}
-                onPress={() => void exportImage('save')}
-              >
-                保存到相册
-              </Button>
-              <Button
-                mode="contained"
-                icon={({ color, size }) => <Share2 color={color} size={size} />}
-                style={[styles.actionButton, stackActions && styles.stackedButton]}
-                contentStyle={styles.buttonContent}
-                labelStyle={styles.buttonLabel}
-                disabled={!ready || operation !== null}
-                onPress={() => void exportImage('share')}
-              >
-                分享图片
-              </Button>
+              <View style={[styles.actionSlot, stackActions && styles.stackedButton]}>
+                <AppButton
+                  accessibilityLabel={saved ? '已保存到相册' : '保存到相册'}
+                  icon={saved ? Check : Download}
+                  label={operation === 'save' ? '保存中' : saved ? '已保存到相册' : '保存到相册'}
+                  loading={operation === 'save'}
+                  disabled={!ready || operation !== null || saved}
+                  onPress={() => void exportImage('save')}
+                />
+              </View>
+              <View style={[styles.actionSlot, stackActions && styles.stackedButton]}>
+                <AppButton
+                  accessibilityLabel="分享图片"
+                  variant="solid"
+                  icon={Share2}
+                  label={operation === 'share' ? '准备中' : '分享图片'}
+                  loading={operation === 'share'}
+                  disabled={!ready || operation !== null}
+                  onPress={() => void exportImage('share')}
+                />
+              </View>
             </View>
           </View>
         </SafeAreaView>
@@ -549,6 +635,7 @@ export function TopicShareSheet({
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const font = createReaderFontSizer(settings);
+  const fontFamily = fontFamilyValue(settings.fontFamily);
   return StyleSheet.create({
     root: { flex: 1, backgroundColor: theme.surface },
     toolbar: {
@@ -560,16 +647,17 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       gap: 8
     },
     headingGroup: { flex: 1, gap: 2, alignItems: 'center' },
-    heading: { color: theme.ink, fontSize: font(17), fontWeight: '600' },
-    subtitle: { color: theme.muted, fontSize: font(12) },
+    heading: { fontFamily, color: theme.ink, fontSize: font(17), fontWeight: '600' },
+    subtitle: { fontFamily, color: theme.muted, fontSize: font(12) },
     headerSpacer: { width: 48 },
     preview: { flex: 1, backgroundColor: theme.background, paddingVertical: 16 },
     paper: { flex: 1, alignSelf: 'center', borderRadius: readerRadii.surface, backgroundColor: '#ffffff' },
     card: { padding: 24, backgroundColor: '#ffffff' },
     brandRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
-    brand: { fontSize: font(12), fontWeight: '700', color: '#65717b', letterSpacing: 2 },
-    source: { color: '#52606c', fontSize: font(13), lineHeight: font(20) },
+    brand: { fontFamily, fontSize: font(12), fontWeight: '700', color: '#65717b', letterSpacing: 2 },
+    source: { fontFamily, color: '#52606c', fontSize: font(13), lineHeight: font(20) },
     title: {
+      fontFamily,
       color: '#20252b',
       fontSize: font(22),
       fontWeight: '700',
@@ -577,9 +665,9 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       marginTop: 16,
       marginBottom: 10
     },
-    date: { color: '#65717b', fontSize: font(12), lineHeight: font(19), marginBottom: 24 },
+    date: { fontFamily, color: '#65717b', fontSize: font(12), lineHeight: font(19), marginBottom: 24 },
     footer: { marginTop: 20, borderTopWidth: 1, borderTopColor: '#e3e7eb', paddingTop: 16, gap: 6 },
-    link: { color: '#285f86', fontSize: font(12), lineHeight: font(18) },
+    link: { fontFamily, color: '#285f86', fontSize: font(12), lineHeight: font(18) },
     actions: {
       paddingHorizontal: 16,
       paddingTop: 12,
@@ -590,13 +678,31 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     },
     actionRow: { flexDirection: 'row', gap: 12 },
     stackedActions: { flexDirection: 'column' },
-    actionButton: { flex: 1, borderRadius: readerRadii.control },
+    actionSlot: { flex: 1 },
     stackedButton: { flex: 0 },
-    buttonContent: { minHeight: 48 },
-    buttonLabel: { fontSize: font(14) },
-    statusRow: { flexDirection: 'row', gap: 8, justifyContent: 'center', alignItems: 'center', minHeight: 22 },
-    status: { flexShrink: 1, color: theme.muted, fontSize: font(12), lineHeight: font(18) },
-    success: { color: theme.success },
-    error: { color: theme.danger, fontSize: font(13), lineHeight: font(19) }
+    errorRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' },
+    statusOverlay: {
+      position: 'absolute',
+      bottom: 16,
+      alignSelf: 'center',
+      flexDirection: 'row',
+      gap: 8,
+      alignItems: 'center',
+      backgroundColor: theme.surface,
+      borderColor: theme.line,
+      borderRadius: readerRadii.pill,
+      borderWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 12,
+      paddingVertical: 6
+    },
+    status: {
+      flexShrink: 1,
+      fontFamily,
+      color: theme.muted,
+      fontSize: font(12),
+      lineHeight: font(18),
+      fontVariant: ['tabular-nums']
+    },
+    error: { flex: 1, fontFamily, color: theme.danger, fontSize: font(13), lineHeight: font(19) }
   });
 }

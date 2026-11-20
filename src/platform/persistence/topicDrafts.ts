@@ -2,6 +2,7 @@ import { createSqliteExecutor } from '@/platform/storage/sqliteExecutor';
 import { openDatabaseAsync, type SQLiteDatabase } from 'expo-sqlite';
 import { z } from 'zod';
 import {
+  applyTopicEditReceipt,
   topicDraftTarget,
   topicSubmissionWithReceipt,
   type TopicSubmissionReceipt,
@@ -26,7 +27,12 @@ const editableFieldsSchema = z.object({
 const targetSchema = z.string().regex(/^(create|edit:\d+)$/);
 const draftBase = {
   edit: z
-    .object({ topicId: z.string().regex(/^\d+$/), postId: counter.optional(), original: editableFieldsSchema })
+    .object({
+      topicId: z.string().regex(/^\d+$/),
+      postId: counter.optional(),
+      original: editableFieldsSchema,
+      confirmedAttemptId: identifier.optional()
+    })
     .optional(),
   additionalReward: z.string().optional(),
   id: identifier,
@@ -97,18 +103,26 @@ const resultSchema = z.object({
   message: z.string(),
   topic: z.object({ id: identifier, source: sourceSchema, title: z.string() }).passthrough().optional()
 });
-const attemptSchema = z.object({
-  target: targetSchema.optional(),
-  confirmed: editableFieldsSchema.partial().optional(),
-  id: identifier,
-  source: sourceSchema,
-  identityKey: identifier,
-  draftId: identifier,
-  revision: counter,
-  startedAt: counter,
-  status: z.enum(['sending', 'posted', 'enqueued', 'rejected', 'unknown', 'saved', 'partial', 'conflict']),
-  result: resultSchema.optional()
-});
+const attemptSchema = z
+  .object({
+    canResumeRemovedDraft: z.literal(true).optional(),
+    canResumeRemovedEdit: z.literal(true).optional(),
+    additionalReward: z.string().optional(),
+    target: targetSchema.optional(),
+    confirmed: editableFieldsSchema.partial().optional(),
+    normalizedFrom: editableFieldsSchema.partial().optional(),
+    id: identifier,
+    source: sourceSchema,
+    identityKey: identifier,
+    draftId: identifier,
+    revision: counter,
+    startedAt: counter,
+    status: z.enum(['sending', 'posted', 'enqueued', 'rejected', 'unknown', 'saved', 'partial', 'conflict']),
+    result: resultSchema.optional()
+  })
+  .transform(({ canResumeRemovedEdit, ...value }) =>
+    canResumeRemovedEdit ? { ...value, canResumeRemovedDraft: true as const } : value
+  );
 
 const schema = `
 CREATE TABLE topic_drafts (source TEXT NOT NULL, identity_key TEXT NOT NULL, target TEXT NOT NULL, payload TEXT NOT NULL,
@@ -278,7 +292,11 @@ export function loadTopicDraft(source: TopicCreationSource, identityKey: string,
   return enqueue(async () => read(await database(), 'topic_drafts', source, identityKey, target));
 }
 
-export function saveTopicDraft(draft: TopicDraft) {
+export function saveTopicDraft(
+  draft: TopicDraft,
+  expectedRevision: number | null = null,
+  completedSubmissionId?: string
+) {
   // Capture before entering the asynchronous queue; callers may keep editing their in-memory object.
   const saved = draftSchema.parse(draft);
   account(saved.source, saved.identityKey);
@@ -294,8 +312,42 @@ export function saveTopicDraft(draft: TopicDraft) {
         target,
         saved.id
       );
-      if (discarded || (previous && (previous.id !== saved.id || previous.revision > saved.revision))) return false;
-      if (previous?.revision === saved.revision) return JSON.stringify(previous) === JSON.stringify(saved);
+      const receipt = !previous
+        ? await read(db, 'topic_submission_attempts', saved.source, saved.identityKey, target)
+        : null;
+      if (discarded) {
+        if (previous || !completedSubmissionId || expectedRevision === null || saved.revision <= expectedRevision)
+          return false;
+        if (
+          !receipt ||
+          !['saved', 'posted', 'enqueued'].includes(receipt.status) ||
+          !receipt.canResumeRemovedDraft ||
+          receipt.id !== completedSubmissionId ||
+          receipt.draftId !== saved.id ||
+          receipt.revision !== expectedRevision
+        )
+          return false;
+        await db.runAsync(
+          'DELETE FROM discarded_topic_drafts WHERE source=? AND identity_key=? AND target=? AND draft_id=?',
+          saved.source,
+          saved.identityKey,
+          target,
+          saved.id
+        );
+      } else {
+        if (previous && (previous.id !== saved.id || previous.revision > saved.revision)) return false;
+        if (previous?.revision === saved.revision) return JSON.stringify(previous) === JSON.stringify(saved);
+        if ((previous?.revision ?? null) !== expectedRevision) return false;
+      }
+      // Once a writer claims the empty target, an old receipt cannot restore it after a later discard.
+      if (receipt?.canResumeRemovedDraft)
+        await db.runAsync(
+          'UPDATE topic_submission_attempts SET payload=? WHERE source=? AND identity_key=? AND target=?',
+          JSON.stringify({ ...receipt, canResumeRemovedDraft: undefined }),
+          saved.source,
+          saved.identityKey,
+          target
+        );
       await db.runAsync(
         'INSERT INTO topic_drafts VALUES (?, ?, ?, ?) ON CONFLICT(source, identity_key, target) DO UPDATE SET payload=excluded.payload',
         saved.source,
@@ -356,6 +408,8 @@ export function beginTopicSubmissionAttempt(attempt: TopicSubmissionAttempt) {
       const draft = await read(db, 'topic_drafts', saved.source, saved.identityKey, saved.target || 'create');
       if (!draft || draft.id !== saved.draftId || draft.revision !== saved.revision)
         throw new Error('草稿已变化或尚未保存，请重试。');
+      if (previous && applyTopicEditReceipt(draft, previous) !== draft)
+        throw new Error('另一页刚保存了修改，请重新核对当前草稿后再保存。');
       await db.runAsync(
         'INSERT INTO topic_submission_attempts VALUES (?, ?, ?, ?) ON CONFLICT(source, identity_key, target) DO UPDATE SET payload=excluded.payload',
         saved.source,
@@ -366,6 +420,10 @@ export function beginTopicSubmissionAttempt(attempt: TopicSubmissionAttempt) {
     });
     activeAttempts.add(attemptKey(saved));
   });
+}
+
+function submissionCompleted(status: TopicSubmissionAttempt['status']) {
+  return status === 'posted' || status === 'enqueued' || status === 'saved';
 }
 
 export function settleTopicSubmissionAttempt(
@@ -392,15 +450,22 @@ export function settleTopicSubmissionAttempt(
         previous.revision !== attempt.revision
       )
         return false;
-      if (previous.status === 'posted' || previous.status === 'enqueued' || previous.status === 'saved') return false;
       if (
-        previous.status !== 'sending' &&
-        savedResult.status !== 'posted' &&
-        savedResult.status !== 'enqueued' &&
-        savedResult.status !== 'saved'
+        submissionCompleted(previous.status) ||
+        (previous.status !== 'sending' && !submissionCompleted(savedResult.status))
       )
         return false;
-      const updated = topicSubmissionWithReceipt(previous, savedResult);
+      const updated = topicSubmissionWithReceipt(
+        { ...previous, ...(attempt.normalizedFrom ? { normalizedFrom: attempt.normalizedFrom } : {}) },
+        savedResult
+      );
+      if (submissionCompleted(savedResult.status)) {
+        const draft = await read(db, 'topic_drafts', attempt.source, attempt.identityKey, attempt.target || 'create');
+        if (draft?.id === attempt.draftId && draft.revision === attempt.revision) {
+          await removeDraft(db, draft);
+          updated.canResumeRemovedDraft = true;
+        }
+      }
       await db.runAsync(
         'UPDATE topic_submission_attempts SET payload=? WHERE source=? AND identity_key=? AND target=?',
         JSON.stringify(updated),
@@ -408,10 +473,6 @@ export function settleTopicSubmissionAttempt(
         attempt.identityKey,
         attempt.target || 'create'
       );
-      if (savedResult.status === 'posted' || savedResult.status === 'enqueued' || savedResult.status === 'saved') {
-        const draft = await read(db, 'topic_drafts', attempt.source, attempt.identityKey, attempt.target || 'create');
-        if (draft?.id === attempt.draftId && draft.revision === attempt.revision) await removeDraft(db, draft);
-      }
       return true;
     });
     return settled;
@@ -434,6 +495,7 @@ export function acknowledgeTopicSubmissionAttempt(
       const attempt = await read(db, 'topic_submission_attempts', source, identityKey, target);
       if (!attempt || attempt.id !== attemptId) return false;
       if (activeAttempts.has(attemptKey(attempt))) throw new Error('发布仍在进行中，请等待结果。');
+      if (submissionCompleted(attempt.status)) return false;
       await db.runAsync(
         'DELETE FROM topic_submission_attempts WHERE source=? AND identity_key=? AND target=?',
         source,
@@ -445,7 +507,11 @@ export function acknowledgeTopicSubmissionAttempt(
   });
 }
 
-export function checkpointTopicEdit(attempt: TopicSubmissionAttempt, confirmed: Partial<TopicEditableFields>) {
+export function checkpointTopicEdit(
+  attempt: TopicSubmissionAttempt,
+  confirmed: Partial<TopicEditableFields>,
+  normalizedFrom?: Partial<TopicEditableFields>
+) {
   const fields = editableFieldsSchema.partial().parse(confirmed);
   return enqueue(async () => {
     const db = await database();
@@ -455,7 +521,7 @@ export function checkpointTopicEdit(attempt: TopicSubmissionAttempt, confirmed: 
         throw new Error('保存记录已变化，请先核对原站');
       await db.runAsync(
         'UPDATE topic_submission_attempts SET payload=? WHERE source=? AND identity_key=? AND target=?',
-        JSON.stringify({ ...current, confirmed: fields }),
+        JSON.stringify({ ...current, confirmed: fields, normalizedFrom }),
         attempt.source,
         attempt.identityKey,
         attempt.target || 'create'

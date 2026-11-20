@@ -63,6 +63,7 @@ type RestoredAccountRecords = {
 type AccountRestoreRun = { owner: AbortSignal; promise: Promise<void>; cancel: () => void };
 type AccountRestoreState =
   | { kind: 'reading'; records: RestoredAccountRecords | null }
+  | { kind: 'failed'; records: null }
   | { kind: 'loaded'; records: RestoredAccountRecords }
   | { kind: 'restoring' | 'ready'; records: RestoredAccountRecords; run: AccountRestoreRun };
 
@@ -162,6 +163,14 @@ export function useAccountStatusController({
   const restoreRef = useRef<AccountRestoreState>({ kind: 'reading', records: null });
   // React receives records and ready; synchronous admission stays with the owned restore.
   const [restoreState, setRestoreState] = useState(restoreRef.current);
+  const [restoreAttempt, setRestoreAttempt] = useState(0);
+  const retryStoredAccounts = useCallback(() => {
+    if (restoreRef.current.kind !== 'failed') return;
+    const reading: AccountRestoreState = { kind: 'reading', records: null };
+    restoreRef.current = reading;
+    setRestoreState(reading);
+    setRestoreAttempt((attempt) => attempt + 1);
+  }, []);
   const hydrated = restoreState.kind === 'ready';
   const settleAccountSessionHandoff = useCallback(
     (source: StatusSource, error?: string) => {
@@ -238,17 +247,15 @@ export function useAccountStatusController({
       if (owner.aborted || !enabledSourcesRef.current.has(event.site)) return false;
       const terminalEvent = eventConfirmsTerminalIdentity(event);
       if (terminalEvent) supersedeProbe(event.site);
-      const { next, previous } = commitAccountSnapshot(event.site, (current) => {
-        const updated = accountSessionSnapshotFromEvent(current, event);
-        if (event.type === 'cleared') delete updated.handoffPending;
-        return updated;
-      });
+      const { next, previous } = commitAccountSnapshot(event.site, (current) =>
+        accountSessionSnapshotFromEvent(current, event)
+      );
       if (accountSessionIdentityKey(previous) !== accountSessionIdentityKey(next)) {
         onAccountStatusChanged(event.site);
       }
       if (terminalEvent && (next.identityTrust === 'confirmed' || next.identityTrust === 'none')) {
         const generation = probesRef.current[event.site].generation;
-        void saveAccountSessionSnapshot(next, event.type === 'cleared' ? () => true : undefined).catch(() => {
+        void saveAccountSessionSnapshot(next).catch(() => {
           if (
             owner.aborted ||
             lifetimeRef.current.signal !== owner ||
@@ -373,13 +380,17 @@ export function useAccountStatusController({
             await options.beforeProbe();
             if (!isCurrent()) return stale();
           }
-          const observation = await readAccountStatus(source, {
-            fetcher: withDiagnosticFetcher(trace, rejectUnauthorizedResponse(fetcher)),
-            linuxDoUserAgent: getLinuxDoUserAgent(),
-            nodeSeekUserAgent: getNodeSeekUserAgent(),
-            readManagedCookieHeader,
-            signal: controller.signal
-          });
+          const observation = await withAbortableTimeout(
+            (signal) =>
+              readAccountStatus(source, {
+                fetcher: withDiagnosticFetcher(trace, rejectUnauthorizedResponse(fetcher)),
+                linuxDoUserAgent: getLinuxDoUserAgent(),
+                nodeSeekUserAgent: getNodeSeekUserAgent(),
+                readManagedCookieHeader,
+                signal
+              }),
+            { signal: controller.signal }
+          );
           if (!isCurrent()) return stale();
           markDiagnosticStage(trace, 'parse', { source, hasDegradation: observation.failed === true });
           const previous =
@@ -508,15 +519,17 @@ export function useAccountStatusController({
         restoreRef.current = loaded;
         setRestoreState(loaded);
       })
-      .catch((error) => {
+      .catch(() => {
         if (owner.aborted || lifetimeRef.current.signal !== owner) return;
         finishDiagnosticTrace(trace, 'failure', { reason: 'storage_error' });
-        throw error;
+        const failed: AccountRestoreState = { kind: 'failed', records: null };
+        restoreRef.current = failed;
+        setRestoreState(failed);
       });
     return () => {
       finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
     };
-  }, []);
+  }, [restoreAttempt]);
 
   useEffect(() => {
     const restore = restoreRef.current;
@@ -568,65 +581,59 @@ export function useAccountStatusController({
           migrationTrace = beginDiagnosticTrace('session', 'account-migration', {
             parentTraceId: restoreTrace.traceId
           });
-          const candidates = (
-            await Promise.all(
-              [...enabledSourcesRef.current].map(async (source) => {
-                try {
+          const trace = migrationTrace;
+          let candidateCount = 0;
+          const ownedProbes: { source: StatusSource; promise: Promise<AccountReconcileResult> }[] = [];
+          await withAbortableTimeout(
+            (signal) =>
+              Promise.all(
+                [...enabledSourcesRef.current].map(async (source) => {
                   const url =
                     source === 'nodeseek'
                       ? NODESEEK_ACCOUNT_STATUS_URL
                       : source === 'linuxdo'
                         ? LINUXDO_ACCOUNT_STATUS_URL
                         : YAOHUO_ACCOUNT_STATUS_URL;
-                  const result = await restoreCommands.current.readManagedCookieHeader(url);
-                  if (!isCurrent()) return null;
-                  markDiagnosticStage(migrationTrace!, 'credential', {
-                    source,
-                    state: result.status === 'ok' ? 'complete' : 'failed',
-                    hasCookie: result.status === 'ok' && !!result.header.trim()
-                  });
-                  if (result.status !== 'ok')
-                    degradeRestore({ reason: result.status === 'unsupported' ? 'unsupported' : 'storage_error' });
-                  return result.status === 'ok' && result.header.trim() ? source : null;
-                } catch (error) {
-                  if (!isCurrent()) return null;
-                  markDiagnosticStage(migrationTrace!, 'credential', {
-                    source,
-                    state: 'failed',
-                    reason: normalizeDiagnosticReason(error)
-                  });
-                  degradeRestore({ reason: normalizeDiagnosticReason(error) });
-                  return null;
-                }
-              })
-            )
-          ).filter((source): source is StatusSource => source !== null);
-          if (!isCurrent()) return;
-          markDiagnosticStage(migrationTrace, 'guard', { candidateCount: candidates.length });
-          let migrationProbes: Promise<AccountReconcileResult[]> = Promise.resolve([]);
-          const ownedProbes: { source: StatusSource; promise: Promise<AccountReconcileResult> }[] = [];
-          await withAbortableTimeout(
-            (signal) => {
-              migrationProbes = Promise.all(
-                candidates.map((source) => {
+                  try {
+                    const result = await withAbortableTimeout(
+                      () => restoreCommands.current.readManagedCookieHeader(url),
+                      { signal }
+                    );
+                    if (!isCurrent() || signal.aborted) return null;
+                    const hasCookie = result.status === 'ok' && !!result.header.trim();
+                    markDiagnosticStage(trace, 'credential', {
+                      source,
+                      state: result.status === 'ok' ? 'complete' : 'failed',
+                      hasCookie
+                    });
+                    if (result.status !== 'ok')
+                      degradeRestore({ reason: result.status === 'unsupported' ? 'unsupported' : 'storage_error' });
+                    if (!hasCookie) return null;
+                  } catch (error) {
+                    if (!isCurrent() || signal.aborted) return null;
+                    const reason = normalizeDiagnosticReason(error);
+                    markDiagnosticStage(trace, 'credential', { source, state: 'failed', reason });
+                    degradeRestore({ reason });
+                    return null;
+                  }
+                  candidateCount += 1;
                   const previous = probesRef.current[source];
                   const promise = restoreCommands.current.reconcileAccountStatus(source, { signal });
                   if (previous.kind === 'idle' || previous.promise !== promise) ownedProbes.push({ source, promise });
                   return promise;
                 })
-              );
-              return migrationProbes;
-            },
+              ),
             { signal: owner, timeoutMs: ACCOUNT_SESSION_MIGRATION_TIMEOUT_MS }
           )
             .then((results) => {
               if (!isCurrent()) return;
               const failures = results.filter(
-                (result) =>
-                  result.status === 'unknown' ||
-                  result.status === 'stale' ||
-                  ('partial' in result && result.partial) ||
-                  persistenceFailedResultsRef.current.has(result)
+                (result): result is AccountReconcileResult =>
+                  result !== null &&
+                  (result.status === 'unknown' ||
+                    result.status === 'stale' ||
+                    ('partial' in result && result.partial) ||
+                    persistenceFailedResultsRef.current.has(result))
               );
               if (failures.length)
                 degradeRestore({
@@ -645,7 +652,7 @@ export function useAccountStatusController({
                 supersedeProbe(source);
                 commitAccountSnapshot(source, (snapshot) => ({ ...snapshot, isVerifying: false }));
               }
-              await migrationProbes.catch(() => undefined);
+              await Promise.allSettled(ownedProbes.map(({ promise }) => promise));
             });
           if (!isCurrent()) return;
           markDiagnosticStage(migrationTrace, 'persist', { state: 'started' });
@@ -653,7 +660,7 @@ export function useAccountStatusController({
             if (isCurrent()) degradeRestore({ reason: 'storage_error' });
           });
           if (!isCurrent()) return;
-          finishDiagnosticTrace(migrationTrace, 'success', { state: 'complete', candidateCount: candidates.length });
+          finishDiagnosticTrace(migrationTrace, 'success', { state: 'complete', candidateCount });
           finishDiagnosticTrace(restoreTrace, 'success', { state: 'restored', itemCount: restoredCount });
         } catch (error) {
           if (!isCurrent()) return;
@@ -739,6 +746,8 @@ export function useAccountStatusController({
     interruptedSources,
     reconcileAccountStatus,
     refreshAccountStatus,
+    restoreFailed: restoreState.kind === 'failed',
+    retryStoredAccounts,
     statusBusy,
     settleAccountSessionHandoff
   };

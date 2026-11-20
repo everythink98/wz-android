@@ -58,6 +58,18 @@ describe('quoted post contract', () => {
   });
 
   it.each([
+    { attribute: ' data-display-name="山月"', title: 'alice:', label: '山月' },
+    { attribute: '', title: '山 月：', label: '山 月' }
+  ])('keeps the quoted display name "$label" separate from its account', ({ attribute, title, label }) => {
+    const root = parseForumContentHtml(
+      `<aside class="quote" data-topic="42" data-post="2" data-username="alice"${attribute}>` +
+        `<div class="title"><img src="/user_avatar/linux.do/alice/48/1.png">${title}</div></aside>`
+    );
+    const node = root.querySelector('aside')!;
+    expect(discourseQuotedPostMetadataFromNode(node, 'linuxdo')?.author).toMatchObject({ label, username: 'alice' });
+  });
+
+  it.each([
     { topicLink: '', topicTitle: undefined, topicUrl: undefined },
     {
       topicLink: '<a href="https://linux.do/t/topic/42">HTTP: topic title</a>',

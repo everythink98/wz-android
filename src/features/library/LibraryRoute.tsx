@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   StackActions,
+  useFocusEffect,
   useIsFocused,
   useNavigation,
   useRoute,
@@ -9,6 +10,7 @@ import {
 } from '@react-navigation/native';
 import type { FlashListRef } from '@shopify/flash-list';
 import type { Topic, UserReference, FeedSource } from '@/domain/forum/models';
+import { sourceValues } from '@/domain/forum/sourceCatalog';
 import type { LibraryTab } from '@/domain/forum/feed';
 
 import { normalizeUserReference } from '@/domain/forum/userNavigation';
@@ -20,7 +22,7 @@ import type { LibraryListItem } from './libraryScreenItems';
 import { LibraryScreen } from './LibraryScreen';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { queryReaderCategories, queryReaderPage } from '@/platform/storage/readerDataStore';
-import type { ReaderPageRequest } from '@/domain/reader/readerRecordState';
+import type { ReaderCommand, ReaderPageRequest } from '@/domain/reader/readerRecordState';
 
 import { useReaderDataActionsController } from './useReaderDataActionsController';
 import { useLibraryRouteRuntime } from './LibraryRouteRuntime';
@@ -31,7 +33,13 @@ export { LibraryRouteRuntimeProvider, type LibraryRouteRuntimeValue } from './Li
 
 function useCollectionPages(request: Omit<ReaderPageRequest, 'after'>, enabled: boolean) {
   const query = useInfiniteQuery({
-    queryKey: ['reader-library', request.collection, request.sources.join('|'), request.source, request.category],
+    queryKey: [
+      'reader-library',
+      request.collection,
+      request.sources.slice().sort().join('|'),
+      request.source,
+      request.category
+    ],
     enabled,
     initialPageParam: undefined as ReaderPageRequest['after'],
     queryFn: ({ pageParam }) => queryReaderPage({ ...request, after: pageParam }),
@@ -48,11 +56,28 @@ export function LibraryRoute() {
   const active = useIsFocused();
   const navigation = useNavigation();
   const route = useRoute<RouteProp<RootStackParamList, 'Library'>>();
+  const focusOwner = useRef<symbol | null>(null);
+  useFocusEffect(
+    useCallback(() => {
+      focusOwner.current = Symbol();
+      return () => {
+        focusOwner.current = null;
+      };
+    }, [])
+  );
+  const getFocusOwner = useCallback(() => (navigation.isFocused() ? focusOwner.current : null), [navigation]);
   const listRef = useRef<FlashListRef<FollowedUserRecord | LibraryListItem> | null>(null);
   useScrollToTop(listRef);
   const [libraryTab, setLibraryTab] = useState<LibraryTab>(route.params?.initialTab ?? 'favorites');
+  const commit = runtime.reader.commit;
+  const commitReaderData = useCallback(
+    (command: ReaderCommand) => {
+      if (getFocusOwner()) commit(command);
+    },
+    [commit, getFocusOwner]
+  );
   const actions = useReaderDataActionsController({
-    commitReaderData: runtime.reader.commit,
+    commitReaderData,
     readerDataRef: runtime.reader.dataRef
   });
   const [sourceFilter, setSourceFilter] = useState<FeedSource>('all');
@@ -95,6 +120,15 @@ export function LibraryRoute() {
     active && runtime.reader.loaded && collection === 'followedUsers'
   );
   const { query: pages, records } = libraryTab === 'favorites' ? favorites : libraryTab === 'history' ? history : users;
+  const { history: historyKeys, counts } = runtime.reader.data;
+  const historyCountToClear = useMemo(() => {
+    if (libraryTab !== 'history' || !counts.history || !runtime.enabledSources.length) return 0;
+    if (runtime.enabledSources.length === sourceValues.length) return counts.history;
+    for (const key in historyKeys) {
+      if (runtime.enabledSources.some((source) => key.startsWith(`${source}:`))) return counts.history;
+    }
+    return 0;
+  }, [libraryTab, counts.history, runtime.enabledSources, historyKeys]);
   const currentTabRef = useCommittedRef(active ? libraryTab : undefined);
   const readingAttempts = useRef(new Set<string>());
   const readingScope = runtime.readingGateway?.reading?.scope();
@@ -132,10 +166,12 @@ export function LibraryRoute() {
   );
   const loadMore = useLatestCallback((tab: LibraryTab) => {
     if (tab !== libraryTab || currentTabRef.current !== tab) return;
-    if (pages.hasNextPage && !pages.isFetching) void pages.fetchNextPage();
+    if (pages.hasNextPage && !pages.isFetching && !pages.isError) void pages.fetchNextPage({ cancelRefetch: false });
   });
   const retry = useLatestCallback(() => {
-    void pages.refetch();
+    if (!active || pages.isFetching) return;
+    if (pages.isFetchNextPageError) void pages.fetchNextPage({ cancelRefetch: false });
+    else void pages.refetch({ cancelRefetch: false });
   });
   const openTopic = useCallback(
     (topic: Topic) => dispatchFocusedRoute(navigation, StackActions.push('Topic', { topic })),
@@ -160,6 +196,7 @@ export function LibraryRoute() {
   return (
     <LibraryScreen
       active={active}
+      getFocusOwner={getFocusOwner}
       categories={categories}
       categoriesReady={categoryQuery.data !== undefined && !categoryQuery.isPlaceholderData}
       onRetryCategories={categoryQuery.isError ? retryCategories : undefined}
@@ -168,13 +205,13 @@ export function LibraryRoute() {
       followedUsers={followedUsers}
       historyRecords={historyRecords}
       libraryTab={libraryTab}
-      loaded={runtime.reader.loaded && !pages.isPending}
+      loaded={runtime.reader.loaded && Boolean(pages.data)}
+      loadingMore={pages.isFetchingNextPage}
       sourceFilter={sourceFilter}
       categoryFilter={categoryFilter}
       onSourceFilter={setSourceFilter}
       onCategoryFilter={setCategoryFilter}
-      total={pages.data?.pages[0]?.total ?? 0}
-      visibleTotal={pages.data?.pages[0]?.visibleTotal ?? 0}
+      historyCountToClear={historyCountToClear}
       error={pages.isError}
       onRetry={retry}
       onLoadMore={loadMore}

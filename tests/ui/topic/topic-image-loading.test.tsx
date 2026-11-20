@@ -27,6 +27,14 @@ afterEach(() => setDiagnosticWriter(null));
 import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
 import { cachedImageDisplayDimensions } from '@/platform/media/imageDisplayDimensions';
 import {
+  imagePreviewItemAt,
+  imagePreviewListFromCatalog,
+  prepareImagePreviewCatalog,
+  projectImagePreviewCatalog,
+  type ImagePreviewItem,
+  type OpenImagePreview
+} from '@/platform/media/imagePreviewCatalog';
+import {
   FORUM_FLOW_IMAGE_CONTEXT_ATTRIBUTE,
   FORUM_STICKER_TAG,
   INLINE_FORUM_IMAGE_TAG
@@ -378,12 +386,7 @@ function TopicImageHarness({
   continuation?: 'only' | 'first' | 'middle' | 'last';
   mediaReferrer?: MediaReferrerContext;
   mediaSessionIdentity?: string;
-  onOpenImagePreview?: (
-    url: string,
-    displaySize?: { height: number; width: number },
-    displayedUri?: string,
-    referrerPolicy?: MediaReferrerPolicy
-  ) => void;
+  onOpenImagePreview?: OpenImagePreview;
   originalImageUpgradeEnabled?: boolean;
   rendererKey?: string;
   textAlign?: 'center' | 'right';
@@ -2294,6 +2297,50 @@ describe('topic block image loading', () => {
     );
   });
 
+  it('opens the tapped original when different topic images share one display thumbnail', async () => {
+    const display = 'https://images.example.com/card-thumbnail.png';
+    const first = 'https://images.example.com/image-first.png';
+    const second = 'https://images.example.com/image-second.png';
+    const content = [
+      `<p><img src="${display}" data-original="${first}" alt="第一张" width="320" height="240"></p>`,
+      `<p><img src="${display}" data-original="${second}" alt="第二张" width="320" height="240"></p>`
+    ].join('');
+    const compiled = compileForumContent({
+      html: sanitizeContentHtml(content, 'https://linux.do/t/123'),
+      role: 'opening',
+      source: 'linuxdo'
+    });
+    const catalog = projectImagePreviewCatalog(prepareImagePreviewCatalog(compiled.previewImages, 320, 2));
+    expect(catalog.items.map((item) => item.originalUri)).toEqual([first, second]);
+    let selected: ImagePreviewItem | undefined;
+    const imageAttributes = compiled.rows
+      .flatMap((row) => ('html' in row ? parseForumContentHtml(row.html).querySelectorAll('img') : []))
+      .map((element) => element.attributes);
+    const view = await render(
+      <>
+        {imageAttributes.map((attributes) => (
+          <TopicImageHarness
+            attributes={attributes}
+            key={attributes.alt}
+            onOpenImagePreview={(url, size, _poster, policy, original) => {
+              const preview = imagePreviewListFromCatalog(catalog, url, 'linuxdo', size, policy, original);
+              selected = imagePreviewItemAt(preview, preview.index);
+            }}
+            topicSource="linuxdo"
+          />
+        ))}
+      </>
+    );
+    try {
+      await fireEvent.press(view.getAllByLabelText('测试图片')[0]);
+      expect(selected).toMatchObject({ displayUri: display, originalUri: first });
+      await fireEvent.press(view.getAllByLabelText('测试图片')[1]);
+      expect(selected).toMatchObject({ displayUri: display, originalUri: second });
+    } finally {
+      await view.unmount();
+    }
+  });
+
   it('raises a tapped original to high priority and keeps the display image on background failure', async () => {
     const displayUrl = 'https://img.example.com/failure-display.png';
     const originalUrl = 'https://img.example.com/failure-original.png';
@@ -2309,7 +2356,7 @@ describe('topic block image loading', () => {
 
     await fireEvent.press(screen.getByLabelText('测试图片'));
     expect(latestImageProps(originalUrl).priority).toBe('high');
-    expect(onOpenImagePreview).toHaveBeenCalledWith(displayUrl, undefined, undefined);
+    expect(onOpenImagePreview).toHaveBeenCalledWith(displayUrl, undefined, undefined, undefined, originalUrl);
     await loadAndDisplayImage(latestImageProps(displayUrl));
     await act(() => latestImageProps(originalUrl).onError?.({ error: 'background failed' }));
 
@@ -2429,7 +2476,13 @@ describe('topic block image loading', () => {
 
     expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(0);
     fireEvent.press(screen.getByLabelText('测试图片'));
-    expect(latestPreviewAction).toHaveBeenCalledWith(imageUrl, { height: 240, width: 320 }, undefined);
+    expect(latestPreviewAction).toHaveBeenCalledWith(
+      imageUrl,
+      { height: 240, width: 320 },
+      undefined,
+      undefined,
+      undefined
+    );
     expect(firstPreviewAction).not.toHaveBeenCalled();
   });
 
@@ -2798,9 +2851,9 @@ describe('topic block image loading', () => {
       backgroundColor: theme.surface2,
       borderRadius: readerRadii.surface,
       gap: 8,
-      minHeight: 82,
+      minHeight: 60,
       paddingHorizontal: 10,
-      paddingVertical: 8
+      paddingVertical: 6
     });
     expect(StyleSheet.flatten(screen.getByLabelText('播放音频').props.style)).toMatchObject({
       height: 48,
@@ -3378,7 +3431,13 @@ describe('topic block image loading', () => {
     expect(imageProps.source?.headers).not.toHaveProperty('Referer');
     await loadAndDisplayImage(imageProps);
     await fireEvent.press(image.getByLabelText('测试图片'));
-    expect(onOpenImagePreview).toHaveBeenCalledWith(imageUrl, { height: 240, width: 320 }, undefined, 'no-referrer');
+    expect(onOpenImagePreview).toHaveBeenCalledWith(
+      imageUrl,
+      { height: 240, width: 320 },
+      undefined,
+      'no-referrer',
+      undefined
+    );
 
     const videoUrl = 'https://cdn.example.com/topic-policy.mp4';
     await render(
@@ -4042,7 +4101,9 @@ describe('topic block image loading', () => {
       expect(onOpenImagePreview).toHaveBeenCalledWith(
         svgImageUrl,
         { height: 1025, width: 920 },
-        'file:///cache/complex-svg-poster.png'
+        'file:///cache/complex-svg-poster.png',
+        undefined,
+        undefined
       );
       expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(0);
       expect(screen.queryByText('测试图片')).toBeNull();
@@ -4377,7 +4438,13 @@ describe('topic block image loading', () => {
       marginTop: 6
     });
     await fireEvent.press(view.getByLabelText('查看图片'));
-    expect(onOpenImagePreview).toHaveBeenCalledWith(src, { height: 30, width: 30 }, undefined, 'no-referrer');
+    expect(onOpenImagePreview).toHaveBeenCalledWith(
+      src,
+      { height: 30, width: 30 },
+      undefined,
+      'no-referrer',
+      undefined
+    );
   });
 
   it('routes compiler-trusted standalone geometry through the block owner and recovers a rejected SVG', async () => {
@@ -4432,7 +4499,9 @@ describe('topic block image loading', () => {
       expect(onOpenImagePreview).toHaveBeenCalledWith(
         svgImageUrl,
         { height: 1025, width: 920 },
-        'file:///cache/complex-svg-poster.png'
+        'file:///cache/complex-svg-poster.png',
+        undefined,
+        undefined
       );
     } finally {
       fetchSpy.mockRestore();

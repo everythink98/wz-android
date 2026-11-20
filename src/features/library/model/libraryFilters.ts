@@ -1,4 +1,5 @@
 import type { Category, FeedSource } from '@/domain/forum/models';
+import { sourceCatalog, type Source } from '@/domain/forum/sourceCatalog';
 import type { TopicRecord } from '@/domain/reader/readerData';
 
 interface LibrarySection {
@@ -6,28 +7,34 @@ interface LibrarySection {
   records: TopicRecord[];
 }
 
-function libraryCategoryKey(source: FeedSource, categoryId: string) {
-  return source === 'all' ? categoryId : `${source}:${categoryId}`;
-}
-
-function libraryCategoryLabel(source: FeedSource, category: Category) {
-  if (source === 'linuxdo' && category.id === 'uncategorized') {
+function libraryCategoryLabel(category: Category) {
+  if (category.source === 'linuxdo' && category.id === 'uncategorized') {
     return '未分类';
   }
   return category.name || category.id;
 }
 
 export function libraryCategoryFilterItems(categories: Category[], source: FeedSource) {
-  const selected = source === 'all' ? categories : categories.filter((category) => category.source === source);
-  const seen = new Set<string>();
+  const options = new Map<string, { source: Source; label: string }>();
+  const labelSources = new Map<string, Source | 'shared'>();
+  for (const category of categories) {
+    if (source !== 'all' && category.source !== source) continue;
+    const value = `${category.source}:${category.id}`;
+    if (options.has(value)) continue;
+    const label = libraryCategoryLabel(category);
+    options.set(value, { source: category.source, label });
+    const previousSource = labelSources.get(label);
+    labelSources.set(label, previousSource && previousSource !== category.source ? 'shared' : category.source);
+  }
   return [
     { value: 'all', label: '全部' },
-    ...selected.flatMap((category) => {
-      const key = libraryCategoryKey(category.source, category.id);
-      if (seen.has(key)) return [];
-      seen.add(key);
-      return [{ value: key, label: libraryCategoryLabel(category.source, category) }];
-    })
+    ...Array.from(options, ([value, option]) => ({
+      value,
+      label:
+        labelSources.get(option.label) === 'shared'
+          ? `${sourceCatalog[option.source].label} · ${option.label}`
+          : option.label
+    }))
   ];
 }
 

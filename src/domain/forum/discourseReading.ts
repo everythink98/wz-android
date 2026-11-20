@@ -92,8 +92,10 @@ export function mergeDiscourseReading(
   const reset =
     unchangedLocally && !pending && last !== undefined && (last || 0) < (current.server.lastReadPostNumber || 0);
   const advancedElsewhere = unchangedLocally && (last || 0) > current.highestKnown;
-  const readPosts = reset ? {} : { ...current.readPosts };
+  let readPosts: DiscourseReadingEntry['readPosts'] = reset ? {} : current.readPosts;
   incoming.readPostNumbers?.forEach((floor) => {
+    if (readPosts[floor]) return;
+    if (readPosts === current.readPosts) readPosts = { ...readPosts };
     readPosts[floor] = true;
   });
   return {

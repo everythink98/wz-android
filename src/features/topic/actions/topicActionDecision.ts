@@ -2,6 +2,7 @@ import type { Reply, TopicDetail, TopicPoll } from '@/domain/forum/models';
 import type { InteractionType } from '@/domain/forum/topicActionState';
 import { sourceSupportsTopicAction, type TopicActionCapability } from '@/domain/forum/sourceCatalog';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
+import { isTopicAccessNotice } from '../model/topicOpeningPresentation';
 
 type TopicActionDecisionReason =
   | 'allowed'
@@ -86,6 +87,7 @@ export function decideTopicAction({
   if (action === 'policy' ? topic.source !== 'linuxdo' : !sourceSupportsTopicAction(topic.source, action)) {
     return { allowed: false, reason: 'unsupported' };
   }
+  if (isTopicAccessNotice(topic)) return { allowed: false, reason: 'object-forbidden' };
   if (
     topic.closed &&
     (action === 'reply' || (action === 'upload' && !(topic.source === 'linuxdo' && reply?.canEdit === true)))

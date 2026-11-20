@@ -3,13 +3,22 @@ import type { ReadGateway } from '@/sources/readGateway';
 import { useForumCatalogRuntime } from '@/app/useForumCatalogRuntime';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { sourceValues, type Source } from '@/domain/forum/sourceCatalog';
+import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import { createSessionReadPlan } from '../sessionReadPlan';
+
+const getReadPlan = createSessionReadPlan({
+  getIdentityBarriers: () => [],
+  getIdentityTrust: () => 'none',
+  getSessionEpochs: () => initialForumSessionEpochs,
+  getSourceEnabled: () => true
+});
 
 describe('forum catalog runtime', () => {
   it('leaves preparation and source deadlines to the gateway instead of canceling catalogs at five seconds', async () => {
     jest.useFakeTimers();
     let requestSignal: AbortSignal | undefined;
     const readGateway = {
-      getReadPlan: () => ({ state: 'ready', lane: 'public', transport: 'native-no-cookie', cacheScope: 'public:omit' }),
+      getReadPlan,
       getCategories: jest.fn(({ signal }: { signal: AbortSignal }) => {
         requestSignal = signal;
         return new Promise((resolve, reject) => {
@@ -55,12 +64,7 @@ describe('forum catalog runtime', () => {
       errors: {}
     }));
     const readGateway = {
-      getReadPlan: (source: Source) => ({
-        state: 'ready',
-        lane: source === 'yaohuo' ? 'local' : 'public',
-        transport: source === 'yaohuo' ? 'none' : 'native-no-cookie',
-        cacheScope: 'public:omit'
-      }),
+      getReadPlan,
       getCategories
     } as unknown as ReadGateway;
     let deferSecondary = true;
@@ -87,13 +91,7 @@ describe('forum catalog runtime', () => {
   it('owns shared categories on Search and cancels them after leaving both readers', async () => {
     const signals: AbortSignal[] = [];
     const readGateway = {
-      getReadPlan: jest.fn(() => ({
-        state: 'ready',
-        lane: 'public',
-        transport: 'native-no-cookie',
-        cacheScope: 'public:omit',
-        authenticated: false
-      })),
+      getReadPlan,
       getCategories: jest.fn(async ({ signal }: { signal: AbortSignal }) => {
         signals.push(signal);
         return new Promise<{ items: never[]; errors: Record<string, never> }>((_resolve, reject) => {
@@ -127,13 +125,7 @@ describe('forum catalog runtime', () => {
   it('cancels only disabled sources while retaining the other catalog requests', async () => {
     const requests: { source: Source; signal: AbortSignal }[] = [];
     const readGateway = {
-      getReadPlan: jest.fn(() => ({
-        state: 'ready',
-        lane: 'public',
-        transport: 'native-no-cookie',
-        cacheScope: 'public:omit',
-        authenticated: false
-      })),
+      getReadPlan,
       getCategories: jest.fn(({ source, signal }: { source: Source; signal: AbortSignal }) => {
         requests.push({ source, signal });
         return new Promise<{ items: never[]; errors: Record<string, never> }>((_resolve, reject) => {
@@ -168,13 +160,7 @@ describe('forum catalog runtime', () => {
 
   it('does not read aggregate categories for an empty source set', async () => {
     const readGateway = {
-      getReadPlan: jest.fn(() => ({
-        state: 'ready',
-        lane: 'public',
-        transport: 'native-no-cookie',
-        cacheScope: 'public:omit',
-        authenticated: false
-      })),
+      getReadPlan,
       getCategories: jest.fn(async () => ({ items: [], errors: {} }))
     } as unknown as ReadGateway;
     const hook = await renderHook(
@@ -195,13 +181,7 @@ describe('forum catalog runtime', () => {
 
   it('reuses catalogs when only source order changes', async () => {
     const readGateway = {
-      getReadPlan: jest.fn(() => ({
-        state: 'ready',
-        lane: 'public',
-        transport: 'native-no-cookie',
-        cacheScope: 'public:omit',
-        authenticated: false
-      })),
+      getReadPlan,
       getCategories: jest.fn(async () => ({ items: [], errors: {} }))
     } as unknown as ReadGateway;
     let enabledFeedSources: readonly Source[] = ['v2ex', 'nodeseek'];

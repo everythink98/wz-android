@@ -39,7 +39,9 @@ function createRuntime(userId = '42', enabledSessionSources: SessionSite[] = ['l
       nextPage: null
     });
   const gateway: LinuxDoCreditGateway = {
-    getReadPlan: () => ({
+    getReadPlan: (source, operation) => ({
+      source,
+      operation,
       state: 'ready',
       lane: 'authenticated',
       transport: 'managed-session',
@@ -147,14 +149,19 @@ describe('LDC route access gates', () => {
     const { view } = await openRoute();
     await waitFor(() => expect(view.getByText('1,234.56')).toBeTruthy());
     await waitFor(() => expect(view.getByText('暂无收支记录')).toBeTruthy());
+    const plan = expect.objectContaining({
+      source: 'linuxdo',
+      operation: 'account-data',
+      cacheScope: 'authenticated:0'
+    });
     expect(mockRuntime.account.read.gateway.getLinuxDoCreditAccount).toHaveBeenCalledTimes(1);
     expect(mockRuntime.account.read.gateway.getLinuxDoCreditAccount).toHaveBeenCalledWith(
       expect.objectContaining({ userId: '42', username: 'reader' }),
-      { readPlanScope: 'authenticated:0' }
+      { plan }
     );
     expect(mockRuntime.account.read.gateway.getLinuxDoCreditTransactions).toHaveBeenCalledWith(
       expect.objectContaining({ userId: '42', username: 'reader', page: 1 }),
-      { readPlanScope: 'authenticated:0' }
+      { plan }
     );
     expect(mockRuntime.account.center.linuxDoCredit.open).not.toHaveBeenCalled();
   });

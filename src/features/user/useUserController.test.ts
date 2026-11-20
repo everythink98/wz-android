@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { hasNextUserPage, userSourceRecoveryTarget } from './useUserController';
+import { nextPageCursor } from '@/domain/forum/pagination';
+import { userSourceRecoveryTarget } from './useUserController';
 
 describe('user query helpers', () => {
   it('keeps an undisplayed cursor reachable and rejects a repeated cursor', () => {
-    expect(hasNextUserPage(true, 'cursor-2', 'cursor-1')).toBe(true);
-    expect(hasNextUserPage(true, 'cursor-1', 'cursor-1')).toBe(false);
-    expect(hasNextUserPage(false, 'cursor-2', 'cursor-1')).toBe(false);
+    expect(nextPageCursor(true, 'cursor-2', 'cursor-1')).toBe('cursor-2');
+    expect(nextPageCursor(true, 'cursor-1', 'cursor-1')).toBeUndefined();
+    expect(nextPageCursor(false, 'cursor-2', 'cursor-1')).toBeUndefined();
   });
 
   it('routes verification and login recovery by source', () => {

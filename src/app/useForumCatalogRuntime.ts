@@ -28,8 +28,8 @@ export function useForumCatalogRuntime({
   const sources = sourceValues.filter((source) => enabledFeedSources.includes(source));
   const plans = sources.map((source) => readGateway.getReadPlan(source, 'categories'));
   const { categories, settled } = useQueries({
-    queries: sources.map((source, index) => {
-      const plan = plans[index];
+    queries: plans.map((plan) => {
+      const source = plan.source;
       return {
         queryKey: forumQueryKeys.categories(source, sessionEpochs, undefined, plan.cacheScope),
         // linux.do needs site metadata to render complete TopicCards. Other remote
@@ -38,7 +38,7 @@ export function useForumCatalogRuntime({
         queryFn: async ({ signal }: { signal: AbortSignal }) => {
           const trace = beginDiagnosticTrace('feed', 'categories', { source });
           try {
-            const data = await readGateway.getCategories({ source, signal }, { readPlanScope: plan.cacheScope, trace });
+            const data = await readGateway.getCategories({ source, signal }, { plan, trace });
             const error = Object.values(data.errors || {}).find(Boolean);
             if (error) throw Object.assign(new Error(error.message), error);
             finishDiagnosticTrace(trace, 'success', { source, itemCount: data.items.length });

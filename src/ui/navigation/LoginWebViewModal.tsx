@@ -82,7 +82,7 @@ export function LoginWebViewModal({
   primaryAction,
   refreshAction,
   title,
-  subtitle,
+  subtitle = '',
   visible,
   onClose
 }: {
@@ -95,7 +95,7 @@ export function LoginWebViewModal({
   primaryAction?: ReactNode;
   refreshAction?: ReactNode;
   title: string;
-  subtitle: string;
+  subtitle?: string;
   visible: boolean;
   onClose: () => void;
 }) {
@@ -120,7 +120,7 @@ export function LoginWebViewModal({
             <View style={styles.loginWebViewHeader}>
               <View style={styles.loginWebViewTitleBlock}>
                 <Text style={styles.loginWebViewTitle}>{title}</Text>
-                <Text style={styles.loginWebViewSubtitle}>{subtitle}</Text>
+                {subtitle ? <Text style={styles.loginWebViewSubtitle}>{subtitle}</Text> : null}
               </View>
               <LoginWebViewAction label="关闭" displayLabel="" icon={X} onPress={onClose} />
             </View>

@@ -3,7 +3,7 @@ import { cleanup } from '@testing-library/react-native';
 import { CommonActions, DefaultTheme, useIsFocused, useScrollToTop } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useRef, useState } from 'react';
-import { Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Linking, NativeModules, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { AppNavigator } from '@/app/AppNavigator';
 import { useAppLifecycleRuntime } from '@/app/useAppLifecycleRuntime';
 import { useAppDeepLinkNavigation } from '@/app/useAppDeepLinkNavigation';
@@ -286,6 +286,30 @@ async function renderNavigator(moreHasBadge = false) {
 }
 
 describe('App navigator UI state', () => {
+  it('keeps the clock and native callbacks usable without recording every navigation frame', async () => {
+    const clock = jest.spyOn(performance, 'now');
+    const measure = jest.spyOn(View.prototype, 'measure');
+    try {
+      const view = await renderNavigator();
+      expect(clock).toHaveBeenCalled();
+      expect(measure).toHaveBeenCalled();
+      await view.unmount();
+    } finally {
+      measure.mockRestore();
+      clock.mockRestore();
+    }
+    const animator = NativeModules.NativeAnimatedModule;
+    const animation = Promise.withResolvers<{ finished: boolean }>();
+    animator.startAnimatingNode(1, 2, { type: 'frames', frames: [1], toValue: 1 }, animation.resolve);
+    await expect(animation.promise).resolves.toEqual({ finished: true });
+    expect({
+      clockReturnsTime: Number.isFinite(performance.now()),
+      recordingClock: jest.isMockFunction(performance.now),
+      recordingLayout: jest.isMockFunction(View.prototype.measure),
+      recordingAnimation: jest.isMockFunction(animator.startAnimatingNode)
+    }).toEqual({ clockReturnsTime: true, recordingClock: false, recordingLayout: false, recordingAnimation: false });
+  });
+
   it.each(['feed', 'search'] as const)(
     'keeps the departing %s bottom bar backdrop mounted while a topic covers it',
     async (route) => {
@@ -665,6 +689,51 @@ describe('App navigator UI state', () => {
     expect(backButton.props.style).not.toEqual(expect.any(Function));
     await fireEvent.press(backButton);
     expect(navigationRef.getCurrentRoute()?.name).toBe('notifications');
+  });
+
+  it('ignores a queued notification settings press after its tab loses focus', async () => {
+    const view = await renderNavigator();
+    await act(async () => {
+      expect(openNotificationsRoute('linuxdo')).toBe(true);
+    });
+    const settings = await view.findByLabelText('消息通知设置');
+    const queuedPress = settings.props.onClick;
+    expect(typeof queuedPress).toBe('function');
+
+    await act(async () => {
+      expect(pushTopicRoute({ topic: topicA })).toBe(true);
+    });
+    await waitFor(() => expect(navigationRef.getCurrentRoute()?.name).toBe('Topic'));
+    await act(async () => {
+      queuedPress({ target: 1, currentTarget: 1, nativeEvent: {} });
+    });
+    expect(navigationRef.getCurrentRoute()?.name).toBe('Topic');
+  });
+
+  it('ignores a queued Library back press after the exact Topic destination takes focus', async () => {
+    const view = await renderNavigator();
+    await fireEvent.press(view.getByTestId('main-tab-more'));
+    const moreKey = navigationRef.getCurrentRoute()?.key;
+    await fireEvent.press(view.getByLabelText('打开收藏'));
+    await waitFor(() => expect(navigationRef.getCurrentRoute()?.name).toBe('Library'));
+    const libraryKey = navigationRef.getCurrentRoute()?.key;
+    const queuedPress = view.getByLabelText('返回').props.onClick;
+    expect(typeof queuedPress).toBe('function');
+
+    await act(async () => {
+      expect(pushTopicRoute({ topic: topicA, location: { kind: 'reply', target: { floor: 7 } } })).toBe(true);
+    });
+    const opened = navigationRef.getCurrentRoute();
+    expect(opened?.name).toBe('Topic');
+    await act(async () => {
+      queuedPress({ target: 1, currentTarget: 1, nativeEvent: {} });
+    });
+
+    expect(navigationRef.getCurrentRoute()?.key).toBe(opened?.key);
+    await act(async () => navigationRef.goBack());
+    expect(navigationRef.getCurrentRoute()?.key).toBe(libraryKey);
+    await fireEvent.press(view.getByLabelText('返回'));
+    expect(navigationRef.getCurrentRoute()?.key).toBe(moreKey);
   });
 
   it('preserves the complete destination when pushing a Topic route', async () => {

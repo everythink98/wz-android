@@ -37,12 +37,13 @@ export async function getLinuxDoReadingBatch(ids: readonly string[], options: Li
     if (!isRecord(data.topic_list) || !Array.isArray(data.topic_list.topics)) {
       throw new Error('linux.do 不支持批量读取话题阅读状态');
     }
+    const requestedIds = new Set(chunk);
     for (const raw of data.topic_list.topics) {
-      if (!isRecord(raw) || !chunk.includes(String(raw.id))) {
+      if (!isRecord(raw) || !requestedIds.has(String(raw.id))) {
         throw new Error('linux.do 未按话题 ID 筛选，批量阅读状态不可用');
       }
       const snapshot = discourseReadingFromJson(raw);
-      if (snapshot && chunk.includes(snapshot.topicId)) snapshots.push(snapshot);
+      if (snapshot) snapshots.push(snapshot);
     }
   }
   return snapshots;

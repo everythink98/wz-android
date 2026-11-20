@@ -1,15 +1,16 @@
 import { StyleSheet } from 'react-native';
-import { type ReaderStyleSettings, type ReaderTheme, fontFamilyValue } from '@/ui/theme/tokens';
+import {
+  createReaderFontSizer,
+  readerRadii,
+  type ReaderStyleSettings,
+  type ReaderTheme,
+  fontFamilyValue
+} from '@/ui/theme/tokens';
 
 export function createLibraryStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const appFontFamily = fontFamilyValue(settings.fontFamily);
+  const fontSize = createReaderFontSizer(settings);
   return StyleSheet.create({
-    actions: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      flexShrink: 0,
-      gap: 8
-    },
     content: {
       flex: 1,
       backgroundColor: theme.surface
@@ -32,36 +33,36 @@ export function createLibraryStyles(theme: ReaderTheme, settings: ReaderStyleSet
     menuLabel: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: 15,
+      fontSize: fontSize(15),
       fontWeight: '600'
     },
     meta: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: 12,
-      lineHeight: 17
+      fontSize: fontSize(12),
+      lineHeight: fontSize(17)
     },
     replyAvatarText: {
       color: theme.primary,
       fontFamily: appFontFamily,
-      fontSize: 13,
+      fontSize: fontSize(13),
       fontWeight: '700'
     },
-    sectionHeader: {
+    toolbarRow: {
       alignItems: 'center',
       flexDirection: 'row',
-      justifyContent: 'space-between',
       minHeight: 48,
       gap: 10
     },
+    toolbarRail: { flex: 1, minWidth: 0 },
     stack: {
-      gap: 8,
+      borderBottomColor: theme.line,
+      borderBottomWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 16,
       width: '100%'
     },
     categoryFilterSlot: {
-      flex: 1,
-      minWidth: 0,
+      maxWidth: '45%',
       justifyContent: 'center'
     },
     categoryFilterButton: {
@@ -71,13 +72,13 @@ export function createLibraryStyles(theme: ReaderTheme, settings: ReaderStyleSet
       gap: 4,
       minHeight: 48,
       maxWidth: '100%',
-      paddingHorizontal: 0
+      paddingLeft: 8
     },
     categoryFilterButtonText: {
       color: theme.primary,
       flexShrink: 1,
       fontFamily: appFontFamily,
-      fontSize: 12,
+      fontSize: fontSize(12),
       fontWeight: '600'
     },
     categoryFilterButtonTextDisabled: {
@@ -112,29 +113,32 @@ export function createLibraryStyles(theme: ReaderTheme, settings: ReaderStyleSet
     },
     libraryInlineAction: {
       alignItems: 'center',
+      borderColor: theme.line,
+      borderRadius: readerRadii.control,
+      borderWidth: StyleSheet.hairlineWidth,
       flexShrink: 0,
       justifyContent: 'center',
-      minHeight: 32,
-      paddingHorizontal: 2,
-      paddingVertical: 4
+      minHeight: 36,
+      paddingHorizontal: 10,
+      paddingVertical: 6
     },
     libraryInlineActionText: {
-      color: theme.danger,
+      color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: 12,
-      fontWeight: '600'
+      fontSize: fontSize(12),
+      fontWeight: '500'
     },
     libraryIconAction: {
       alignItems: 'center',
       flexShrink: 0,
-      height: 32,
+      height: 44,
       justifyContent: 'center',
-      width: 32
+      width: 44
     },
     librarySectionTitle: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: 12,
+      fontSize: fontSize(12),
       fontWeight: '600',
       letterSpacing: 0,
       paddingHorizontal: 16,

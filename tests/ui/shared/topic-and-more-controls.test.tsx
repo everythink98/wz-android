@@ -6,6 +6,7 @@ import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { AppearancePanel } from '@/features/more/components/AppearancePanel';
 import { ReadingSettingsScreen } from '@/features/more/ReadingSettingsScreen';
 import { TopicMenu } from '@/features/topic/components/TopicMenu';
+import { AppButton } from '@/ui/controls/ButtonControls';
 import {
   NavigationBackdropProvider,
   NavigationBackdropTarget,
@@ -38,6 +39,46 @@ const theme = createTheme(readerData.settings);
 const styles = createStyles(theme, readerData.settings, 800);
 
 describe('Topic and More controls', () => {
+  it('keeps a compact primary action readable and at least 48 dp tall to touch', async () => {
+    const view = await render(<AppButton compact variant="solid" label="确认" testID="confirm" onPress={jest.fn()} />);
+    const { hitSlop } = view.getByRole('button', { name: '确认' }).props;
+    const minHeight = StyleSheet.flatten(view.getByText('确认').parent?.props.style).minHeight;
+    expect(minHeight + hitSlop.top + hitSlop.bottom).toBeGreaterThanOrEqual(48);
+    expect(StyleSheet.flatten(view.getByTestId('confirm-container').props.style).backgroundColor).toBe(
+      theme.primaryStrong
+    );
+  });
+
+  it('keeps the mounted blur target while its screen is suspended and releases it on removal', async () => {
+    const contentReady = Promise.withResolvers<{ default: typeof View }>();
+    const DeferredBody = React.lazy(() => contentReady.promise);
+    const screen = (state: 'visible' | 'suspended' | 'removed') => (
+      <NavigationBackdropProvider>
+        <React.Suspense fallback={<View testID="covered-screen" />}>
+          {state !== 'removed' && (
+            <NavigationBackdropTarget active={state === 'visible'}>
+              {state === 'suspended' ? <DeferredBody /> : <View />}
+            </NavigationBackdropTarget>
+          )}
+        </React.Suspense>
+        <NavigationGlass />
+      </NavigationBackdropProvider>
+    );
+    const view = await render(screen('visible'));
+    const currentTarget = () => view.getByTestId('navigation-glass').props.blurTarget?.current;
+    const target: unknown = currentTarget();
+    expect(target).toBeTruthy();
+    await view.rerender(screen('suspended'));
+    expect(view.getByTestId('covered-screen')).toBeTruthy();
+    expect(currentTarget() === target).toBe(true);
+    await view.rerender(screen('visible'));
+    expect(currentTarget() === target).toBe(true);
+    await view.rerender(screen('suspended'));
+    await view.rerender(screen('removed'));
+    await act(() => contentReady.resolve({ default: View }));
+    expect(currentTarget()).toBeUndefined();
+  });
+
   it('retains a mounted backdrop until replacement and clears only the current unmounted target', async () => {
     const content = (firstMounted: boolean, firstActive: boolean, secondMounted: boolean) => (
       <NavigationBackdropProvider>
@@ -123,11 +164,11 @@ describe('Topic and More controls', () => {
     const statusBarHeight = jest.replaceProperty(StatusBar, 'currentHeight', 64);
     try {
       const view = await render(<ReadingSettingsScreen settings={readerData.settings} onUpdateSettings={jest.fn()} />);
-      let content = view.getByText('显示').parent;
+      let content = view.getByText('主题').parent;
       while (content && !content.props.contentContainerStyle) content = content.parent;
       const contentStyle = StyleSheet.flatten(content?.props.contentContainerStyle);
       expect(contentStyle.paddingTop).toBeLessThanOrEqual(16);
-      expect(view.getByText('显示')).toBeVisible();
+      expect(view.getByText('主题')).toBeVisible();
       expect(view.getByLabelText('增大字号')).toBeVisible();
     } finally {
       statusBarHeight.restore();
@@ -230,7 +271,7 @@ describe('Topic and More controls', () => {
 
     const slider = view.getByTestId('appearance-font-scale-slider');
     await act(async () => slider.props.onValueChange(1.15));
-    expect(view.getByText('字号 115%')).toBeTruthy();
+    expect(view.getByText('115%')).toBeTruthy();
     expect(onUpdateSettings).not.toHaveBeenCalled();
 
     await act(async () => slider.props.onSlidingComplete(1.15));
@@ -238,7 +279,7 @@ describe('Topic and More controls', () => {
     expect(onUpdateSettings).toHaveBeenLastCalledWith({ fontScale: 1.15 });
 
     await fireEvent.press(view.getByLabelText('减小字号'));
-    expect(view.getByText('字号 110%')).toBeTruthy();
+    expect(view.getByText('110%')).toBeTruthy();
     expect(onUpdateSettings).toHaveBeenCalledTimes(2);
     expect(onUpdateSettings).toHaveBeenLastCalledWith({ fontScale: 1.1 });
   });

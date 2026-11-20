@@ -368,13 +368,13 @@ describe('Yaohuo reply composer', () => {
   it('labels an image upload separately from sending while keeping both actions disabled', async () => {
     const onSubmit = jest.fn();
     const view = await render(<Harness actionBusy uploadingImage onSubmit={onSubmit} />);
-    expect(view.queryByText('发送中…')).toBeNull();
-    expect(view.getByLabelText('上传中…').props.accessibilityState.disabled).toBe(true);
-    await fireEvent.press(view.getByLabelText('上传中…'));
+    expect(view.queryByText('发送中')).toBeNull();
+    expect(view.getByLabelText('上传中').props.accessibilityState.disabled).toBe(true);
+    await fireEvent.press(view.getByLabelText('上传中'));
     expect(onSubmit).not.toHaveBeenCalled();
     await view.rerender(<Harness actionBusy onSubmit={onSubmit} />);
-    expect(view.getByLabelText('发送中…').props.accessibilityState.disabled).toBe(true);
-    expect(view.queryByText('上传中…')).toBeNull();
+    expect(view.getByLabelText('发送中').props.accessibilityState.disabled).toBe(true);
+    expect(view.queryByText('上传中')).toBeNull();
   });
   it('inserts consecutive inline faces at the current selection and keeps the chooser open for new topics', async () => {
     const onContentChange = jest.fn<(value: string) => void>();
@@ -551,8 +551,8 @@ describe('Yaohuo reply composer', () => {
     expect(onSubmit).toHaveBeenCalledTimes(1);
 
     await view.rerender(<Harness actionBusy format="plain-text" status="正在提交回复…" onSubmit={onSubmit} />);
-    expect(view.getByText('发送中…')).toBeTruthy();
-    expect(view.getByLabelText('发送中…').props.accessibilityState.disabled).toBe(true);
+    expect(view.getByText('发送中')).toBeTruthy();
+    expect(view.getByLabelText('发送中').props.accessibilityState.disabled).toBe(true);
     expect(view.getByText('正在提交回复…').props.accessibilityLiveRegion).toBe('polite');
   });
 

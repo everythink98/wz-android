@@ -6,6 +6,8 @@ import { NativeModules } from 'react-native';
 import type { WebView } from 'react-native-webview';
 import * as SecureStore from 'expo-secure-store';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
+import type { DiagnosticEvent } from '@/platform/diagnostics/diagnosticPolicy';
 import { useSessionController } from '@/features/account/useSessionController';
 import { HiddenBrowserHost } from '@/features/account/HiddenBrowserHost';
 import { useHiddenBrowserFetchController } from '@/features/account/useHiddenBrowserFetchController';
@@ -319,6 +321,10 @@ describe('session controller browser flow', () => {
       const root = createRoot({ isStrictMode: true });
       await act(async () => root.render(<Session />));
       try {
+        const events: DiagnosticEvent[] = [];
+        setDiagnosticWriter((line) => {
+          events.push(JSON.parse(line));
+        });
         expect(effectRuns).toBe(2);
         const session = latest.current;
         if (!session) throw new Error('Session did not mount');
@@ -328,22 +334,29 @@ describe('session controller browser flow', () => {
           firstNative.resolve(new Response('challenge', { status: 403, headers: { 'cf-mitigated': 'challenge' } }))
         );
         expect(retiredResult).toEqual(expect.objectContaining({ message: '请求已取消' }));
+        const body = site === 'nodeseek' ? '<main>fresh document</main>' : '{}';
         await act(async () => {
           if (site === 'nodeseek') {
             await session.completeNodeSeekBrowserFetch({
               id: current?.id,
               url,
-              html: '<main>fresh document</main>'
+              html: body
             });
           } else {
-            await session.completeLinuxDoBrowserFetch({ id: current?.id, url, body: '{}' });
+            await session.completeLinuxDoBrowserFetch({ id: current?.id, url, body });
           }
         });
         const [retired, fresh] = await Promise.all(requests);
 
         expect(retired).toEqual(expect.objectContaining({ message: '请求已取消' }));
         expect(fresh).toEqual(expect.objectContaining({ status: 200 }));
+        const receipts = events.filter(
+          (event) => event.phase === 'parse' && event.channel === 'webview' && event.source === site
+        );
+        expect(receipts).toMatchObject([{ status: 200, contentLength: body.length, isChallenge: false }]);
+        expect(receipts[0]).not.toHaveProperty('hasCredential');
       } finally {
+        setDiagnosticWriter(null);
         await act(async () => root.unmount());
         await Promise.allSettled(requests);
       }

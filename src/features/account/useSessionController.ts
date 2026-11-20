@@ -113,7 +113,6 @@ function finishBrowserFetchSuccess(
   source: SessionSite,
   status: number,
   contentLength: number,
-  hasCredential: boolean,
   isChallenge: boolean
 ) {
   markDiagnosticStage(trace, 'parse', {
@@ -121,7 +120,6 @@ function finishBrowserFetchSuccess(
     channel: 'webview',
     status,
     contentLength,
-    hasCredential,
     isChallenge
   });
   if (ownsTrace) {
@@ -372,7 +370,6 @@ export function useSessionController({
           'nodeseek',
           status,
           (data.html || '').length,
-          false,
           challenge
         );
         current.resolve(
@@ -497,7 +494,6 @@ export function useSessionController({
           'linuxdo',
           status,
           (data.body || '').length,
-          false,
           challenge
         );
         if (challenge) current.reject(new LinuxDoCloudflareError());

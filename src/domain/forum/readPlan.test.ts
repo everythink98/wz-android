@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
 import {
   forumReadOperationIsPublic,
-  forumReadPlanScopesKey,
+  aggregateForumReadPlan,
   resolveForumReadPlan,
   type ForumReadOperation
 } from './readPlan';
@@ -55,6 +55,8 @@ describe('forum read plans', () => {
     ).toEqual(['v2ex', 'linuxdo', 'nodeseek']);
     expect(forumReadOperationIsPublic('yaohuo', 'search')).toBe(false);
     expect(resolveForumReadPlan('v2ex', 'topic', true)).toEqual({
+      source: 'v2ex',
+      operation: 'topic',
       state: 'ready',
       lane: 'public',
       transport: 'native-no-cookie',
@@ -87,17 +89,23 @@ describe('forum read plans', () => {
 
   it('separates Yaohuo local categories from its credential-required remote reads', () => {
     expect(resolveForumReadPlan('yaohuo', 'categories', true, session('yaohuo'))).toEqual({
+      source: 'yaohuo',
+      operation: 'categories',
       state: 'ready',
       lane: 'local',
       transport: 'none',
       cacheScope: 'local'
     });
     expect(resolveForumReadPlan('yaohuo', 'feed', true, session('yaohuo'))).toEqual({
+      source: 'yaohuo',
+      operation: 'feed',
       state: 'blocked',
       reason: 'identity-unavailable',
       cacheScope: 'blocked:identity-unavailable'
     });
     expect(resolveForumReadPlan('yaohuo', 'topic', true, session('yaohuo', { identityTrust: 'none' }))).toEqual({
+      source: 'yaohuo',
+      operation: 'topic',
       state: 'blocked',
       reason: 'login-required',
       cacheScope: 'blocked:login-required'
@@ -114,6 +122,8 @@ describe('forum read plans', () => {
   ])('keeps %s credential-required while identity is unknown', (operation) => {
     const source = operation === 'user-resolution' ? 'nodeseek' : 'linuxdo';
     expect(resolveForumReadPlan(source, operation, true, session(source))).toEqual({
+      source,
+      operation,
       state: 'blocked',
       reason: 'identity-unavailable',
       cacheScope: 'blocked:identity-unavailable'
@@ -161,6 +171,8 @@ describe('forum read plans', () => {
       cacheScope: 'public:omit'
     });
     expect(resolveForumReadPlan('linuxdo', 'level', true, unknown)).toEqual({
+      source: 'linuxdo',
+      operation: 'level',
       state: 'blocked',
       reason: 'identity-unavailable',
       cacheScope: 'blocked:identity-unavailable'
@@ -188,6 +200,8 @@ describe('forum read plans', () => {
     });
     expect(authenticated.cacheScope).not.toBe(publicPlan.cacheScope);
     expect(resolveForumReadPlan('linuxdo', 'topic', false, session('linuxdo'))).toEqual({
+      source: 'linuxdo',
+      operation: 'topic',
       state: 'blocked',
       reason: 'source-disabled',
       cacheScope: 'blocked:source-disabled'
@@ -195,19 +209,22 @@ describe('forum read plans', () => {
   });
 
   it('canonicalizes an aggregate plan snapshot without making user order part of the key', () => {
-    expect(
-      forumReadPlanScopesKey([
-        ['v2ex', 'public:omit'],
-        ['nodeseek', 'authenticated:4']
-      ])
-    ).toBe(
-      forumReadPlanScopesKey([
-        ['nodeseek', 'authenticated:4'],
-        ['v2ex', 'public:omit']
-      ])
+    const v2ex = resolveForumReadPlan('v2ex', 'feed', true);
+    const nodeSeek = resolveForumReadPlan(
+      'nodeseek',
+      'feed',
+      true,
+      session('nodeseek', {
+        authenticated: true,
+        identityTrust: 'confirmed',
+        sessionEpoch: 4
+      })
     );
-    expect(forumReadPlanScopesKey([['v2ex', 'public:omit']])).not.toBe(
-      forumReadPlanScopesKey([['v2ex', 'blocked:source-disabled']])
+    const aggregate = aggregateForumReadPlan('feed', [v2ex, nodeSeek]);
+    expect(aggregate.cacheScope).toBe('nodeseek:authenticated:4,v2ex:public:omit');
+    expect(aggregate.cacheScope).toBe(aggregateForumReadPlan('feed', [nodeSeek, v2ex]).cacheScope);
+    expect(aggregateForumReadPlan('feed', [v2ex]).cacheScope).not.toBe(
+      aggregateForumReadPlan('feed', [resolveForumReadPlan('v2ex', 'feed', false)]).cacheScope
     );
   });
 });

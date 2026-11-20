@@ -96,11 +96,15 @@ describe('LinuxDo Credit managed reads', () => {
   it('checks the requested cache scope and preserves the exact available balance', async () => {
     const fetcher = vi.fn<Fetcher>(withForumIdentity(async () => Response.json(account)));
     const { gateway } = setup(fetcher);
-    await expect(gateway.getLinuxDoCreditAccount(options, { readPlanScope: 'authenticated:3' })).rejects.toThrow(
-      '请求已取消'
-    );
+    await expect(
+      gateway.getLinuxDoCreditAccount(options, {
+        plan: { ...gateway.getReadPlan('linuxdo', 'account-data'), cacheScope: 'authenticated:3' }
+      })
+    ).rejects.toThrow('请求已取消');
     expect(fetcher).not.toHaveBeenCalled();
-    expect(await gateway.getLinuxDoCreditAccount(options, { readPlanScope: 'authenticated:4' })).toMatchObject({
+    expect(
+      await gateway.getLinuxDoCreditAccount(options, { plan: gateway.getReadPlan('linuxdo', 'account-data') })
+    ).toMatchObject({
       availableBalance: '123456789012345.67'
     });
     expect(new Headers(fetcher.mock.calls[0]?.[1]?.headers).get('User-Agent')).toBe('L-UA');

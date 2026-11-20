@@ -352,8 +352,8 @@ describe('Account site panels', () => {
     const onRefresh = jest.fn();
     const common = { busy: false, loading: false, error: null, styles, onCheckIn, onRefresh };
     const view = await render(<NodeSeekAttendancePanel {...common} state={{ kind: 'idle' }} />);
-    expect(view.getByLabelText('普通签到').props.accessibilityState.disabled).toBe(true);
-    expect(view.getByLabelText('随机签到').props.accessibilityState.disabled).toBe(true);
+    expect(view.queryByLabelText('普通签到')).toBeNull();
+    expect(view.queryByLabelText('随机签到')).toBeNull();
 
     await view.rerender(<NodeSeekAttendancePanel {...common} board={board} state={{ kind: 'idle' }} />);
     await fireEvent.press(view.getByLabelText('普通签到'));
@@ -386,12 +386,12 @@ describe('Account site panels', () => {
       const readingStatus = state.kind === 'confirmed-pending' ? '签到成功，正在读取收益…' : '正在确认签到结果…';
       await view.rerender(<NodeSeekAttendancePanel {...common} board={board} state={state} busy />);
       expect(view.getByText(readingStatus)).toBeTruthy();
-      expect(view.getByLabelText('普通签到').props.accessibilityState.disabled).toBe(true);
-      expect(view.getByLabelText('随机签到').props.accessibilityState.disabled).toBe(true);
+      expect(view.queryByLabelText('普通签到')).toBeNull();
+      expect(view.queryByLabelText('随机签到')).toBeNull();
       await view.rerender(<NodeSeekAttendancePanel {...common} board={board} state={state} />);
       expect(view.queryByText(readingStatus)).toBeNull();
-      expect(view.getByLabelText('普通签到').props.accessibilityState.disabled).toBe(true);
-      expect(view.getByLabelText('随机签到').props.accessibilityState.disabled).toBe(true);
+      expect(view.queryByLabelText('普通签到')).toBeNull();
+      expect(view.queryByLabelText('随机签到')).toBeNull();
       expect(view.queryByLabelText('刷新签到状态')).toBeNull();
       expect(view.queryByLabelText('重试签到状态')).toBeNull();
       expect(
@@ -532,7 +532,7 @@ describe('Account site panels', () => {
       />
     );
 
-    expect(view.getByText(/需要先保存 linux\.do 登录 Cookie/)).toBeTruthy();
+    expect(view.getByText('登录后查看等级进度')).toBeTruthy();
     await fireEvent.press(view.getByLabelText('打开 linux.do 登录 / 验证'));
     expect(onOpenLogin).toHaveBeenCalledTimes(1);
 
@@ -759,6 +759,7 @@ describe('Account site panels', () => {
       <NodeSeekServicesPanel
         active={active}
         apiKeyBusy={false}
+        apiKeyAuthorized={false}
         apiKeySaved={false}
         recoveryThreshold={1}
         theme={theme}

@@ -2,8 +2,11 @@ import { check } from '../proofCheck';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as BackgroundTask from 'expo-background-task';
 import { File, Paths } from 'expo-file-system';
+import { SQLiteDatabase } from 'expo-sqlite';
 import * as TaskManager from 'expo-task-manager';
 import { AppState } from 'react-native';
+import { runNotificationBackgroundTask } from '@/app/notificationBackgroundTask';
+import { withReaderSettings } from '@/platform/storage/readerDataStore';
 import { diagnosticBuildContext } from '@/platform/diagnostics/nativeDiagnosticJournal';
 import {
   clearNotificationSourceForContentDisable,
@@ -39,6 +42,69 @@ function write(config: Config, checkpoint: string, evidence: object = {}) {
   );
 }
 
+async function verifyDelayedSettingsDeadline() {
+  let release!: () => void;
+  let finishSession!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const sessionFinished = new Promise<void>((resolve) => {
+    finishSession = resolve;
+  });
+  let reads = 0;
+  let connectionCloses = 0;
+  let workerStarts = 0;
+  let sessionError: unknown;
+  const close = SQLiteDatabase.prototype.closeAsync;
+  SQLiteDatabase.prototype.closeAsync = async function () {
+    await close.call(this);
+    if (this.databasePath.endsWith('/reader-data.db')) connectionCloses++;
+  };
+  const started = Date.now();
+  // A broken task must still release the isolated read and produce a failing receipt.
+  const watchdog = setTimeout(release, 60_000);
+  try {
+    const result = await runNotificationBackgroundTask(
+      (work) => {
+        const session = withReaderSettings((read) =>
+          work(async () => {
+            const settings = await read();
+            reads++;
+            await blocked;
+            return settings;
+          })
+        );
+        void session.then(finishSession, (error: unknown) => {
+          sessionError = error;
+          finishSession();
+        });
+        return session;
+      },
+      async () => {
+        workerStarts++;
+        throw new Error('Late settings started a notification worker');
+      }
+    );
+    const elapsedMs = Date.now() - started;
+    release();
+    await sessionFinished;
+    check(
+      result === BackgroundTask.BackgroundTaskResult.Failed && reads === 1 && workerStarts === 0,
+      'Delayed settings escaped the task deadline'
+    );
+    check(elapsedMs >= 49_000 && elapsedMs < 60_000, 'Settings did not share the original deadline');
+    check(
+      connectionCloses === 1 && sessionError instanceof Error && !(sessionError instanceof AggregateError),
+      'Late settings did not close the temporary SQLite connection'
+    );
+    return { elapsedMs, reads, workerStarts, connectionCloses, connectionReleased: true };
+  } finally {
+    clearTimeout(watchdog);
+    release();
+    SQLiteDatabase.prototype.closeAsync = close;
+  }
+}
+
 // Only this developer entry imports the synthetic task. No upstream requests are made.
 TaskManager.defineTask(taskName, async () => {
   const config = JSON.parse(await configFile().text()) as Config;
@@ -54,7 +120,7 @@ TaskManager.defineTask(taskName, async () => {
     configFile().write(JSON.stringify(config));
     write(config, 'running', { startedAt, states });
     const before = JSON.stringify(await loadNotificationState());
-    const result = await runNotificationBackgroundWorker({
+    const worker = runNotificationBackgroundWorker({
       sources: ['nodeseek'],
       sourceAllowed: () => true,
       network: {
@@ -77,6 +143,10 @@ TaskManager.defineTask(taskName, async () => {
         dismissDigest: (_source, identifier) => dismissSourceNotificationExact(identifier)
       }
     });
+    const [result, settingsDeadline] = await Promise.all([
+      worker,
+      config.mode === 'deadline' ? verifyDelayedSettingsDeadline() : undefined
+    ]);
     const elapsedMs = Date.now() - startedAt;
     const state = await loadNotificationState();
     check(
@@ -92,7 +162,7 @@ TaskManager.defineTask(taskName, async () => {
       check(elapsedMs >= 500 && elapsedMs < 15000, 'Background timer did not run promptly');
       check(state.sources.nodeseek.baselineReady, 'Native storage baseline did not commit');
     }
-    write(config, 'passed', { startedAt, finishedAt: Date.now(), elapsedMs, states, result });
+    write(config, 'passed', { startedAt, finishedAt: Date.now(), elapsedMs, states, result, settingsDeadline });
     return BackgroundTask.BackgroundTaskResult.Success;
   } catch (error) {
     write(config, 'failed', { elapsedMs: Date.now() - startedAt, states, error: String(error) });

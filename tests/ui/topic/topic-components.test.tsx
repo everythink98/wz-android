@@ -636,21 +636,35 @@ describe('Topic real child components', () => {
     expect(view.getByLabelText('Ref 无效').props.accessibilityState.disabled).toBe(true);
   });
 
-  it('blocks a second click after an ambiguous send', async () => {
+  it('refreshes a closed Stardust card while blocking a second payment after an ambiguous send', async () => {
     const receive = {
       receiverMemberId: '42',
       amount: 3,
       refId: 100,
       description: '测试收款',
-      oneTime: false
+      oneTime: true
     };
-    const load = jest.fn(async () => ({ participantCount: 0, totalAmount: 0, paid: false, closed: false }));
+    const pending = Promise.withResolvers<Awaited<ReturnType<TopicActionsController['loadNodeSeekStardustStatus']>>>();
+    const load = jest
+      .fn<TopicActionsController['loadNodeSeekStardustStatus']>()
+      .mockResolvedValueOnce({ participantCount: 0, totalAmount: 0, paid: false, closed: false })
+      .mockReturnValueOnce(pending.promise)
+      .mockRejectedValue(new Error('查询次数达到上限'));
     const pay = jest.fn(async () => 'unknown' as const);
     const view = await render(<NodeSeekStardustCard actions={stardustActions(load, pay)} receive={receive} />);
 
     await waitFor(() => expect(view.getByText('0 人已付 · 累计 0 Stardust')).toBeTruthy());
     await fireEvent.press(view.getByLabelText('支付 3 Stardust'));
     await waitFor(() => expect(view.getByText('付款结果未知，请先在原站确认，切勿直接重复付款。')).toBeTruthy());
+    await fireEvent.press(view.getByRole('button', { name: '刷新状态' }));
+    await fireEvent.press(view.getByRole('button', { name: '刷新状态' }));
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(view.getByLabelText('刷新状态').props.accessibilityState.busy).toBe(true);
+    await act(() => pending.resolve({ participantCount: 1, totalAmount: 3, paid: false, closed: true }));
+    await waitFor(() => expect(view.getByText('该收款已关闭')).toBeTruthy());
+    await fireEvent.press(view.getByRole('button', { name: '刷新状态' }));
+    expect(load).toHaveBeenCalledTimes(3);
+    expect(view.getByText('该收款已关闭')).toBeTruthy();
     expect(view.getByLabelText('结果待确认').props.accessibilityState.disabled).toBe(true);
     await fireEvent.press(view.getByLabelText('结果待确认'));
     expect(pay).toHaveBeenCalledTimes(1);
@@ -934,6 +948,36 @@ describe('Topic real child components', () => {
     expect(onVotePoll).toHaveBeenCalledWith(multiplePoll, ['a', 'b']);
   });
 
+  it('keeps the pending vote visible without showing progress on other polls', async () => {
+    const otherPoll = { ...multiplePoll, id: 'poll-2', name: 'poll-2' };
+    const onVotePoll = jest.fn();
+    const props = pollProps({
+      polls: [multiplePoll, otherPoll],
+      pollSelections: { 'topic-poll-1': ['a', 'b'], 'topic-poll-2': ['a', 'b'] },
+      onVotePoll
+    });
+    const view = await render(<TopicPolls {...props} />);
+    await fireEvent.press(view.getAllByRole('button', { name: '提交投票' })[0]);
+    await view.rerender(
+      <TopicPolls
+        {...props}
+        actionBusy
+        decisionFor={({ action, poll }) =>
+          action === 'vote' && poll?.id === 'poll-1' ? deniedDecision('pending') : { allowed: true, reason: 'allowed' }
+        }
+      />
+    );
+
+    const buttons = view.getAllByRole('button', { name: '提交投票' });
+    expect(buttons.map((button) => button.props.accessibilityState)).toMatchObject([
+      { busy: true, disabled: true },
+      { busy: false, disabled: true }
+    ]);
+    await fireEvent.press(buttons[0]);
+    await fireEvent.press(buttons[1]);
+    expect(onVotePoll).toHaveBeenCalledTimes(1);
+  });
+
   it('shows NodeSeek poll locking only for the current owner and labels locked polls', async () => {
     const onLockPoll = jest.fn();
     const ownerPoll = { ...multiplePoll, ownerId: '54874' };
@@ -1004,7 +1048,8 @@ describe('Topic real child components', () => {
     await view.rerender(
       <TopicPolls {...pollProps({ decisionFor: () => deniedDecision('login-required'), source: 'nodeseek' })} />
     );
-    expect(view.getByLabelText('登录后投票').props.accessibilityState.disabled).toBe(true);
+    expect(view.getByText('登录后投票')).toBeTruthy();
+    expect(view.queryByLabelText('提交投票')).toBeNull();
   });
 
   it('keeps an unavailable poll identity typed as awaiting reconciliation', async () => {
@@ -1021,9 +1066,9 @@ describe('Topic real child components', () => {
     );
 
     expect(view.getByText('账号待核对')).toBeTruthy();
-    expect(view.getByLabelText('核对后投票').props.accessibilityState.disabled).toBe(true);
+    expect(view.queryByLabelText('核对后投票')).toBeNull();
+    expect(view.queryByLabelText('提交投票')).toBeNull();
     expect(view.queryByText('未登录')).toBeNull();
-    await fireEvent.press(view.getByLabelText('核对后投票'));
     expect(onVotePoll).not.toHaveBeenCalled();
   });
 
@@ -1728,6 +1773,26 @@ describe('Topic real child components', () => {
     expect(onOpenUser).not.toHaveBeenCalled();
   });
 
+  it('shows the referenced commenter’s nickname and opens the account named by the reply', async () => {
+    const onOpenUser = jest.fn();
+    const target: Reply = { author: '山月', authorId: 'bob', floor: 1, createdAt: '', contentHtml: '<p>楼上</p>' };
+    const props = replyProps({ onOpenUser, source: 'linuxdo', repliesByFloor: new Map([[1, target]]) });
+    const view = await render(<ReplyItem {...props} />);
+    await fireEvent.press(view.getByText('@山月'));
+    expect(onOpenUser).toHaveBeenCalledWith(expect.objectContaining({ username: 'bob', displayName: '山月' }));
+
+    await view.rerender(<ReplyItem {...props} repliesByFloor={new Map()} />);
+    expect(view.getByText('@bob')).toBeTruthy();
+    await view.rerender(
+      <ReplyItem {...props} repliesByFloor={new Map()} loadedQuotedReplies={{ 'linuxdo:topic-1:1': target }} />
+    );
+    expect(view.getByText('@山月')).toBeTruthy();
+
+    await view.rerender(<ReplyItem {...props} repliesByFloor={new Map([[1, { ...target, authorId: 'other' }]])} />);
+    await fireEvent.press(view.getByText('@bob'));
+    expect(onOpenUser).toHaveBeenLastCalledWith(expect.objectContaining({ username: 'bob', displayName: 'bob' }));
+  });
+
   it('gives the Yaohuo target author and floor independent destinations', async () => {
     const onOpenUser = jest.fn();
     const onLocateReply = jest.fn();
@@ -1815,7 +1880,7 @@ describe('Topic real child components', () => {
 
     expect(view.getByLabelText('已采纳的解决方案')).toBeTruthy();
     expect(view.getByText('已解决')).toBeTruthy();
-    expect(view.getByLabelText('解决方案')).toBeTruthy();
+    expect(view.queryByLabelText('解决方案')).toBeNull();
     expect(view.queryByText('✓ 解决方案')).toBeNull();
     expect(view.getByText('答案正文')).toBeTruthy();
     expect(view.getByText('#2')).toBeTruthy();
@@ -2084,7 +2149,8 @@ describe('Topic real child components', () => {
     expect(view.getByLabelText('编辑回复')).toBeTruthy();
     expect(view.getByLabelText('点赞')).toBeTruthy();
     expect(view.getByLabelText('删除回复')).toBeTruthy();
-    expect(view.getByText('可投票')).toBeTruthy();
+    expect(view.queryByText('可投票')).toBeNull();
+    expect(view.getByLabelText('提交投票')).toBeTruthy();
     expect(view.getAllByRole('checkbox').every((option) => !option.props.accessibilityState.disabled)).toBe(true);
   });
 

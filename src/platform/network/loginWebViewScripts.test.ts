@@ -61,12 +61,32 @@ describe('NodeSeek login document hints', () => {
       'logged-out'
     ],
     [
+      'same-site document-relative and protocol-relative controls',
+      '<nav><a href="./signIn.html">登录</a><a href="//www.nodeseek.com/register.html">注册</a></nav>',
+      'logged-out'
+    ],
+    [
+      'a registration link to another origin',
+      '<nav><a href="./signIn.html">登录</a><a href="//example.org/register.html">注册</a></nav>',
+      'unknown'
+    ],
+    [
       'guest controls with stale self marker',
       '<a class="Username" href="/space/48872">PRIVATE_NAME</a><a class="btn" href="/signIn.html">登录</a><a class="btn" href="/register.html">注册</a>',
       'logged-out'
     ],
     ['ordinary author and UID text', '<article>UID: 4706</article><a href="/space/4706">帖子作者</a>', 'unknown'],
     ['public navigation', '<a href="/setting">设置</a><a href="/notification">通知</a>', 'unknown'],
+    [
+      'article buttons',
+      '<article><header><a class="btn" href="/signIn.html">登录</a><a class="btn" href="/register.html">注册</a></header></article>',
+      'unknown'
+    ],
+    [
+      'hidden navigation',
+      '<style>.desktop-account { display:none }</style><nav class="desktop-account"><a href="/signIn.html">登录</a><a href="/register.html">注册</a></nav>',
+      'unknown'
+    ],
     [
       'login advice',
       '<article><a href="/signIn.html">登录教程</a><a href="/register.html">注册教程</a></article>',

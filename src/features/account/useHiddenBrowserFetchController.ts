@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import type { WebViewMessageEvent } from 'react-native-webview';
 import { ACCESS_REQUIREMENT_NOTICE_PATTERN_SOURCE } from '@/domain/forum/accessRequirements';
+import { NODESEEK_BROWSER_GUEST_CONTROLS } from '@/platform/network/nodeSeekGuestControls';
 
 export const NODESEEK_BROWSER_FETCH_SCRIPT = `
 (() => {
@@ -55,6 +56,7 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
       && Object.prototype.hasOwnProperty.call(config, "user")
       && (config.user === null || (typeof config.user === "object" && !Array.isArray(config.user))));
   };
+  ${NODESEEK_BROWSER_GUEST_CONTROLS}
   const hasAccountEvidence = () => {
     const config = window.__config__ && typeof window.__config__ === "object"
       ? window.__config__
@@ -76,18 +78,7 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
     if (config && Object.prototype.hasOwnProperty.call(config, "user") && config.user === null) {
       return true;
     }
-    const guestKinds = new Set(Array.from(document.querySelectorAll('a.btn[href], header a[href], nav a[href], .header a[href], .navbar a[href], .topbar a[href]')).flatMap((link) => {
-      const href = String(link.getAttribute("href") || "").trim();
-      const label = String(link.textContent || "").trim();
-      if (/^\\/(?:login|signin|sign-in)(?:\\.html?)?(?:[/?#]|$)/i.test(href) && /^(?:登录|sign in|log in)$/i.test(label)) {
-        return ["login"];
-      }
-      if (/^\\/(?:register|signup|sign-up)(?:\\.html?)?(?:[/?#]|$)/i.test(href) && /^(?:注册|sign up|register)$/i.test(label)) {
-        return ["register"];
-      }
-      return [];
-    }));
-    return guestKinds.has("login") && guestKinds.has("register");
+    return hasVisibleNodeSeekGuestControls();
   };
   const isNodeSeekPostPage = () => /\\/post-\\d+-\\d+\\/?$/i.test(location.pathname || "");
   const base64Json = (value) => {
@@ -200,7 +191,9 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
     const html = document.documentElement ? document.documentElement.outerHTML : "";
     const user = window.__config__?.user;
     if (!user || typeof user !== "object" || Array.isArray(user) || !document.documentElement) {
-      return html;
+      if (requestOwner !== "account") return html;
+      const guestState = hasVisibleNodeSeekGuestControls() ? "anonymous" : "no-visible-guest-controls";
+      return '<meta name="nodeseekAccountState" content="' + guestState + '">' + html;
     }
     const scripts = [...html.matchAll(/<script\\b[^>]*>([\\s\\S]*?)<\\/script>/gi)].map((match) => match[1]);
     const attributes = [...html.matchAll(/\\sdata-[\\w:-]+=["']([^"']*eyJ[A-Za-z0-9+/=]+[^"']*)["']/g)].map((match) => match[1]);

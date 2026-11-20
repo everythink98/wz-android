@@ -1,23 +1,27 @@
 export const MAX_RECENT_SEARCHES = 20;
 export const MAX_SEARCH_HISTORY_QUERY_LENGTH = 120;
 
-export function normalizeSearchHistory(value: unknown) {
+export function normalizeSearchHistoryEntry(text: string) {
+  const query = text.trim().slice(0, MAX_SEARCH_HISTORY_QUERY_LENGTH).trimEnd();
+  return { query, key: query.toLowerCase() };
+}
+
+export function normalizeSearchHistory(value: unknown, removedKeys?: ReadonlySet<string>) {
   if (!Array.isArray(value)) {
     return [];
   }
-  const seen = new Set<string>();
+  const seen = new Set(removedKeys);
   const history: string[] = [];
   for (const item of value) {
     if (typeof item !== 'string') {
       continue;
     }
-    const clean = item.trim().slice(0, MAX_SEARCH_HISTORY_QUERY_LENGTH);
-    const key = clean.toLowerCase();
-    if (!clean || seen.has(key)) {
+    const { query, key } = normalizeSearchHistoryEntry(item);
+    if (!query || seen.has(key)) {
       continue;
     }
     seen.add(key);
-    history.push(clean);
+    history.push(query);
     if (history.length >= MAX_RECENT_SEARCHES) {
       break;
     }
@@ -34,10 +38,6 @@ export function searchHistoryFromRaw(raw: string | null) {
   } catch {
     return [];
   }
-}
-
-export function mergeLoadedSearchHistory(current: string[], raw: string | null) {
-  return normalizeSearchHistory([...current, ...searchHistoryFromRaw(raw)]);
 }
 
 export function sameSearchHistory(left: string[] | null | undefined, right: string[] | null | undefined) {

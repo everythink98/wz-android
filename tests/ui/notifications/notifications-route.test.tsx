@@ -4,12 +4,13 @@ import React from 'react';
 import { createNavigationContainerRef, NavigationContainer, StackActions } from '@react-navigation/native';
 import { defaultScheduler, focusManager, notifyManager } from '@tanstack/react-query';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { Alert, Text } from 'react-native';
+import { Alert, Linking, Text } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNotificationsRuntime } from '@/features/notifications/useNotificationsRuntime';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import * as DocumentPicker from 'expo-document-picker';
 import * as WebBrowser from 'expo-web-browser';
+import { useAppDeepLinkNavigation } from '@/app/useAppDeepLinkNavigation';
 import type {
   ForumNotification,
   NotificationDetail,
@@ -28,11 +29,15 @@ import { createSiteSessionStates } from '@/domain/session/siteSessionState';
 import {
   NotificationDetailRoute,
   NotificationRouteRuntimeProvider,
+  NotificationSettingsRoute,
   NotificationsRoute,
   type NotificationRouteRuntimeValue
 } from '@/features/notifications/NotificationRoute';
 import { defaultNotificationState } from '@/platform/notifications/notificationStore';
-import { notificationPermissionGranted } from '@/platform/notifications/notificationSystem';
+import {
+  notificationPermissionGranted,
+  requestNotificationPermission
+} from '@/platform/notifications/notificationSystem';
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { prepareRequestToSend, type Fetcher } from '@/platform/network/request';
 import type { NotificationAdapter, NotificationAdapterAccess } from '@/sources/notificationAdapter';
@@ -91,6 +96,7 @@ jest.mock('expo-document-picker', () => ({
 
 jest.mock('@/platform/notifications/notificationSystem', () => ({
   notificationPermissionGranted: jest.fn(async () => false),
+  requestNotificationPermission: jest.fn(async () => false),
   syncNotificationBackgroundRegistration: jest.fn(async () => false),
   reconcileSourceNotificationSlots: jest.fn(async () => undefined),
   dismissSourceNotification: jest.fn(async () => undefined)
@@ -162,7 +168,7 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
 
 jest.mock('lucide-react-native', () => {
   const Icon = () => null;
-  return { ChevronRight: Icon };
+  return { ChevronDown: Icon, ChevronRight: Icon, SquarePen: Icon };
 });
 
 jest.mock('react-native-safe-area-context', () => ({
@@ -281,6 +287,7 @@ const notification: ForumNotification = {
 
 type FocusTestStackParamList = {
   NotificationDetail: { notification: ForumNotification; identityKey: string };
+  NotificationSettings: undefined;
   notifications: { source?: NotificationSource } | undefined;
   Other: undefined;
   User: { user: UserReference };
@@ -357,7 +364,180 @@ function routeRuntime(gateway: NotificationRouteRuntimeValue['gateway']): Notifi
   } as NotificationRouteRuntimeValue;
 }
 
+async function renderNotificationSettings(openSystemSettings?: NotificationRouteRuntimeValue['openSystemSettings']) {
+  const navigation = createNavigationContainerRef<FocusTestStackParamList>();
+  const subscription = Linking.addEventListener('url', () => {});
+  const addEventListener = jest.fn<typeof Linking.addEventListener>(() => subscription);
+  const linking = { addEventListener, getInitialURL: async () => null };
+  const pushTopic = (destination: { topic: Topic }) => {
+    if (!navigation.isReady()) return false;
+    navigation.dispatch(StackActions.push('Topic', destination));
+    return true;
+  };
+  const sessions = projectTestAccountSessions(createSiteSessionStates());
+  const ignore = jest.fn();
+  function Harness() {
+    const onReady = useAppDeepLinkNavigation(linking, pushTopic);
+    const runtime = useNotificationsRuntime({
+      appActive: true,
+      contentSourcesReady: true,
+      enabledNotificationSources: notificationSources,
+      fetcher: async () => new Response('{}'),
+      getLinuxDoUserAgent: () => 'test',
+      getNodeSeekUserAgent: () => 'test',
+      onSessionExpired: ignore,
+      requestAccountRecheck: ignore,
+      openSource: () => true,
+      privateAccessAllowed: () => false,
+      remoteReady: false,
+      sessionEpochs: initialForumSessionEpochs,
+      sessions
+    });
+    return (
+      <NotificationRouteRuntimeProvider
+        value={{ ...routeRuntime(runtime.gateway), ...runtime, ...(openSystemSettings ? { openSystemSettings } : {}) }}
+      >
+        <NavigationContainer ref={navigation} onReady={onReady}>
+          <FocusTestStack.Navigator initialRouteName="NotificationSettings">
+            <FocusTestStack.Screen name="NotificationSettings" component={NotificationSettingsRoute} />
+            <FocusTestStack.Screen name="Topic">{() => <Text>新打开的主题</Text>}</FocusTestStack.Screen>
+          </FocusTestStack.Navigator>
+        </NavigationContainer>
+      </NotificationRouteRuntimeProvider>
+    );
+  }
+  const view = await render(<Harness />, { wrapper: QueryTestWrapper });
+  const followLink = () => {
+    const [[, onUrl]] = addEventListener.mock.calls;
+    onUrl({ url: 'https://linux.do/t/176543' });
+    expect(navigation.getCurrentRoute()?.name).toBe('Topic');
+  };
+  return { view, navigation, followLink };
+}
 describe('notification routes', () => {
+  it.each(['left', 'returned', 'current'] as const)(
+    'applies first Android notification opt-in once with current settings focus after %s',
+    async (transition) => {
+      let persisted = defaultNotificationState();
+      const read = jest.mocked(AsyncStorage.getItem);
+      const write = jest.mocked(AsyncStorage.setItem);
+      const permission = jest.mocked(requestNotificationPermission);
+      read.mockClear().mockImplementation(async () => JSON.stringify(persisted));
+      write.mockClear().mockImplementation(async (_key, value) => {
+        persisted = JSON.parse(value);
+      });
+      const permissionResult = Promise.withResolvers<boolean>();
+      permission.mockClear().mockReturnValue(permissionResult.promise);
+      const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+      const { view, navigation, followLink } = await renderNotificationSettings();
+      const requestOptIn = async () => {
+        const toggle = await view.findByTestId('notification-global-switch');
+        await waitFor(() => expect(toggle.props.accessibilityState.disabled).toBe(false));
+        await fireEvent(toggle, 'valueChange', true);
+        expect(alert.mock.calls.at(-1)?.[0]).toBe('开启 Android 消息通知');
+        const accept = alert.mock.calls.at(-1)?.[2]?.find(({ text }) => text === '继续')?.onPress;
+        expect(accept).toBeDefined();
+        return accept!;
+      };
+      try {
+        let confirm = await requestOptIn();
+        expect(persisted.hasOptedIn).toBe(false);
+        expect(permission).not.toHaveBeenCalled();
+        if (transition !== 'current') {
+          await act(async () => {
+            followLink();
+            if (transition === 'left') confirm();
+          });
+          await act(async () => navigation.goBack());
+          expect(navigation.getCurrentRoute()?.name).toBe('NotificationSettings');
+          if (transition === 'returned') await act(async () => confirm());
+          expect(persisted.globalEnabled).toBe(false);
+          expect(persisted.hasOptedIn).toBe(false);
+          expect(write).not.toHaveBeenCalled();
+          expect(permission).not.toHaveBeenCalled();
+          confirm = await requestOptIn();
+        }
+        await act(async () => {
+          confirm();
+          confirm();
+        });
+        await waitFor(() => expect(permission).toHaveBeenCalledTimes(1));
+        expect(write).toHaveBeenCalledTimes(1);
+        expect(persisted).toMatchObject({ globalEnabled: true, hasOptedIn: true });
+        await act(async () => {
+          followLink();
+          permissionResult.resolve(true);
+        });
+        expect(persisted.globalEnabled).toBe(true);
+        expect(permission).toHaveBeenCalledTimes(1);
+        expect(write).toHaveBeenCalledTimes(1);
+      } finally {
+        permissionResult.resolve(false);
+        await view.unmount();
+        read.mockImplementation(async () => null);
+        write.mockImplementation(async () => undefined);
+        permission.mockReset().mockResolvedValue(false);
+        alert.mockRestore();
+      }
+    }
+  );
+
+  it.each(['global', 'source', 'system'] as const)(
+    'ignores a queued %s notification settings action after a warm link and permits a fresh action',
+    async (action) => {
+      const defaults = defaultNotificationState();
+      const before = {
+        ...defaults,
+        globalEnabled: true,
+        hasOptedIn: true,
+        sources: { ...defaults.sources, nodeseek: { ...defaults.sources.nodeseek, intentEnabled: true } }
+      };
+      let persisted = before;
+      const read = jest.mocked(AsyncStorage.getItem);
+      const write = jest.mocked(AsyncStorage.setItem);
+      read.mockClear().mockImplementation(async () => JSON.stringify(persisted));
+      write.mockClear().mockImplementation(async (_key, value) => {
+        persisted = JSON.parse(value);
+      });
+      const openSystemSettings = jest.fn(async () => undefined);
+      const { view, navigation, followLink } = await renderNotificationSettings(openSystemSettings);
+      const perform = async (includeHiddenElements = false) => {
+        if (action === 'system') {
+          await fireEvent.press(view.getByRole('button', { name: '打开系统设置', includeHiddenElements }));
+          return;
+        }
+        const testId = action === 'global' ? 'notification-global-switch' : 'notification-source-switch-nodeseek';
+        await fireEvent(view.getByTestId(testId, { includeHiddenElements }), 'valueChange', false);
+      };
+      try {
+        const toggle = await view.findByTestId('notification-global-switch');
+        await waitFor(() => expect(toggle.props.accessibilityState.disabled).toBe(false));
+        expect(toggle.props.value).toBe(true);
+        await act(async () => {
+          followLink();
+          await perform(true);
+        });
+        expect(persisted).toEqual(before);
+        expect(write).not.toHaveBeenCalled();
+        expect(openSystemSettings).not.toHaveBeenCalled();
+
+        await act(() => navigation.goBack());
+        await perform();
+        if (action === 'system') {
+          expect(openSystemSettings).toHaveBeenCalledTimes(1);
+          expect(write).not.toHaveBeenCalled();
+        } else {
+          await waitFor(() => expect(write).toHaveBeenCalledTimes(1));
+          expect(persisted.globalEnabled).toBe(action !== 'global');
+          expect(persisted.sources.nodeseek.intentEnabled).toBe(action !== 'source');
+        }
+      } finally {
+        await view.unmount();
+        read.mockImplementation(async () => null);
+        write.mockImplementation(async () => undefined);
+      }
+    }
+  );
   it.each(['list', 'topic', 'actor'] as const)(
     'ignores captured %s navigation after leaving the notification route and permits returning',
     async (source) => {
@@ -586,7 +766,8 @@ describe('notification routes', () => {
           forumQueryKeys.notificationDetail({
             source: 'linuxdo',
             identityKey: 'linuxdo:7',
-            notificationId: item.id
+            notificationId: item.id,
+            sessionEpoch: 0
           })
         );
         challenged = false;
@@ -620,8 +801,10 @@ describe('notification routes', () => {
               ? { ...runtime, enabledNotificationSources: [] }
               : { ...runtime, sessionEpochs: { ...runtime.sessionEpochs, linuxdo: 1 } };
         await view.rerender(tree());
+        const currentReads = completedReads + (change === 'epoch' ? 1 : 0);
+        await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(currentReads));
         expect(await recovery!.resume()).toBe('stale');
-        expect(fetcher).toHaveBeenCalledTimes(completedReads);
+        expect(fetcher).toHaveBeenCalledTimes(currentReads);
         const retry = events.find(
           (event) => event.operation === 'notification-detail-retry' && event.phase === 'intent'
         );
@@ -770,7 +953,8 @@ describe('notification routes', () => {
             queryKey: forumQueryKeys.notificationDetail({
               source: 'linuxdo',
               identityKey: 'linuxdo:7',
-              notificationId: item.id
+              notificationId: item.id,
+              sessionEpoch: 0
             }),
             exact: true
           });
@@ -1162,7 +1346,8 @@ describe('notification routes', () => {
       queryKey: forumQueryKeys.notificationDetail({
         source: 'linuxdo',
         identityKey: 'linuxdo:7',
-        notificationId: item.id
+        notificationId: item.id,
+        sessionEpoch: 0
       }),
       updateRuntime(changes: Partial<NotificationRouteRuntimeValue>) {
         runtime = { ...runtime, ...changes };
@@ -1518,8 +1703,10 @@ describe('notification routes', () => {
       queryKey: forumQueryKeys.notificationDetail({
         source: 'nodeseek',
         identityKey: 'nodeseek:7',
-        notificationId: item.id
+        notificationId: item.id,
+        sessionEpoch: 0
       }),
+      snapshotReads: () => fetcher.mock.calls.filter(([url]) => new URL(url).pathname.endsWith('/unread-count')).length,
       reads: () => fetcher.mock.calls.filter(([url]) => new URL(url).pathname.endsWith('/message/with/9')).length,
       marks: () =>
         fetcher.mock.calls
@@ -1563,6 +1750,24 @@ describe('notification routes', () => {
     };
   }
 
+  it.each([
+    { label: '私信 20', rows: [privateMessageRow(20, true)] },
+    { label: '暂无私信', rows: [] }
+  ])('does not reconcile unread snapshots without a mark write ($label)', async ({ label, rows }) => {
+    const conversation = await renderProfileConversation(rows);
+    try {
+      await conversation.open();
+      await waitFor(() => expect(conversation.view.getByText(label)).toBeTruthy());
+      expect(conversation.reads()).toBe(1);
+      expect(conversation.markAttempts).toEqual([]);
+      expect(conversation.marks()).toEqual([]);
+      expect(conversation.runtime.refreshSnapshots).not.toHaveBeenCalled();
+      expect(conversation.snapshotReads()).toBe(0);
+    } finally {
+      await conversation.view.unmount();
+    }
+  });
+
   it('reads the latest same-account conversation when reopening it from a cached profile route', async () => {
     expect(appQueryClient.getDefaultOptions().queries?.refetchOnMount).toBe(false);
     const conversation = await renderProfileConversation([privateMessageRow(20, true)]);
@@ -1578,6 +1783,41 @@ describe('notification routes', () => {
     await waitFor(() => expect(conversation.view.getByText('私信 21')).toBeTruthy());
     expect(conversation.reads()).toBe(2);
     expect(conversation.marks()).toEqual([]);
+  });
+
+  it('loads the active page when moving directly between two views of the same conversation', async () => {
+    const conversation = await renderProfileConversation([privateMessageRow(20, true)]);
+    const firstRead = conversation.pauseNextRead();
+    try {
+      await conversation.open();
+      await firstRead.started;
+      const firstKey = conversation.navigation.getCurrentRoute()?.key;
+      await conversation.open();
+      expect(conversation.navigation.getCurrentRoute()?.key).not.toBe(firstKey);
+      await act(async () => firstRead.resolve());
+      await waitFor(() => expect(conversation.view.getByText('私信 20')).toBeTruthy());
+    } finally {
+      firstRead.resolve();
+      await conversation.view.unmount();
+    }
+  });
+
+  it('shows conversation messages only after a read for the current session', async () => {
+    const conversation = await renderProfileConversation([privateMessageRow(20, true)]);
+    await conversation.open();
+    await waitFor(() => expect(conversation.view.getByText('私信 20')).toBeTruthy());
+    const currentRead = conversation.pauseNextRead();
+    try {
+      conversation.setRows([privateMessageRow(21, true)]);
+      await conversation.updateRuntime({ sessionEpochs: { ...conversation.runtime.sessionEpochs, nodeseek: 1 } });
+      expect(conversation.view.queryByText('私信 20')).toBeNull();
+      await currentRead.started;
+      await act(async () => currentRead.resolve());
+      await waitFor(() => expect(conversation.view.getByText('私信 21')).toBeTruthy());
+    } finally {
+      currentRead.resolve();
+      await conversation.view.unmount();
+    }
   });
 
   it('opens the conversation participant from the native header with the canonical source and user id', async () => {
@@ -1990,7 +2230,8 @@ describe('notification routes', () => {
           queryKey: forumQueryKeys.notificationDetail({
             source: notification.source,
             identityKey: 'nodeseek:new-account',
-            notificationId: notification.id
+            notificationId: notification.id,
+            sessionEpoch: 0
           })
         });
       });
@@ -2006,7 +2247,8 @@ describe('notification routes', () => {
           queryKey: forumQueryKeys.notificationDetail({
             source: notification.source,
             identityKey: 'nodeseek:new-account',
-            notificationId: notification.id
+            notificationId: notification.id,
+            sessionEpoch: 0
           })
         });
       });
@@ -2124,6 +2366,124 @@ describe('notification routes', () => {
       }
     }
   );
+  it('reconciles a written NodeSeek receipt without restarting the first linux.do unread GET', async () => {
+    appQueryClient.clear();
+    let persisted: string | null = null;
+    jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
+    jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
+      persisted = value;
+    });
+    const linuxDoSnapshot = Promise.withResolvers<Response>();
+    const linuxDoResponse = new Response(JSON.stringify({ notifications: [], total_rows_notifications: 4 }));
+    const linuxDoSignals: (AbortSignal | null | undefined)[] = [];
+    let unread = 2;
+    let markCalls = 0;
+    const fetcher = jest.fn(async (url: string, init?: RequestInit) => {
+      const parsed = new URL(url);
+      if (parsed.hostname === 'linux.do' && parsed.pathname === '/notifications') {
+        linuxDoSignals.push(init?.signal);
+        if (linuxDoSignals.length === 1) return linuxDoSnapshot.promise;
+        return new Response(JSON.stringify({ notifications: [], total_rows_notifications: 9 }));
+      }
+      if (parsed.pathname.endsWith('/unread-count')) {
+        return new Response(JSON.stringify({ atMe: 0, reply: unread, message: 0 }));
+      }
+      if (parsed.pathname.endsWith('/markViewed')) {
+        expect(init?.method).toBe('POST');
+        markCalls++;
+        unread = 1;
+        return new Response(JSON.stringify({ success: true }));
+      }
+      return new Response(JSON.stringify({ data: [] }));
+    });
+    const sessions = projectTestAccountSessions(
+      createSiteSessionStates({
+        nodeseek: {
+          site: 'nodeseek',
+          status: 'logged-in',
+          cookieSummary: [],
+          isVerifying: false,
+          currentUser: { source: 'nodeseek', id: '41', username: 'reader', url: 'https://www.nodeseek.com/space/41' }
+        },
+        linuxdo: {
+          site: 'linuxdo',
+          status: 'logged-in',
+          cookieSummary: [],
+          isVerifying: false,
+          currentUser: { source: 'linuxdo', id: '42', username: 'reader', url: 'https://linux.do/u/reader' }
+        }
+      })
+    );
+    const navigationRef = createNavigationContainerRef<FocusTestStackParamList>();
+    function Harness() {
+      const runtime = useNotificationsRuntime({
+        appActive: true,
+        contentSourcesReady: true,
+        enabledNotificationSources: ['nodeseek', 'linuxdo'],
+        fetcher,
+        getLinuxDoUserAgent: () => 'test',
+        getNodeSeekUserAgent: () => 'test',
+        onSessionExpired: jest.fn(),
+        requestAccountRecheck: jest.fn(),
+        openSource: () => true,
+        privateAccessAllowed: () => true,
+        remoteReady: true,
+        sessionEpochs: initialForumSessionEpochs,
+        sessions
+      });
+      return (
+        <>
+          <Text testID="unread-total">{runtime.unreadTotal}</Text>
+          <NotificationRouteRuntimeProvider value={{ ...routeRuntime(runtime.gateway), ...runtime }}>
+            <NavigationContainer ref={navigationRef}>
+              <FocusTestStack.Navigator initialRouteName="Other">
+                <FocusTestStack.Screen name="Other">{() => null}</FocusTestStack.Screen>
+                <FocusTestStack.Screen name="NotificationDetail">
+                  {(props) => (
+                    <NotificationDetailRoute navigation={props.navigation as never} route={props.route as never} />
+                  )}
+                </FocusTestStack.Screen>
+              </FocusTestStack.Navigator>
+            </NavigationContainer>
+          </NotificationRouteRuntimeProvider>
+        </>
+      );
+    }
+    const nodeSeekUnreadKey = forumQueryKeys.notificationSnapshot({
+      source: 'nodeseek',
+      identityKey: 'nodeseek:41',
+      sessionEpoch: 0
+    });
+    const view = await render(<Harness />, { wrapper: QueryTestWrapper });
+    try {
+      await waitFor(() => expect(linuxDoSignals).toHaveLength(1));
+      await waitFor(() => expect(view.getByTestId('unread-total').props.children).toBe(2));
+      expect(linuxDoSignals[0]?.aborted).toBe(false);
+      await act(async () =>
+        navigationRef.navigate('NotificationDetail', {
+          notification: { ...notification, id: 'reply:known-writer', remoteReadId: '1', remoteGroup: 'reply-to-me' },
+          identityKey: 'nodeseek:41'
+        })
+      );
+      await waitFor(() => expect(markCalls).toBe(1));
+      await waitFor(() =>
+        expect(appQueryClient.getQueryData(nodeSeekUnreadKey)).toMatchObject({ snapshot: { total: 1 } })
+      );
+      expect(linuxDoSignals).toHaveLength(1);
+      expect(linuxDoSignals[0]?.aborted).toBe(false);
+      await act(async () => {
+        linuxDoSnapshot.resolve(linuxDoResponse);
+        await linuxDoSnapshot.promise;
+      });
+      await waitFor(() => expect(view.getByTestId('unread-total').props.children).toBe(5));
+    } finally {
+      linuxDoSnapshot.resolve(linuxDoResponse);
+      await view.unmount();
+      jest.mocked(AsyncStorage.getItem).mockImplementation(async () => null);
+      jest.mocked(AsyncStorage.setItem).mockImplementation(async () => undefined);
+    }
+  });
+
   it.each([
     { action: 'first snapshot pending', remaining: 0 },
     { action: 'return during read', remaining: 0 },
@@ -2324,6 +2684,80 @@ describe('notification routes', () => {
       jest.mocked(AsyncStorage.setItem).mockImplementation(async () => undefined);
     }
   });
+
+  it.each(['foreground', 'background', 'resumed'] as const)(
+    'keeps a notification retry login intent with its original foreground visit after %s',
+    async (visit) => {
+      appQueryClient.clear();
+      const fetcher = jest.fn(async () => new Response('{"errors":["请求受限"]}', { status: 429 }));
+      const gateway = createNotificationGateway({
+        readAccess: () => ({ identityKey: 'nodeseek:42', userId: '42', fetcher }),
+        privateAccessAllowed: () => true,
+        sourceAllowed: () => true
+      });
+      const accountCheck = Promise.withResolvers<AccountReconcileResult>();
+      let runtime: NotificationRouteRuntimeValue = {
+        ...routeRuntime(gateway),
+        enabledNotificationSources: ['nodeseek'],
+        activeSources: ['nodeseek'],
+        identityKeys: { nodeseek: 'nodeseek:42' },
+        identitySignature: 'nodeseek:42',
+        reconcileAccountStatus: jest.fn(() => accountCheck.promise)
+      };
+      const navigation = createNavigationContainerRef<FocusTestStackParamList>();
+      const tree = () => (
+        <NotificationRouteRuntimeProvider value={runtime}>
+          <NavigationContainer ref={navigation}>
+            <FocusTestStack.Navigator initialRouteName="notifications">
+              <FocusTestStack.Screen name="notifications">
+                {(props) => <NotificationsRoute navigation={props.navigation as never} route={props.route as never} />}
+              </FocusTestStack.Screen>
+            </FocusTestStack.Navigator>
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>
+      );
+      const view = await render(tree(), { wrapper: QueryTestWrapper });
+      try {
+        const retry = await view.findByText('重试 NodeSeek');
+        const listRequests = fetcher.mock.calls.length;
+        await fireEvent.press(retry);
+        expect(runtime.reconcileAccountStatus).toHaveBeenCalledTimes(1);
+        expect(runtime.openAccountSurface).not.toHaveBeenCalled();
+        if (visit !== 'foreground') {
+          await act(async () => focusManager.setFocused(false));
+          expect(navigation.getCurrentRoute()?.name).toBe('notifications');
+          if (visit === 'resumed') await act(async () => focusManager.setFocused(true));
+        }
+        await act(async () => {
+          accountCheck.resolve({ status: 'anonymous', session: createSiteSessionStates().nodeseek });
+          await accountCheck.promise;
+        });
+        if (visit === 'foreground') {
+          expect(runtime.openAccountSurface).toHaveBeenCalledWith('nodeseek', '登录已失效，请重新登录。');
+        } else {
+          expect(runtime.openAccountSurface).not.toHaveBeenCalled();
+          await act(async () => focusManager.setFocused(true));
+          runtime = {
+            ...runtime,
+            activeSources: [],
+            identityKeys: {},
+            identitySignature: 'none',
+            sessionEpochs: { ...runtime.sessionEpochs, nodeseek: 1 }
+          };
+          await view.rerender(tree());
+          await fireEvent.press(await view.findByText('去登录 NodeSeek'));
+          expect(runtime.openAccountSurface).toHaveBeenCalledTimes(1);
+        }
+        expect(runtime.reconcileAccountStatus).toHaveBeenCalledTimes(1);
+        expect(fetcher).toHaveBeenCalledTimes(listRequests);
+      } finally {
+        accountCheck.resolve({ status: 'stale' });
+        await act(async () => focusManager.setFocused(true));
+        await view.unmount();
+        appQueryClient.clear();
+      }
+    }
+  );
 
   it.each(notificationSources)('opens %s login directly from its account-not-ready state', async (source) => {
     appQueryClient.clear();
@@ -2777,7 +3211,8 @@ describe('notification routes', () => {
         forumQueryKeys.notificationDetail({
           source: notification.source,
           identityKey: 'nodeseek:new-account',
-          notificationId: notification.id
+          notificationId: notification.id,
+          sessionEpoch: 0
         })
       )
     ).toBeUndefined();
@@ -3059,6 +3494,7 @@ describe('notification routes', () => {
       );
       try {
         await waitFor(() => expect(view.getByText('全部已读')).toBeTruthy());
+        const queuedMarkAll = mockListNavigationProps.onMarkAll;
         await fireEvent.press(view.getByText('全部已读'));
         expect(confirm).toBeDefined();
         const previousConfirm = confirm!;
@@ -3076,6 +3512,8 @@ describe('notification routes', () => {
         }
         await act(async () => previousConfirm());
         expect(posts).not.toHaveBeenCalled();
+        await act(async () => queuedMarkAll());
+        expect(alert).toHaveBeenCalledTimes(1);
         await fireEvent.press(view.getByText('全部已读'));
         expect(alert.mock.calls.at(-1)?.[1]).toContain('NodeSeek');
         await act(async () => confirm?.());
@@ -3605,6 +4043,134 @@ describe('notification routes', () => {
     });
 
     expect(listAllPage).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['notification-list-end', 'notification-list-refresh'])(
+    'ignores a queued %s when another source takes over the list',
+    async (testId) => {
+      appQueryClient.clear();
+      const listPage = jest.fn<NotificationRouteRuntimeValue['gateway']['listPage']>(async () => ({
+        quality: 'complete',
+        items: [notification],
+        cursor: 'next',
+        hasMore: true
+      }));
+      const gateway = {
+        getCategories: jest.fn(async () => [{ id: 'all', label: '全部' }]),
+        listAllPage: jest.fn(async () => ({
+          qualities: {},
+          items: [notification],
+          pages: {},
+          errors: {},
+          nextCursors: { nodeseek: 'old' },
+          hasMore: true
+        })),
+        listPage
+      } as unknown as NotificationRouteRuntimeValue['gateway'];
+      const view = await render(
+        <NotificationRouteRuntimeProvider value={routeRuntime(gateway)}>
+          <NavigationContainer>
+            <NotificationsRoute
+              navigation={{ navigate: jest.fn(), setParams: jest.fn() } as never}
+              route={{ key: 'notifications', name: 'notifications' }}
+            />
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>,
+        { wrapper: QueryTestWrapper }
+      );
+      try {
+        await waitFor(() => expect(view.getByText('旧账号消息')).toBeTruthy());
+        const oldEvent = view.getByTestId(testId).props.onPress;
+        expect(oldEvent).toBeDefined();
+        await fireEvent.press(view.getByTestId('notification-source-nodeseek'));
+        await waitFor(() => expect(listPage).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(view.getByText('旧账号消息')).toBeTruthy());
+        await act(async () => oldEvent());
+        expect(listPage).toHaveBeenCalledTimes(1);
+        await fireEvent.press(view.getByTestId(testId));
+        await waitFor(() => expect(listPage).toHaveBeenCalledTimes(2));
+      } finally {
+        await view.unmount();
+      }
+    }
+  );
+
+  it.each(['source', 'focus'])('rejects a site retry queued before a change of %s', async (change) => {
+    appQueryClient.clear();
+    const gateway = {
+      getCategories: jest.fn(async () => [{ id: 'all', label: '全部' }]),
+      listAllPage: jest.fn(async () => ({
+        qualities: {},
+        items: [notification],
+        pages: {},
+        errors: { nodeseek: sourceErrorFromUnknown('nodeseek', new Error('暂时无法读取')) },
+        nextCursors: {},
+        hasMore: false
+      })),
+      listPage: jest.fn(async () => ({ quality: 'complete', items: [notification], cursor: null, hasMore: false }))
+    } as unknown as NotificationRouteRuntimeValue['gateway'];
+    const runtime = routeRuntime(gateway);
+    const navigation = createNavigationContainerRef<FocusTestStackParamList>();
+    const view = await render(
+      <NotificationRouteRuntimeProvider value={runtime}>
+        <NavigationContainer ref={navigation}>
+          <FocusTestStack.Navigator>
+            <FocusTestStack.Screen name="notifications">
+              {(props) => <NotificationsRoute navigation={props.navigation as never} route={props.route} />}
+            </FocusTestStack.Screen>
+            <FocusTestStack.Screen name="Other">{() => null}</FocusTestStack.Screen>
+          </FocusTestStack.Navigator>
+        </NavigationContainer>
+      </NotificationRouteRuntimeProvider>,
+      { wrapper: QueryTestWrapper }
+    );
+    try {
+      await waitFor(() => expect(view.getByText('旧账号消息')).toBeTruthy());
+      const queuedRetry = mockListNavigationProps.onRetrySource;
+      if (change === 'source') await fireEvent.press(view.getByTestId('notification-source-nodeseek'));
+      else await act(async () => navigation.navigate('Other'));
+      await act(async () => queuedRetry('nodeseek'));
+      expect(runtime.reconcileAccountStatus).not.toHaveBeenCalled();
+    } finally {
+      await view.unmount();
+    }
+  });
+
+  it('stops its account retry sequence when the first check completes after leaving messages', async () => {
+    appQueryClient.clear();
+    const runtime = routeRuntime({} as NotificationRouteRuntimeValue['gateway']);
+    runtime.activeSources = [];
+    runtime.sessions.nodeseek = { ...runtime.sessions.nodeseek, identityTrust: 'unknown' };
+    runtime.sessions.linuxdo = { ...runtime.sessions.linuxdo, identityTrust: 'unknown' };
+    const first = Promise.withResolvers<AccountReconcileResult>();
+    jest
+      .mocked(runtime.reconcileAccountStatus)
+      .mockResolvedValue({ status: 'stale' })
+      .mockReturnValueOnce(first.promise);
+    const navigation = createNavigationContainerRef<FocusTestStackParamList>();
+    const view = await render(
+      <NotificationRouteRuntimeProvider value={runtime}>
+        <NavigationContainer ref={navigation}>
+          <FocusTestStack.Navigator>
+            <FocusTestStack.Screen name="notifications">
+              {(props) => <NotificationsRoute navigation={props.navigation as never} route={props.route} />}
+            </FocusTestStack.Screen>
+            <FocusTestStack.Screen name="Other">{() => null}</FocusTestStack.Screen>
+          </FocusTestStack.Navigator>
+        </NavigationContainer>
+      </NotificationRouteRuntimeProvider>,
+      { wrapper: QueryTestWrapper }
+    );
+    try {
+      await fireEvent.press(view.getByText('重试账号核对'));
+      expect(runtime.reconcileAccountStatus).toHaveBeenCalledTimes(1);
+      await act(async () => navigation.navigate('Other'));
+      await act(async () => first.resolve({ status: 'stale' }));
+      expect(runtime.reconcileAccountStatus).toHaveBeenCalledTimes(1);
+    } finally {
+      first.resolve({ status: 'stale' });
+      await view.unmount();
+    }
   });
 
   it.each(['storage', 'source'] as const)(
@@ -4195,7 +4761,7 @@ describe('notification routes', () => {
     }
   });
 
-  it('routes private-message original and bubble links through the same external owner', async () => {
+  it('opens original and bubble links only while their private-message route is focused', async () => {
     appQueryClient.clear();
     const item: ForumNotification = {
       ...notification,
@@ -4222,35 +4788,63 @@ describe('notification routes', () => {
       markRead: jest.fn()
     } as unknown as NotificationRouteRuntimeValue['gateway'];
     const runtime = routeRuntime(gateway);
+    const navigation = createNavigationContainerRef<FocusTestStackParamList>();
+    const subscription = Linking.addEventListener('url', () => {});
+    const addEventListener = jest.fn<typeof Linking.addEventListener>(() => subscription);
+    const linking = { addEventListener, getInitialURL: async () => null };
+    function pushTopic(destination: { topic: Topic }) {
+      if (!navigation.isReady()) return false;
+      navigation.dispatch(StackActions.push('Topic', destination));
+      return true;
+    }
+    function Navigator() {
+      const onReady = useAppDeepLinkNavigation(linking, pushTopic);
+      return (
+        <NotificationRouteRuntimeProvider value={runtime}>
+          <NavigationContainer ref={navigation} onReady={onReady}>
+            <FocusTestStack.Navigator initialRouteName="NotificationDetail">
+              <FocusTestStack.Screen
+                name="NotificationDetail"
+                initialParams={{ notification: item, identityKey: 'nodeseek:new-account' }}
+              >
+                {(props) => <NotificationDetailRoute navigation={props.navigation as never} route={props.route} />}
+              </FocusTestStack.Screen>
+              <FocusTestStack.Screen name="Topic">{() => <Text>新打开的主题</Text>}</FocusTestStack.Screen>
+            </FocusTestStack.Navigator>
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>
+      );
+    }
     const openBrowserAsync = jest
       .spyOn(WebBrowser, 'openBrowserAsync')
       .mockResolvedValue({ type: WebBrowser.WebBrowserResultType.OPENED });
+    const view = await render(<Navigator />, { wrapper: QueryTestWrapper });
     try {
-      const view = await render(
-        <NotificationRouteRuntimeProvider value={runtime}>
-          <NavigationContainer>
-            <NotificationDetailRoute
-              navigation={{ navigate: jest.fn(), setParams: jest.fn() } as never}
-              route={{
-                key: 'notification-detail',
-                name: 'NotificationDetail',
-                params: { notification: item, identityKey: 'nodeseek:new-account' }
-              }}
-            />
-          </NavigationContainer>
-        </NotificationRouteRuntimeProvider>,
-        { wrapper: QueryTestWrapper }
-      );
-
       await waitFor(() => expect(view.getByRole('link', { name: '原消息外链' })).toBeTruthy());
       await fireEvent.press(view.getByRole('link', { name: '原消息外链' }));
       await fireEvent.press(view.getByRole('link', { name: '气泡外链' }));
-
       expect(openBrowserAsync).toHaveBeenNthCalledWith(1, 'https://example.com/original');
       expect(openBrowserAsync).toHaveBeenNthCalledWith(2, 'https://example.com/bubble');
+
+      openBrowserAsync.mockClear();
+      const [[, onUrl]] = addEventListener.mock.calls;
+      await act(async () => {
+        onUrl({ url: 'https://linux.do/t/176543' });
+        expect(navigation.getCurrentRoute()?.name).toBe('Topic');
+        await fireEvent.press(view.getByRole('link', { name: '原消息外链', includeHiddenElements: true }));
+        await fireEvent.press(view.getByRole('link', { name: '气泡外链', includeHiddenElements: true }));
+      });
+      expect(openBrowserAsync).not.toHaveBeenCalled();
+
+      await act(() => navigation.goBack());
+      await fireEvent.press(await view.findByRole('link', { name: '原消息外链' }));
+      await fireEvent.press(view.getByRole('link', { name: '气泡外链' }));
+      expect(openBrowserAsync.mock.calls).toEqual([['https://example.com/original'], ['https://example.com/bubble']]);
       expect(runtime.notify).not.toHaveBeenCalled();
     } finally {
+      await view.unmount();
       openBrowserAsync.mockRestore();
+      appQueryClient.clear();
     }
   });
 
@@ -4571,12 +5165,11 @@ describe('notification routes', () => {
     );
 
     await waitFor(() => expect(view.getByLabelText('发私信')).toBeTruthy());
-    expect(view.getByText('还没有私信，点击下方输入区开始聊天。')).toBeTruthy();
+    expect(view.getByText('暂无私信')).toBeTruthy();
     expect(view.queryByLabelText('私信回复内容')).toBeNull();
     expect(gateway.markRead).not.toHaveBeenCalled();
     expect(gateway.listPage).not.toHaveBeenCalled();
-    await waitFor(() => expect(runtime.refreshSnapshots).toHaveBeenCalledTimes(1));
-    jest.mocked(runtime.refreshSnapshots).mockClear();
+    expect(runtime.refreshSnapshots).not.toHaveBeenCalled();
     await fireEvent.press(view.getByLabelText('发私信'));
     await fireEvent.changeText(view.getByLabelText('私信回复内容'), 'PRIVATE_DRAFT');
     await act(async () => {

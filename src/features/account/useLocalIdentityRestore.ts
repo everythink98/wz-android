@@ -6,6 +6,7 @@ import {
   sanitizeWebViewUserAgent
 } from '@/platform/android/userAgent';
 import { migrateLegacyCookieSnapshots } from '@/platform/storage/legacyCookieSnapshotMigration';
+import { withAbortableTimeout } from '@/platform/network/request';
 import {
   createCredentialWriteGate,
   enqueueCredentialWriteForGeneration,
@@ -39,6 +40,7 @@ type IdentityState = {
 };
 
 const RESTORE_ERROR = '本地登录身份读取失败，请重试';
+const RESTORE_TIMEOUT_MS = 5_000;
 const storageKey = (site: UserAgentSite) =>
   site === 'nodeseek' ? NODESEEK_USER_AGENT_STORAGE_KEY : LINUXDO_USER_AGENT_STORAGE_KEY;
 
@@ -125,10 +127,14 @@ export function useLocalIdentityRestore({
       return !run.owner.aborted && current.phase === 'reading-agents' && current.run === run;
     };
     const generations = { nodeseek: gates.current.nodeseek.generation, linuxdo: gates.current.linuxdo.generation };
-    void Promise.all([
-      SecureStore.getItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY),
-      SecureStore.getItemAsync(LINUXDO_USER_AGENT_STORAGE_KEY)
-    ])
+    void withAbortableTimeout(
+      () =>
+        Promise.all([
+          SecureStore.getItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY),
+          SecureStore.getItemAsync(LINUXDO_USER_AGENT_STORAGE_KEY)
+        ]),
+      { signal: run.owner, timeoutMs: RESTORE_TIMEOUT_MS }
+    )
       .then(([nodeSeekUserAgent, linuxDoUserAgent]) => {
         if (!isCurrent()) return;
         if (generations.nodeseek === 0 && gates.current.nodeseek.generation === 0)
@@ -189,7 +195,7 @@ export function useLocalIdentityRestore({
         ? { ...value, restoration: { ...previous, migration: run } }
         : value;
     });
-    const isCurrent = () => {
+    const ownsRun = () => {
       const previous = stateRef.current.restoration;
       return (
         !run.owner.aborted &&
@@ -200,37 +206,41 @@ export function useLocalIdentityRestore({
         enabledSources.every((source) => enabledSourcesRef.current.includes(source))
       );
     };
-    void migrateLegacyCookieSnapshots({
-      enabledSources: run.sources,
-      isCurrent,
-      restoreUserAgent: async (site, legacyUserAgent) => {
-        const gate = gates.current[site];
-        const currentAgent = getUserAgent(site);
-        if (isCurrent() && (!currentAgent || gate.generation > 0)) {
-          const userAgent = currentAgent || sanitizeWebViewUserAgent(legacyUserAgent);
-          const write = enqueueCredentialWriteForGeneration(
-            gate,
-            gate.generation,
-            async ({ isCurrent: writeIsCurrent }) => {
-              if (!isCurrent()) return;
-              await SecureStore.setItemAsync(storageKey(site), userAgent);
-              if (isCurrent() && writeIsCurrent()) setUserAgent(site, userAgent);
-            }
-          );
-          writes.current[site] = write;
-          await write;
+    const migrate = (signal: AbortSignal) => {
+      const isCurrent = () => !signal.aborted && ownsRun();
+      return migrateLegacyCookieSnapshots({
+        enabledSources: run.sources,
+        isCurrent,
+        restoreUserAgent: async (site, legacyUserAgent) => {
+          const gate = gates.current[site];
+          const currentAgent = getUserAgent(site);
+          if (isCurrent() && (!currentAgent || gate.generation > 0)) {
+            const userAgent = currentAgent || sanitizeWebViewUserAgent(legacyUserAgent);
+            const write = enqueueCredentialWriteForGeneration(
+              gate,
+              gate.generation,
+              async ({ isCurrent: writeIsCurrent }) => {
+                if (!isCurrent()) return;
+                await SecureStore.setItemAsync(storageKey(site), userAgent);
+                if (isCurrent() && writeIsCurrent()) setUserAgent(site, userAgent);
+              }
+            );
+            writes.current[site] = write;
+            await write;
+          }
+          // A Native identity may replace a pending legacy write before its old key can be deleted.
+          let write = writes.current[site];
+          while (write) {
+            await write;
+            if (!isCurrent() || write === writes.current[site]) break;
+            write = writes.current[site];
+          }
         }
-        // A Native identity may replace a pending legacy write before its old key can be deleted.
-        let write = writes.current[site];
-        while (write) {
-          await write;
-          if (!isCurrent() || write === writes.current[site]) break;
-          write = writes.current[site];
-        }
-      }
-    })
+      });
+    };
+    void withAbortableTimeout(migrate, { signal: run.owner, timeoutMs: RESTORE_TIMEOUT_MS })
       .then((migration) => {
-        if (!isCurrent()) return;
+        if (!ownsRun()) return;
         if (Object.values(migration).some((result) => result === 'retained'))
           throw new Error('Local identity restore is incomplete');
         publish((value) => {
@@ -249,7 +259,7 @@ export function useLocalIdentityRestore({
         });
       })
       .catch(() => {
-        if (!isCurrent()) return;
+        if (!ownsRun()) return;
         publish((value) => {
           const previous = value.restoration;
           return previous.phase === 'restoring-sources'

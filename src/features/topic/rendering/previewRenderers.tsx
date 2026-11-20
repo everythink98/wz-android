@@ -1,5 +1,5 @@
 import { ActivityIndicator } from 'react-native-paper';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useContext, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Image as NativeImage,
   PixelRatio,
@@ -28,14 +28,15 @@ import { useImageLoadDiagnostics } from '@/platform/media/imageLoadDiagnostics';
 import { imageSourceFromUrl, normalizeImagePreviewUrl } from '@/platform/media/imageRequestSource';
 import {
   selectImageDisplaySource,
-  selectImageOriginalSource,
-  type ImageDisplaySize
+  type ImageDisplaySize,
+  type OpenImagePreview
 } from '@/platform/media/imagePreviewCatalog';
 import {
   FORUM_FLOW_IMAGE_CONTEXT_ATTRIBUTE,
   INLINE_FORUM_IMAGE_TAG,
   isBoundedInlineForumImage,
-  isInlineForumImage
+  isInlineForumImage,
+  selectImageOriginalSource
 } from '@/domain/forum/forumContentMedia';
 import { inlineForumImageAlignmentStyle, inlineForumImageAttachmentSize } from '@/platform/media/inlineMedia';
 import { readerRadii, type ReaderTheme } from '@/ui/theme/tokens';
@@ -66,6 +67,8 @@ import {
 } from '@/platform/media/imageDisplayDimensions';
 import { useTopicBodyMediaLease } from '../media/TopicBodyMediaCoordinator';
 import { normalizeMediaReferrerPolicy, type MediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
+
+export const PictureDestinationContext = createContext(false);
 
 export function useImagePreviewPress(onPress: PressableProps['onPress']) {
   const multipleTouches = useRef(false);
@@ -234,18 +237,14 @@ type PreviewImageBlockProps = {
   errorTextStyle: StyleProp<TextStyle>;
   frameBackgroundColor: string;
   frameBorderColor: string;
+  hasDestinationLink: boolean;
   imageProps: IMGElementProps;
   imageSource: ImageURISource;
   loadingColor: string;
   maxHeight?: number;
   mediaContext: ForumMediaRequestContext;
   nodeSeekMediaUserAgent?: string;
-  onOpenImagePreview: (
-    url: string,
-    displaySize?: ImageDisplaySize,
-    renderedPosterUri?: string,
-    referrerPolicy?: MediaReferrerPolicy
-  ) => void;
+  onOpenImagePreview: OpenImagePreview;
   originalUri: string;
   src: string;
 };
@@ -392,6 +391,7 @@ function AdmittedPreviewImageBlock({
   errorTextStyle,
   frameBackgroundColor,
   frameBorderColor,
+  hasDestinationLink,
   imageProps,
   imageSource,
   loadingColor,
@@ -542,6 +542,43 @@ function AdmittedPreviewImageBlock({
   useEffect(() => {
     if (loadFailed) bodyMediaLease.settle('error');
   }, [bodyMediaLease, loadFailed]);
+  const frame = (
+    <View
+      testID="topic-image-frame"
+      style={[{ borderRadius: readerRadii.content, overflow: 'hidden' as const }, imageState.dimensions]}
+    >
+      {!loadFailed ? (
+        <ExpoImage
+          allowDownscaling
+          cachePolicy="disk"
+          contentFit="contain"
+          priority="normal"
+          recyclingKey={imageVisualIdentity}
+          source={attemptedImageSource}
+          style={[imageState.dimensions, imageState.type === 'success' ? imageState.imageStyle : null]}
+          onDisplay={handleImageDisplay}
+          onError={handleImageError}
+          onLoad={handleImageLoad}
+          onProgress={handleImageProgress}
+        />
+      ) : null}
+      {original.layer}
+      {!imageDisplayed && !loadFailed && !original.displayed ? (
+        <View style={imageLoadingOverlayStyle}>
+          <ActivityIndicator color={loadingColor} size="small" />
+        </View>
+      ) : loadFailed && !original.displayed ? (
+        <View style={imageLoadingOverlayStyle}>
+          <Text numberOfLines={2} style={errorTextStyle}>
+            {imageState.alt || '图片加载失败'}
+          </Text>
+        </View>
+      ) : null}
+    </View>
+  );
+  if (hasDestinationLink) {
+    return <View style={sharedContainerStyle}>{frame}</View>;
+  }
   return (
     <ImagePreviewPressable
       accessibilityLabel={imageState.alt || '查看图片'}
@@ -550,50 +587,16 @@ function AdmittedPreviewImageBlock({
       onPress={(event) => {
         event.stopPropagation?.();
         original.force();
-        if (referrerPolicy) {
-          onOpenImagePreview(
-            src,
-            activeLoadedImage?.dimensions || cachedDimensions,
-            activeArtifact?.posterSource.uri,
-            referrerPolicy
-          );
-        } else {
-          onOpenImagePreview(src, activeLoadedImage?.dimensions || cachedDimensions, activeArtifact?.posterSource.uri);
-        }
+        onOpenImagePreview(
+          src,
+          activeLoadedImage?.dimensions || cachedDimensions,
+          activeArtifact?.posterSource.uri,
+          referrerPolicy,
+          originalSource?.uri
+        );
       }}
     >
-      <View
-        testID="topic-image-frame"
-        style={[{ borderRadius: readerRadii.content, overflow: 'hidden' as const }, imageState.dimensions]}
-      >
-        {!loadFailed ? (
-          <ExpoImage
-            allowDownscaling
-            cachePolicy="disk"
-            contentFit="contain"
-            priority="normal"
-            recyclingKey={imageVisualIdentity}
-            source={attemptedImageSource}
-            style={[imageState.dimensions, imageState.type === 'success' ? imageState.imageStyle : null]}
-            onDisplay={handleImageDisplay}
-            onError={handleImageError}
-            onLoad={handleImageLoad}
-            onProgress={handleImageProgress}
-          />
-        ) : null}
-        {original.layer}
-        {!imageDisplayed && !loadFailed && !original.displayed ? (
-          <View style={imageLoadingOverlayStyle}>
-            <ActivityIndicator color={loadingColor} size="small" />
-          </View>
-        ) : loadFailed && !original.displayed ? (
-          <View style={imageLoadingOverlayStyle}>
-            <Text numberOfLines={2} style={errorTextStyle}>
-              {imageState.alt || '图片加载失败'}
-            </Text>
-          </View>
-        ) : null}
-      </View>
+      {frame}
     </ImagePreviewPressable>
   );
 }
@@ -793,12 +796,7 @@ function ManagedMixedForumImage({
   frameBackgroundColor: string;
   frameBorderColor: string;
   loadingColor: string;
-  onOpenImagePreview: (
-    url: string,
-    displaySize?: ImageDisplaySize,
-    renderedPosterUri?: string,
-    referrerPolicy?: MediaReferrerPolicy
-  ) => void;
+  onOpenImagePreview: OpenImagePreview;
   originalSource: ImageURISource | null;
   referrerPolicy?: MediaReferrerPolicy;
   scale: number;
@@ -881,11 +879,7 @@ function ManagedMixedForumImage({
         event.stopPropagation?.();
         original.force();
         const displaySize = naturalDimensions || cachedImageDisplayDimensions(cacheKey) || undefined;
-        if (referrerPolicy) {
-          onOpenImagePreview(src, displaySize, activeArtifact?.posterSource.uri, referrerPolicy);
-        } else {
-          onOpenImagePreview(src, displaySize, activeArtifact?.posterSource.uri);
-        }
+        onOpenImagePreview(src, displaySize, activeArtifact?.posterSource.uri, referrerPolicy, originalSource?.uri);
       }}
     >
       <NativeImage
@@ -970,16 +964,12 @@ export function createPreviewRenderers({
   htmlRendererStyles: ReturnType<typeof createHtmlRendererStyles>;
   mediaContext: ForumMediaRequestContext;
   nodeSeekMediaUserAgent?: string;
-  onOpenImagePreview: (
-    url: string,
-    displaySize?: ImageDisplaySize,
-    renderedPosterUri?: string,
-    referrerPolicy?: MediaReferrerPolicy
-  ) => void;
+  onOpenImagePreview: OpenImagePreview;
   settings: Pick<ReaderSettings, 'fontScale'>;
   theme: ReaderTheme;
 }): HtmlRenderers {
   const PreviewImageRenderer: CustomBlockRenderer = (props) => {
+    const hasDestinationLink = useContext(PictureDestinationContext);
     const continuationSpacing = useContentBoundarySpacing(props.tnode);
     const maxHeight = useContentImageMaxHeight();
     const contentWidth = useForumContentWidth();
@@ -1024,6 +1014,7 @@ export function createPreviewRenderers({
     }
     const src = displaySource.uri;
     const originalUri = selectImageOriginalSource(attributes) || src;
+    const picture = props.tnode.parent?.tagName === 'picture' ? props.tnode.parent : undefined;
     const imageSource = imageSourceFromUrl(src, {
       baseSource: imageProps.source,
       mediaContext,
@@ -1036,11 +1027,14 @@ export function createPreviewRenderers({
         alignment={maxHeight === undefined ? forumImageRowAlignment(props.tnode) : 'center'}
         attributes={attributes}
         boundarySpacing={boundarySpacing}
-        contentWidth={contentWidth}
+        contentWidth={
+          picture && displaySource.displaySize ? Math.min(contentWidth, displaySource.displaySize.width) : contentWidth
+        }
         displaySize={displaySource.displaySize}
         errorTextStyle={htmlRendererStyles.inlineForumImageText}
         frameBackgroundColor={theme.surface2}
         frameBorderColor={theme.line}
+        hasDestinationLink={hasDestinationLink}
         imageProps={imageProps}
         imageSource={imageSource as ImageURISource}
         loadingColor={theme.primary}

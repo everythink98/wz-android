@@ -14,7 +14,7 @@ import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flas
 import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
 import { RefreshControl, ScrollView } from 'react-native-gesture-handler';
 import { TabBar, TabView, type TabBarProps } from 'react-native-tab-view';
-import { ChevronDown, SquarePen } from 'lucide-react-native';
+import { ListFilter, SquarePen } from 'lucide-react-native';
 import Animated from 'react-native-reanimated';
 import { useScrollActionVisibility } from '@/ui/hooks/useScrollActionVisibility';
 import type {
@@ -65,8 +65,10 @@ export const FeedScreen = memo(function FeedScreen({
   feedFilter,
   feedFilters,
   feedSource,
+  isRouteFocused,
   enabledFeedSources,
   loadMoreFailureSignal,
+  loadMoreErrorMessage,
   loadingMore,
   topicStateIndex,
   readingFilter,
@@ -94,8 +96,10 @@ export const FeedScreen = memo(function FeedScreen({
   feedFilter?: SourceFeedFilter;
   feedFilters: Readonly<FeedFilterState>;
   feedSource: FeedSource;
+  isRouteFocused?: () => boolean;
   enabledFeedSources: readonly Source[];
   loadMoreFailureSignal: number;
+  loadMoreErrorMessage?: string;
   loadingMore: boolean;
   topicStateIndex: TopicListItemStateIndex;
   readingFilter: ReadingFilter;
@@ -118,7 +122,7 @@ export const FeedScreen = memo(function FeedScreen({
   const [sourceHeaderHeight, setSourceHeaderHeight] = useState(
     styles.feedFixedHeader.paddingTop + styles.feedSourceTab.minHeight
   );
-  const [secondaryHeaderHeight, setSecondaryHeaderHeight] = useState(46);
+  const [secondaryHeaderHeight, setSecondaryHeaderHeight] = useState(48);
   const internalListRef = useRef<FlashListRef<Topic>>(null);
   const listRef = scrollRef || internalListRef;
   const renderedSourceRef = useRef<{ source: FeedSource; phase: 'waiting' | 'rendered' }>({
@@ -191,8 +195,13 @@ export const FeedScreen = memo(function FeedScreen({
   );
   const feedInitialLayout = useMemo(() => ({ width: pagerWidth }), [pagerWidth]);
   const showFeedFilter = shouldUseFeedFilter(feedSource, categoryFilter);
+  if (filterMenuOpen && (!screenActive || !showFeedFilter)) setFilterMenuOpen(false);
   const activeFeedFilterMenuGroups = showFeedFilter ? feedFilterMenuGroupsFor(feedSource) : [];
   const feedTabOptions = useMemo(() => ({ labelStyle: styles.feedSourceLabel }), [styles.feedSourceLabel]);
+  const canChangeFeedSelection = useCallback(
+    () => screenActive && isRouteFocused?.() !== false,
+    [isRouteFocused, screenActive]
+  );
   const renderFeedTabBar = useCallback(
     (props: TabBarProps<{ key: string }>) => (
       <View
@@ -202,6 +211,9 @@ export const FeedScreen = memo(function FeedScreen({
       >
         <TabBar
           {...props}
+          onTabPress={({ preventDefault }) => {
+            if (!canChangeFeedSelection()) preventDefault();
+          }}
           scrollEnabled
           gap={22}
           activeColor={theme.primary}
@@ -215,12 +227,12 @@ export const FeedScreen = memo(function FeedScreen({
         />
       </View>
     ),
-    [styles, theme]
+    [canChangeFeedSelection, styles, theme]
   );
 
   const requestFeedLoadMore = useCallback(
     (source: 'button' | 'scroll' = 'button', offsetY = 0) => {
-      if (!feedHasMore || busy || loadingMore) {
+      if (!feedHasMore || busy || refreshing || loadingMore) {
         return;
       }
       const request = pageRequests.begin(feedPage + 1, source, offsetY, AUTO_LOAD_SCROLL_STEP);
@@ -231,7 +243,7 @@ export const FeedScreen = memo(function FeedScreen({
         () => settle(true)
       );
     },
-    [busy, feedHasMore, feedPage, loadingMore, onLoadMore, pageRequests]
+    [busy, feedHasMore, feedPage, loadingMore, onLoadMore, pageRequests, refreshing]
   );
 
   const handleScroll = useCallback(
@@ -271,22 +283,17 @@ export const FeedScreen = memo(function FeedScreen({
 
   const commitFeedSelectionChange = useCallback(
     (commit: () => void) => {
+      if (!canChangeFeedSelection()) return;
       scrollFeedToTop(false);
       commit();
       requestAnimationFrame(() => scrollFeedToTop(false));
     },
-    [scrollFeedToTop]
+    [canChangeFeedSelection, scrollFeedToTop]
   );
 
   useEffect(() => {
     pageRequests.reset();
   }, [categoryFilter, feedFilter, feedSource, readingFilter, pageRequests]);
-
-  useEffect(() => {
-    if (!showFeedFilter) {
-      setFilterMenuOpen(false);
-    }
-  }, [showFeedFilter]);
 
   const changeFeedSourceValue = useCallback(
     (value: string) => {
@@ -333,23 +340,25 @@ export const FeedScreen = memo(function FeedScreen({
   }, []);
   const changeFeedFilter = useCallback(
     (value: SourceFeedFilter) => {
+      if (!canChangeFeedSelection()) return;
       setFilterMenuOpen(false);
       if (value !== feedFilter) {
         commitFeedSelectionChange(() => onFeedFilterChange(value));
       }
     },
-    [commitFeedSelectionChange, feedFilter, onFeedFilterChange]
+    [canChangeFeedSelection, commitFeedSelectionChange, feedFilter, onFeedFilterChange]
   );
   const renderTopicItem = useCallback<ListRenderItem<Topic>>(
     ({ index, item: topic }) => (
       <MemoizedTopicCard
         readerState={getTopicListItemStateFromIndex(topicStateIndex, topic)}
+        showSource={feedSource === 'all'}
         testID={index === 0 ? 'feed-topic-first' : undefined}
         topic={topic}
         onOpenTopic={onOpenTopic}
       />
     ),
-    [onOpenTopic, topicStateIndex]
+    [feedSource, onOpenTopic, topicStateIndex]
   );
   const renderTopicSeparator = useCallback(() => <View style={styles.topicListSeparator} />, [styles]);
   const renderFeedFilterItem = useCallback(
@@ -396,7 +405,7 @@ export const FeedScreen = memo(function FeedScreen({
         testID="feed-loading-scene"
         style={[styles.content, { paddingTop: sourceHeaderHeight + secondaryHeaderHeight }]}
       >
-        <LoadingState text="正在读取主题..." animating={screenActive && routeSource === feedSource} />
+        <LoadingState text="加载中" animating={screenActive && routeSource === feedSource} />
       </View>
     ),
     [styles, sourceHeaderHeight, secondaryHeaderHeight, screenActive, feedSource]
@@ -437,7 +446,7 @@ export const FeedScreen = memo(function FeedScreen({
               allSourcesDisabled ? undefined : (
                 <RefreshControl
                   enabled={!busy || visibleFeedItems.length > 0}
-                  refreshing={refreshing}
+                  refreshing={refreshing && !busy}
                   onRefresh={onRefresh}
                   colors={[theme.primary]}
                   tintColor={theme.primary}
@@ -452,7 +461,7 @@ export const FeedScreen = memo(function FeedScreen({
             {...FEED_LIST_PERFORMANCE_PROPS}
             ListEmptyComponent={
               busy ? (
-                <LoadingState text="正在读取主题..." animating={screenActive} />
+                <LoadingState text="加载中" animating={screenActive} />
               ) : (
                 <View testID="feed-empty-state" onLayout={handleInitialListLoad}>
                   {allSourcesDisabled ? (
@@ -475,17 +484,31 @@ export const FeedScreen = memo(function FeedScreen({
             }
             ListFooterComponent={
               feedHasMore ? (
-                <AppButton
-                  label={loadingMore ? '正在加载...' : `加载第 ${feedPage + 1} 页`}
-                  disabled={busy || loadingMore}
-                  onPress={() => requestFeedLoadMore('button')}
-                />
-              ) : visibleFeedItems.length > 0 && !busy ? (
+                <View style={styles.feedListFooter}>
+                  {loadMoreErrorMessage && !loadingMore && !refreshing ? (
+                    <Text accessibilityLiveRegion="polite" style={styles.pageErrorText}>
+                      {loadMoreErrorMessage}
+                    </Text>
+                  ) : null}
+                  <AppButton
+                    compact
+                    variant="ghost"
+                    label={
+                      loadingMore ? '加载更多中' : `${loadMoreFailureSignal ? '重试加载' : '加载'}第 ${feedPage + 1} 页`
+                    }
+                    loading={loadingMore}
+                    disabled={busy || refreshing || loadingMore}
+                    onPress={() => requestFeedLoadMore('button')}
+                  />
+                </View>
+              ) : visibleFeedItems.length > 0 && !busy && !refreshing ? (
                 feedOutcomeKind ? (
-                  <Text style={styles.endOfListText}>已经到底了</Text>
-                ) : (
-                  <LoadingState text="正在读取其他来源..." animating={screenActive} />
-                )
+                  <Text testID="feed-end-of-list" style={styles.endOfListText}>
+                    已经到底了
+                  </Text>
+                ) : feedSource === 'all' ? (
+                  <LoadingState compact text="加载其他来源" animating={screenActive} />
+                ) : null
               ) : null
             }
             ItemSeparatorComponent={renderTopicSeparator}
@@ -508,6 +531,8 @@ export const FeedScreen = memo(function FeedScreen({
       handleScroll,
       handleScrollBeginDrag,
       listRef,
+      loadMoreErrorMessage,
+      loadMoreFailureSignal,
       loadingMore,
       handleInitialListLoad,
       onManageContentSources,
@@ -580,8 +605,10 @@ export const FeedScreen = memo(function FeedScreen({
                 </View>
                 {routeShowsFilter ? (
                   <Pressable
+                    testID={active ? 'feed-list-filter' : undefined}
                     accessibilityRole="button"
                     accessibilityLabel="列表筛选"
+                    accessibilityValue={{ text: feedFilterLabel(routeSource, routeFilter) }}
                     accessibilityState={{ expanded: active && filterMenuOpen }}
                     disabled={!active}
                     hitSlop={TOUCH_HIT_SLOP}
@@ -590,10 +617,10 @@ export const FeedScreen = memo(function FeedScreen({
                       if (active) toggleFeedFilterMenu();
                     }}
                   >
+                    <ListFilter accessible={false} size={15} color={theme.primary} strokeWidth={1.8} />
                     <Text style={styles.linuxDoFilterButtonText} numberOfLines={1}>
                       {feedFilterLabel(routeSource, routeFilter)}
                     </Text>
-                    <ChevronDown size={14} color={theme.primary} strokeWidth={1.8} />
                   </Pressable>
                 ) : null}
               </View>

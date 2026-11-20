@@ -2,6 +2,1148 @@
 
 本文记录已确认事故的历史症状、根因、当前状态、修复证据和验收边界。按 REG 编号或能力 ID 查找条目，先读状态与当前结论，再核对证据适用的源码、构建、设备和来源。历史通过结果不能直接作为当前版本的验证结论。
 
+## `REG-NAV-024` 已离开的消息页仍能执行顶栏动作
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NAV-02`、`NOTIFY-03` |
+| 历史症状与根因 | 已排队的消息设置按钮在其他页面显示后仍能打开消息设置，并改变当前导航栈。 |
+| 当前 owner | `tests/ui/app/app-navigator.test.tsx` |
+| 修复与证据 | 执行时检查拥有该按钮的导航页是否仍在前台。真实导航树回放同时覆盖当前按钮与迟到旧事件。 |
+
+## `REG-NAV-025` 旧页面的返回按钮弹掉刚打开的新页面
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NAV-03` |
+| 历史症状与根因 | 排队中的旧顶栏事件执行无目标的 Stack 返回，Router 取当前顶层而非旧按钮所属页。 |
+| 当前 owner | `tests/ui/app/app-navigator.test.tsx`、`tests/ui/topic/topic-route-external-links.test.tsx` |
+| 修复与证据 | 默认顶栏、主题、用户、编辑器及停用页复用导航焦点核对。真实栈回放核对旧返回不改变新页，可见页继续返回，编辑器保留草稿退出门禁。 |
+
+## `REG-FEED-049` 已离开的首页列表发出第一页或尾页请求
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `FEED-01/02` |
+| 历史症状与根因 | 旧列表的滚动和下拉刷新事件在离页或切来源后送达，仍按旧活动状态启动网络读取。 |
+| 当前 owner | `tests/ui/feed/feed-controller-session.test.tsx` |
+| 修复与证据 | 请求入口核对实际活动页和当前读取范围。受控响应覆盖四组旧回调且正常入口 仍可刷新和翻页。 |
+
+## `REG-FEED-050` 停用一站时聚合首页清空其他站的内容
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `FEED-01/02`、`MORE-05` |
+| 历史症状与根因 | 停用来源需要重建 Pager。整条 Feed 路由随之重建也丢掉已验证的首屏快照，新请求挂起或失败时，聚合页看不到仍可读的站点。 |
+| 当前 owner | `tests/ui/app/content-source-navigation.test.tsx`、`tests/ui/feed/feed-controller-session.test.tsx` |
+| 修复与证据 | Pager 与筛选重建仍生效。沿用 Feed 展示快照，按当前 ReadPlan 快照只保留仍可信来源。导航回放覆盖等待、失败、重新启用及旧内容和游标失效。 |
+
+## `REG-FEED-051` V2EX 续页在重复列表里持续发送请求
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `FEED-04` |
+| 历史症状与根因 | 单站 V2EX「全部」返回相同的主题窗口和递增页码时，一次续页可以反复发送请求，已有列表未增加。每个请求的时限未约束整次窗口扫描。 |
+| 当前 owner | `src/sources/v2ex/reader.test.ts` |
+| 修复与证据 | 整次续页共享时限和取消，窗口重复且未新增主题时保留原游标并允许重试。覆盖重复窗口、迟到正文、正常重叠和旧游标。 |
+
+## `REG-LIBRARY-004` 聚合资料库的跨站同名分类无法区分
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `LIBRARY-01/03` |
+| 历史症状与根因 | 收藏与历史聚合列表的同名分类有独立来源和标识，菜单及选中摘要却只显示分类名，无法判断会筛哪一站。 |
+| 当前 owner | `tests/ui/library/library-screen.test.tsx` |
+| 修复与证据 | 只为聚合视图跨站重名的分类补来源。受控实际菜单核对两个名称、选中摘要及单站原名。 |
+
+## `REG-SEARCH-042` 迟到的搜索事件打开浏览器或翻新结果页
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `SEARCH-02/04` |
+| 历史症状与根因 | 已离页的文本提交会打开 Google 搜索。旧结果的触底事件在新关键词提交后会让新列表直接请求第二页。 |
+| 当前 owner | `tests/ui/search/search-controller-ai.test.tsx` |
+| 修复与证据 | 提交和翻页分别在执行时核对路由活动状态及当前查询范围。回放覆盖旧事件零请求、当前范围仍能提交和翻页。 |
+
+## `REG-SEARCH-043` 慢速补读搜索历史丢掉刚重加的长关键词
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `SEARCH-02` |
+| 历史症状与根因 | 删除使用已截断的历史项，重新搜索使用全文。慢速初读补回旧历史时，旧删除标记还在并移除当前已重加的关键词。 |
+| 当前 owner | `tests/ui/search/search-controller-ai.test.tsx` |
+| 修复与证据 | 历史添加、删除和补读共享规范化身份，网关继续接收完整搜索词。真实 controller 回放覆盖超过 120 字、截断处空白和大小写变化，保留既有容量与格式。 |
+
+## `REG-SEARCH-044` 最近搜索没有保存却从页面消失
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `SEARCH-02` |
+| 历史症状与根因 | 最近搜索先更新页面，再异步保存。写入拒绝时只取消当前写入标记，条目重新进入搜索才出现，也没有失败反馈。新增关键词共用该路径。 |
+| 当前 owner | `tests/ui/search/search-controller-ai.test.tsx`、`tests/ui/search/search-screen.test.tsx` |
+| 修复与证据 | 同一串行写入记录最近成功快照与最新待保存意图。最新写入失败会恢复成功快照并提示，较早失败不覆盖更新意图。回放覆盖实际增删、重开与导航冻结后恢复，已卸载页面没有迟到提示。 |
+
+## `REG-SEARCH-045` 换账号后同词搜索报告前一账号的续页完成
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `SEARCH-02` |
+| 历史症状与根因 | 新账号只读过第 1 页，界面与无障碍仍报告上一账号已加载第 2 页。页面用关键词和站点另拼分页归属，遗漏了现有读取作用域里的身份与代际。 |
+| 当前 owner | `tests/ui/search/search-screen.test.tsx` |
+| 修复与证据 | 分页请求锁和反馈沿用搜索控制器的读取作用域。受控请求验证当前账号保留已完成反馈，换号后等实际完成新续页才显示并播报。 |
+
+## `REG-SEARCH-046` 已离开的搜索页仍写最近搜索
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `SEARCH-02` |
+| 历史症状与根因 | 暖深链已经打开主题时，旧搜索页同批到达的输入法提交或删除最近搜索仍会修改持久化历史。回到原页后还可能开始搜索旧输入。 |
+| 当前 owner | `tests/ui/app/content-source-navigation.test.tsx` |
+| 修复与证据 | 提交和删除入口复用实时路由焦点，先于页面状态和持久化操作拦截旧事件。真实导航栈与受控存储分别验证失焦后零写入，以及聚焦时照常增删。 |
+
+## `REG-NAV-026` 深链切页后旧弹窗仍能修改筛选或本机资料
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NAV-03`、`FEED-02/03`、`SEARCH-02/03`、`LIBRARY-01/02/03`、`USER-02`、`TOPIC-04`、`MORE-01`、`WRITE-04/07` |
+| 历史症状与根因 | 原生导航进入新页后，首页、搜索和编辑器的上一页弹窗仍可保留。部分迟到事件会修改所选来源、筛选、历史、收藏、关注、草稿附件或代理配置。 |
+| 当前 owner | `tests/ui/app/content-source-navigation.test.tsx`、`tests/ui/more/more-screen.test.tsx`、`tests/ui/user/user-route.test.tsx`、`tests/ui/topic/topic-route-verification.test.tsx`、`tests/ui/topic-composer/create-topic-screen.test.tsx`、`tests/ui/topic-composer/topic-draft-controller.test.tsx` |
+| 修复与证据 | 以当前路由焦点和各自的弹窗归属判定动作。真实导航回放覆盖来源标签、筛选、分类、代理写入、草稿、资料库删除和直接本机收藏、关注。离页前的旧确认在返回后仍失效，新确认可以正常提交受控命令。保留已开始的首页横滑结算和编辑器系统文件选择器的正常往返。 |
+
+## `REG-NAV-027` 发帖页保存草稿后弹走后来打开的帖子
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NAV-03`、`WRITE-02/07` |
+| 历史症状与根因 | 发帖页拦住一次返回来保存草稿。等待期间深链压入新主题，旧保存回执仍重播原返回，导致新主题被弹出。 |
+| 当前 owner | `tests/ui/topic-composer/topic-composer-route.test.tsx` |
+| 修复与证据 | 保存继续由原草稿所有者完成，重放返回前核对原导航与栈顶仍属于同一次操作。真实栈回放覆盖新深链、返回原编辑器、当前正常返回、从上层回到通知或设置。 |
+
+## `REG-NAV-028` 离开的页面仍能打开外链、分享或复制旧内容
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NAV-02/03`、`TOPIC-02/04`、`USER-01`、`NOTIFY-02` |
+| 历史症状与根因 | 用户页、主题和消息详情的外部打开回调只看传入链接。新页面已到原生栈顶，排队中的旧点击仍能打开浏览器或分享选择器，也可复制旧主题链接。 |
+| 当前 owner | `tests/ui/user/user-route.test.tsx`、`tests/ui/topic/topic-route-verification.test.tsx`、`tests/ui/topic/topic-route-external-links.test.tsx`、`tests/ui/notifications/notifications-route.test.tsx` |
+| 修复与证据 | 使用现有实时导航焦点判定。受控实际栈回放核对用户原站、主题原站和正文链接、原消息与气泡、系统分享和剪贴板。旧动作零交付，返回后沿用原打开方式。 |
+
+## `REG-NAV-029` 「我的」旧面板吞掉新主题的 Android 返回键
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NAV-03`、`MORE-03`、`ACCOUNT-04` |
+| 历史症状与根因 | 打开内联外观或 NodeSeek 自愈阈值菜单后，如果暖深链已切到新帖，尚未卸下的旧系统返回监听仍消费该次返回。 |
+| 当前 owner | `tests/ui/app/content-source-navigation.test.tsx`、`tests/ui/more/more-screen.test.tsx` |
+| 修复与证据 | 两个面板共用带实时焦点判断的关闭监听。真实栈回放核对新帖先返回，当前「我的」面板仍按原优先级关闭。 |
+
+## `REG-USER-023` 旧用户页重试和刷新仍持有共享查询
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `USER-01` |
+| 历史症状与根因 | 旧资料重试可在失焦、卸载、换用户或换会话后请求。旧刷新还能取消另一页正在用的共享分页。 |
+| 当前 owner | `tests/ui/user/user-controller-session.test.tsx` |
+| 修复与证据 | 活动页及当前读取范围统一决定读取动作是否可以启动。受控回放核对共享订阅不再被旧事件取消。 |
+
+## `REG-USER-024` 妖火分页混入其他用户的活动
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `USER-01` |
+| 历史症状与根因 | 资料首页校验用户身份，活动分页只校验站点。下一页可混入其他人的主题，重定向后的回复还会被标成当前资料用户。 |
+| 当前 owner | `src/sources/sourceUserRead.test.ts`、`src/sources/yaohuo/reader.test.ts` |
+| 修复与证据 | 活动入口、续页链接和 HTTP 最终地址共用原有用户匹配条件。通过实际适配器断言异主主题链接零请求、异主回复在解析前拒绝，原有连续分页与总数回退仍通过。 |
+
+## `REG-USER-025` 妖火用户活动的下一页指回已读过的页
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `USER-01` |
+| 历史症状与根因 | 活动分页只核对用户和入口，接受响应指回更早数字页的链接。列表继续显示加载入口，再次操作形成 1→2→1 请求。 |
+| 当前 owner | `tests/ui/user/user-activity-reads.test.tsx`、`src/sources/sourceUserRead.test.ts` |
+| 修复与证据 | 以响应最终地址的页码筛选真实向前链接，保留已读活动和首聚合现有重定向续传。真实 Gateway 与控制器回放覆盖回退与有效前进两种响应。 |
+
+## `REG-USER-026` 妖火活动总数回退生成互相冲突的页码
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `USER-01` |
+| 历史症状与根因 | 妖火分页能接受大写 `PAGE` 链接，但总数回退单独读取小写 `page`。进入第 10 页后，回退游标同时带第 10 页和第 2 页。 |
+| 当前 owner | `src/sources/sourceUserRead.test.ts` |
+| 修复与证据 | 行解析、分页链接和总数回退共用同一个页码解析。来源回放核对第 10 页的总数回退准确生成唯一的第 11 页参数。 |
+
+## `REG-USER-027` NodeSeek 用户名解析失败后重试不发请求
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `USER-01` |
+| 历史症状与根因 | 用户名链接首次解析失败时，错误按钮直接重读还没有数字身份的资料查询。解析接口未重试，用户页无法恢复。 |
+| 当前 owner | `tests/ui/user/user-activity-reads.test.tsx` |
+| 修复与证据 | 尚未解析的链接复用现有身份核对和解析流程。真实导航按钮回放覆盖解析重试、已解析资料单独重试、离开页面后的按钮时序。 |
+
+## `REG-USER-028` 妖火重定向后用户活动再次读取已消费页
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `USER-01` |
+| 历史症状与根因 | 已读完第 1、2 页后，第 3 页经原站重定向到第 1 页。新链接相对响应页前进，却已被当前 Query 使用。下一页入口继续请求第 2 页。 |
+| 当前 owner | `tests/ui/user/user-activity-reads.test.tsx` |
+| 修复与证据 | Query 续页、资料投影和主动加载复用同一游标判定。真实 Gateway 回放覆盖主题和回复两条路径，两者都保留已加载记录并停止重复请求。 |
+
+## `REG-ACCOUNT-080` 首次会话迁移卡在 Android Cookie 读取
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `ACCOUNT-01`、`NAV-01` |
+| 历史症状与根因 | 候选 Cookie 的原生读取没有计入五秒预算。探测期间的原生读取滞后也会使取消后收尾一直等待。 |
+| 当前 owner | `tests/ui/account/account-status-controller.test.tsx` |
+| 修复与证据 | 候选读取和账号核对共用连续预算。超时只等待迁移拥有的核对结束，迟到的 Cookie 不会启动旧探测。既有用例保留显式账号刷新与新手动核对的独立性。 |
+
+## `REG-ACCOUNT-081` 清除登录后冷启恢复旧身份
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `ACCOUNT-02` |
+| 历史症状与根因 | 登录窗口的交接标记写失败仍能发起原生清除，停在 Cookie 已变化和身份落盘之间时，冷启直接相信旧身份。正常清除也曾在同窗口仍能重新登录时提前清标记。 |
+| 当前 owner | `tests/ui/account/account-runtime.test.tsx` |
+| 修复与证据 | 三站共用标记成功和当前窗口归属核对。清除成功先持久化匿名并保留该窗口交接，关闭或确认时才结算。合成端到端回放覆盖拒绝、清除、同页登录与冷重挂。 |
+
+## `REG-ACCOUNT-082` 换号后 NodeImage 显示上一个账号已授权
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `ACCOUNT-04`、`WRITE-04` |
+| 历史症状与根因 | 页面用本机存在 Key 推断当前身份已授权。凭据实际归属上一个账号时，上传已正确拒绝，但面板和无障碍标签仍显示已授权。 |
+| 当前 owner | `tests/ui/account/account-runtime.test.tsx`、`tests/ui/account/nodeimage-auth-controller.test.tsx` |
+| 修复与证据 | 已保存和当前可用分别表达，授权复用上传已有的归属判断。受控真实账号切换覆盖原账号、换号、切回、游客、旧版无归属 Key 和迟到读取。用户仍可主动清除本机 Key。 |
+
+## `REG-ACCOUNT-083` 冷启时已禁用的来源重新启用后擅自核对账号
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `ACCOUNT-02`、`MORE-05` |
+| 历史症状与根因 | 停用来源时留下原登录的交接记录。进程重启仍停用，后来重新启用却继续执行本应只在合格启动时自动执行的检测，提前打开私有读取和通知。 |
+| 当前 owner | `tests/ui/account/account-runtime.test.tsx` |
+| 修复与证据 | 冷启动期间遇到已停用来源即消费该轮自动检测机会，用户仍能手动核对。受控三站回放覆盖跨进程禁用、重新启用零检测和显式核对，兼顾启动时已启用来源的正常恢复。 |
+
+## `REG-ACCOUNT-084` 重新启用 NodeSeek 后 NodeImage 授权状态滞后
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `ACCOUNT-04`、`MORE-05`、`WRITE-04` |
+| 历史症状与根因 | 面板渲染读取了供异步命令使用的上一份内容源快照。重新启用 NodeSeek 时当前身份的私有读取已恢复，NodeImage 仍显示未授权。 |
+| 当前 owner | `tests/ui/account/account-runtime.test.tsx` |
+| 修复与证据 | 面板从本次渲染的启用集合派生授权，现有异步校验仍在执行时读取当前状态。受控实际面板验证停用变未授权、再启用立即恢复，同账号 Key 保持原样。 |
+
+## `REG-ACCOUNT-085` 离开「我的」后旧按钮仍能改 NodeImage Key 或发起签到
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `ACCOUNT-04`、`MORE-05` |
+| 历史症状与根因 | 深链已经打开新帖，上一页的清除事件仍触达系统凭据存储，签到事件仍会向 NodeSeek 发出请求。这些站点服务绕过了「我的」对即时页面操作的焦点判断。 |
+| 当前 owner | `tests/ui/more/more-screen.test.tsx` |
+| 修复与证据 | 授权、清除、保存和签到共用路由的实时焦点。真实导航、受控凭据存储和传输覆盖离页后的旧事件和返回后重新发起的当前操作。 |
+
+## `REG-ACCOUNT-086` 短暂读盘失败丢失本轮登录态或误跑迁移
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `ACCOUNT-01`、`NAV-01`、`NOTIFY-03` |
+| 历史症状与根因 | 冷启动读取账号记录失败会按空记录完成恢复。迁移标记读取失败会按尚未迁移处理，即使磁盘已保存标记也会发起原站核对。两处把读取失败与成功读到空值当成同一个结果。 |
+| 当前 owner | `tests/ui/account/account-status-controller.test.tsx`、`tests/ui/account/account-runtime.test.tsx`、`src/platform/storage/accountSessionStore.test.ts` |
+| 修复与证据 | 每个失败的本地键重读一次，持续失败进入已有启动重试，系统通知后台任务跳过该来源。受控读盘失败验证保住已保存身份、避免原站核对、保留原有标记以及手动重试后正常启动。 |
+
+## `REG-NOTIFY-093` 上一账号清理取消当前账号的全部消息读取
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-01/03` |
+| 历史症状与根因 | 旧账号的 Android 摘要结束后，消息运行时按整个聚合前缀删缓存，连同新账号已经开始读取的聚合一并取消。 |
+| 当前 owner | `tests/ui/notifications/notifications-runtime.test.tsx` |
+| 修复与证据 | 清理以消息 Query 的身份范围为依据。受控交错同时确认旧记录删除，新请求仍能返回并进入当前缓存。 |
+
+## `REG-NOTIFY-094` 再次进入同一私信时一直加载
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-02` |
+| 历史症状与根因 | 同一私信的两个页面共享详情缓存。上一页失焦时按 key 取消，刚接替它的页面也会失去读取。 |
+| 当前 owner | `tests/ui/notifications/notifications-route.test.tsx` |
+| 修复与证据 | 页面只结束自己的订阅。详情 key 包含会话代际，滚动历史和公告使用同一份当前数据。真实导航树验证第二页显示内容，会话变更后等待新读取。 |
+
+## `REG-NOTIFY-095` 旧消息列表仍会发起刷新、分页和全部已读
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-01/02` |
+| 历史症状与根因 | 上一列表的刷新和触底事件被交给当前列表执行。来源、分类、未读范围或可见性已变化后，迟到的旧按钮还可打开「全部已读」。 |
+| 当前 owner | `tests/ui/notifications/notifications-route.test.tsx` |
+| 修复与证据 | 本次可见列表持有刷新、分页和全部已读的入口。回放确认旧事件无额外读取、无法打开确认或发写请求，当前列表可正常执行。 |
+
+## `REG-NOTIFY-096` 离开消息后旧来源仍开始账号重试
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-01`、`ACCOUNT-01` |
+| 历史症状与根因 | 旧错误入口根据原渲染的焦点状态启动核对。全部账号重试串行等待首站时离页，完成后也会开始第二站。 |
+| 当前 owner | `tests/ui/notifications/notifications-route.test.tsx` |
+| 修复与证据 | 开始核对前验证当前列表范围。回放覆盖切来源、离页和多站核对中返回，保留当前列表对未知身份的显式重试。 |
+
+## `REG-NOTIFY-097` Android 摘要撤销失败被当成清理成功
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-03` |
+| 历史症状与根因 | 系统 adapter 吞掉真实原生撤销错误。来源停用或换号后，旧 Android 摘要仍可能保留，JS 却放弃该项的清理凭据。 |
+| 当前 owner | `src/platform/notifications/notificationSystem.test.ts`、`tests/ui/notifications/notifications-runtime.test.tsx` |
+| 修复与证据 | 尝试所有待取消摘要后传播真实失败，保留旧清理身份直至成功。停用的原意图先同步给后台调度。受控回放覆盖关闭开关、换号失败和回前台重试。 |
+
+## `REG-NOTIFY-098` 只待验证恢复的账号仍能登记后台通知任务
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-03`、`ACCOUNT-02` |
+| 历史症状与根因 | 为了让当前消息路由恢复验证，被暂停的 Query 仍有观察者。App 同时沿用这份可观察来源清单作为 WorkManager 资格。 |
+| 当前 owner | `tests/ui/notifications/notifications-runtime.test.tsx` |
+| 修复与证据 | 后台按当前私有读取能力和持久身份核对。回放确认原路由可继续恢复，任务暂停后只在来源重新合格时登记。 |
+
+## `REG-NOTIFY-099` 打开已读或空私信仍发出未读数请求
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-02` |
+| 历史症状与根因 | 进入私信时，通知控制器无条件核对未读数，即使当前会话的状态没有触发已读写入。 |
+| 当前 owner | `tests/ui/notifications/notifications-route.test.tsx` |
+| 修复与证据 | 只在已读请求实际发出后核对未读数。受控回放覆盖无需写入时零额外请求，以及仍需核对的写入结果。 |
+
+## `REG-NOTIFY-100` 旧后台任务清除重新启用后的消息游标
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-03` |
+| 历史症状与根因 | 后台任务等待系统撤销通知时，前台可重新启用来源并保存当前账号的新摘要、游标与投递记录。旧任务结束后仍可清掉这些记录。 |
+| 当前 owner | `src/platform/notifications/notificationWorker.test.ts` |
+| 修复与证据 | 通知 Store 在清理队列内重新核对来源开关和绑定身份。真实 worker 与 Store 的受控交错覆盖同账号重新启用与切换账号。 |
+
+## `REG-NOTIFY-101` 启动时自动覆盖损坏的本地通知状态
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-01/03` |
+| 历史症状与根因 | 本地通知 JSON 无法解析时返回首次使用的默认值。已确认账号随后自动写入身份，覆盖原内容与通知意图。 |
+| 当前 owner | `tests/ui/notifications/notifications-runtime.test.tsx`、`src/platform/notifications/notificationWorker.test.ts` |
+| 修复与证据 | 存储读取失败沿用既有重试入口。前台冷启和后台回放均保留原值，存储重新可读后才能恢复；首次使用缺 key 时仍可初始化。 |
+
+## `REG-NOTIFY-102` 首次授权检查的重复调用暂停通知
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-03` |
+| 历史症状与根因 | 首次系统检查确认授权后，发布权限状态又触发同一检查。第二次临时失败把已确认权限改为不可用，暂停后台登记和投递。 |
+| 当前 owner | `tests/ui/notifications/notifications-runtime.test.tsx` |
+| 修复与证据 | 由启动、实际前台边沿和显式操作发起检查。回放覆盖首次只检查一次、系统撤回、临时失败重试以及手动授权后清除旧错误。 |
+
+## `REG-NOTIFY-103` 关闭通知时撤销失败的旧摘要无法重试
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-03` |
+| 历史症状与根因 | 关闭全局或单站通知时先删摘要标识，Android 撤销失败后，App 无法在下次前台或冷启找到并撤回同一摘要。 |
+| 当前 owner | `tests/ui/notifications/notifications-runtime.test.tsx`、`src/platform/notifications/notificationStore.test.ts` |
+| 修复与证据 | 关闭立即停止投递并保留摘要标识。系统确认后才在存储中核对身份、标识和停用状态并清理。回放覆盖关闭、失败重试、重新启用及迟到旧投递回执。 |
+
+## `REG-NOTIFY-104` 快速切回原账号后磁盘仍记录中间账号
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `ACCOUNT-01`、`NOTIFY-03` |
+| 历史症状与根因 | A→B 的本机通知身份写入耗时。切回 A 时界面仍有 A，跳过对账，迟到的 B 写入最终使 A 无法提交投递。 |
+| 当前 owner | `tests/ui/notifications/notifications-runtime.test.tsx` |
+| 修复与证据 | 只等待同来源已开始的持久写，再按最新身份复核本机状态。真实 runtime 与 Store 的交错回放核对界面、落盘和实际投递一致，旧系统撤销不阻塞后续账号。 |
+
+## `REG-NOTIFY-105` 一站写后对账取消另一站正在进行的读取
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-02/03` |
+| 历史症状与根因 | 写后刷新未带来源。NodeSeek 单条已读会取消 linux.do 首次未读请求，再发一遍相同请求，丢掉先发出的健康读取。 |
+| 当前 owner | `tests/ui/notifications/notifications-route.test.tsx` |
+| 修复与证据 | 写后按实际来源、账号和会话代际对账，进入与主动刷新仍覆盖全部可读来源。真实路由与 Gateway 回放核对 linux.do 零重发，保留原返回用于徽标。 |
+
+## `REG-NOTIFY-106` 首次通知授权的旧确认改掉设置并申请系统权限
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-03` |
+| 历史症状与根因 | 首次通知开启使用系统确认框。深链已经离开设置页，旧回执仍能持久化开启状态并请求 Android 权限。一次确认的重复回执也会重复写入。 |
+| 当前 owner | `tests/ui/notifications/notifications-route.test.tsx` |
+| 修复与证据 | 确认由当前设置页的一次性操作持有，失焦或离页即失效。实际栈与受控 Android 权限接口核对旧回执零请求、重复回执只写一次、已开始的更新继续正常结算。 |
+
+## `REG-NOTIFY-107` 离开通知设置后旧开关仍写设置
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-03` |
+| 历史症状与根因 | 已有 Android 权限时，总开关和分站开关可在设置页离开后继续写入。系统设置按钮也可能在新页面打开 Android 设置。 |
+| 当前 owner | `tests/ui/notifications/notifications-route.test.tsx` |
+| 修复与证据 | 设置页共享操作入口核对实时路由焦点，系统设置按钮也沿用同一判定。真实栈回放覆盖三个旧回调与仍在设置页的有效操作。 |
+
+## `REG-NOTIFY-108` 消息重试的迟到身份回执在后台发起登录交接
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-01`、`ACCOUNT-02` |
+| 历史症状与根因 | 消息重试等待核对账号期间，App 退到后台。匿名回执正确写入账号状态后，又启动了旧列表的站点验证，写入待交接标记，回前台便出现登录或验证页。 |
+| 当前 owner | `tests/ui/notifications/notifications-route.test.tsx` |
+| 修复与证据 | 列表恢复与消息详情都要求当前 App 在前台才能交付新界面。模拟真实账号宿主与持久层，核对匿名结果保留，离页或后台的旧回执不发起交接，前台重试仍可提示重新登录。 |
+
+## `REG-TOPIC-232` 换账号后旧主题图集仍可保存
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-02`、`ACCOUNT-01` |
+| 历史症状与根因 | 主题图集保留旧详情的目录、原图与海报。会话变化时通用预览重新建立连接，旧目录仍显示并能送入新会话的保存入口。 |
+| 当前 owner | `tests/ui/topic/topic-route-external-links.test.tsx`、`tests/ui/topic/image-preview-controller.test.tsx` |
+| 修复与证据 | 图集绑定其详情的主题、账号和读取计划。换号、离页或详情受限会关闭图集并取消保存。真实 TopicRoute 与预览回放覆盖同账号代理变化保留、新旧会话交接与新图保存。 |
+
+## `REG-TOPIC-233` 权限降为游客后旧主题长图仍写入相册
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-02`、`ACCOUNT-01` |
+| 历史症状与根因 | 登录验证把详情切至公开读取计划，账号代际可能不变。原长图操作未跟随这项变化，旧正文截图仍可交给相册。 |
+| 当前 owner | `tests/ui/topic/topic-route-verification.test.tsx`、`tests/ui/topic/topic-share-sheet.test.tsx` |
+| 修复与证据 | 长图和图集复用详情的读取归属。作用域失效时立即关闭旧分享并取消生成。受控回放验证旧私有图不能发布、受限详情仍可分享链接。 |
+
+## `REG-TOPIC-234` 多张图共用缩略图时预览选错原图
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-02`、`NOTIFY-02` |
+| 历史症状与根因 | 图片渲染已经解析出该图的原图地址，打开时却只传缩略图。目录按缩略图查到另一项，预览和保存都会选错。 |
+| 当前 owner | `tests/ui/topic/topic-image-loading.test.tsx`、`tests/ui/notifications/notifications-screen.test.tsx`、`src/platform/media/imagePreviewCatalog.test.ts` |
+| 修复与证据 | 渲染入口将现有原图地址交给预览，用目录的原图索引匹配当前项。受控回放覆盖正文与私信共享缩略图时的正确选择，继续显示已渲染缩略图。 |
+
+## `REG-TOPIC-235` 刷新评论时重新下载已加载的旧页
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-04` |
+| 历史症状与根因 | 手动菜单直接刷新无限列表，按旧窗口起点和已加载页数重读。用户选择刷新评论时会读取旧分页，居中窗口也未回到当前顺序的首窗。 |
+| 当前 owner | `tests/ui/topic/topic-session-controller.test.tsx` |
+| 修复与证据 | 仅更新当前顺序的首窗，沿用原窗口的请求归属。生产 controller 回放覆盖多页刷新、失败保留和显式重试。 |
+
+## `REG-TOPIC-236` 同帖刷新或翻页重复增加历史访问次数
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01/04`、`DATA-01`、`LIBRARY-03` |
+| 历史症状与根因 | V2EX、NodeSeek、妖火主题的回复数或正文摘要变化时重复发出访问命令。当前页面未离开，历史仍增加次数并调整访问时间。 |
+| 当前 owner | `tests/ui/topic/topic-session-controller.test.tsx`、`src/platform/storage/readerDataStore.test.ts` |
+| 修复与证据 | 首次有效进入保留原访问行为，同一页面后续回执只更新摘要。三站受控路由测试和实际 SQLite 测试核对新摘要、原顺序与访问次数。 |
+
+## `REG-TOPIC-237` 主题变为受限后仍能请求更多回复
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01/03/04`、`WRITE-02` |
+| 历史症状与根因 | 编辑成功后，原站回读返回当前用户组不可查看。正文显示受限，回复查询仍读取同一账号缓存的下一页状态，旧分页动作可继续发请求。 |
+| 当前 owner | `tests/ui/topic/topic-route-verification.test.tsx` |
+| 修复与证据 | 回复状态与动作使用当前主题访问判定，旧分页回调在发请求前再次核对。受控实际编辑返回流程支持受限提示和全文刷新，保留可访问时原有窗口。 |
+
+## `REG-TOPIC-238` 受限主题仍投影为可写回复
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01`、`WRITE-01` |
+| 历史症状与根因 | 原站拒绝查看且账号仍有效时，回复动作只核对账号和帖子状态，受限详情仍显示写回复入口。 |
+| 当前 owner | `tests/ui/topic/topic-route-verification.test.tsx` |
+| 修复与证据 | 动作准入复用已有的受限主题判定。真实详情与编辑返回回放核对本人编辑前可回复、回读受限时不可回复、全文刷新后恢复。 |
+
+## `REG-TOPIC-239` 同帖旧楼层链接改掉覆盖后的原页位置
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-03`、`NAV-03` |
+| 历史症状与根因 | 深链压入新主题后，旧主题正文的同帖楼层链接仍能更新原路由目标，并清空原查找和筛选。 |
+| 当前 owner | `tests/ui/topic/topic-route-external-links.test.tsx` |
+| 修复与证据 | 同帖定位和其控制器回调在共用入口确认实际焦点。真实正文链接和暖深链回放核对后台原位置未更新，返回后主动定位正常。 |
+
+## `REG-DATA-020` SQLite 设置格式损坏时启动崩溃
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `DATA-02` |
+| 历史症状与根因 | SQLite 中合法 JSON 却非法的设置形状被前台直接发布，或被后台当作默认设置。 |
+| 当前 owner | `src/platform/storage/readerDataStore.test.ts` |
+| 修复与证据 | 前后台复用设置解析边界。真实 SQLite 受控输入覆盖 null、数组和字符串拒绝，以及合法旧对象补全。 |
+
+## `REG-DATA-021` 迁移重开时清除仅存的有效旧资料
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `DATA-02` |
+| 历史症状与根因 | 新库已经提交但复核失败后重开。行数和 key 正常时，轻量启动检查会漏掉坏记录，并接着删除旧资料。 |
+| 当前 owner | `src/platform/storage/readerDataStore.test.ts` |
+| 修复与证据 | 在清旧键前验证持久记录和墓碑的完整快照。真实 SQLite 覆盖坏 JSON 和可解析的非法记录，正常启动仍用轻量检查。 |
+
+## `REG-DATA-022` 损坏 UTF-8 的备份被当作有效记录导入
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `DATA-03` |
+| 历史症状与根因 | Android 读取备份文件时把非法 UTF-8 默默换成替代字符。损坏处在 JSON 字符串内时，导入继续接受坏标题。 |
+| 当前 owner | `modules/forum-platform/android/src/test/java/com/wz/reader/storage/BackupExportTest.kt` |
+| 修复与证据 | 文件入口严格解码并返回明确错误，异常仍释放输入流。Native 断言覆盖坏字节、正常汉字和 emoji、正文合法替代字符，保留原有 BOM 行为。 |
+
+## `REG-DATA-023` 只读 SQLite 事务冻结后本机资料仍显示可用
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `DATA-01/02/03`、`LIBRARY-01/02/03` |
+| 历史症状与根因 | 备份导出或 Library 分页提交与回滚都失败后冻结共享连接。Reader runtime 只在自己发起的写入或导入捕获此状态，页面仍显示已就绪。 |
+| 当前 owner | `src/platform/storage/readerDataStore.test.ts`、`src/app/useReaderRuntime.test.ts` |
+| 修复与证据 | 共用 SQLite 连接首次冻结即通知应用，进入本机数据恢复保护。真实数据库故障回放覆盖导出、分页、成功回滚后重试及冷启保留旧设置和历史。 |
+
+## `REG-DATA-024` 备份读写时静默丢弃损坏的本机记录
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `DATA-02/03` |
+| 历史症状与根因 | 合并和导出会把能解析为 JSON 的损坏记录静默丢弃。冷恢复全量导入随后可能清掉旧副本，只导入设置也可能先改写设置再报错。 |
+| 当前 owner | `src/platform/storage/readerDataStore.test.ts` |
+| 修复与证据 | 导出、备份导入写入前和迁移清理共用完整校验。真实 SQLite 回放覆盖普通全量导入、冷恢复全量和仅设置导入，以及拒绝交付不完整的导出。 |
+
+## `REG-DATA-025` 资料库读取坏记录时渲染崩溃
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `DATA-02`、`LIBRARY-01/02/03` |
+| 历史症状与根因 | SQLite 分页把能解析为 JSON 的坏记录直接交给列表。渲染遇到 `null` 会崩溃，用户看不到原有重试入口。 |
+| 当前 owner | `src/platform/storage/readerDataStore.test.ts`、`tests/ui/library/library-route.test.tsx` |
+| 修复与证据 | 只校验实际返回的当前页并使用原有错误和重试。真实 SQLite 验证首屏与续页、来源隔离和旧游标，受控列表核对已显示内容保持。 |
+
+## `REG-DATA-026` 文件操作结束后返回「我的」没有结果提示
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `DATA-03`、`MORE-02` |
+| 历史症状与根因 | 导入或导出在路由冻结后结算，旧实现把暂停展示视为页面结束。返回时控制项可以继续操作，但已经丢掉失败或成功的结果。 |
+| 当前 owner | `tests/ui/more/backup-status-controller.test.tsx` |
+| 修复与证据 | 备份与诊断共用自己的当前操作和回执状态。恢复展示时交付一次。系统选择器返回不兼容备份、导出成功、取消和卸载分别以受控回放核对。 |
+
+## `REG-MORE-018` 离开「我的」后，旧操作打开系统文件选择、分享或安装窗口
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `DATA-03`、`MORE-02/04` |
+| 历史症状与根因 | 暖深链已经打开新帖，旧的备份导出、导入、诊断分享或 APK 安装按钮仍能发起系统操作。四个入口绕过了「我的」已有的实时焦点判定。 |
+| 当前 owner | `tests/ui/more/more-screen.test.tsx` |
+| 修复与证据 | 四个起点共用路由检查。实际导航配合受控原生接口核对失焦后零交付、返回后可启动，以及合法发起的系统往返和执行回执各自正常结算。 |
+
+## `REG-MORE-017` 内容源的旧开关和排序事件改掉其他站
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `MORE-05`、`DATA-01` |
+| 历史症状与根因 | 两个开关在一次渲染内到达，各自替换整份旧数组，第二笔还原第一次结果。无障碍的迟到手柄动作按原索引移动了另一站。 |
+| 当前 owner | `tests/ui/more/more-screen.test.tsx`、`src/platform/storage/readerDataStore.test.ts` |
+| 修复与证据 | 开关、无障碍移动和拖动通过现有设置命令逐次应用。乐观投影和 SQLite 使用同一规则。回放覆盖连续开关、旧手柄、写失败后的独立下一笔和有效拖动。 |
+
+## `REG-PROXY-017` 临时读取失败后新增方案覆盖已有代理
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `MORE-01` |
+| 历史症状与根因 | SecureStore 临时不可用时界面以空值呈现错误，但新增或直连动作也把这份空值当作持久化基线，原有有效方案随之丢失。 |
+| 当前 owner | `tests/ui/more/network-proxy-controller.test.tsx` |
+| 修复与证据 | 修改前先恢复可信持久化状态。读取仍不可用时保留现有磁盘数据，明确损坏仍可走显式重置。受控回放确认临时读取失败后的新增和关闭均保留合法方案。 |
+
+## `REG-PROXY-018` 后台通知把新代理覆盖为旧直连
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `MORE-01`、`NOTIFY-03` |
+| 历史症状与根因 | Expo 后台任务可复用 App 的 JS 运行时。任务异步读取旧直连配置，用户开启代理并成功确认后，迟到的任务仍可再次写入直连。 |
+| 当前 owner | `tests/ui/more/network-proxy-controller.test.tsx`、`src/app/notificationBackgroundTask.test.ts` |
+| 修复与证据 | App 运行时存活时，任务等待同一代理就绪状态；独立后台任务才自行读取持久配置，并复核过程中是否发生归属切换。受控运行时回放覆盖前台加入、离开、确实独立启动和存储失败。 |
+
+## `REG-UPDATE-012` 下载开始前按暂停，Android 仍继续请求
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `MORE-04` |
+| 历史症状与根因 | Expo 原生异步回调开始时重置了同一次操作已收到的暂停，首次下载和续传都会越过开关。 |
+| 当前 owner | `patches/expo-file-system+57.0.6.patch` 中的 `DownloadResponseTest` |
+| 修复与证据 | 每笔下载持有独立的暂停状态。真实 Expo task 的宿主测试确认早暂停零 HTTP 请求、不动断点，之后可重试。 |
+
+## `REG-UPDATE-013` 离线更新包短暂核验失败后无从重试
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `MORE-04` |
+| 历史症状与根因 | 冷启动已有完整 APK，Android 首次读取异常后 App 丢失本地恢复入口。网络离线时，用户无法再让 App 校验保存的包。 |
+| 当前 owner | `tests/ui/more/app-update-runtime.test.tsx`、`tests/ui/more/more-screen.test.tsx` |
+| 修复与证据 | 保留显式本地恢复动作。重新完整核验文件及包身份成功后才交给安装器，损坏文件按既有流程清理。受控异常后可离线重试。 |
+
+## `REG-UPDATE-014` 替换更新下载后界面仍显示已删除的旧包
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `MORE-04` |
+| 历史症状与根因 | 点「下载新版」后先持久化目标并清除旧包。历史缓存路径随后被系统清理，清理异常让页面宣称旧包仍在，重启却已经恢复新目标。 |
+| 当前 owner | `tests/ui/more/app-update-runtime.test.tsx` |
+| 修复与证据 | 先准备并检查新候选，再保存新目标，最后清理旧文件。受控回放覆盖提交前失败仍能安装旧包、提交后清理失败仍显示正确目标及重启恢复。 |
+
+## `REG-WRITE-148` 退出编辑页后回复回执未更新楼层和引用
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-07`、`TOPIC-03` |
+| 历史症状与根因 | 已提交请求成功时，原编辑页可能失焦或退出。更新依赖原窗口回读，其他已打开楼层及跨帖引用仍显示旧正文。 |
+| 当前 owner | `tests/ui/topic/topic-actions-controller.test.tsx`、`tests/ui/topic/topic-session-controller.test.tsx` |
+| 修复与证据 | L 站成功回执可直接确认正文。统一应用到同会话、同读取范围内匹配的回复及引用，保留游标、互动与缓存时效。回放覆盖迟到旧请求和错范围。 |
+
+## `REG-WRITE-149` 迟到的编辑核验覆盖已经输入的新回复
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-02/07` |
+| 历史症状与根因 | 打开编辑等待账号核验期间，用户开始新回复、关闭面板或选择另一条回复。旧核验返回后仍会打开旧编辑并覆盖输入。 |
+| 当前 owner | `tests/ui/topic/topic-actions-controller.test.tsx` |
+| 修复与证据 | 编辑请求保留发起时的页面、目标和草稿版本。回放核对关闭、失焦、账号变化及后续选择都可使旧结果失效。 |
+
+## `REG-WRITE-150` 第二个编辑器用旧原文覆盖已保存的回复
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-07` |
+| 历史症状与根因 | 两个页面先后编辑同一条回复，第二页仍持有旧原文。第一笔确认后，第二笔仍可覆盖新版。 |
+| 当前 owner | `tests/ui/topic/topic-actions-controller.test.tsx` |
+| 修复与证据 | 本地已确认原文变化时保留输入并停止发送。L 站提交携带打开编辑时的原文，用于原站版本检查。受控回放确认旧编辑零额外写入。 |
+
+## `REG-WRITE-151` 已超限的附件仍被完整复制到草稿目录
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-04/07` |
+| 历史症状与根因 | 选择器未报告文件尺寸时，编辑器先完整复制文件，再用复制件的尺寸拒绝超限附件。 |
+| 当前 owner | `tests/ui/topic-composer/topic-composer-route.test.tsx` |
+| 修复与证据 | 源文件可提供可信正长度时先执行原有站点限制。长度未知仍可正常复制，目标仍核对实际大小。回放确认 24 MiB 超限文件零持久副本、零上传。 |
+
+## `REG-WRITE-152` 旧确认弹窗使用后来登录的账号执行写入
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-02/03`、`ACCOUNT-01` |
+| 历史症状与根因 | 用户以 A 打开投票或删除确认，切到 B 后才点确认。原回调此时临时取账号票据，获得了 B 的有效票据并发出旧操作。 |
+| 当前 owner | `tests/ui/topic/topic-actions-controller.test.tsx` |
+| 修复与证据 | 投票、锁票、删除回复和删除加电共用单次确认归属，以开启时的页面、账号和会话代际核对回调。受控真实 controller 测试确认切换、失焦和旧确认无法发出请求，当前有效确认继续可用。 |
+
+## `REG-WRITE-153` 发帖和编辑的旧确认解除防重发保护或发起扣费操作
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-02/07` |
+| 历史症状与根因 | 发帖或编辑结果未知时，旧确认在离页后仍能删除 SQLite 防重发记录。回到原页再次提交会发出第二次请求。NodeSeek 改私有和妖火追加悬赏的旧确认也可以发请求。 |
+| 当前 owner | `tests/ui/topic-composer/topic-submit-controller.test.tsx` |
+| 修复与证据 | 继续使用同一个编辑器焦点归属，确认结算和开始写入前均核对。真实 SQLite 与受控传输回放覆盖新建、编辑、离页、返回、当前确认和付费请求。已经合法开始的提交仍按原回执结算。 |
+
+## `REG-WRITE-154` 已撤销的回复或投票权限被旧确认继续使用
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-02/03` |
+| 历史症状与根因 | 确认框打开后，同帖刷新已撤掉回复删除权限或关闭 NodeSeek 投票，旧确认仍按发起时的对象发送删除、投票或锁定请求。 |
+| 当前 owner | `tests/ui/topic/topic-actions-controller.test.tsx` |
+| 修复与证据 | 写入前用已加载的同一回复或投票重新判断权限，且确认仍须属于当前原生路由。受控传输验证明确撤权时零写入，权限未变和对象仅离开当前窗口的原有操作可继续。 |
+
+## `REG-WRITE-155` 离开主题后旧确认仍能付款或创建投票
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-05/06` |
+| 历史症状与根因 | NodeSeek 的 Stardust 付款和回复里的投票替换在最终确认时只核对账号，主题页离开后旧确认仍能发出付款、建投票或发送回复请求。 |
+| 当前 owner | `tests/ui/topic/topic-actions-controller.test.tsx` |
+| 修复与证据 | 两条确认接回主题页已有的实时归属，并在副作用派发前复核。受控回放覆盖正常确认、离页、离页后返回和已经派发的合法付款回执。 |
+
+## `REG-WRITE-156` 回复回执丢失后再次提交可重复发送
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-01` |
+| 历史症状与根因 | NodeSeek、linux.do 和妖火收到回复后如果响应中断，旧路径只保留草稿和通用错误，普通再次点击即可重发同一份内容。 |
+| 当前 owner | `tests/ui/topic/topic-actions-controller.test.tsx` |
+| 修复与证据 | 沿用实际请求派发标记，明确拒绝仍允许普通重试。结果不明时保稿，提示核对原帖，明确确认后才允许同稿再发。使用三站实际客户端和受控响应验证。 |
+
+## `REG-WRITE-157` 附件选择和使用后遗留 Android 缓存副本
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-04`、`NOTIFY-02` |
+| 历史症状与根因 | Android 选档的一批文件读到一半失败，会留下已复制的文件；成功后发帖、回帖和私信也没有回收用完的选档副本。 |
+| 当前 owner | `tests/native/DocumentPickerThreadingTest.kt`、`tests/ui/topic-composer/topic-draft-controller.test.tsx` |
+| 修复与证据 | Android 选择请求只回收本次未交接的副本，应用消费结束后只回收已交接的选档副本。用户原件、备份的直接读取与独立保存的草稿附件保持各自的生命周期。 |
+
+## `REG-WRITE-158` Android 先复制附件再拒绝超过数量或体积的选择
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-04`、`NOTIFY-02` |
+| 历史症状与根因 | 应用现有附件限制只在 Android 选档完整复制后检查，超过限制的文件仍占用本机读写时间与缓存。 |
+| 当前 owner | `tests/native/DocumentPickerThreadingTest.kt` |
+| 修复与证据 | 将原有站点限制传给复制入口，先拒绝明确超量和超大文件，大小不可信时按实读字节截断。合格文件仍可继续进入原流程。 |
+
+## `REG-NOTIFY-092` 同账号重新验证后接收上一代结果
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-01/02/03` |
+| 历史症状与根因 | 同一账号重新验证不改变 identity key。旧未读请求晚到，徽标和本机未读数均曾被写成 97。聚合需要等待其他来源时，已经返回的子结果同样可能过期。 |
+| 当前 owner | `src/sources/notificationGateway.test.ts`、`tests/ui/notifications/notifications-runtime.test.tsx` |
+| 修复与证据 | 网关在等待凭据前固定会话代际，发网、返回及聚合结算复核。未读查询按代际隔离，队列落盘前再验身份和代际。受控响应覆盖旧成功、代理等待后的旧写入和聚合兄弟来源成功。 |
+
+## `REG-MORE-015` 文件任务在「我的」被冻结时完成，返回后仍显示忙碌
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `DATA-03`、`MORE-02` |
+| 历史症状与根因 | 两层导航覆盖「我的」后，React 暂停布局效果。备份或诊断任务此时完成，清理守卫误以为页面已经卸载，跳过空闲状态结算。 |
+| 当前 owner | `tests/ui/more/backup-status-controller.test.tsx`、`tests/ui/more/more-screen.test.tsx` |
+| 修复与证据 | 已启动任务可在冻结期间结算，真卸载后的提示仍受保护。受控导航和 Suspense 用例覆盖返回后的按钮状态及重复操作。 |
+
+## `REG-USER-022` 旧页面取消另一页面仍在使用的共享读取
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `USER-01`、`TOPIC-03` |
+| 历史症状与根因 | 两个页面同时读取同一用户或跨帖引用时，旧页面失焦或卸载按 Query key 取消了前台仍在等待的请求。前台主题手动刷新也可能因自动读取已禁用而被误取消。 |
+| 当前 owner | `tests/ui/user/user-controller-session.test.tsx`、`tests/ui/topic/topic-session-controller.test.tsx` |
+| 修复与证据 | 路由只持有自身的监听，最后一个监听释放后由 Query 取消请求。定向覆盖共享请求、手动刷新和最后一个使用者离开。 |
+
+## `REG-TOPIC-229` 长图分享按整页宽度误判窄列图片
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-04` |
+| 历史症状与根因 | 一张 100 × 5,000 的图片在 64 dp 宽的表格列里可完整显示。长图预览按整页宽度推算高度，误报图片加载失败并禁用分享。 |
+| 当前 owner | `tests/ui/topic/topic-share-sheet.test.tsx` |
+| 修复与证据 | 图片宽高由实际容器布局和原始比例共同决定。用例覆盖容器先或后测量、窄列图片完整显示及超高图片等比缩小。 |
+
+## `REG-TOPIC-230` 同一主题的子页面覆盖父页面所在楼层
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-03`、`NAV-03` |
+| 历史症状与根因 | 父页面在第 20 楼，子页面打开同帖第 80 楼。两页共用同一个回复窗口缓存，子页面换窗及退出清理使父页面回到第 1 楼。 |
+| 当前 owner | `tests/ui/topic/topic-session-controller.test.tsx`、`tests/ui/topic/topic-actions-controller.test.tsx` |
+| 修复与证据 | 远端定位后的窗口归所属路由。主楼、引用和普通开篇仍共享，互动结果同步写入同一会话及读取计划下的各个窗口。受控交错覆盖焦点和卸载两种先后顺序、开篇和指定楼层、其他身份窗口隔离。 |
+
+## `REG-TOPIC-231` 多图长图预览累积解码位图及排版缩小
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-04` |
+| 历史症状与根因 | 原长图仅限制单图尺寸，64 张 1440 × 1440 图片同时驻留时，Android 15 预览就绪的进程 PSS 中位数达 654.5 MiB。按单图预算下采样时还需区分解码像素和纸面尺寸，否则窄长图会在图多的帖子里缩小。 |
+| 当前 owner | `tests/ui/topic/topic-share-sheet.test.tsx` |
+| 修复与证据 | 所有图片分摊解码预算。图片按布局宽度和原比例呈现，适配窄列及单图上限。相同 Android 15 合成样本的 PSS 中位数降至 342.6 MiB，实际保存的 1440 × 81,543 PNG 从像素核对包含全部 64 张图。 |
+
+## `REG-MORE-016` Android 启动分享面板失败后持有旧任务
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-04`、`MORE-02` |
+| 历史症状与根因 | Expo Sharing 在启动 Android 选择器前占用任务。启动异常后任务未释放，后一笔操作持续报告分享进行中，第一次的图片副本也留在缓存。 |
+| 当前 owner | `tests/native/SharingModuleTest.kt`、`src/features/topic/shareTopicImageFile.test.ts`、`src/platform/diagnostics/diagnosticFileStore.test.ts` |
+| 修复与证据 | 原生异常只释放当前任务并返回稳定的未启动回执。长图和诊断按此回执清理未交付副本。无法确认交付时保留副本供接收应用晚读。Host 测试经真实 Expo 模块验证启动失败、再次启动及回执结算。 |
+
+## `REG-WRITE-146` 主帖保存后的回读覆盖新版正文及并发状态
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-07`、`TOPIC-01` |
+| 历史症状与根因 | 连续保存同一主帖时，第一笔的回读可能晚到并覆盖第二版。回读直接替换完整详情，也会抹掉回帖、收藏或阅读的新状态，并可能写到同一主题下的其他读取范围。 |
+| 当前 owner | `tests/ui/topic-composer/topic-composer-route.test.tsx` |
+| 修复与证据 | 同一读取范围的新保存接管待完成回读。只把可编辑字段和正文所需的派生字段投影到原详情 Query，保留回复窗口与其他实时字段。真实导航组合覆盖旧成功与失败、退出后结算、不同主题、公开缓存隔离和缓存删除后重建。 |
+
+## `REG-WRITE-147` 同帖子页编辑回复后父页仍显示旧正文
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-07`、`TOPIC-03`、`NAV-03` |
+| 历史症状与根因 | 父页和同帖子页的楼层窗口都包含同一条回复。子页编辑后只刷新自己的窗口。父页的定位已完成，返回时没有另一次回读，仍显示旧正文。 |
+| 当前 owner | `tests/ui/topic/topic-session-controller.test.tsx` |
+| 修复与证据 | 将原站回读确认的 Discourse 回复正文、Markdown 和引用应用到同账号、同读取范围内已有的楼层。父页位置、游标、点赞和缓存原有的失效状态均保留。受控响应覆盖子页退出后旧读取迟到，父页的新正文不被覆盖。 |
+
+## `REG-NAV-023` 页面冻结时释放模糊目标，连续入栈使导航测试耗尽堆
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NAV-01/03` |
+| 历史症状与根因 | 连续打开第三篇帖子时，主标签页与第一篇帖子同时冻结。React 暂停布局效果，页面的清理回调把仍挂载的模糊目标从父组件清除，触发重复渲染。一次 Jest 回放中两个页面各挂起 4,076 次。React Native 测试预设还记录每次读钟和原生回调，放大了堆占用。 |
+| 当前 owner | `tests/ui/shared/topic-and-more-controls.test.tsx`、`tests/ui/app/app-navigator.test.tsx` |
+| 修复与证据 | 模糊目标在页面真正卸载时释放。用例逐步核对冻结、恢复及卸载时的目标身份，并覆盖新页面已接管背景的情况。测试环境保留了原有时钟、测量和动画完成回调，只有用例主动监听时才记录调用。 |
+| 验收边界 | 4 GiB 堆耗尽复现在 Node/Jest 进程。Android 的导航行为由设备上的单独回放核对。 |
+
+## `REG-DATA-019` 导出的 5,002 条历史在空库恢复后少了两条
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `DATA-02/03` |
+| 历史症状与根因 | 迁移保留了超出 5,000 条的旧历史，但备份合并只按目标库计算容量。空库导入同一份导出时触发裁剪。 |
+| 当前 owner | `src/platform/storage/readerDataStore.test.ts`、`dev/review-remediation-proof/acceptance.tsx` |
+| 修复与证据 | 合并采用源、目标和常规上限中的最大值。SQLite 用例逐条比较导出结果，并检查用户显式删除后恢复常规上限。冷恢复回放核对 5,002 条记录和较新的旧库访问次数。 |
+| 两版 Android 冷恢复 | Android 10 和 Android 15 均从新进程进入恢复页，逐条对上 5,002 条历史，保留较新的 7 次访问及非默认通知设置。回放结束后，两台模拟器的各 12 个检查点文件均已还原。 |
+
+## `REG-WRITE-145` 较早提交或远端读取完成后覆盖新编辑的正文
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-02/07` |
+| 历史症状与根因 | 编辑请求与本地草稿共用主题标识。旧请求成功后清理了更新版本，读取冲突帖期间继续输入也会被旧快照覆盖。 |
+| 当前 owner | `src/platform/persistence/topicDrafts.test.ts`、`tests/ui/topic-composer/topic-submit-controller.test.tsx`、`scripts/run-composer-device-proof.mjs` |
+| 修复与证据 | 事务核对提交版本和提交记录。残留新稿可重新打开，保留较新正文，并去除妖火已由原站确认的悬赏。 |
+| 后续复现 | 两个编辑页共用一份草稿，第一笔追加 1000 妖晶收到确认后，仍挂载的第二页曾再次发送 1000。linux.do 也曾把原站规范化的标题还原，新主题发布或送审时退出页面曾丢失随后输入的正文。 |
+| 后续修复 | 按字段合并已确认输入，提交前读取最新回执并由 SQLite 核对归属。发帖离页前先保存后续输入。提交控制器测试核对写入次数与内容，`dev/review-remediation-proof/editorReceiptReview.tsx` 在隔离设备组合真实编辑器和 SQLite。 |
+| 回执竞争与落盘 | 新建或编辑的旧失败回调读回 SQLite 中同一次提交的结果，迟到的「解除限制」保留已保存的回执和新提交。原站已返回、本地回执写入失败时显示待核对并拦住再次发送。`tests/ui/topic-composer/topic-submit-controller.test.tsx` 核对提示和请求次数，`src/platform/persistence/topicDrafts.test.ts` 核对落盘及解除限制的归属。 |
+
+## `REG-FEED-048` V2EX 最新主题跨页漏掉原站页尾
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `FEED-04` |
+| 历史症状与根因 | 原站第一页有三个主题，App 每次显示两个时，第二次读取直接跳到原站第二页，第三个主题消失。 |
+| 当前 owner | `src/sources/v2ex/reader.test.ts`、`dev/review-remediation-proof/sourcePaginationReview.ts` |
+| 修复与证据 | 游标记录页内位置。适配器测试与 `dev/review-remediation-proof/sourcePaginationReview.ts` 核对两个原站页的五个主题依次出现一次，并在末页结束。 |
+
+## `REG-ACCOUNT-079` 旧身份读取无响应时无法重试启动
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `ACCOUNT-01/02` |
+| 历史症状与根因 | 已保存的 User-Agent 读取有时限，后续旧身份迁移却可以无限期等待原生确认，启动页无法提供重试。 |
+| 当前 owner | `tests/ui/account/account-runtime.test.tsx`、`dev/review-remediation-proof/verificationRecoveryProof.ts` |
+| 修复与证据 | 迁移超时后允许重试，迟到响应失去写入和清理旧键的权限。`tests/ui/account/account-runtime.test.tsx` 核对按钮、会话就绪与清理次数。 |
+
+## `REG-UPDATE-011` 暂停请求失败后无法继续控制正在下载的更新
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `MORE-04` |
+| 历史症状与根因 | 原生下载仍在进行，暂停请求报错后面板停在「暂停中」，进度回调和再次暂停都被拒绝。 |
+| 当前 owner | `tests/ui/more/app-update-runtime.test.tsx` |
+| 修复与证据 | 仍持有该任务的下载恢复进度和按钮，随后完成时保留安装包供手动安装。`tests/ui/more/app-update-runtime.test.tsx` 分别覆盖再次暂停及下载先结束。 |
+| 续传回退 | 服务端拒绝原断点后，检查文件或保存元数据期间的暂停、退出曾触发旧任务清零或重新下载。下载循环在异步操作后复核任务归属和暂停意图。上述组件测试覆盖两个等待点各自与暂停、退出的四种交错，核对断点和下载次数。 |
+
+## `REG-NOTIFY-091` 后台通知的首次设置读取未计入超时
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-03` |
+| 历史症状与根因 | 任务先打开数据库并读取来源，随后才启动 50 秒计时。首次读取挂起时系统任务一直等待。 |
+| 当前 owner | `src/app/notificationBackgroundTask.test.ts`、`dev/review-remediation-proof/background.ts` |
+| 修复与证据 | 任务入口建立统一截止时间。用例覆盖打开数据库和读取设置阻塞，核对任务超时、后续请求次数以及迟到读取释放连接。 |
+
+## `REG-DATA-017` 临时迁移故障后的备份导入清除了仍可读取的旧资料
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `DATA-02/03` |
+| 历史症状与根因 | 一次旧设置读取失败后，恢复分支以空快照合并并清理旧键。有效历史消失，类型错误的 v2 备份也能被接受。旧主资料读取不返回时还能阻塞启动队列。 |
+| 当前 owner | `src/platform/storage/readerDataStore.test.ts`、`src/domain/reader/readerBackup.test.ts` |
+| 修复与证据 | 隔离 SQLite 用例覆盖读取拒绝、超时、恢复重读、合并后的两份记录、重启和畸形备份。旧格式不受支持或 I/O 仍异常时保留原键。 |
+| 部分设置与重复解析 | 普通导入和启动恢复共用同一次备份解析，合并时保留未出现在备份中的本机设置。SQLite 用例分别导入含 64 条带头像历史记录的备份，两条路径的头像地址规范化调用都从 128 次降为 64 次。 |
+
+## `REG-DATA-018` 收藏与历史的标题在导出时再次解码
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `DATA-01/03` |
+| 历史症状与根因 | 站点返回的标题已经是显示文本，摘要生成与备份归一化仍重复解码实体。带字面实体的技术标题在多次导入、导出后改变。 |
+| 当前 owner | `src/domain/reader/readerBackup.test.ts`、`tests/integration/source-read-contracts/discourse.test.ts` |
+| 修复与证据 | 站点适配器负责解码。包含命名及数字实体的模型标题能原样导出并往返，已有发布包写失的字符无法推断还原。 |
+
+## `REG-WRITE-143` 两个编辑页先后保存同一草稿会覆盖已保存标题
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-02/07` |
+| 历史症状与根因 | 第二个页面从旧快照连续修改正文，生成较大的本地版本号，SQLite 接受了含旧标题的整份草稿。 |
+| 当前 owner | `src/platform/persistence/topicDrafts.test.ts`、`tests/ui/topic-composer/topic-draft-controller.test.tsx` |
+| 修复与证据 | 写入事务比较编辑页上次确认的磁盘版本。两个编辑页独立修改的用例核对数据库结果及本地冲突反馈。 |
+
+## `REG-FEED-047` V2EX 全部列表超过去重窗口后停在旧主题
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `FEED-02/04` |
+| 历史症状与根因 | 游标最多保存 200 个已见 ID，每次却从上游首页扫描。在 400 帖的样本中，显示到 230 帖后连续 12 次翻页没有新增记录。 |
+| 当前 owner | `src/sources/v2ex/reader.test.ts` |
+| 修复与证据 | 样本覆盖旧格式游标、页内续读和翻到最后一页，按顺序核对 400 个主题。 |
+
+## `REG-WRITE-144` 收款状态核对丢弃已确认的关闭结果
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-06` |
+| 历史症状与根因 | 付款结果未知后，自动状态读取与多次手动刷新重叠。最后发起的读取失败，先前成功确认关闭的结果也被丢弃。 |
+| 当前 owner | `tests/ui/topic/topic-components.test.tsx` |
+| 修复与证据 | 收款卡共享同一笔核对，读取完成前禁用手动刷新。组件用例使用受控响应，未向原站付款。 |
+
+## `REG-TOPIC-225` 折叠引用仅补昵称时跨帖图片进入相册
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-02/03` |
+| 历史症状与根因 | 读取引用作者时一并缓存楼层正文。图集遍历缓存，使从未展开的引用图片进入主题预览。 |
+| 当前 owner | `tests/ui/topic/topic-session-controller.test.tsx`、`tests/ui/topic/topic-reply-filters.test.tsx` |
+| 修复与证据 | 预读昵称不会注册图片。显式展开后建立的图片目录继续按原契约跨折叠保留。 |
+
+## `REG-TOPIC-226` linux.do 缺少账号的同名回复被判为楼主
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-03` |
+| 历史症状与根因 | 主楼和回复均缺少用户名时，筛选以昵称相等判定身份，会保留其他用户的同名回复。 |
+| 当前 owner | `src/features/topic/useTopicSessionController.test.ts` |
+| 修复与证据 | 当前用例分别覆盖已确认账号、同名不同账号和缺少账号的回复。 |
+
+## `REG-TOPIC-228` Android 图片在取消后仍交付临时文件
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-02/04` |
+| 历史症状与根因 | 临时文件改名后收到取消，图片下载仍可能返回成品并留下文件。已有同名成品时，Linux 的改名操作还可能覆盖旧文件。下载与主题长图共用这一发布步骤。 |
+| 当前 owner | `modules/forum-platform/android/src/main/java/com/wz/reader/media/TemporaryImageFile.kt`、`modules/forum-platform/android/src/test/java/com/wz/reader/media/ImageDownloadTest.kt`、`modules/forum-platform/android/src/test/java/com/wz/reader/media/TopicShareCaptureTest.kt` |
+| 修复与证据 | 改名前检查目标和取消状态，改名后交付前再次检查取消状态并清理本次文件。Gradle 两个测试类共 13 项通过。已有同名成品的用例也在 Linux OpenJDK 17 复验，核对原文件内容。 |
+| 分享交付的后续复现 | 预览图重新解码时，非 Android 截图路径曾交付旧 PNG；复制期间关闭分享窗口还会留下未交付的副本。两条截图路径共用当次导出的取消状态，未交付的副本在退出时清理。已交付的文件仍供接收方读取。`tests/ui/topic/topic-share-sheet.test.tsx` 核对取消后重新分享，`src/features/topic/shareTopicImageFile.test.ts` 核对临时目录和原文件。 |
+
+## `REG-TOPIC-227` linux.do 红包封面只显示图片说明
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-02/03` |
+| 历史症状与根因 | linux.do 主题 3205240 在原站显示可点击的 300 × 400 红包封面，阅坛正文只显示替代文字。图片地址写在 `picture > source[srcset]` 中，原有正文处理只读取 `img` 自身的图片地址。 |
+| 当前 owner | `src/domain/forum/contentSanitizer.test.ts`、`tests/ui/topic/topic-rich-text-selection.test.tsx` |
+| 修复与证据 | 正文解析按顺序选择可用来源。组件测试核对 420 × 560 的图片加载后仍按作者声明的 300 × 400 显示，链接沿用图片说明，点击只打开一次目标页面。 |
+| 点击去向 | 正文组件用同一 300 × 400 封面分别绑定红包页面和图片自身。前者打开页面一次，后者即使是 SVG 也只打开一次图集。`tests/ui/topic/topic-rich-text-selection.test.tsx` 核对点击次数和显示尺寸。 |
+| 设备与范围 | Android 15 主模拟器保留数据覆盖安装后，在已登录的阅坛内打开原帖，核对矿洞图案、“查看”按钮、带时间的奖池快照，以及原生链接节点的无障碍名称。正文显示为 `LIVE_PASS`，点击分派为 `UI_PASS`；红包领取未执行。 |
+| 2026-11-20 原帖点击 | Android 15 普通包在已登录的阅坛内核对主题 3205240。原站的 420 × 560 SVG 以 300 × 400 展示，点阅坛封面后打开第三方页面，完整落地地址的摘要与作者链接一致。返回后仍在原帖并可继续滚动。封面点击与落地页为 `LIVE_PASS`。本次止于第三方登录入口，未领取红包。 |
+| 长图中的同一封面 | `TOPIC-04` 的长图曾对已在正文显示的 SVG 再次请求原文件，解码失败后，30 秒计时又把错误改报为超时。分享页现复用按请求身份生成的静态 PNG，并等图片实际显示再开放导出。无缓存、重试、迟到显示与同帖不同图片格式的回归见 `tests/ui/topic/topic-share-sheet.test.tsx` 和 `src/features/topic/topicShareContent.test.ts`。 |
+
+## `REG-ACCOUNT-078` NodeSeek 站内相对链接未能确认访客
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `ACCOUNT-01/02` |
+| 历史症状与根因 | 登录和注册的链接带有相对路径或省略协议时，原始 href 不能匹配访客规则，账号页跳过自动核验。 |
+| 当前 owner | `src/platform/network/loginWebViewScripts.test.ts`、`src/sources/sourceAccountRead.test.ts` |
+| 修复与证据 | 同站链接按文档 URL 解析后再核对路径及可见性。受控页面覆盖原生与 WebView 两个入口，线上采用该写法的频率未知。 |
+
+## `REG-UPDATE-010` 最后一次 APK 校验期间切后台仍会请求安装
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `MORE-04` |
+| 历史症状与根因 | 自动下载完成时检查前台状态。用户在随后异步校验期间离开，校验返回后仍调用系统安装器。 |
+| 当前 owner | `tests/ui/more/app-update-runtime.test.tsx` |
+| 修复与证据 | 在受控校验期间切到后台，确认不调用安装器、已验证文件仍可供随后手动安装。 |
+
+## `REG-OPS-023` 专项设备回放被发布清单标为全量回放
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `RELEASE-01/02` |
+| 历史症状与根因 | 只传专项回放目录时，Smoke 实际只执行所选脚本，清单仍按是否跳过 JS 验证标记 full。 |
+| 当前 owner | `tests/tooling/release-workflow.test.ts` |
+| 修复与证据 | 执行发布脚本的内存夹具核对默认目录、专项目录及跳过全量验证时实际写入的范围。 |
+
+## `REG-OPS-024` 验签期间安装身份变化仍发出覆盖安装
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `RELEASE-02` |
+| 历史症状与根因 | 工具在耗时的验签前读取设备身份，随后直接安装。此间设备包被替换或隔离包空位被占用时，仍会覆盖。 |
+| 当前 owner | `tests/tooling/device-apk-install.test.ts` |
+| 修复与证据 | 安装前重新比对包的哈希、UID 与首次安装时间，或再次确认隔离安装目标仍为空。运行实际工具的假设备回放确认变化时零安装。 |
+
+## `REG-OPS-025` 正式签名的旧 APK 可生成新版本清单
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `RELEASE-01/02` |
+| 历史症状与根因 | 发布脚本检查 APK 路径和签名，写清单时却从配置推导版本，未读每个待发布或待验收包自身的 Android 声明。 |
+| 当前 owner | `tests/tooling/release-workflow.test.ts` |
+| 修复与证据 | Smoke 与清单前用 Android 工具核对正式包和验收包各自的包名、版本、架构。受控发布入口回放核对正确签名的旧版仍会在 Smoke 前被拒绝。 |
+
+## `REG-OPS-026` Smoke 进入了同名但序列不同的模拟器
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `RELEASE-02` |
+| 历史症状与根因 | 显式输入 ADB 序列后，工具只保留解析得到的 AVD 名。启动返回同名另一台设备时，后续仍按返回设备覆盖安装。 |
+| 当前 owner | `tests/tooling/android-smoke-guard.test.ts` |
+| 修复与证据 | 安装或执行 Smoke 前比对当前回执与用户显式给出的序列。受控工具回放核对错设备零安装，并只关闭此轮验收会话。 |
+
+## `REG-OPS-027` 核对正确设备后安装时又按同名选择
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `RELEASE-02` |
+| 历史症状与根因 | Smoke 前置按 ADB 序列读取并验签，安装调用又按 AVD 名重新选择。出现第二台同名模拟器时，安装可能先写到另一台，验后才报错。 |
+| 当前 owner | `tests/tooling/android-smoke-guard.test.ts` |
+| 修复与证据 | 覆盖安装与首启绑定同一显式序列，后续使用原会话。实际本机选择器的替代设备回放证实写入只到核验过的序列。 |
+
+## `REG-OPS-028` Replay 核对 APK 后又按显示名称选择设备
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `RELEASE-02` |
+| 历史症状与根因 | 普通与敏感 Replay 先用已解析序列检查 APK，再把设备名称交给 agent-device。两台模拟器同名时，回放及录制清理可能进入另一台。 |
+| 当前 owner | `tests/tooling/android-smoke-guard.test.ts` |
+| 修复与证据 | 回放、录制清理及敏感回放的会话关闭沿用已核验序列。受控设备列表令名称指向另一台，六个入口断言修前失败、修后通过。最低支持的 agent-device 已提供 `--serial`。 |
+
+## `REG-OPS-029` 主设备名称与序列号的别名绕过游客隔离
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `RELEASE-02` |
+| 历史症状与根因 | 游客工具只比较配置字符串。主设备使用名称而游客配置使用同一设备序列时，后续实际解析仍进入主设备。反向组合也有相同行为。 |
+| 当前 owner | `tests/tooling/android-smoke-guard.test.ts` |
+| 修复与证据 | 一次解析游客设备，比较该设备的实际名称和序列，原设备对象交给回放。真实 CLI 的双向别名受控回放均在 ADB 和首次打开前拒绝，独立目标正常执行。 |
+
+## `REG-OPS-030` 普通回放配置覆盖显式发布 Smoke 设备
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `RELEASE-02` |
+| 历史症状与根因 | 同时设置发布 Smoke 和普通回放目标时，Smoke 启动复用普通回放的选择优先级。安装实际转向另一个已通过预检的设备。 |
+| 当前 owner | `tests/tooling/android-smoke-guard.test.ts` |
+| 修复与证据 | Smoke 优先使用明确的 `WZ_ANDROID_SMOKE_DEVICE`，只有普通配置时仍兼容原入口。CLI 受控回放覆盖双配置和各自单独配置，核对启动与安装落在同一台预期设备。 |
+
+## `REG-OPS-031` 按同名模拟器启动 Smoke 时随枚举顺序改变目标
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `RELEASE-02` |
+| 历史症状与根因 | 按名称运行 Smoke 时，设备工具取第一个同名或等价名称，导致同一命令随枚举顺序进入不同设备。 |
+| 当前 owner | `tests/tooling/android-smoke-guard.test.ts` |
+| 修复与证据 | 复用回放的设备名匹配，启动前要求唯一目标。已启动设备的回执须匹配序列，未启动的核对回执名。实际设备选择器配合两种枚举顺序复现错选，修后移交安装入口的次数均为零。 |
+
 ## `REG-ACCOUNT-077` NodeSeek 强挑战被缓存访客内容覆盖
 
 | 字段 | 内容 |
@@ -1625,6 +2767,7 @@
 | 历史症状与根因 | 2026-10-03 连续操作审计复现：打开默认空查询的标签候选后关闭 picker，query key 保持不变，只有 enabled 变为 false，旧请求未取消；重开时复用仍在途的旧读取，未发出新的候选请求。 |
 | 当前 owner | `tests/ui/search/search-screen.test.tsx` 固定空查询与非空查询的关闭、取消、重开及迟到结果，另验证当前搜索页失活不取消其他来源的候选读取；seed `310031` 空查询用例先红后绿，三项相关用例通过。 |
 | 修复与边界 | picker 记录自身激活的候选 query key，仅取消刚失活的 exact key；保留其他来源和其他 scope 的在途候选，重开沿新请求更新。证据为 `UI_PASS`。 |
+| 后续复现与修复 | 两个选择页订阅相同查询时，关闭其中一个曾取消另一页正在等的请求。现在每个页面释放自己的订阅，最后一个订阅退出时才取消请求。`tests/ui/search/search-performance-stress.test.tsx` 核对另一页仍能收到原请求的结果，且全程只发出一次请求。 |
 
 ## `REG-MORE-009` 代理弹层重开后旧异步回执污染新会话
 
@@ -2035,6 +3178,7 @@
 | 当前 owner | `src/sources/readGateway.test.ts`、`src/sources/feedRead.test.ts` 运行真实 read plan、gateway 与聚合读取；`tests/ui/feed/feed-controller-session.test.tsx` 覆盖匿名终止、登录恢复与退出移除，全部为普通行为测试。 |
 | 失败 oracle 与边界 | 只启用 linux.do 与妖火、两站匿名、linux.do 返回合法空终页；两轮均 items 空、errors 空、hasMore 为真，page 2→3 而妖火 cursor 固定在页 1，实际网络只有一次。普通测试固定 seed `20260920` 因无法到达终态失败。未做设备或 Live 验收，不把逻辑空分页推断为原站请求风暴。 |
 | 处置与关闭证据 | 聚合请求、旧 buffer 与 cursor 只包含当前 ReadPlan 可读取的来源，删除对 unavailable 来源制造伪请求失败并保留重试页的路径；真实网络失败/超时继续保留重试页。凭据 epoch 变化沿既有 Query scope 重建计划，不增加 UI 页数上限。Gateway 与真实 Feed controller 红例转绿，负向撤去过滤后两者均转红；定向 Vitest 固定 112、扩展随机 121 项，UI 固定 49 项通过。主设备不退出账号制造匿名状态，该分支由受控 owner 验证。 |
+| 来源分页终点 | 来源已明确结束但仍附页码，或返回与请求相同的页码和游标时，`src/sources/feedRead.test.ts` 复现聚合首页仍承诺下一页。修复后仍可读完已缓冲的条目，同页有新游标时可继续，暂时失败可按原位置重试。`src/features/search/listItems.test.ts` 核对倒退、负数、小数和无限页码均终止。 |
 
 ## `REG-NAV-006` 迟到的启动链接覆盖新的链接目标
 
@@ -2759,6 +3903,7 @@
 | 能力 ID | `SEARCH-02`、`SEARCH-03`、`SEARCH-04` |
 | 历史症状与根因 | linux.do 标签和发帖人原本是可任意手输的文本框，可能提交站点不存在的值；快速改词时旧候选或旧 AI 响应还可能覆盖当前查询；空作者输入可能永久显示 Loading；关闭标签选择、切换分类再重开时，上一分类的同词候选可能重新出现并可点击；分页或详情返回后筛选也可能退回浅拷贝中的旧数组；根因：`src/features/search/SearchScreen.tsx` 的候选草稿交互、`src/features/search/useSearchController.ts` 的普通/AI/候选结构化 Query key、`src/features/search/searchRun.ts` 的深快照和合并、`src/sources/linuxdo/search.ts` 的候选接口。 |
 | 当前 owner | `tests/ui/search/search-screen.test.tsx` |
+| 换号后的延迟候选 | 发起查询后换号，旧的标签和作者回调曾使用新账号请求。`tests/ui/search/search-controller-ai.test.tsx` 核对每次请求沿用其查询键对应的账号。`src/sources/readGatewayContract.test.ts` 核对来源或操作不一致时拒绝读取，即使两个缓存范围碰巧相同。 |
 
 
 ## `REG-SEARCH-002` 分页失败隐藏已有结果
@@ -3242,7 +4387,7 @@
 | --- | --- |
 | 状态 | `RESOLVED` |
 | 能力 ID | `RELEASE-02` |
-| 历史症状与根因 | runner 已按 `emulator-5554` 找到唯一设备并验证 APK 身份，但第一条 Replay 在 `open` 步骤报 `No device named emulator-5554`，全部设备旅程无法开始；根因：`scripts/run-device-replay.mjs` 同时承担设备发现与 Replay 调用：设备发现接受 ID 或名称，但 agent-device 0.19.0 的 test runner 按显示名称绑定设备。 |
+| 历史症状与根因 | runner 已按 `emulator-5554` 找到唯一设备并验证 APK 身份，却把序列作为 `--device` 的值传给 Replay。第一条回放在 `open` 步骤报 `No device named emulator-5554`。该参数接受显示名称，显式序列使用 `--serial`。 |
 | 当前 owner | `tests/tooling/android-smoke-guard.test.ts` |
 
 
@@ -4794,6 +5939,7 @@
 | 能力 ID | `TOPIC-02`、`TOPIC-01`、`TOPIC-03`、`NAV-03`、`ACCOUNT-01` |
 | 历史症状与根因 | 浏览器中秒开的论坛图片在 App 正文等待十几秒甚至离页仍未完成；窄屏正文实际下载了灯箱原图或 `srcset` 最大候选，耗时和字节数远大于展示所需；根因：`src/platform/media/imagePreviewCatalog.ts` 的图片候选解析与预览 alias catalog、`src/domain/forum/forumContentMedia.ts` 的正文 source 选择，以及 `src/features/topic/rendering/previewRenderers.tsx` 的最终 native source。 |
 | 当前 owner | `src/platform/media/imageRequestSource.test.ts` |
+| 已保留的原图 | 适屏 `src`、中等尺寸 `data-original`、编译器保留的 `data-forum-original-src` 同时存在时，正文继续显示适屏图片，预览优先使用编译器保留的原图。`src/platform/media/imagePreviewCatalog.test.ts` 核对这些地址指向同一图集项。 |
 
 
 ## `REG-TOPIC-041` 不同会话 epoch 的同 URL 图片请求被 Glide 合并
@@ -5494,6 +6640,7 @@
 | 能力 ID | `RELEASE-02`、`ACCOUNT-01`、`ACCOUNT-02`、`ACCOUNT-04`、`DATA-01`、`DATA-02`、`DATA-03` |
 | 历史症状与根因 | 为查看最新构建而安装 APK 后，主模拟器账号中心从已有登录变成全部未登录，本机数据看似被重置；后续普通启动载入旧 Quick Boot 状态后登录又出现，造成「数据已永久丢失」和「Cookie 自己恢复」的相互矛盾判断；根因：`agent-device 0.20.6` 的 Android `reinstall` 会先执行不带 `-k` 的 `adb uninstall`，再安装 APK；帮助文案「Replace installed app」没有承诺保留数据。仓库 Smoke 本来使用安全的 `install`，但临时人工命令绕过了该边界；看到账号全部未登录后又把 UI 当成永久丢失证据，在证据不足时操作 Quick Boot，扩大了诊断风险。 |
 | 当前 owner | `tests/tooling/android-smoke-guard.test.ts` |
+| 覆盖前后身份 | `scripts/device-apk-install.mjs` 统一复核 Android 用户 0 的安装状态、应用 UID、首次安装时间和 APK 哈希。`tests/tooling/android-smoke-guard.test.ts` 复现首次安装时间未变但 UID 已变的情形，脚本会停止设备变更。`tests/tooling/device-apk-install.test.ts` 和 `tests/tooling/reader-storage-device-proof.test.ts` 用模拟 ADB 核对新装边界、包名、签名、版本及覆盖前后哈希。构建期间原包被替换，或隔离设备上原先没有的目标包已经安装时，脚本会中止。 |
 
 
 ## `REG-OPS-019` booted emulator ID 被当成 AVD 名导致 Smoke 无法启动
@@ -7469,8 +8616,9 @@
 | 字段 | 内容 |
 | --- | --- |
 | 状态 | `OPEN` |
+| 2026-11-20 暖切复测 | 游客 V2EX 与已登录 linux.do 分别采集 180 个暖切窗口。游客 V2EX 共 3,432 个有效帧，9 批均出现相邻有效帧超期。已登录 linux.do 的原实现、按需创建筛选编辑器、原实现复测依次通过 0/3、1/3、2/3 批，问题保持开放。完整帧时与首开筛选的独立指标见[本批取证记录](review-remediation.md#2026-11-20-四站读取与-android-冷恢复)。 |
 | 2026-11-16 图形提交与采样开销 | 重 syscall/gfx 诊断的 368.163 ms 帧主要采到 ftrace ring-buffer 计时：90 个 CPU 样本中 85 个 read_hpet，trace 自身有 misplaced_end_event=411，不能当普通 App 根因。默认配置去 gfx 后保留 255/255 DrawFrames、254/255 FrameTimeline 和 App/sched，GL encode marker 为零；view 仍放大到 worst55.720ms，无 ftrace/simpleperf-only 为 33.780ms，均为诊断数据。后者最慢帧仅一个 goldfish pipe write 样本，不足以确定宿主 GPU/驱动根因。普通 v5 三批 FAIL 保留，未调整视觉或门槛；详见[宿主链路核对](performance/android-host-chain.md)。 |
-| 当前结论 | 2026-11-16 普通 v6、SHA bfaa5b37…、主 AVD/PID3717，三批各十次往返共1576有效帧、每方向完整3.3秒；p95 27.687/30.640/23.960ms，worst46.320/42.712/42.957ms，严格门槛三批全部FAIL，零invalid/缺失。该组在L重新登录前完成，不能与之后带登录内容混称一组。重追踪HPET开销已确认，普通剩余RenderThread提交慢帧尚未定位到可安全修改的App根因，保持OPEN；详见[宿主链路核对](performance/android-host-chain.md)。 |
+| 2026-11-16 暖切复测 | 2026-11-16 普通 v6、SHA bfaa5b37…、主 AVD/PID3717，三批各十次往返共1576有效帧、每方向完整3.3秒；p95 27.687/30.640/23.960ms，worst46.320/42.712/42.957ms，严格门槛三批全部FAIL，零invalid/缺失。该组在L重新登录前完成，不能与之后带登录内容混称一组。重追踪HPET开销已确认，普通剩余RenderThread提交慢帧尚未定位到可安全修改的App根因，保持OPEN；详见[宿主链路核对](performance/android-host-chain.md)。 |
 | 前轮普通 v5 与同帧诊断 | 2026-11-16 普通 Release v5，SHA eec3b94a…，主登录态 AVD 同 PID 7234、预热后各十次往返三批全部 FAIL，p95 26.446/26.862/26.401 ms、worst 45.526/54.990/45.365 ms。相同完整 3.3 秒窗口，无缺失或 invalid；不以 More 的局部隐藏动画修复或诊断未复现关闭事故。随后同帧诊断的 414 帧唯一绑定，重点慢帧主要为 RT 排队和 GL 提交，未发现多余 Blur 层或可删 App 重复工作；诊断明显更慢，不替代正式计时，也不冒充旧失败帧的同次根因。见 [TLS 与切页继续核对](performance/android-tls-frame-followup.md)。 |
 | 旧正式 warm 结论 | cfcb8a62… 的三批严格复验为通过/失败/失败，事故重开 `OPEN`；p95/worst 达标，但有 3 对相邻有效 App 记录同时 miss。先前 956 包三批严格通过、四 Tab 与返回恢复验收仍是有效历史证据，不能替代当前包结论。相邻记录间隔约 1.589 秒，不证明连续显示周期掉帧或原生重新附着回归，晚帧是否来自滚动条尚未确认；冷首次进入继续由 `REG-PERF-029` 单列。 |
 | 2026-10-04 复核 | 普通 Release 1.3.150/154（APK SHA 4880a3dc…ec339a），同 PID 4627、三批各 10 次双向切页，共 1,620 个有效帧。三批 p95 为 21.878/21.832/21.543 ms，worst 为 23.299/23.424/23.540 ms，时长均过门槛；单次转向内相邻 miss 为 0。第一批首个 Search→Feed 边界有一对相邻有效 miss，IntendedVsync 相隔 2100.076 ms，因此三批严格门槛为失败/通过/通过。无对应 Fatal、Fabric 或 Reanimated 错误，登录前后 3/3。原帧与统计见 ignored `.codex-tmp/known-issues-verify-20261004-2ae8fd38` 的 formal-warm-complete；该跨操作间隔不证明连续显示周期掉帧。 |

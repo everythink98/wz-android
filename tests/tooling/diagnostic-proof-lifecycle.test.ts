@@ -1,5 +1,6 @@
 // @vitest-environment node
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { expect, it, vi } from 'vitest';
 
 async function fixture(
@@ -11,6 +12,7 @@ async function fixture(
     composer?: { error: unknown };
     report?: { error: unknown };
     identityChangesAfterInstall?: boolean;
+    identityChangesDuringBuild?: boolean;
     startsAfterInstall?: boolean;
     snapshotBytes?: number;
     snapshotError?: 'ENOBUFS' | 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
@@ -19,6 +21,7 @@ async function fixture(
 ) {
   const temporary = path.resolve('.codex-tmp/diagnostic-device-proof-fixture');
   let installs = 0;
+  let proofBuilt = false;
   let running = false;
   let stops = 0;
   const launchStates: ('cold' | 'warm')[] = [];
@@ -33,11 +36,20 @@ async function fixture(
   const exec = vi.fn((command: string, args: readonly string[], options: { maxBuffer?: number } = {}) => {
     if (command === 'git') return 'fixture-revision';
     if (args.join(' ') === 'devices') return 'emulator-7777 device\n';
+    if (command.endsWith('aapt2') || command.endsWith('aapt2.exe'))
+      return "package: name='com.wz.reader' versionCode='42' versionName='fixture'";
     const operation = args.slice(2).join(' ');
+    if (operation === 'shell pm list packages -u') return 'package:android\npackage:com.wz.reader';
+    if (operation === 'shell pm path com.wz.reader') return 'package:/data/app/fixture/base.apk';
+    if (operation.startsWith('shell sha256sum'))
+      return createHash('sha256')
+        .update(JSON.stringify({ buildId: 'a'.repeat(32) }))
+        .digest('hex');
+    if (operation.startsWith('pull ')) return '';
     if (operation === 'emu avd name') return 'WZ_ImageRuntime_Test_API35\nOK\n';
     if (operation === 'shell pidof com.wz.reader') return running ? '12345' : '';
     if (operation === 'shell dumpsys package com.wz.reader')
-      return `firstInstallTime=${installs && failures.identityChangesAfterInstall ? '2026-01-02' : '2026-01-01'} 00:00:00\n`;
+      return `firstInstallTime=${(installs && failures.identityChangesAfterInstall) || (proofBuilt && failures.identityChangesDuringBuild) ? '2026-01-02' : '2026-01-01'} 00:00:00\nappId=10123\nUser 0: installed=true\n`;
     if (operation.startsWith('install -r ')) {
       installs++;
       running = failures.startsAfterInstall === true;
@@ -80,6 +92,7 @@ async function fixture(
     throw new Error('Unexpected synthetic command: ' + command + ' ' + args.join(' '));
   });
   const spawn = vi.fn((command: string, args: readonly string[]) => {
+    if (command.includes('gradlew') && args.includes('-I')) proofBuilt = true;
     if (command.includes('npm') && failures.composer) return { error: failures.composer.error, status: 1 };
     if (command.includes('gradlew') && args.includes('-I') && failures.proofBuild)
       return { error: failures.proofBuild.error, status: 1 };
@@ -102,6 +115,11 @@ async function fixture(
         report = JSON.parse(value);
       }
     }
+  }));
+  vi.doMock('../../scripts/device-apk-signer.mjs', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('../../scripts/device-apk-signer.mjs')>()),
+    findApkSignerJar: () => 'fixture-signer',
+    deviceApkSignerSha256: () => 'a'.repeat(64)
   }));
   vi.doMock('../../scripts/device-proof-build.mjs', () => ({
     deviceProofFixture: () => {
@@ -128,6 +146,7 @@ async function fixture(
     vi.doUnmock('node:child_process');
     vi.doUnmock('node:timers/promises');
     vi.doUnmock('node:fs');
+    vi.doUnmock('../../scripts/device-apk-signer.mjs');
     vi.doUnmock('../../scripts/device-proof-build.mjs');
     vi.doUnmock('../../scripts/diagnostic-symbols.mjs');
     vi.resetModules();
@@ -264,6 +283,16 @@ it('keeps device mutations frozen after an installation identity anomaly', async
   if (result.outcome.kind !== 'failed' || !(result.outcome.error instanceof Error))
     throw new Error('Expected identity failure');
   expect(result.outcome.error.message).toMatch(/Installation identity changed/);
+});
+
+it('detects a replaced installation during the proof build before changing the device', async () => {
+  const result = await fixture({ identityChangesDuringBuild: true });
+  expect(result.installs).toBe(0);
+  expect(result.launchStates).toEqual([]);
+  expect(result.outcome).toMatchObject({
+    kind: 'failed',
+    error: expect.objectContaining({ message: expect.stringContaining('identity') })
+  });
 });
 
 it.each(['launch', 'cold-stop'] as const)(

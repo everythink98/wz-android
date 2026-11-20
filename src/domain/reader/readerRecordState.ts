@@ -1,5 +1,6 @@
 import type { Source, Topic, UserDetails, UserTopicsPage } from '@/domain/forum/models';
 import { createEmptyReaderData, sanitizeReaderSettings, topicKey, userKey, type ReaderSettings } from './readerData';
+import { applyContentSourceEdit, type ContentSourceEdit } from './contentSourcePreferences';
 
 export type ReaderStatus = 'loading' | 'ready' | 'recovery';
 
@@ -19,7 +20,14 @@ export interface ReaderView extends ReaderMembership {
 
 export interface ReaderState extends ReaderView {
   counts: Record<ReaderCollection, number>;
-  revisions: Record<ReaderCollection, number>;
+}
+
+export type ReaderSettingsUpdate = Partial<ReaderSettings> | ContentSourceEdit;
+
+export function applyReaderSettings(current: ReaderSettings, patch: ReaderSettingsUpdate): ReaderSettings {
+  if (!('kind' in patch)) return sanitizeReaderSettings({ ...current, ...patch });
+  const contentSources = applyContentSourceEdit(current.contentSources, patch);
+  return contentSources === current.contentSources ? current : { ...current, contentSources };
 }
 
 export type ReaderCommand =
@@ -29,7 +37,7 @@ export type ReaderCommand =
   | { type: 'follow'; user: UserDetails & Partial<UserTopicsPage>; enabled: boolean; at: string }
   | { type: 'delete'; collection: ReaderCollection; keys: readonly string[]; at: string }
   | { type: 'clear-history'; at: string }
-  | { type: 'settings'; patch: Partial<ReaderSettings> };
+  | { type: 'settings'; patch: ReaderSettingsUpdate };
 
 export interface ReaderChange {
   membership: { collection: ReaderCollection; key: string; present: boolean }[];
@@ -52,12 +60,14 @@ export function createEmptyReaderState(): ReaderState {
     history: {},
     followedUsers: {},
     settings: createEmptyReaderData().settings,
-    counts: { favorites: 0, history: 0, followedUsers: 0 },
-    revisions: { favorites: 0, history: 0, followedUsers: 0 }
+    counts: { favorites: 0, history: 0, followedUsers: 0 }
   };
 }
 
-export function applyReaderChange(current: ReaderState, change: ReaderChange, committed = true): ReaderState {
+export function applyReaderChange(
+  current: ReaderState,
+  change: Pick<ReaderChange, 'membership' | 'counts' | 'settings'>
+): ReaderState {
   let next = current;
   const copied = new Set<ReaderCollection>();
   for (const item of change.membership) {
@@ -79,16 +89,11 @@ export function applyReaderChange(current: ReaderState, change: ReaderChange, co
       next = { ...next, counts: { ...next.counts, [collection]: count } };
     }
   }
-  if (committed && change.changed.length) {
-    const revisions = { ...next.revisions };
-    for (const collection of change.changed) revisions[collection]++;
-    next = { ...next, revisions };
-  }
   return next;
 }
 
 export function projectReaderCommand(current: ReaderState, command: ReaderCommand): ReaderState {
-  const change: ReaderChange = { membership: [], counts: {}, changed: [] };
+  const change: Pick<ReaderChange, 'membership' | 'counts' | 'settings'> = { membership: [], counts: {} };
   const set = (collection: ReaderCollection, key: string, present: boolean) => {
     if (Object.hasOwn(current[collection], key) === present) return;
     change.membership.push({ collection, key, present });
@@ -111,8 +116,8 @@ export function projectReaderCommand(current: ReaderState, command: ReaderComman
       for (const key of Object.keys(current.history)) set('history', key, false);
       break;
     case 'settings':
-      change.settings = sanitizeReaderSettings({ ...current.settings, ...command.patch });
+      change.settings = applyReaderSettings(current.settings, command.patch);
       break;
   }
-  return applyReaderChange(current, change, false);
+  return applyReaderChange(current, change);
 }

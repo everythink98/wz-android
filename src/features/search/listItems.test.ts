@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildSearchListItems,
   groupFromRemoteSearchResult,
-  hasNextSearchPage,
+  nextSearchPage,
   searchGroupEmptyText,
   type RemoteSearchSourceResult,
   type SearchGroup
@@ -25,9 +25,13 @@ function topic(id: string, source: Topic['source'], category = '默认'): Topic 
 
 describe('Android search list items', () => {
   it('keeps an undisplayed cached page reachable and rejects a repeated page', () => {
-    expect(hasNextSearchPage(true, 3, 2)).toBe(true);
-    expect(hasNextSearchPage(true, 2, 2)).toBe(false);
-    expect(hasNextSearchPage(false, 3, 2)).toBe(false);
+    expect(nextSearchPage({ hasMore: true, nextPage: 3 }, 2)).toBe(3);
+    expect(nextSearchPage({ hasMore: true, nextPage: 2 }, 2)).toBeUndefined();
+    expect(nextSearchPage({ hasMore: false, nextPage: 3 }, 2)).toBeUndefined();
+  });
+
+  it.each([1, -1, 2.5, Infinity])('rejects an invalid forward search page %s', (page) => {
+    expect(nextSearchPage({ hasMore: true, nextPage: page }, 2)).toBeUndefined();
   });
 
   it('projects each remote result into its user-visible group', () => {
@@ -114,6 +118,24 @@ describe('Android search list items', () => {
     expect(items.filter((item) => item.type === 'topic')).toHaveLength(2);
   });
 
+  it('retains the single-site page and shows refresh status in place of pagination', () => {
+    const groups: SearchGroup[] = [
+      {
+        source: 'linuxdo',
+        label: 'linux.do',
+        items: [topic('1', 'linuxdo')],
+        loading: true,
+        hasMore: true,
+        nextPage: 2
+      }
+    ];
+
+    expect(buildSearchListItems({ groups, mode: 'source' }).map((item) => item.type)).toEqual([
+      'topic',
+      'groupLoading'
+    ]);
+  });
+
   it('keeps source auth notices visible instead of treating them as empty results', () => {
     const groups: SearchGroup[] = [
       {
@@ -169,10 +191,7 @@ describe('Android search list items', () => {
       }
     ];
 
-    expect(buildSearchListItems({ groups, mode: 'overview' }).map((item) => item.type)).toEqual([
-      'groupHeader',
-      'externalSearch'
-    ]);
+    expect(buildSearchListItems({ groups, mode: 'overview' }).map((item) => item.type)).toEqual(['externalSearch']);
   });
 
   it('shows an enabled unsettled request as loading', () => {

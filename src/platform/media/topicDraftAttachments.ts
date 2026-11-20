@@ -5,6 +5,7 @@ import { topicDraftTarget } from '@/domain/forum/topicComposer';
 
 type DraftOwner = Pick<TopicDraft, 'id' | 'source' | 'identityKey' | 'edit'>;
 const safeId = /^[A-Za-z0-9_-]{1,128}$/;
+const pickedFileUri = /^(file|content):\/\//;
 
 function directory(draft: DraftOwner) {
   if (
@@ -35,6 +36,17 @@ function ownedFile(draft: DraftOwner, attachment: TopicDraftAttachment) {
   return file.uri === uri ? file : null;
 }
 
+export function knownTopicDraftAttachmentSize(uri: string): number | undefined {
+  if (!pickedFileUri.test(uri)) return;
+  try {
+    const size = new File(uri).size;
+    if (Number.isFinite(size) && size > 0) return size;
+  } catch {
+    // Some document providers expose the file for copying without reporting its size.
+    return undefined;
+  }
+}
+
 export async function persistTopicDraftAttachment({
   draft,
   asset,
@@ -53,7 +65,7 @@ export async function persistTopicDraftAttachment({
     status: 'queued',
     description: ''
   };
-  if (!safeId.test(attachment.id) || !/^(file|content):\/\//.test(attachment.uri)) throw new Error('请选择本机文件');
+  if (!safeId.test(attachment.id) || !pickedFileUri.test(attachment.uri)) throw new Error('请选择本机文件');
   const folder = directory(draft);
   folder.create({ intermediates: true, idempotent: true });
   const extension = attachment.name.match(/\.([a-zA-Z0-9]{1,12})$/)?.[1] || 'bin';

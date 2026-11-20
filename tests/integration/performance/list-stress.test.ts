@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { Topic, UserReplyActivity } from '@/domain/forum/models';
 import { sourceCatalog, sourceValues } from '@/domain/forum/sourceCatalog';
 import { topicKey } from '@/domain/reader/readerData';
-import { applyFeedFilter, balanceTopicsBySource, mergeTopics, sortTopicsByCreatedAt } from '@/domain/forum/feed';
+import { applyFeedFilter, balanceTopicsBySource, mergeTopics } from '@/domain/forum/feed';
+import { sortTopicsByCreatedAt } from '@/domain/forum/html';
 import { buildSearchListItems, type SearchGroup } from '@/features/search/listItems';
 import { createUserListItems, userListItemKey } from '@/features/user/userScreenItems';
 
@@ -70,7 +71,7 @@ describe('large production list derivations (host JS, without native cell render
       expect(new Set([...read, ...unread].map(topicKey)).size).toBe(count);
       expect(read.length + unread.length).toBe(count);
 
-      const sorted = measure(`search.time-sort.${count}`, () => sortTopicsByCreatedAt(items));
+      const sorted = measure(`user.topic-created-sort.${count}`, () => sortTopicsByCreatedAt(items));
       const position = new Map(items.map((item, index) => [topicKey(item), index]));
       expect(
         sorted.every((item, index) => {

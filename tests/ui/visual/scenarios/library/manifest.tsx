@@ -93,6 +93,7 @@ function LibraryScenario({
 }) {
   const { settings } = useReaderThemeStyles(noStyles);
   const readerData = createEmptyReaderData();
+  const records = empty ? [] : createRecords();
   const topicStateIndex = createTopicListItemStateIndex({
     ...readerData,
     settings: { ...readerData.settings, listDensity: settings.listDensity }
@@ -100,20 +101,20 @@ function LibraryScenario({
   return (
     <LibraryScreen
       active
+      loadingMore={false}
       sourceFilter="all"
       categoryFilter="all"
       onSourceFilter={noop}
       onCategoryFilter={noop}
-      total={empty ? 0 : tab === 'users' ? createFollowedUsers().length : createRecords().length}
-      visibleTotal={empty ? 0 : tab === 'users' ? createFollowedUsers().length : createRecords().length}
+      historyCountToClear={records.some((record) => sources.includes(record.topic.source)) ? records.length : 0}
       error={false}
       onRetry={noop}
       onLoadMore={noop}
       categories={createCategories()}
       enabledSources={sources}
-      favoriteRecords={empty ? [] : createRecords()}
+      favoriteRecords={records}
       followedUsers={empty ? [] : createFollowedUsers()}
-      historyRecords={empty ? [] : createRecords()}
+      historyRecords={records}
       libraryTab={tab}
       loaded
       topicStateIndex={topicStateIndex}

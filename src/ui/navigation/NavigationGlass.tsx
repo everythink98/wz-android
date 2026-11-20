@@ -1,6 +1,7 @@
 import {
   createContext,
   useContext,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -42,7 +43,8 @@ export function NavigationBackdropTarget({
   const navigation = useContext(NavigationContext);
   const setTarget = useContext(NavigationBackdropContext)?.setTarget;
   const { theme } = useReaderThemeStyles(createStyles);
-  useLayoutEffect(() => {
+  // Suspense disconnects layout effects while a frozen route still owns its native blur target.
+  useEffect(() => {
     if (!setTarget) return;
     const view = target.current;
     return () => setTarget((current) => (current === view ? null : current));

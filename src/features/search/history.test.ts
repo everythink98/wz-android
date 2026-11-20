@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_RECENT_SEARCHES,
   MAX_SEARCH_HISTORY_QUERY_LENGTH,
-  mergeLoadedSearchHistory,
   normalizeSearchHistory,
   sameSearchHistory,
   searchHistoryFromRaw
@@ -32,10 +31,11 @@ describe('search history helpers', () => {
     expect(searchHistoryFromRaw(JSON.stringify({ query: 'AI' }))).toEqual([]);
   });
 
-  it('merges loaded history without dropping searches added during startup', () => {
-    expect(mergeLoadedSearchHistory(['new query'], JSON.stringify(['old query', 'new query']))).toEqual([
+  it('fills the history limit with nonremoved queries after a late read', () => {
+    const stored = Array.from({ length: MAX_RECENT_SEARCHES }, (_, index) => `query ${index}`);
+    expect(normalizeSearchHistory(['new query', ...stored], new Set(['query 0']))).toEqual([
       'new query',
-      'old query'
+      ...stored.slice(1)
     ]);
   });
 

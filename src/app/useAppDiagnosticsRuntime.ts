@@ -13,7 +13,6 @@ import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from
 export function useAppDiagnosticsRuntime({
   accountSessionViewModels,
   appUpdateBusy,
-  appUpdateDownloading,
   dimensions,
   fontScale,
   proxyEnabled,
@@ -23,7 +22,6 @@ export function useAppDiagnosticsRuntime({
 }: {
   accountSessionViewModels: SiteSessionViewModels;
   appUpdateBusy: boolean;
-  appUpdateDownloading: boolean;
   dimensions: { height: number; width: number };
   fontScale: number;
   proxyEnabled: boolean;
@@ -54,7 +52,7 @@ export function useAppDiagnosticsRuntime({
   const pageStateRef = useRef('');
 
   useEffect(() => {
-    const isBusy = screen === 'more' && (appUpdateBusy || appUpdateDownloading || statusBusy);
+    const isBusy = screen === 'more' && (appUpdateBusy || statusBusy);
     const emptyReason = screen === 'more' ? 'none' : 'route-owned';
     const stateKey = `${screen}:${isBusy}:false:1:${emptyReason}`;
     if (pageStateRef.current === stateKey) return;
@@ -68,7 +66,7 @@ export function useAppDiagnosticsRuntime({
     });
     markDiagnosticStage(trace, 'apply', { state: 'summary' });
     finishDiagnosticTrace(trace, 'success');
-  }, [appUpdateBusy, appUpdateDownloading, screen, statusBusy]);
+  }, [appUpdateBusy, screen, statusBusy]);
 
   return { metadata };
 }

@@ -80,18 +80,19 @@ type GitHubRelease = {
 };
 
 function versionParts(value: string) {
-  const match = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(value.trim());
+  const match = /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.exec(value.trim());
   if (!match) {
     return null;
   }
-  return match.slice(1).map(Number);
+  const parts = match.slice(1).map(Number);
+  return parts.every(Number.isSafeInteger) ? parts : null;
 }
 
 function cleanReleaseVersion(tagName: unknown) {
   if (typeof tagName !== 'string') {
     return null;
   }
-  if (!/^v\d+\.\d+\.\d+$/.test(tagName.trim())) {
+  if (!tagName.trim().startsWith('v')) {
     return null;
   }
   const parts = versionParts(tagName);
@@ -191,6 +192,7 @@ function parseReleaseManifest(value: unknown, version: string): ReleaseManifest 
     manifest.versionName !== version ||
     typeof manifest.versionCode !== 'number' ||
     !Number.isSafeInteger(manifest.versionCode) ||
+    manifest.versionCode > 2_147_483_647 ||
     manifest.versionCode <= CURRENT_ANDROID_VERSION_CODE ||
     !sha256 ||
     !signerSha256 ||

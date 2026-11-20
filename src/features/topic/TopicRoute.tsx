@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ImagePreviewItem } from '@/platform/media/imagePreviewCatalog';
-import { AppState, Platform, Share, type NativeScrollEvent, type NativeSyntheticEvent, View } from 'react-native';
+import { AppState, Platform, Share, View } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { FlashListRef } from '@shopify/flash-list';
@@ -15,9 +15,8 @@ import { topicKey, topicSummary } from '@/domain/reader/readerData';
 import type { TopicLocationTarget, Topic, TopicDetail, UserReference } from '@/domain/forum/models';
 
 import { ImagePreviewModal } from '@/ui/media/ImagePreviewModal';
-import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
-import { manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
+import { goBackFromFocusedRoute } from '@/ui/navigation/appRouteActions';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { ContentSourceDisabledState } from '@/ui/controls/FeedbackStates';
 import { useTopicActionsController } from './actions/useTopicActionsController';
@@ -28,6 +27,7 @@ import { TopicScreen } from './TopicScreen';
 import { TopicShareSheet } from './components/TopicShareSheet';
 import { TopicShareOptions } from './components/TopicShareOptions';
 import type { TopicListItem } from './model/topicListModel';
+import { isTopicAccessNotice } from './model/topicOpeningPresentation';
 import { useStableTopicLayoutDetail } from './useStableTopicLayoutDetail';
 import { useTopicController } from './useTopicController';
 import { useTopicSessionController } from './useTopicSessionController';
@@ -38,7 +38,7 @@ export { TopicRouteRuntimeProvider, type TopicRouteRuntimeValue } from './TopicR
 
 type TopicRouteProps = NativeStackScreenProps<RootStackParamList, 'Topic'>;
 type TopicShareState = ({ kind: 'options'; topic: Topic } | { kind: 'image'; topic: TopicDetail }) & {
-  sessionIdentity: string;
+  scope: string;
 };
 
 async function copyTopicLink(url: string) {
@@ -82,13 +82,7 @@ export function TopicRoute({ navigation, route }: TopicRouteProps) {
   const topic = route.params.topic;
   const sourceEnabled = runtime.enabledSources.includes(topic.source);
   if (!sourceEnabled) {
-    return (
-      <ContentSourceDisabledState
-        source={topic.source}
-        onBack={navigation.goBack}
-        onManage={() => navigation.dispatch(manageContentSourcesAction())}
-      />
-    );
+    return <ContentSourceDisabledState source={topic.source} navigation={navigation} />;
   }
   return <EnabledTopicRoute navigation={navigation} route={route} runtime={runtime} />;
 }
@@ -115,6 +109,7 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
   });
   const requestTopicLocation = useCallback(
     (location: TopicLocationTarget) => {
+      if (!navigation.isFocused()) return;
       topicView.changeCommentQuery('');
       topicView.changeReplyFilter('all');
       locationRequestIdRef.current = Math.max(locationRequestIdRef.current, route.params.locationRequestId ?? 0) + 1;
@@ -170,18 +165,36 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
   const topicLayoutDetail = useStableTopicLayoutDetail(topicDetail);
   const mediaSessionIdentity = useForumMediaSessionIdentity(topic.source);
   const openExternalUrl = useCallback(
-    (url: string) => openHttpUrl(url, runtime.notify, WebBrowser.openBrowserAsync),
-    [runtime]
+    (url: string) => {
+      if (navigation.isFocused()) openHttpUrl(url, runtime.notify, WebBrowser.openBrowserAsync);
+    },
+    [navigation, runtime.notify]
   );
-  const openOriginalUrl = useCallback((url: string) => openHttpUrl(url, runtime.notify), [runtime]);
-  const openImagePreviewRef = useRef<Parameters<typeof useHtmlRenderingController>[0]['onOpenImagePreview']>(
-    () => undefined
+  const openOriginalUrl = useCallback(
+    (url: string) => {
+      if (navigation.isFocused()) openHttpUrl(url, runtime.notify);
+    },
+    [navigation, runtime.notify]
   );
+  const currentDetail = topicDetail?.id === topic.id && topicDetail.source === topic.source ? topicDetail : null;
+  const readableDetail = useMemo(
+    () => (currentDetail && !isTopicAccessNotice(currentDetail) ? currentDetail : null),
+    [currentDetail]
+  );
+  const readScope = JSON.stringify(topicQueryKey);
+  const imagePreviewController = useImagePreviewController({
+    beforeSave: runtime.ensureNetworkProxyReady,
+    contentSource: topic.source,
+    contentWidth: runtime.contentWidth,
+    mediaReferrer: topicLayoutDetail?.mediaReferrer,
+    nodeSeekMediaUserAgent: runtime.nodeSeekMediaUserAgent,
+    notify: runtime.notify,
+    scope: focused && readableDetail ? readScope : null
+  });
   const html = useHtmlRenderingController({
     mediaSessionIdentity,
     onOpenExternalUrl: openExternalUrl,
-    onOpenImagePreview: (url, displaySize, posterUri, referrerPolicy) =>
-      openImagePreviewRef.current(url, displaySize, posterUri, referrerPolicy),
+    onOpenImagePreview: imagePreviewController.openImagePreview,
     onOpenTopic: openTopicDestination,
     onOpenUser: stableOpenUser,
     nodeSeekMediaUserAgent: runtime.nodeSeekMediaUserAgent,
@@ -192,32 +205,30 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     topicDetail: topicLayoutDetail,
     webViewBlockMessage: runtime.networkProxyWebViewBlockMessage
   });
-  const imagePreviewController = useImagePreviewController({
-    beforeSave: runtime.ensureNetworkProxyReady,
-    contentSource: topic.source,
-    contentWidth: runtime.contentWidth,
-    mediaReferrer: html.mediaContext?.referrer,
-    nodeSeekMediaUserAgent: runtime.nodeSeekMediaUserAgent,
-    notify: runtime.notify
-  });
-  useCommitRefValue(openImagePreviewRef, imagePreviewController.openImagePreview);
   const [displayedPreview, setDisplayedPreview] = useState<ImagePreviewItem | null>(null);
-  const [sharingTopic, setSharingTopic] = useState<TopicShareState | null>(null);
-  const shareableDetail = topicDetail?.id === topic.id && topicDetail.source === topic.source ? topicDetail : null;
-  const toggleTopicFavorite = useCallback(
-    () =>
-      runtime.reader.commit({
-        type: 'favorite',
-        topic: topicSummary(shareableDetail || topic),
-        enabled: !runtime.reader.dataRef.current.favorites[topicKey(topic)],
-        at: new Date().toISOString()
-      }),
-    [runtime.reader, shareableDetail, topic]
-  );
-  const closeTopicShare = useCallback(() => setSharingTopic(null), []);
+  const shareScope = focused ? JSON.stringify([topic.source, topic.id, readScope, mediaSessionIdentity]) : null;
+  const [shareSelection, setShareSelection] = useState<TopicShareState | null>(null);
+  const imageShareDetail = readableDetail?.contentHtml.trim() ? readableDetail : null;
+  const canShareImage = Boolean(imageShareDetail);
+  const sharingTopic =
+    shareSelection?.scope === shareScope && (shareSelection.kind === 'options' || canShareImage)
+      ? shareSelection
+      : null;
+  const toggleTopicFavorite = useCallback(() => {
+    if (!navigation.isFocused()) return;
+    runtime.reader.commit({
+      type: 'favorite',
+      topic: topicSummary(currentDetail || topic),
+      enabled: !runtime.reader.dataRef.current.favorites[topicKey(topic)],
+      at: new Date().toISOString()
+    });
+  }, [currentDetail, navigation, runtime.reader, topic]);
+  const closeTopicShare = useCallback(() => setShareSelection(null), []);
   useEffect(() => {
-    setSharingTopic(null);
-  }, [focused, mediaSessionIdentity, topic.id, topic.source]);
+    setShareSelection((current) =>
+      current?.scope === shareScope && (current.kind === 'options' || canShareImage) ? current : null
+    );
+  }, [canShareImage, shareScope]);
   const previewOrigin = imagePreviewController.imagePreview ? displayedPreview?.readingOrigin : undefined;
   const previewInteractionRef = useRef<(() => void) | null>(null);
   const interactWithPreview = useCallback(() => previewInteractionRef.current?.(), []);
@@ -240,6 +251,7 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
   }, [active, previewOrigin?.floor, previewOrigin?.topicId, readingRuntime, readingScope, topic.id, topic.source]);
   const actions = useTopicActionsController({
     active,
+    isRouteFocused: navigation.isFocused,
     sessionEpochs: runtime.account.sessionEpochs,
     linuxDoUserAgent: runtime.account.getLinuxDoUserAgent,
     showLinuxDoVerification: runtime.account.showLinuxDoVerification,
@@ -252,6 +264,7 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     onSessionExpired: runtime.account.onSessionExpired,
     requestAccountRecheck: runtime.account.requestAccountRecheck,
     readGateway: runtime.account.readGateway,
+    replyWindowOwner: topicController.replyWindowOwner,
     refreshTopicReplies,
     siteSessionViewModels: runtime.account.sessionViewModels,
     refreshWholeTopic,
@@ -260,9 +273,6 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     topicSession
   });
   const closeReplyComposer = useCallback(() => topicComposer.toggle(false), [topicComposer]);
-  const refreshCurrentTopic = useCallback(() => {
-    void refreshWholeTopic();
-  }, [refreshWholeTopic]);
   const verifyLinuxDo = useCallback(() => {
     if (topic.source !== 'linuxdo') return;
     return runtime.account.showLinuxDoVerification(topicError?.message, {
@@ -279,29 +289,32 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
       resume: refreshWholeTopic
     });
   }, [isReadRecoveryCurrent, refreshWholeTopic, runtime, topic.source, topicError?.message, topicQueryKey]);
+  const copyLink = useCallback(
+    async (current: Topic) => {
+      if (navigation.isFocused()) await copyTopicLink(current.url);
+    },
+    [navigation]
+  );
+  const { notify } = runtime;
   const shareTopic = useCallback(
     async (current: Topic, signal: AbortSignal) => {
+      if (!navigation.isFocused()) return;
       await shareTopicWithClipboardFallback({
-        copy: () => copyTopicLink(current.url),
-        notify: runtime.notify,
+        copy: () => copyLink(current),
+        notify: (message) => {
+          if (navigation.isFocused()) notify(message);
+        },
         share: () => shareTopicLink(current, signal)
       });
     },
-    [runtime.notify]
+    [copyLink, navigation, notify]
   );
-  const openTopicShare = () =>
-    setSharingTopic({
-      kind: 'options',
-      topic: topicDetail || topic,
-      sessionIdentity: mediaSessionIdentity
-    });
-  const handleTopicScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => topicView.rememberScrollY(event.nativeEvent.contentOffset.y),
-    [topicView]
-  );
+  const openTopicShare = () => {
+    if (shareScope) setShareSelection({ kind: 'options', topic: currentDetail || topic, scope: shareScope });
+  };
   const stableOpenTopic = useLatestCallback(openTopicDestination);
   const stableRefreshReplies = useLatestCallback(refreshTopicReplies);
-  const stableRefreshWholeTopic = useLatestCallback(refreshCurrentTopic);
+  const stableRefreshWholeTopic = useLatestCallback(refreshWholeTopic);
   return (
     <TopicRouteBackBoundary
       imagePreviewOpen={Boolean(imagePreviewController.imagePreview)}
@@ -347,10 +360,9 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
                     }
                   }
                 : {}),
-              back: navigation.goBack,
+              back: () => goBackFromFocusedRoute(navigation),
               favorite: topicFavorite,
               getDiscourseEmojiUrls: runtime.account.readGateway.getEmojiUrls,
-              onScroll: handleTopicScroll,
               openOriginal: openOriginalUrl,
               openReadingSettings: () => {
                 if (navigation.isFocused()) navigation.push('ReadingSettings');
@@ -384,36 +396,22 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
             onVisibleImageChange={setDisplayedPreview}
             onInteraction={interactWithPreview}
           />
-          {focused &&
-          sharingTopic?.kind === 'options' &&
-          sharingTopic.sessionIdentity === mediaSessionIdentity &&
-          sharingTopic.topic.id === topic.id &&
-          sharingTopic.topic.source === topic.source ? (
+          {sharingTopic?.kind === 'options' ? (
             <TopicShareOptions
               topic={sharingTopic.topic}
               onClose={closeTopicShare}
               onShareLink={(signal) => shareTopic(sharingTopic.topic, signal)}
-              onCopyLink={() => copyTopicLink(sharingTopic.topic.url)}
+              onCopyLink={() => copyLink(sharingTopic.topic)}
               onShareImage={
-                shareableDetail
-                  ? () => {
-                      setSharingTopic({
-                        kind: 'image',
-                        topic: shareableDetail,
-                        sessionIdentity: mediaSessionIdentity
-                      });
-                    }
+                imageShareDetail
+                  ? () => setShareSelection({ kind: 'image', topic: imageShareDetail, scope: sharingTopic.scope })
                   : undefined
               }
             />
           ) : null}
-          {focused &&
-          sharingTopic?.kind === 'image' &&
-          sharingTopic.sessionIdentity === mediaSessionIdentity &&
-          sharingTopic.topic.id === topic.id &&
-          sharingTopic.topic.source === topic.source ? (
+          {sharingTopic?.kind === 'image' ? (
             <TopicShareSheet
-              key={`${mediaSessionIdentity}:${sharingTopic.topic.source}:${sharingTopic.topic.id}`}
+              key={sharingTopic.scope}
               topic={sharingTopic.topic}
               mediaContext={html.mediaContext}
               nodeSeekUserAgent={runtime.nodeSeekMediaUserAgent}

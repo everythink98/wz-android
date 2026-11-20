@@ -293,12 +293,34 @@ describe('Android notification system', () => {
     expect(mocks.schedule).not.toHaveBeenCalled();
 
     await dismissSourceNotification('nodeseek', undefined, 'nodeseek:7');
-    expect(mocks.dismiss).toHaveBeenCalledWith(identityIdentifier);
-    expect(mocks.dismiss).toHaveBeenCalledWith(`${identityIdentifier}-a`);
-    expect(mocks.dismiss).toHaveBeenCalledWith(`${identityIdentifier}-b`);
-    expect(mocks.dismiss).toHaveBeenCalledWith('wz-message-nodeseek');
-    expect(mocks.dismiss).not.toHaveBeenCalledWith('wz-message-nodeseek-nodeseek%3A8');
+    expect(mocks.nativeDismiss.mock.calls.map(([identifier]) => identifier)).toEqual([
+      identityIdentifier,
+      `${identityIdentifier}-a`,
+      `${identityIdentifier}-b`,
+      'wz-message-nodeseek'
+    ]);
+    expect(mocks.dismiss).not.toHaveBeenCalled();
   });
+
+  it.each(['synchronously', 'asynchronously'] as const)(
+    'surfaces a %s failed Android dismissal after attempting every slot and allows a retry',
+    async (failure) => {
+      const rejection = new Error('无法撤销消息通知');
+      if (failure === 'synchronously') {
+        mocks.nativeDismiss.mockImplementationOnce(() => {
+          throw rejection;
+        });
+      } else {
+        mocks.nativeDismiss.mockRejectedValueOnce(rejection);
+      }
+      const args = ['nodeseek', 'wz-message-nodeseek-nodeseek%3A7-a', 'nodeseek:7'] as const;
+
+      await expect(dismissSourceNotification(...args)).rejects.toMatchObject({ errors: [rejection] });
+      expect(mocks.nativeDismiss).toHaveBeenCalledTimes(4);
+      await expect(dismissSourceNotification(...args)).resolves.toBeUndefined();
+      expect(mocks.nativeDismiss.mock.calls.slice(4)).toEqual(mocks.nativeDismiss.mock.calls.slice(0, 4));
+    }
+  );
 
   it('resolves presentation only after native notify acknowledges the exact identifier', async () => {
     const nativeAcknowledgement = Promise.withResolvers<string>();

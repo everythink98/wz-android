@@ -11,7 +11,7 @@ const mockListRender = jest.fn<(props: Pick<FlatListProps<unknown>, 'data' | 'Li
 let mockListOffset = 0;
 jest.mock('lucide-react-native', () => {
   const Icon = () => null;
-  return { ChevronLeft: Icon, ExternalLink: Icon, RefreshCw: Icon, Star: Icon };
+  return { ChevronDown: Icon, ChevronLeft: Icon, ExternalLink: Icon, RefreshCw: Icon, Star: Icon };
 });
 jest.mock('@/ui/avatar/Avatar', () => {
   const ReactModule = require('react') as typeof React;
@@ -185,7 +185,8 @@ describe('User screen behavior', () => {
       })
     );
     expect(view.getByText('主题读取失败')).toBeTruthy();
-    expect(view.queryByText('这个用户暂时没有可显示的主题')).toBeNull();
+    expect(view.queryByText('暂无主题')).toBeNull();
+    expect(view.queryByRole('button', { name: '加载更多主题' })).toBeNull();
     await fireEvent.press(view.getByRole('button', { name: '重试主题' }));
     expect(onRetryTopics).toHaveBeenCalledTimes(1);
     expect(onRefresh).not.toHaveBeenCalled();
@@ -234,6 +235,18 @@ describe('User screen behavior', () => {
     expect(mockListRender.mock.calls.at(-1)![0].data).toBe(topicInputs.data);
   });
 
+  it('shows the first profile read in the content and reserves the toolbar indicator for refresh', async () => {
+    const onRefresh = jest.fn();
+    const view = await render(userScreen({ profile: null, busy: true, onRefresh }));
+    expect(view.getByRole('status', { name: '加载中', busy: true })).toBeTruthy();
+    expect(view.getByLabelText('刷新').props.accessibilityState).toMatchObject({ busy: false, disabled: true });
+    await fireEvent.press(view.getByLabelText('刷新'));
+    expect(onRefresh).not.toHaveBeenCalled();
+    await view.rerender(userScreen({ busy: true, onRefresh }));
+    expect(view.queryByRole('status', { name: '加载中' })).toBeNull();
+    expect(view.getByLabelText('刷新').props.accessibilityState).toMatchObject({ busy: true, disabled: true });
+  });
+
   it('refreshes in the toolbar while retaining the selected activity and loaded content', async () => {
     const onRefresh = jest.fn<() => void>();
     const view = await render(userScreen({ onRefresh }));
@@ -280,7 +293,7 @@ describe('User screen behavior', () => {
     const onLoadMoreReplies = jest.fn<() => void>();
     const view = await render(userScreen({ loadingMoreTopics: true, onLoadMoreReplies }));
 
-    expect(view.getByLabelText('正在加载...').props.accessibilityState.disabled).toBe(true);
+    expect(view.getByLabelText('加载中').props.accessibilityState.disabled).toBe(true);
     expect(view.getByLabelText('刷新').props.accessibilityState.busy).toBe(false);
     await fireEvent.press(view.getByLabelText('回复'));
     expect(view.getByLabelText('加载更多回复').props.accessibilityState.disabled).toBe(false);
@@ -288,8 +301,8 @@ describe('User screen behavior', () => {
     expect(onLoadMoreReplies).toHaveBeenCalledTimes(1);
 
     await view.rerender(userScreen({ loadingMoreReplies: true, onLoadMoreReplies }));
-    expect(view.getByLabelText('正在加载...').props.accessibilityState.disabled).toBe(true);
-    await fireEvent.press(view.getByLabelText('正在加载...'));
+    expect(view.getByLabelText('加载中').props.accessibilityState.disabled).toBe(true);
+    await fireEvent.press(view.getByLabelText('加载中'));
     expect(onLoadMoreReplies).toHaveBeenCalledTimes(1);
   });
 
@@ -387,12 +400,12 @@ describe('User screen behavior', () => {
     };
     const view = await render(userScreen({ profile: emptyProfile, requestedUser: emptyProfile }));
 
-    expect(view.getByText('这个用户暂时没有可显示的主题')).toBeTruthy();
+    expect(view.getByText('暂无主题')).toBeTruthy();
     await fireEvent.press(view.getByLabelText('回复'));
-    expect(view.queryByText('这个用户暂时没有可显示的主题')).toBeNull();
-    expect(view.getByText('这个用户暂时没有可显示的回复')).toBeTruthy();
+    expect(view.queryByText('暂无主题')).toBeNull();
+    expect(view.getByText('暂无回复')).toBeTruthy();
     await view.rerender(userScreen({ profile: emptyProfile, requestedUser: emptyProfile, busy: true }));
-    expect(view.getByText('这个用户暂时没有可显示的回复')).toBeTruthy();
+    expect(view.getByText('暂无回复')).toBeTruthy();
     expect(view.queryByRole('status')).toBeNull();
   });
 
@@ -438,6 +451,7 @@ describe('User screen behavior', () => {
     await fireEvent.press(view.getByLabelText('回复'));
     expect(view.getByText('回复所在主题')).toBeTruthy();
     expect(view.getByText('回复摘要')).toBeTruthy();
+    expect(view.getByRole('button', { name: /^回复所在主题.*回复摘要.*alice · #2 · 刚刚/ })).toBeTruthy();
     await fireEvent.press(view.getByText('回复所在主题'));
     expect(onOpenTopic).toHaveBeenCalledWith({
       source: 'linuxdo',

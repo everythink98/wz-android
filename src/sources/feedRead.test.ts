@@ -16,6 +16,7 @@ import type { Fetcher } from '@/platform/network/request';
 import { registerForumReadResponseEvidence } from './forumSourceReadAttempt';
 import { beginDiagnosticTrace, setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { getDefaultAndroidWebViewUserAgent } from '@/platform/android/androidWebViewUserAgent';
+import * as v2exReader from '@/sources/v2ex/reader';
 
 it('fills aggregate pages with unique candidates and merges access before buffering the remainder', async () => {
   const buffered = Array.from({ length: 20 }, (_, index) => ({
@@ -79,6 +80,88 @@ const nodeSeekPayload = Buffer.from(
 ).toString('base64');
 
 describe('feed read', () => {
+  it.each([
+    { hasMore: false, nextPage: 3 },
+    { hasMore: true, nextPage: 2, nextCursor: 'same' }
+  ])('stops a source whose adapter has no advancing position %j', async (answer) => {
+    const adapter = vi.spyOn(v2exReader, 'getV2exFeed').mockResolvedValueOnce({ items: [], errors: {}, ...answer });
+    try {
+      const cursor = encodeURIComponent(JSON.stringify({ nextPages: { v2ex: 2 }, sourceCursors: { v2ex: 'same' } }));
+      const result = await getFeed({ source: 'all', includedSources: ['v2ex'], page: 2, cursor, fetcher: vi.fn() });
+      expect(result).toMatchObject({ hasMore: false, nextPage: null, nextCursor: undefined });
+      expect(adapter).toHaveBeenCalledTimes(1);
+    } finally {
+      adapter.mockRestore();
+    }
+  });
+
+  it('drains buffered rows and keeps a new opaque position on the same upstream page', async () => {
+    const topic = (id: string) => ({
+      source: 'v2ex' as const,
+      id,
+      title: id,
+      author: 'tester',
+      url: `https://www.v2ex.com/t/${id}`,
+      createdAt: ''
+    });
+    const adapter = vi
+      .spyOn(v2exReader, 'getV2exFeed')
+      .mockResolvedValueOnce({ items: [topic('3')], errors: {}, hasMore: true, nextPage: 2, nextCursor: 'new' })
+      .mockResolvedValueOnce({ items: [], errors: {}, hasMore: false, nextPage: null });
+    try {
+      let cursor = encodeURIComponent(
+        JSON.stringify({
+          buffers: { v2ex: [topic('1'), topic('2')] },
+          nextPages: { v2ex: 2 },
+          sourceCursors: { v2ex: 'old' }
+        })
+      );
+      const ids = [];
+      for (const page of [2, 3, 4, 5]) {
+        const result = await getFeed({
+          source: 'all',
+          includedSources: ['v2ex'],
+          page,
+          cursor,
+          limit: 1,
+          fetcher: vi.fn()
+        });
+        ids.push(...result.items.map((item) => item.id));
+        if (page <= 3) expect(adapter).not.toHaveBeenCalled();
+        if (page === 5) expect(result.hasMore).toBe(false);
+        cursor = result.nextCursor ?? '';
+      }
+      expect(ids).toEqual(['1', '2', '3']);
+      expect(adapter.mock.calls.map(([options]) => [options?.page, options?.cursor])).toEqual([
+        [2, 'old'],
+        [2, 'new']
+      ]);
+    } finally {
+      adapter.mockRestore();
+    }
+  });
+
+  it('drains cached topics without promising another page for an unusable source cursor', async () => {
+    const item = { source: 'v2ex', id: '1', title: '缓存主题', url: 'https://www.v2ex.com/t/1', createdAt: '' };
+    const cursor = encodeURIComponent(JSON.stringify({ buffers: { v2ex: [item] }, sourceCursors: { v2ex: 'orphan' } }));
+    const fetcher = vi.fn();
+    const result = await getFeed({ source: 'all', includedSources: ['v2ex'], page: 2, cursor, fetcher });
+    expect(result.items).toEqual([item]);
+    expect(result).toMatchObject({ hasMore: false, nextPage: null, nextCursor: undefined });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('keeps valid cached topics when a source buffer includes an invalid row or another site', async () => {
+    const item = { source: 'v2ex', id: '1', title: '缓存主题', url: 'https://www.v2ex.com/t/1', createdAt: '' };
+    const rows = [item, { ...item, source: 'yaohuo', id: '2' }, { ...item, id: '3', url: 42 }];
+    const cursor = encodeURIComponent(JSON.stringify({ buffers: { v2ex: rows } }));
+    const fetcher = vi.fn();
+    const result = await getFeed({ source: 'all', includedSources: ['v2ex'], page: 2, cursor, fetcher });
+    expect(result.items).toEqual([item]);
+    expect(result.hasMore).toBe(false);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it('shows completed sources while a cold connection is still reading, then keeps visible posts in order', async () => {
     vi.useFakeTimers();
     const controller = new AbortController();
@@ -182,7 +265,7 @@ describe('feed read', () => {
         id: String(index + 1),
         title: `Buffered ${index}`,
         url: `https://linux.do/t/topic/${index + 1}`,
-        createdAt: '2026-05-20T00:00:00Z'
+        createdAt: index === 0 ? '2026-05-20T00:00:00Z' : ''
       }));
       const cursor = encodeURIComponent(
         JSON.stringify({

@@ -1,13 +1,67 @@
 import { useEffect, useRef } from 'react';
 import { NativeModules } from 'react-native';
 import type WebView from 'react-native-webview';
+import * as SecureStore from 'expo-secure-store';
 import type { WebViewMessageEvent } from 'react-native-webview';
 import { useVerificationController } from '@/features/account/useVerificationController';
+import { useLocalIdentityRestore } from '@/features/account/useLocalIdentityRestore';
 import type { AccountReconcileResult, LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import type { ManagedCookieNativeModule } from '@/platform/network/managedCookies';
 import { check } from '../proofCheck';
 
 export const verificationRecoveryProofModes = ['cancel-reopen', 'inactive', 'scope-change', 'unmount'] as const;
+
+export async function verifyLegacyIdentityDeadline({
+  hook,
+  unmount,
+  until
+}: {
+  hook: (
+    useValue: () => ReturnType<typeof useLocalIdentityRestore>
+  ) => Promise<() => ReturnType<typeof useLocalIdentityRestore>>;
+  unmount: () => void;
+  until: (test: () => unknown, message: string) => Promise<void>;
+}) {
+  const native: ManagedCookieNativeModule | undefined = NativeModules.NetworkProxyModule;
+  check(typeof native?.readManagedCookieHeader === 'function', 'Missing native cookie reader');
+  const readCookie = native.readManagedCookieHeader;
+  const original = { getItemAsync: SecureStore.getItemAsync, deleteItemAsync: SecureStore.deleteItemAsync };
+  const sources = ['linuxdo'] as const;
+  let reads = 0;
+  let deletions = 0;
+  let release!: () => void;
+  const first = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  try {
+    // Supply only fixture values. The store and CookieManager on this device are never queried.
+    Object.assign(SecureStore, {
+      getItemAsync: async (key: string) => (key === 'linuxdo-clearance' ? '{}' : null),
+      deleteItemAsync: async (key: string) => {
+        check(key === 'linuxdo-clearance', 'Unexpected migration key');
+        deletions++;
+      }
+    });
+    native.readManagedCookieHeader = async () => {
+      if (++reads === 1) await first;
+      return { status: 'ok', header: '' };
+    };
+    const get = await hook(() => useLocalIdentityRestore({ ready: true, enabledSources: sources, notify: () => {} }));
+    await until(() => get().error, 'Stalled identity migration did not offer retry');
+    check(!get().ready && deletions === 0, 'Stalled migration changed stored identity');
+    get().retry();
+    await until(() => get().ready, 'Retried identity migration did not open the account gate');
+    release();
+    await first;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    check(reads === 2 && Number(deletions) === 1 && !get().error, 'Stale migration applied after retry');
+  } finally {
+    unmount();
+    release();
+    Object.assign(SecureStore, original);
+    native.readManagedCookieHeader = readCookie;
+  }
+}
 
 type RecoveryProof = ReturnType<typeof useRecoveryProbe>;
 

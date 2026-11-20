@@ -110,10 +110,8 @@ export function LinuxDoVerifyModal(props: Props) {
             ? '恢复页面访问'
             : '恢复阅读记录同步'
           : verifying
-            ? '验证完成后自动检测访问状态'
-            : linuxDoSession.summaryLabel === '匿名可用'
-              ? '匿名可用，登录后内容更完整'
-              : linuxDoSession.summaryLabel
+            ? ''
+            : linuxDoSession.summaryLabel
       }
       loading={web && !busy && !webViewBlockMessage && loadingLinuxDoPage}
       loadingText={page.stage === 'returning' ? '正在返回主站…' : verifying ? '正在打开验证页面…' : '正在打开登录页面…'}
@@ -184,7 +182,6 @@ export function LinuxDoVerifyModal(props: Props) {
             <Text style={styles.verificationBody}>
               {recovery ? '验证结果正在交回原请求，请稍候。' : '正在检查主站会话，请稍候。'}
             </Text>
-            <Text style={styles.verificationHint}>可以随时关闭并返回原页面。</Text>
           </View>
         </ScrollView>
       ) : result ? (

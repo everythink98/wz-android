@@ -20,7 +20,15 @@ describe('search visual scenarios', () => {
 
     await fireEvent.press(view.getByLabelText(/打开搜索筛选/));
     expect(view.getByTestId('search-filter-close')).toBeTruthy();
-    expect(view.getByText('更多筛选 · 已设置')).toBeTruthy();
+    const expanded = view.getByLabelText('收起更多筛选，已设置');
+    expect(expanded.props.accessibilityState.expanded).toBe(true);
+    const range = view.getByLabelText('设置帖子数范围');
+    expect(range.props.accessibilityValue.text).toBe('2–50');
+    await fireEvent.press(range);
+    expect(view.getByTestId('search-filter-input-minPosts').props.value).toBe('2');
     expect(view.getByText('确认筛选')).toBeTruthy();
+    await fireEvent.press(view.getByTestId('search-filter-back'));
+    await fireEvent.press(view.getByLabelText('收起更多筛选，已设置'));
+    expect(view.getByText('更多筛选 · 已设置')).toBeTruthy();
   });
 });

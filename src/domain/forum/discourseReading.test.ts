@@ -89,4 +89,24 @@ describe('Discourse reading facts', () => {
       })
     ).toMatchObject({ lastReadPostNumber: null, highestPostNumber: 20, readPostNumbers: [2] });
   });
+
+  it('reuses read floors for list snapshots and replaces them only when floors change or the server resets progress', () => {
+    const observe = (previous: ReturnType<typeof mergeDiscourseReading> | undefined, last: number, floors?: number[]) =>
+      mergeDiscourseReading(
+        previous,
+        { topicId: '1', lastReadPostNumber: last, readPostNumbers: floors },
+        { sequence: (previous?.requestSequence ?? 0) + 1, localVersion: 0 },
+        false
+      );
+    const first = observe(undefined, 4, [2, 4]);
+    const unchanged = observe(first, 4);
+    const repeated = observe(unchanged, 4, [4, 2, 4]);
+    const advanced = observe(repeated, 7, [4, 7]);
+    const reset = observe(advanced, 1, [1]);
+    expect(unchanged.readPosts).toBe(first.readPosts);
+    expect(repeated.readPosts).toBe(first.readPosts);
+    expect(first.readPosts).toEqual({ 2: true, 4: true });
+    expect(advanced.readPosts).toEqual({ 2: true, 4: true, 7: true });
+    expect(reset.readPosts).toEqual({ 1: true });
+  });
 });

@@ -1,3 +1,4 @@
+import { NODESEEK_BROWSER_GUEST_CONTROLS } from './nodeSeekGuestControls';
 import { NODEIMAGE_AUTH_URL, NODEIMAGE_URL } from '@/domain/forum/sourceUrls';
 
 export const NODESEEK_LOGIN_PROBE_SCRIPT = String.raw`
@@ -12,6 +13,7 @@ export const NODESEEK_LOGIN_PROBE_SCRIPT = String.raw`
   }
   current?.observer.disconnect();
   let previousState = '';
+  ${NODESEEK_BROWSER_GUEST_CONTROLS}
   const report = () => {
     if (String(location.href || "") + ":" + String(performance.timeOrigin || 0) !== documentKey) return;
     const configUser = window.__config__ && typeof window.__config__ === 'object'
@@ -23,18 +25,7 @@ export const NODESEEK_LOGIN_PROBE_SCRIPT = String.raw`
     const usernameLink = document.querySelector('a.Username[href*="/space/"], .Username a[href*="/space/"]');
     const hasAccountMarker = /\/space\/\d+/i.test(String(usernameLink?.getAttribute('href') || ''))
       || Boolean(document.querySelector('a[href*="/api/account/signOut"]'));
-    const guestKinds = new Set(Array.from(document.querySelectorAll('a.btn[href], header a[href], nav a[href], .header a[href], .navbar a[href], .topbar a[href]')).flatMap((link) => {
-      try {
-        const target = new URL(String(link.getAttribute('href') || ''), location.href);
-        const host = target.hostname.toLowerCase();
-        if (target.protocol !== 'https:' || (host !== 'nodeseek.com' && !host.endsWith('.nodeseek.com'))) return [];
-        const label = String(link.textContent || '').trim();
-        if (/^\/(login|signin|sign-in)(?:\.html?)?\/?$/i.test(target.pathname) && /^(登录|sign in|log in)$/i.test(label)) return ['login'];
-        if (/^\/(register|signup|sign-up)(?:\.html?)?\/?$/i.test(target.pathname) && /^(注册|sign up|register)$/i.test(label)) return ['register'];
-        return [];
-      } catch { return []; }
-    }));
-    const pageStatus = hasConfigUser ? 'logged-in' : guestKinds.has('login') && guestKinds.has('register') ? 'logged-out' : hasAccountMarker ? 'logged-in' : 'unknown';
+    const pageStatus = hasConfigUser ? 'logged-in' : hasVisibleNodeSeekGuestControls() ? 'logged-out' : hasAccountMarker ? 'logged-in' : 'unknown';
     const hasChallengeMarker = Boolean(document.querySelector('#challenge-form, #cf-challenge-running, .cf-turnstile, iframe[src^="https://challenges.cloudflare.com/"]'));
     const status = hasChallengeMarker ? 'unknown' : pageStatus;
     const state = status + ':' + hasChallengeMarker;
@@ -49,7 +40,7 @@ export const NODESEEK_LOGIN_PROBE_SCRIPT = String.raw`
     }));
   };
   const observer = new MutationObserver(report);
-  observer.observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['class', 'id', 'src', 'href', 'name', 'method'] });
+  observer.observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['class', 'id', 'src', 'href', 'name', 'method', 'hidden', 'inert', 'aria-hidden', 'style'] });
   window.__WZ_ACCOUNT_PAGE_OBSERVER__ = { documentKey, type, observer, report };
   report();
 })();

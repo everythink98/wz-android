@@ -11,21 +11,35 @@ import { ensureYaohuoHtmlLoggedIn } from './sessionParser';
 import {
   YAOHUO_BASE_URL,
   YAOHUO_BBS_REFERER,
+  isYaohuoUserReplyListUrl,
+  isYaohuoUserTopicListUrl,
   requireYaohuoRequestUrl,
-  yaohuoReplyListNextPageUrlFromRoot,
-  yaohuoTopicListNextPageUrlFromRoot,
+  yaohuoUserActivityPage,
   yaohuoUserProfileReplyListUrlFromRoot,
-  yaohuoUserProfileTopicListUrlFromRoot
+  yaohuoUserProfileTopicListUrlFromRoot,
+  yaohuoUserReplyNextPageUrlFromRoot,
+  yaohuoUserTopicNextPageUrlFromRoot
 } from './protocol';
 
 type UserReadOptions = { fetcher?: Fetcher; signal?: AbortSignal; timeoutMs?: number; cursor?: string | null };
+type YaohuoActivity = {
+  topicsUrl: string;
+  repliesUrl: string;
+  inlineTopics?: UserTopicsPage;
+  emptyReplies: boolean;
+};
+type YaohuoUserDetails = UserDetails & { yaohuoActivity?: YaohuoActivity };
 type YaohuoUserTopicScan =
   | { kind: 'discovering' }
   | { kind: 'reading'; url: string; read: number }
   | { kind: 'ready' | 'cycle'; nextUrl: string };
 
-async function readHtml(url: string, options: UserReadOptions) {
+async function readHtml(url: string, options: UserReadOptions, matchesActivity?: (url: URL) => boolean) {
+  const requireActivity = (value: string) => {
+    if (matchesActivity && !matchesActivity(new URL(value))) throw new Error('妖火活动页与当前用户不匹配');
+  };
   const safeUrl = requireYaohuoRequestUrl(url);
+  requireActivity(safeUrl);
   const response = await fetchWithTimeout(
     safeUrl,
     {
@@ -40,6 +54,7 @@ async function readHtml(url: string, options: UserReadOptions) {
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const resolvedUrl = requireYaohuoRequestUrl(response.url || safeUrl, safeUrl);
   ensureYaohuoHtmlLoggedIn(html, resolvedUrl);
+  requireActivity(resolvedUrl);
   return { html, root: parseHtml(html), url: resolvedUrl };
 }
 
@@ -47,18 +62,33 @@ function profileUrl(id: string) {
   return `${YAOHUO_BASE_URL}/bbs/userinfo.aspx?touserid=${encodeURIComponent(id)}&siteid=1000`;
 }
 
-export async function getYaohuoUserDetails(
-  id: string,
-  username: string | undefined,
-  options: UserReadOptions
-): Promise<UserDetails> {
+export async function getYaohuoUserDetails(id: string, username: string | undefined, options: UserReadOptions) {
   const page = await readHtml(profileUrl(id), options);
   const parsed = parseYaohuoUserProfileDocument(page.root, { id, username });
-  const { topics: _topics, ...details } = parsed;
-  return copySourceDiagnosticSummary(details, parsed);
+  const { topics, ...details } = parsed;
+  const topicsUrl = yaohuoUserProfileTopicListUrlFromRoot(page.root, id, page.url);
+  const yaohuoActivity: YaohuoActivity = {
+    topicsUrl,
+    repliesUrl: yaohuoUserProfileReplyListUrlFromRoot(page.root, id, page.url),
+    emptyReplies: parsed.replyCount === 0
+  };
+  if (!topicsUrl && (topics.length || parsed.topicCount === 0))
+    yaohuoActivity.inlineTopics = copySourceDiagnosticSummary(
+      { topics, hasMoreTopics: false, nextTopicsCursor: null },
+      parsed
+    );
+  return copySourceDiagnosticSummary({ ...details, yaohuoActivity }, parsed);
 }
 
-export async function getYaohuoUserTopics(profile: UserDetails, options: UserReadOptions): Promise<UserTopicsPage> {
+async function activityFromProfile(profile: YaohuoUserDetails, options: UserReadOptions) {
+  return profile.yaohuoActivity ?? (await getYaohuoUserDetails(profile.id, profile.username, options)).yaohuoActivity;
+}
+
+export async function getYaohuoUserTopics(
+  profile: YaohuoUserDetails,
+  options: UserReadOptions
+): Promise<UserTopicsPage> {
+  const matchesActivity = (url: URL) => isYaohuoUserTopicListUrl(url, profile.id);
   const topics: Topic[] = [];
   const seen = new Set<string>();
   const visited = new Set<string>();
@@ -67,18 +97,10 @@ export async function getYaohuoUserTopics(profile: UserDetails, options: UserRea
     ? { kind: 'reading', url: options.cursor, read: 0 }
     : { kind: 'discovering' };
   if (scan.kind === 'discovering') {
-    // The first activity URL is parsed from the profile; do not synthesize a remote link.
-    const page = await readHtml(profileUrl(profile.id), options);
-    const nextUrl = yaohuoUserProfileTopicListUrlFromRoot(page.root, profile.id, page.url);
-    if (!nextUrl) {
-      const parsed = parseYaohuoUserProfileDocument(page.root, profile);
-      if (!parsed.topics.length && parsed.topicCount !== 0) throw new Error('妖火资料页未提供可确认的主题入口');
-      return copySourceDiagnosticSummary(
-        { topics: parsed.topics, hasMoreTopics: false, nextTopicsCursor: null },
-        parsed
-      );
-    }
-    scan = { kind: 'reading', url: nextUrl, read: 0 };
+    const activity = await activityFromProfile(profile, options);
+    if (activity.inlineTopics) return activity.inlineTopics;
+    if (!activity.topicsUrl) throw new Error('妖火资料页未提供可确认的主题入口');
+    scan = { kind: 'reading', url: activity.topicsUrl, read: 0 };
   }
   while (scan.kind === 'reading') {
     if (visited.has(scan.url)) {
@@ -86,9 +108,8 @@ export async function getYaohuoUserTopics(profile: UserDetails, options: UserRea
       break;
     }
     visited.add(scan.url);
-    const page = await readHtml(scan.url, options);
-    const requestedPage = Number(new URL(page.url).searchParams.get('page') || '1');
-    const pageNumber = Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+    const page = await readHtml(scan.url, options, matchesActivity);
+    const pageNumber = yaohuoUserActivityPage(new URL(page.url))?.page ?? 1;
     const result = parseYaohuoListDocument(page.root, page.html, {
       classId: '0',
       limit: 30,
@@ -101,7 +122,7 @@ export async function getYaohuoUserTopics(profile: UserDetails, options: UserRea
       seen.add(topic.id);
       topics.push(topic.author ? topic : { ...topic, author: profile.displayName || profile.username });
     }
-    const nextUrl = yaohuoTopicListNextPageUrlFromRoot(page.root, page.url, pageNumber, result.items.length, 30);
+    const nextUrl = yaohuoUserTopicNextPageUrlFromRoot(page.root, page.url, profile.id, result.items.length, 30);
     const read: number = scan.read + 1;
     scan =
       nextUrl && topics.length < 30 && read < (options.cursor ? 1 : 10)
@@ -120,23 +141,26 @@ export async function getYaohuoUserTopics(profile: UserDetails, options: UserRea
   );
 }
 
-export async function getYaohuoUserReplies(profile: UserDetails, options: UserReadOptions): Promise<UserRepliesPage> {
+export async function getYaohuoUserReplies(
+  profile: YaohuoUserDetails,
+  options: UserReadOptions
+): Promise<UserRepliesPage> {
+  const matchesActivity = (url: URL) => isYaohuoUserReplyListUrl(url, profile.id);
   let url = options.cursor || '';
   if (!url) {
-    const page = await readHtml(profileUrl(profile.id), options);
-    url = yaohuoUserProfileReplyListUrlFromRoot(page.root, profile.id, page.url);
+    const activity = await activityFromProfile(profile, options);
+    url = activity.repliesUrl;
     if (!url) {
-      const parsed = parseYaohuoUserProfileDocument(page.root, profile);
-      if (parsed.replyCount !== 0) throw new Error('妖火资料页未提供可确认的回复入口');
+      if (!activity.emptyReplies) throw new Error('妖火资料页未提供可确认的回复入口');
       return { replies: [], hasMoreReplies: false, nextRepliesCursor: null };
     }
   }
-  const page = await readHtml(url, options);
+  const page = await readHtml(url, options, matchesActivity);
   const replies = parseYaohuoUserRepliesDocument(page.root, {
     id: profile.id,
     username: profile.displayName || profile.username
   });
-  const nextUrl = yaohuoReplyListNextPageUrlFromRoot(page.root, page.url, replies.length);
+  const nextUrl = yaohuoUserReplyNextPageUrlFromRoot(page.root, page.url, profile.id, replies.length);
   return copySourceDiagnosticSummary(
     { replies, hasMoreReplies: Boolean(nextUrl), nextRepliesCursor: nextUrl || null },
     replies

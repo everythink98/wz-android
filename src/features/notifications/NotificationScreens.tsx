@@ -1,12 +1,11 @@
 import { AppSwitch as Switch } from '@/ui/controls/InputControls';
-import { ActivityIndicator } from 'react-native-paper';
 import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
 import { Image, PixelRatio, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
-import { ChevronDown } from 'lucide-react-native';
+import { ChevronDown, SquarePen } from 'lucide-react-native';
 import RenderHTML, {
   HTMLContentModel,
   HTMLElementModel,
@@ -30,9 +29,11 @@ import type { NotificationState } from '@/platform/notifications/notificationSto
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { Avatar } from '@/ui/avatar/Avatar';
 import { AppButton, FloatingIconButton } from '@/ui/controls/ButtonControls';
+import { LoadingState } from '@/ui/controls/FeedbackStates';
 import { PillRail } from '@/ui/controls/SelectionControls';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
+import { readerRadii } from '@/ui/theme/tokens';
 import {
   formatNotificationTime,
   notificationAccessibilityLabel,
@@ -50,7 +51,7 @@ import {
   isInlineForumImage,
   normalizeForumStickerMediaHtml
 } from '@/domain/forum/forumContentMedia';
-import { normalizeMediaReferrerPolicy, type MediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
+import { normalizeMediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
 import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
 import { compatibleImageRequestIdentity } from '@/platform/media/compatibleImageSources';
 import {
@@ -67,12 +68,13 @@ import {
   prepareImagePreviewCatalog,
   projectImagePreviewCatalog,
   selectImageDisplaySource,
-  type ImagePreviewList
+  type ImagePreviewList,
+  type OpenImagePreview
 } from '@/platform/media/imagePreviewCatalog';
 import { ImagePreviewModal } from '@/ui/media/ImagePreviewModal';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
-import { notificationImagePreviewDescriptors } from './notificationImagePreview';
+import { notificationImageOriginalSource, notificationImagePreviewDescriptors } from './notificationImagePreview';
 import { createForumStickerRenderers } from '@/ui/content/ForumStickerContent';
 import { FORUM_STICKER_ELEMENT_MODELS } from '@/ui/content/forumStickerElementModels';
 import { createConversationAutoScrollController } from './conversationAutoScroll';
@@ -113,7 +115,7 @@ function EmptyState({
 }: {
   action?: { label: string; run: () => void };
   secondaryAction?: { label: string; run: () => void };
-  text: string;
+  text?: string;
   title: string;
 }) {
   const { styles } = useReaderThemeStyles(createNotificationStyles);
@@ -122,7 +124,7 @@ function EmptyState({
       <Text style={styles.stateTitle} accessibilityRole="header">
         {title}
       </Text>
-      <Text style={styles.stateText}>{text}</Text>
+      {text ? <Text style={styles.stateText}>{text}</Text> : null}
       {action || secondaryAction ? (
         <View style={styles.stateActions}>
           {action ? <AppButton label={action.label} onPress={action.run} /> : null}
@@ -290,32 +292,21 @@ export const NotificationsScreen = memo(function NotificationsScreen({
         ? '账号状态暂不可确认'
         : !sourceAvailable
           ? '账号尚未就绪'
-          : errorSources.length
-            ? '消息暂未加载成功'
-            : hasMore
-              ? '当前页没有匹配消息'
-              : unreadOnly
-                ? '暂无未读消息'
-                : '暂无消息';
-  const emptyText = noEnabledSources
-    ? '请前往“更多”中的“内容源”面板启用想看的站点。'
-    : !sourceAvailable
+          : hasMore
+            ? '当前页没有匹配消息'
+            : unreadOnly
+              ? '暂无未读消息'
+              : '暂无消息';
+  const emptyText =
+    !noEnabledSources && !sourceAvailable
       ? sourcePending
         ? source === 'all'
           ? '正在确认已启用站点的账号身份；完成后会自动加载可用消息。'
           : `正在确认${sourceCatalog[source].label}账号身份；完成后会自动加载消息。`
         : sourceUnknown
           ? '本次账号核对失败；消息请求已暂停，可在账号中心重试核对。'
-          : source === 'all'
-            ? '登录任一支持的站点后，就能在这里统一查看消息。'
-            : `请先登录 ${sourceCatalog[source].label}，并确认账号身份。`
-      : errorSources.length
-        ? '请重试上方读取失败的站点，已有消息会保留。'
-        : hasMore
-          ? '继续加载，查看更早的消息。'
-          : unreadOnly
-            ? '当前筛选下没有未读消息，可以查看全部消息。'
-            : '原站有新消息时会显示在这里。';
+          : ''
+      : '';
   const showMarkAll = source !== 'all' && source !== 'yaohuo' && sourceAvailable && categoryId === categories[0]?.id;
   const outcome = loading
     ? undefined
@@ -339,7 +330,7 @@ export const NotificationsScreen = memo(function NotificationsScreen({
         </View>
       ) : null}
       {source === 'all' && loginSources.length ? (
-        <View style={styles.sourceNotice}>
+        <View style={[styles.sourceNotice, styles.sourceErrorRow]}>
           {loginSources.map((candidate) => (
             <AppButton
               key={candidate}
@@ -392,50 +383,41 @@ export const NotificationsScreen = memo(function NotificationsScreen({
         <View style={styles.unreadControl}>
           <Text style={styles.controlLabel}>只看未读</Text>
           <Switch
+            testID="notification-unread-switch"
             accessibilityLabel="只看未读"
             accessibilityState={{ checked: unreadOnly }}
             value={unreadOnly}
-
             onValueChange={onChangeUnreadOnly}
           />
         </View>
-        <View style={styles.controlSummary}>
-          {visibleItems.length ? (
-            <Text style={styles.controlMeta}>
-              已加载 {visibleItems.length} 条{unreadOnly ? '未读消息' : '消息'}
-            </Text>
-          ) : null}
-          {showMarkAll ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`将 ${sourceCatalog[source].label} 全部标记为已读`}
-              accessibilityState={{ busy: markAllBusy, disabled: markAllBusy }}
-              disabled={markAllBusy}
-              style={[styles.inlineAction, markAllBusy && styles.disabled]}
-              onPress={onMarkAll}
-            >
-              <Text style={styles.inlineActionText}>{markAllBusy ? '处理中' : '全部已读'}</Text>
-            </Pressable>
-          ) : source === 'yaohuo' && sourceAvailable ? (
-            <Text style={styles.controlMeta}>逐条打开后已读</Text>
-          ) : null}
-        </View>
+        {showMarkAll ? (
+          <Pressable
+            testID="notification-mark-all"
+            accessibilityRole="button"
+            accessibilityLabel={`将 ${sourceCatalog[source].label} 全部标记为已读`}
+            accessibilityState={{ busy: markAllBusy, disabled: markAllBusy }}
+            disabled={markAllBusy}
+            style={[styles.inlineAction, markAllBusy && styles.disabled]}
+            onPress={onMarkAll}
+          >
+            <Text style={styles.inlineActionText}>{markAllBusy ? '处理中' : '全部已读'}</Text>
+          </Pressable>
+        ) : null}
       </View>
     </View>
   );
   const onPageLayout = useStartupPageLayout();
-  if (!storageReady)
-    return (
+  if (!storageReady) {
+    return initializationError ? (
       <EmptyState
-        title={initializationError ? '通知初始化失败' : '正在恢复通知'}
-        text={initializationError || '正在读取本机通知设置和记录。'}
-        action={
-          initializationError && onRetryInitialization
-            ? { label: '重试通知初始化', run: onRetryInitialization }
-            : undefined
-        }
+        title="通知初始化失败"
+        text={initializationError}
+        action={onRetryInitialization ? { label: '重试通知初始化', run: onRetryInitialization } : undefined}
       />
+    ) : (
+      <LoadingState text="正在恢复通知" />
     );
+  }
   return (
     <View style={styles.screen}>
       {toolbar}
@@ -472,12 +454,11 @@ export const NotificationsScreen = memo(function NotificationsScreen({
         maintainVisibleContentPosition={{ disabled: false }}
         ListHeaderComponent={notices}
         ListEmptyComponent={
-          loading || fetchingMore ? (
-            <View style={styles.centeredState} accessibilityLiveRegion="polite">
-              <ActivityIndicator color={theme.primary} />
-              <Text style={styles.stateText}>正在读取消息</Text>
-            </View>
-          ) : (
+          loading && !fetchingMore ? (
+            refreshing ? null : (
+              <LoadingState text="加载中" />
+            )
+          ) : sourceAvailable && errorSources.length ? null : (
             <EmptyState
               title={emptyTitle}
               text={emptyText}
@@ -495,7 +476,7 @@ export const NotificationsScreen = memo(function NotificationsScreen({
         }
         ListFooterComponent={
           <View>
-            {source === 'all' && !loading && (hasMore || errorSources.length > 0) ? (
+            {source === 'all' && !loading && (hasMore || (visibleItems.length > 0 && errorSources.length > 0)) ? (
               <View style={styles.paginationSources}>
                 {enabledSources
                   .filter(
@@ -513,20 +494,17 @@ export const NotificationsScreen = memo(function NotificationsScreen({
                   ))}
               </View>
             ) : null}
-            {fetchingMore ? (
-              <View style={styles.footer} accessibilityLiveRegion="polite">
-                <ActivityIndicator color={theme.primary} size="small" />
-                <Text style={styles.noticeText}>正在加载更多消息</Text>
-              </View>
-            ) : hasMore && !loading && !refreshing ? (
+            {fetchingMore || (hasMore && !loading && !refreshing) ? (
               <View style={styles.footer}>
-                <AppButton variant="ghost" label="继续加载消息" onPress={onLoadMore} />
-              </View>
-            ) : visibleItems.length > 0 && !loading && !hasMore && !errorSources.length ? (
-              <View style={styles.footer}>
-                <Text style={styles.noticeText}>
-                  {source === 'all' ? '各站当前可提供的消息已加载完成' : '当前可提供的消息已加载完成'}
-                </Text>
+                <AppButton
+                  compact
+                  variant="ghost"
+                  loading={fetchingMore}
+                  disabled={fetchingMore}
+                  label={fetchingMore ? '加载中' : '继续加载消息'}
+                  accessibilityLabel="继续加载消息"
+                  onPress={onLoadMore}
+                />
               </View>
             ) : null}
           </View>
@@ -540,12 +518,12 @@ export const NotificationsScreen = memo(function NotificationsScreen({
   );
 });
 
-function sourceSettingStatus(source: NotificationSource, state: NotificationState, sessions: SiteSessionViewModels) {
+function sourceSettingStatus(source: NotificationSource, sessions: SiteSessionViewModels) {
   if (sessions[source].identityTrust === 'unknown') {
-    return '账号状态暂不可确认；开关意图会保留，可重试核对';
+    return '账号状态暂不可确认';
   }
-  if (!sessions[source].isLoggedIn || sessions[source].identityTrust !== 'confirmed') return '未登录；开关意图会保留';
-  return state.sources[source].intentEnabled ? '已启用' : '已关闭';
+  if (!sessions[source].isLoggedIn || sessions[source].identityTrust !== 'confirmed') return '未登录';
+  return '';
 }
 
 export function NotificationSettingsScreen({
@@ -590,44 +568,41 @@ export function NotificationSettingsScreen({
           {onRetryInitialization ? <AppButton label="重试通知初始化" onPress={onRetryInitialization} /> : null}
         </View>
       ) : null}
-      <Text style={styles.settingsIntro}>
-        Android 通知默认关闭。启用后，系统会在本机约每 15
-        分钟安排一次检查；force-stop、省电策略和系统调度都可能造成延迟。
-      </Text>
       <View style={styles.settingsSection}>
         <View style={styles.settingRow}>
           <View style={styles.settingBody}>
             <Text style={styles.settingLabel}>Android 消息通知</Text>
-            <Text style={styles.settingMeta}>
-              {backgroundEnabled ? '后台检查已启用' : state.globalEnabled ? '已保留意图，后台当前暂停' : '已关闭'}
-            </Text>
+            {!backgroundEnabled && state.globalEnabled ? <Text style={styles.settingMeta}>后台当前暂停</Text> : null}
           </View>
           <Switch
+            testID="notification-global-switch"
             accessibilityLabel="Android 消息通知"
             accessibilityState={{ busy, disabled: busy }}
             disabled={busy}
             value={state.globalEnabled}
-
             onValueChange={onToggleGlobal}
           />
         </View>
-        {enabledSources.map((source) => (
-          <View key={source} style={styles.settingRow}>
-            <View style={styles.settingBody}>
-              <Text style={styles.settingLabel}>{sourceCatalog[source].label}</Text>
-              <Text style={styles.settingMeta}>{sourceSettingStatus(source, state, sessions)}</Text>
+        {enabledSources.map((source) => {
+          const status = sourceSettingStatus(source, sessions);
+          return (
+            <View key={source} style={styles.settingRow}>
+              <View style={styles.settingBody}>
+                <Text style={styles.settingLabel}>{sourceCatalog[source].label}</Text>
+                {status ? <Text style={styles.settingMeta}>{status}</Text> : null}
+              </View>
+              <Switch
+                testID={`notification-source-switch-${source}`}
+                accessibilityLabel={`${sourceCatalog[source].label} 消息通知`}
+                accessibilityState={{ busy, disabled: busy }}
+                disabled={busy}
+                value={state.sources[source].intentEnabled}
+                onValueChange={(enabled) => onToggleSource(source, enabled)}
+              />
             </View>
-            <Switch
-              accessibilityLabel={`${sourceCatalog[source].label} 消息通知`}
-              accessibilityState={{ busy, disabled: busy }}
-              disabled={busy}
-              value={state.sources[source].intentEnabled}
-
-              onValueChange={(enabled) => onToggleSource(source, enabled)}
-            />
-          </View>
-        ))}
-        {!enabledSources.length ? <Text style={styles.settingMeta}>尚未启用内容源；通知开关意图会保留。</Text> : null}
+          );
+        })}
+        {!enabledSources.length ? <Text style={styles.settingMeta}>尚未启用内容源</Text> : null}
       </View>
       {state.globalEnabled && permission === 'denied' ? (
         <View style={styles.permissionBox} accessibilityLiveRegion="polite">
@@ -660,7 +635,7 @@ const DetailHtml = memo(function DetailHtml({
   message?: boolean;
   source: NotificationSource;
   mediaContext: ForumMediaRequestContext;
-  onOpenImagePreview: (url: string, referrerPolicy?: MediaReferrerPolicy) => void;
+  onOpenImagePreview: OpenImagePreview;
   onOpenExternalUrl: (url: string) => void;
   onOpenTopic: (topic: Topic, location?: TopicLocationTarget) => void;
 }) {
@@ -721,14 +696,27 @@ const DetailHtml = memo(function DetailHtml({
       );
       const size = { width, height: width / ratio };
       const label = attributes.alt || attributes.title || '图片';
+      const isPendingPlaceholder = loaded?.identity !== identity && failedIdentity !== identity;
       return (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`预览图片：${label}`}
-          style={[imageProps.style, size, { overflow: 'hidden' }]}
+          style={[
+            imageProps.style,
+            size,
+            { overflow: 'hidden' },
+            isPendingPlaceholder && { backgroundColor: theme.surface2, borderRadius: readerRadii.content }
+          ]}
           onPress={(event) => {
             event.stopPropagation();
-            onOpenImagePreview(src, referrerPolicy);
+            let ancestor = props.tnode.parent;
+            while (ancestor && (ancestor.tagName !== 'a' || !ancestor.hasClass('lightbox'))) ancestor = ancestor.parent;
+            const original = notificationImageOriginalSource(
+              attributes,
+              ancestor?.attributes.href,
+              mediaContext.referrer?.documentUrl
+            );
+            onOpenImagePreview(src, undefined, undefined, referrerPolicy, original === src ? undefined : original);
           }}
         >
           {failedIdentity === identity ? (
@@ -793,7 +781,7 @@ const DetailHtml = memo(function DetailHtml({
             accessibilityLabel={`预览图片：${props.accessibilityLabel || '贴纸'}`}
             onPress={(event) => {
               event.stopPropagation();
-              onOpenImagePreview(props.src, props.referrerPolicy);
+              onOpenImagePreview(props.src, undefined, undefined, props.referrerPolicy);
             }}
           >
             <ExpoImage
@@ -807,7 +795,7 @@ const DetailHtml = memo(function DetailHtml({
       img: PreviewImageRenderer,
       [INLINE_FORUM_IMAGE_TAG]: InlineImageRenderer
     };
-  }, [bodyStyle, contentWidth, mediaContext, message, onOpenImagePreview, settings.fontScale]);
+  }, [bodyStyle, contentWidth, mediaContext, message, onOpenImagePreview, settings.fontScale, theme.surface2]);
   const renderersProps = useMemo(
     () => ({
       a: {
@@ -973,17 +961,20 @@ export function NotificationDetailScreen({
       ),
     [contentWidth, detail, documentUrl, mediaContext]
   );
-  const openImagePreview = useLatestCallback((url: string, referrerPolicy?: MediaReferrerPolicy) => {
-    if (!routeActive || !detail) return;
-    const gallery = imagePreviewListFromCatalog(
-      imageCatalog,
-      url,
-      detail.notification.source,
-      undefined,
-      referrerPolicy
-    );
-    if (gallery.items.length) setImagePreview({ scope: previewScope, gallery });
-  });
+  const openImagePreview: OpenImagePreview = useLatestCallback<Parameters<OpenImagePreview>, void>(
+    (url, displaySize, _poster, referrerPolicy, original) => {
+      if (!routeActive || !detail) return;
+      const gallery = imagePreviewListFromCatalog(
+        imageCatalog,
+        url,
+        detail.notification.source,
+        displaySize,
+        referrerPolicy,
+        original
+      );
+      if (gallery.items.length) setImagePreview({ scope: previewScope, gallery });
+    }
+  );
   useEffect(() => {
     setImagePreview(null);
   }, [previewScope, routeActive]);
@@ -1039,9 +1030,8 @@ export function NotificationDetailScreen({
     topicReplyAction || detail?.notification.kind === 'mention' || detail?.notification.kind === 'reply';
   if (loading && !detail) {
     return (
-      <View style={[styles.screen, styles.centeredState]} onLayout={onPageLayout} accessibilityLiveRegion="polite">
-        <ActivityIndicator color={theme.primary} />
-        <Text style={styles.stateText}>正在读取消息详情</Text>
+      <View style={[styles.screen, styles.centeredState]} onLayout={onPageLayout}>
+        <LoadingState text="加载中" />
       </View>
     );
   }
@@ -1151,13 +1141,14 @@ export function NotificationDetailScreen({
             ) : null}
             {markMessage ? (
               <View style={styles.readFailure} accessibilityLiveRegion="polite">
-                <Text style={styles.errorText}>{markMessage}</Text>
-                {onRetryMark ? <AppButton label="重试已读状态" disabled={markBusy} onPress={onRetryMark} /> : null}
+                <Text style={[styles.errorText, styles.sourceErrorText]}>{markMessage}</Text>
+                {onRetryMark ? (
+                  <AppButton compact label="重试已读状态" disabled={markBusy} onPress={onRetryMark} />
+                ) : null}
               </View>
             ) : null}
             {conversation && (detail.contentHtml || detail.contentText) ? (
               <View style={styles.conversationOriginal}>
-                <Text style={styles.conversationOriginalLabel}>原消息</Text>
                 {detail.contentHtml ? (
                   <DetailHtml contentWidth={contentWidth - 50} html={detail.contentHtml} {...detailHtmlProps} />
                 ) : null}
@@ -1168,9 +1159,7 @@ export function NotificationDetailScreen({
                 ) : null}
               </View>
             ) : null}
-            {conversation && emptyConversation ? (
-              <Text style={styles.conversationNotice}>还没有私信，点击下方输入区开始聊天。</Text>
-            ) : null}
+            {conversation && emptyConversation ? <Text style={styles.conversationNotice}>暂无私信</Text> : null}
             {conversation && detail.historyNotice ? (
               <Text style={styles.conversationNotice}>{detail.historyNotice}</Text>
             ) : null}
@@ -1178,8 +1167,10 @@ export function NotificationDetailScreen({
               <View style={styles.conversationHistory} accessibilityLiveRegion="polite">
                 {detail.messageHistory.olderCursor && onLoadEarlierMessages ? (
                   <AppButton
+                    compact
                     variant="ghost"
-                    label={historyBusy ? '正在加载更早消息…' : '加载更早消息'}
+                    loading={historyBusy}
+                    label={historyBusy ? '加载中' : '加载更早消息'}
                     accessibilityLabel="加载更早消息"
                     disabled={historyBusy || !routeActive}
                     onPress={() => {
@@ -1286,19 +1277,25 @@ export function NotificationDetailScreen({
             onPress={onOpenReply}
           >
             <View style={styles.replyLauncherBody}>
-              {hasDraft ? <Text style={styles.replyLauncherHint}>草稿</Text> : null}
-              <Text numberOfLines={1} style={styles.replyLauncherTitle}>
+              {hasDraft ? <Text style={styles.replyLauncherBadge}>草稿</Text> : null}
+              <Text
+                numberOfLines={1}
+                style={[styles.replyLauncherTitle, hasDraft && !replyBusy && styles.replyLauncherDraftText]}
+              >
                 {replyBusy
-                  ? '正在发送…'
+                  ? '发送中'
                   : hasDraft
                     ? replyContent.replace(/\s+/g, ' ').trim()
                     : emptyConversation
-                      ? `发私信给 ${item.actor.name}…`
-                      : `回复 ${item.actor.name}…`}
+                      ? `发私信给 ${item.actor.name}`
+                      : `回复 ${item.actor.name}`}
               </Text>
-              <Text numberOfLines={1} style={styles.replyLauncherHint}>
-                {hasDraft ? '继续编辑' : '写回复'}
-              </Text>
+              <SquarePen
+                size={16}
+                color={hasDraft && !replyBusy ? theme.primary : theme.muted}
+                strokeWidth={1.8}
+                accessible={false}
+              />
             </View>
           </Pressable>
           {!replyVisible && (replyError || replyStatus) ? (

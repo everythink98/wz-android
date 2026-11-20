@@ -7,7 +7,7 @@ import appConfig from '../../../app.json';
 import { useAppUpdateRuntime } from '@/platform/update/useAppUpdateRuntime';
 import { MoreUpdatePanel } from '@/features/more/components/MoreUpdatePanel';
 import { type AppUpdateInfo, UPDATE_APK_NAME } from '@/platform/update/appUpdate';
-import type { DownloadProgress, DownloadTaskOptions } from 'expo-file-system';
+import { File, type DownloadProgress, type DownloadTaskOptions } from 'expo-file-system';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 afterEach(() => setDiagnosticWriter(null));
 
@@ -175,6 +175,7 @@ function RuntimePanel({ visible = true }: { visible?: boolean }) {
       runtime={{
         phase: runtime.phase,
         artifact: runtime.artifact,
+        restoreFailed: runtime.restoreFailed,
         info: runtime.appUpdateInfo,
         message: runtime.appUpdateMessage,
         progress: runtime.appUpdateDownloadProgress,
@@ -303,6 +304,50 @@ describe('recoverable app updates', () => {
     expect(mockOpen).toHaveBeenCalledTimes(1);
   });
 
+  it('retries cold recovery and opens a verified local APK while offline', async () => {
+    save();
+    const apk = target(update(), true);
+    mockFiles.set(apk, 100);
+    mockNetwork.mockRejectedValue(new Error('offline'));
+    const inspect = jest.mocked(NativeModules.ApkInstallerModule.inspectApk);
+    const unavailable = Object.assign(new Error('临时无法读取安装包'), { code: 'apk_inspect_failed' });
+    inspect.mockRejectedValueOnce(unavailable).mockRejectedValueOnce(unavailable);
+    const view = await render(<RuntimePanel />);
+
+    await waitFor(() => expect(view.getByLabelText('重试恢复').props.accessibilityState.disabled).toBe(false));
+    expect(view.queryByLabelText('安装')).toBeNull();
+    await fireEvent.press(view.getByLabelText('重试恢复'));
+    await waitFor(() => expect(view.getByLabelText('重试恢复').props.accessibilityState.disabled).toBe(false));
+    expect(mockFiles.get(apk)).toBe(100);
+    expect(mockOpen).not.toHaveBeenCalled();
+
+    await fireEvent.press(view.getByLabelText('重试恢复'));
+    await waitFor(() => expect(view.getByLabelText('安装').props.accessibilityState.disabled).toBe(false));
+    expect(inspect.mock.calls).toEqual([[apk], [apk], [apk]]);
+    expect(mockOpen.mock.calls).toEqual([[apk]]);
+    expect(mockNetwork).not.toHaveBeenCalled();
+    expect(mockReceivedOffsets).toEqual([]);
+  });
+
+  it('discards an APK that fails verification when cold recovery is retried', async () => {
+    save();
+    const apk = target(update(), true);
+    mockFiles.set(apk, 100);
+    jest
+      .mocked(NativeModules.ApkInstallerModule.inspectApk)
+      .mockRejectedValueOnce(Object.assign(new Error('临时无法读取安装包'), { code: 'apk_inspect_failed' }))
+      .mockResolvedValueOnce({ ...update(), signerSha256: '9'.repeat(64) });
+    const view = await render(<RuntimePanel />);
+
+    await waitFor(() => expect(view.getByLabelText('重试恢复').props.accessibilityState.disabled).toBe(false));
+    await fireEvent.press(view.getByLabelText('重试恢复'));
+    await waitFor(() => expect(view.getByLabelText('下载并安装').props.accessibilityState.disabled).toBe(false));
+    expect(view.queryByLabelText('安装')).toBeNull();
+    expect(mockFiles.has(apk)).toBe(false);
+    expect(mockOpen).not.toHaveBeenCalled();
+    expect(mockNetwork).not.toHaveBeenCalled();
+  });
+
   it('recovers a finished partial file even if the process ended before rename', async () => {
     save(update(), null);
     mockFiles.set(target(), 100);
@@ -407,6 +452,65 @@ describe('recoverable app updates', () => {
     );
   });
 
+  it('keeps an active download controllable when the native pause request fails', async () => {
+    const pending = Promise.withResolvers<object | null>();
+    mockPlans.push(async () => pending.promise);
+    mockPause.mockRejectedValueOnce(new Error('暂停请求失败'));
+    const hook = await readyHook();
+    let download: Promise<void> | undefined;
+    try {
+      await act(() => hook.result.current.checkAppUpdate());
+      await act(async () => {
+        download = hook.result.current.startAppUpdateDownload();
+      });
+      await waitFor(() => expect(mockReceivedOffsets).toEqual([0]));
+      await act(() => hook.result.current.pauseAppUpdateDownload());
+      expect(hook.result.current.phase).toBe('downloading');
+      expect(hook.result.current.appUpdateMessage).toBe('暂停请求失败');
+      await act(async () => mockLastProgress!({ bytesWritten: 45, totalBytes: 100 }));
+      expect(hook.result.current.appUpdateDownloadProgress?.downloadedBytes).toBe(45);
+      mockPause.mockImplementationOnce(async () => pending.resolve(null));
+      await act(() => hook.result.current.pauseAppUpdateDownload());
+      expect(mockPause).toHaveBeenCalledTimes(2);
+    } finally {
+      await act(async () => {
+        pending.resolve(null);
+        await download;
+      });
+      await hook.unmount();
+    }
+  });
+
+  it('keeps a completed download for manual installation after a rejected pause', async () => {
+    const pending = Promise.withResolvers<object>();
+    mockPlans.push(async (uri) => {
+      const file = await pending.promise;
+      mockFiles.set(uri, 100);
+      return file;
+    });
+    mockPause.mockRejectedValueOnce(new Error('暂停请求失败'));
+    const hook = await readyHook();
+    let download: Promise<void> | undefined;
+    try {
+      await act(() => hook.result.current.checkAppUpdate());
+      await act(async () => {
+        download = hook.result.current.startAppUpdateDownload();
+      });
+      await waitFor(() => expect(mockReceivedOffsets).toEqual([0]));
+      await act(() => hook.result.current.pauseAppUpdateDownload());
+      await act(async () => {
+        pending.resolve({});
+        await download;
+      });
+      expect(hook.result.current.artifact).toMatchObject({ kind: 'verified', bytes: 100 });
+      expect(mockOpen).not.toHaveBeenCalled();
+    } finally {
+      pending.resolve({});
+      await download;
+      await hook.unmount();
+    }
+  });
+
   it('preserves the local target when a check fails or finds a different version', async () => {
     save();
     mockFiles.set(target(update(), true), 100);
@@ -422,6 +526,67 @@ describe('recoverable app updates', () => {
     expect(mockFiles.has(target(update(), true))).toBe(false);
   });
 
+  it('keeps the committed new target when Android removes a legacy cache file during replacement cleanup', async () => {
+    save();
+    mockFiles.set(target(update(), true), 100);
+    const oldCache = 'file:///cache/wz-update.apk';
+    mockFiles.set(oldCache, 100);
+    mockCheck.mockResolvedValue(update(2));
+    const deleteFile = jest.spyOn(File.prototype, 'delete').mockImplementation(function (this: File) {
+      mockFiles.delete(this.uri);
+      if (this.uri === oldCache) throw new Error('缓存文件在删除前已被系统清理');
+    });
+    const view = await render(<RuntimePanel />);
+    try {
+      await waitFor(() => expect(view.getByLabelText('安装').props.accessibilityState.disabled).toBe(false));
+      await fireEvent.press(view.getByLabelText('检查更新'));
+      await fireEvent.press(view.getByLabelText(`下载新版 ${update(2).version}`));
+      await waitFor(() => expect(view.getByText(`本地安装包 ${update(2).version} · 已就绪`)).toBeTruthy());
+      expect(mockNotify).not.toHaveBeenCalledWith(expect.stringContaining('安装包已保留'));
+      expect(mockFiles.has(target(update(), true))).toBe(false);
+      expect(mockReceivedOffsets).toEqual([0]);
+    } finally {
+      deleteFile.mockRestore();
+      await view.unmount();
+    }
+    const reopened = await readyHook();
+    try {
+      expect(reopened.result.current.artifact).toMatchObject({ kind: 'verified', update: update(2) });
+    } finally {
+      await reopened.unmount();
+    }
+  });
+
+  it.each(['inspection', 'persistence'] as const)(
+    'preserves the ready old package if replacement %s fails before committing',
+    async (stage) => {
+      save();
+      const oldFile = target(update(), true);
+      mockFiles.set(oldFile, 100);
+      mockCheck.mockResolvedValue(update(2));
+      const hook = await readyHook();
+      try {
+        await act(() => hook.result.current.checkAppUpdate());
+        if (stage === 'inspection') {
+          mockFiles.set(target(update(2), true), 100);
+          jest.mocked(NativeModules.ApkInstallerModule.inspectApk).mockRejectedValueOnce(new Error('磁盘读取失败'));
+        } else {
+          jest.mocked(AsyncStorage.setItem).mockRejectedValueOnce(new Error('无法保存更新记录'));
+        }
+        await act(() => hook.result.current.startAppUpdateDownload());
+        expect(hook.result.current.artifact).toMatchObject({ kind: 'verified', update: update() });
+        expect(mockFiles.has(oldFile)).toBe(true);
+        expect(JSON.parse(mockStore.get('app-update-download')!)).toMatchObject({ update: update() });
+        expect(hook.result.current.appUpdateMessage).toContain('安装包已保留');
+        expect(mockTaskFactory).not.toHaveBeenCalled();
+        await act(() => hook.result.current.installAppUpdate());
+        expect(mockOpen).toHaveBeenCalledWith(oldFile);
+      } finally {
+        await hook.unmount();
+      }
+    }
+  );
+
   it('keeps unrelated files while migrating a verified legacy cache', async () => {
     const legacy = `file:///cache/wz-update-${update().versionCode}-${update().sha256}.apk`;
     mockFiles.set(legacy, 100);
@@ -434,6 +599,34 @@ describe('recoverable app updates', () => {
     expect(mockFiles.has(legacy)).toBe(false);
     expect(mockFiles.get('file:///cache/avatar.png')).toBe(20);
     expect(mockOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the verified APK for manual installation when backgrounded during the final inspection', async () => {
+    const inspected = Promise.withResolvers<AppUpdateInfo>();
+    const inspect = jest.mocked(NativeModules.ApkInstallerModule.inspectApk);
+    inspect.mockImplementation(async (uri: string) => (uri === target(update(), true) ? inspected.promise : update()));
+    const hook = await readyHook();
+    await act(() => hook.result.current.checkAppUpdate());
+    let download!: Promise<void>;
+    try {
+      await act(async () => {
+        download = hook.result.current.startAppUpdateDownload();
+      });
+      await waitFor(() => expect(inspect).toHaveBeenCalledWith(target(update(), true)));
+      AppState.currentState = 'background';
+      await act(async () => {
+        inspected.resolve(update());
+        await download;
+      });
+      expect(mockOpen).not.toHaveBeenCalled();
+      expect(hook.result.current.artifact).toMatchObject({ kind: 'verified', bytes: 100 });
+      AppState.currentState = 'active';
+      await act(() => hook.result.current.installAppUpdate());
+      expect(mockOpen).toHaveBeenCalledTimes(1);
+    } finally {
+      inspected.resolve(update());
+      await download;
+    }
   });
 
   it('does not install in the background or automatically when returning', async () => {
@@ -449,6 +642,63 @@ describe('recoverable app updates', () => {
     await act(() => hook.result.current.installAppUpdate());
     expect(mockOpen).toHaveBeenCalledTimes(1);
   });
+
+  it.each([
+    { exit: 'pause', stage: 'inspection' },
+    { exit: 'unmount', stage: 'inspection' },
+    { exit: 'pause', stage: 'metadata' },
+    { exit: 'unmount', stage: 'metadata' }
+  ] as const)(
+    'keeps the partial APK on $exit during range-retry $stage and waits for explicit resume',
+    async ({ exit, stage }) => {
+      save();
+      mockFiles.set(target(), 32);
+      const reached = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      mockPlans.push(async () => {
+        if (stage === 'inspection') {
+          jest.mocked(NativeModules.ApkInstallerModule.inspectApk).mockImplementationOnce(async () => {
+            reached.resolve();
+            await release.promise;
+            throw Object.assign(new Error('APK 文件不完整'), { code: 'apk_invalid' });
+          });
+        } else {
+          jest.mocked(AsyncStorage.setItem).mockImplementationOnce(async (key, value) => {
+            reached.resolve();
+            await release.promise;
+            mockStore.set(key, value);
+          });
+        }
+        throw Object.assign(new Error('range'), { code: 'ERR_DOWNLOAD_RANGE' });
+      });
+      const original = await readyHook();
+      let transfer: Promise<void> | undefined;
+      let current = original;
+      try {
+        await act(async () => {
+          transfer = original.result.current.resumeAppUpdateDownload();
+        });
+        await reached.promise;
+        if (exit === 'pause') await act(() => original.result.current.pauseAppUpdateDownload());
+        else await original.unmount();
+        await act(async () => {
+          release.resolve();
+          await transfer;
+        });
+        expect(mockReceivedOffsets).toEqual([32]);
+        expect(mockFiles.get(target())).toBe(32);
+        if (exit === 'unmount') current = await readyHook();
+        expect(current.result.current.artifact).toMatchObject({ kind: 'partial', downloadedBytes: 32 });
+        await act(() => current.result.current.resumeAppUpdateDownload());
+        expect(mockReceivedOffsets).toEqual([32, 32]);
+        expect(current.result.current.artifact?.kind).toBe('verified');
+      } finally {
+        release.resolve();
+        await transfer;
+        if (exit === 'pause' || current !== original) await current.unmount();
+      }
+    }
+  );
 
   it('restarts once on a rejected range while preserving the same trusted identity', async () => {
     const lines: string[] = [];
@@ -696,7 +946,7 @@ describe('recoverable app updates', () => {
     try {
       expect(view.queryByText(`正在下载 ${update().version}`)).toBeNull();
       expect(view.getByText('正在校验安装包')).toBeTruthy();
-      expect(view.getByRole('progressbar').props.accessibilityValue.now).toBe(100);
+      expect(view.getByRole('button', { name: '校验中' }).props.accessibilityValue.now).toBe(100);
       expect(view.queryByLabelText('暂停下载')).toBeNull();
       expect(view.getByLabelText('检查更新').props.accessibilityState.disabled).toBe(true);
       await act(async () => inspected.resolve(update()));
@@ -785,10 +1035,10 @@ describe('recoverable app updates', () => {
     await act(async () => {
       void fireEvent.press(view.getByLabelText('下载并安装'));
     });
-    await waitFor(() => expect(view.getByRole('progressbar')).toBeTruthy());
+    await waitFor(() => expect(view.getByRole('button', { name: '暂停下载' })).toBeTruthy());
     try {
-      expect(view.getByRole('progressbar').props.accessibilityValue).toMatchObject({ text: '已下载 40 B' });
-      expect(view.getByRole('progressbar').props.accessibilityValue.now).toBeUndefined();
+      const pause = view.getByRole('button', { name: '暂停下载' });
+      expect(pause.props.accessibilityValue).toMatchObject({ text: '已下载 40 B', now: undefined });
       await act(async () => {
         void fireEvent.press(view.getByLabelText('暂停下载'));
       });

@@ -159,6 +159,7 @@ export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderStyl
       fontSize: 12,
       fontWeight: '600',
       lineHeight: 17,
+      fontVariant: ['tabular-nums'],
       textAlign: 'right'
     },
     levelProgressTrack: {
@@ -265,7 +266,8 @@ export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderStyl
       fontFamily: appFontFamily,
       fontSize: 15,
       fontWeight: '700',
-      lineHeight: 20
+      lineHeight: 20,
+      fontVariant: ['tabular-nums']
     },
     levelEmptyState: {
       alignItems: 'flex-start',

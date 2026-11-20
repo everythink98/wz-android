@@ -35,6 +35,7 @@ import {
 } from '../helpers/topicCreationTransport';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
+const lateEditBody = '另一页在旧回执返回前保存的新正文';
 export type TopicProofObservation = {
   ready: boolean;
   route: string;
@@ -53,6 +54,8 @@ export type TopicProofObservation = {
     status?: string;
     writes: number;
     blockedRequests: number;
+    newerDraft?: boolean;
+    newerDraftRebased?: boolean;
   };
 };
 
@@ -118,7 +121,32 @@ export function TopicCreationFixture({
       sessionEpochs: initialForumSessionEpochs,
       appActive: true,
       fetcher: async (input, init) => {
-        if (editTransport) return editTransport.fetcher(input, init);
+        if (editTransport) {
+          const result = await editTransport.fetcher(input, init);
+          if (
+            kind === 'newer-draft' &&
+            init?.method === 'POST' &&
+            new URL(input).pathname === '/api/content/edit-discussion'
+          ) {
+            // A second editor flushes after dispatch, before this route receives its successful response.
+            const identity = siteSessionIdentityKey(sessions[source]);
+            const draft = await loadTopicDraft(source, identity, 'edit:123');
+            if (
+              !draft?.edit ||
+              !(await saveTopicDraft(
+                {
+                  ...draft,
+                  body: lateEditBody,
+                  revision: draft.revision + 1,
+                  updatedAt: Date.now()
+                },
+                draft.revision
+              ))
+            )
+              throw new Error('Newer edit proof could not persist its competing revision');
+          }
+          return result;
+        }
         if (kind === 'inactive-receipt' && init?.method === 'POST') {
           const owned = navigationWaiters.current;
           const response = await transport.fetcher(input, init);
@@ -172,6 +200,14 @@ export function TopicCreationFixture({
       requestAccountRecheck: () => {},
       ensureNodeImageApiKey: async () => null,
       getUserAgent: () => 'isolated-topic-proof',
+      getReadPlan: (source, operation) => ({
+        source,
+        operation,
+        state: 'ready',
+        lane: 'authenticated',
+        transport: 'managed-session',
+        cacheScope: 'authenticated:0'
+      }),
       getTopic: async () => {
         throw new Error('No cached topic in this fixture');
       },
@@ -323,7 +359,14 @@ export function TopicCreationFixture({
             otherDraftRetained: other?.title === topicProofTitle(source) && other.body === topicProofBody(source),
             status: attempt?.status,
             writes: editTransport.writes().length,
-            blockedRequests: editTransport.blockedRequests()
+            blockedRequests: editTransport.blockedRequests(),
+            ...(kind === 'newer-draft'
+              ? {
+                  newerDraft: draft?.body === lateEditBody && editTransport.state.body === editOriginalBody,
+                  newerDraftRebased:
+                    draft?.body === lateEditBody && draft.edit?.original.title === editTransport.state.title
+                }
+              : {})
           };
         }
         if (active) observe(value);
@@ -339,7 +382,7 @@ export function TopicCreationFixture({
       active = false;
       clearInterval(timer);
     };
-  }, [failure, navigation, observe, ready, sessions, transport, editTransport, editOriginalBody, source]);
+  }, [failure, navigation, observe, ready, sessions, transport, editTransport, editOriginalBody, source, kind]);
   if (!ready) return <Text>{failure || '准备本机测试草稿'}</Text>;
   return (
     <TopicComposerRouteRuntimeProvider value={runtime}>

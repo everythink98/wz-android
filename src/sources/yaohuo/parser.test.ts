@@ -21,6 +21,57 @@ function parseUserReplies(html: string, options: Parameters<typeof parseYaohuoUs
 }
 
 describe('yaohuo reply parsing', () => {
+  it('reads topic dates only from listing and opening post metadata', () => {
+    const title = '活动截止 2025-09-18 15:00';
+    const link = `<a href="/bbs-12.html">${title}</a>`;
+    const row = `<div class="listdata">${link}/火友/阅12</div>`;
+    const opening = `<div class="content"><div class="Postinfo">[标题] ${title} (阅12)</div><div class="bbscontent">往期活动 [时间] 2024-01-31 10:00</div></div>`;
+    const summary = (markup: string) => parseYaohuoListHtml(markup).items[0];
+    const profile = (markup: string) => parseUserProfile(markup, { id: '7', username: '火友' }).topics[0];
+    const topic = (markup: string) => parseYaohuoTopicHtml(markup, { id: '12' });
+    for (const item of [summary(row), profile(row), topic(opening)]) {
+      expect(item.createdAt).toBe('');
+      expect(item.lastReplyAt).toBeUndefined();
+    }
+    const datedRow = row.replace('阅12', '阅12/2026-03-01 10:00');
+    const datedOpening = opening.replace('(阅12)', '(阅12) [时间] 2026-03-01 10:00');
+    for (const item of [summary(datedRow), profile(datedRow), topic(datedOpening)]) {
+      expect(item.createdAt).toBe('2026-03-01T02:00:00.000Z');
+    }
+  });
+
+  it('keeps dates cited in profile reply text while reading its trailing activity timestamp', () => {
+    const cited = '活动在 2025-09-18 15:00 截止。';
+    const row = (date: string) =>
+      `<div class="line1">火友 (7) #2 ${cited} ${date} <a href="/bbs-66.html">查看</a></div>`;
+    const read = (date: string) => parseUserReplies(row(date), { id: '7', username: '火友' })[0];
+    expect(read('2026-03-01 10:00')).toMatchObject({ excerpt: cited, createdAt: '2026-03-01T02:00:00.000Z' });
+    expect(read('').excerpt).toBe(cited);
+    expect(read('').createdAt).toBeUndefined();
+  });
+
+  it('keeps a structured reply undated if the only timestamp is inside quoted reply content', () => {
+    const reply = parseReplies(
+      '<div class="list-reply" data-floor="2"><span class="retext">原记录 <blockquote><span class="retime">2025-09-18 15:00</span></blockquote></span><span class="renick">火友</span></div>'
+    ).items[0];
+    expect(reply.createdAt).toBe('');
+    expect(reply.contentHtml).toContain('2025-09-18 15:00');
+  });
+
+  it('keeps undated list, compact and profile topics without a synthetic timestamp', () => {
+    const link = '<a href="/bbs-12.html?classid=177">Topic</a>';
+    const row = `<div class="listdata">${link}<span class="post-time">时间待定</span></div>`;
+    const standard = parseYaohuoListHtml(row).items[0];
+    const compact = parseYaohuoListHtml(`<div class="list">${link}</div>`).items[0];
+    const profile = parseUserProfile(row, { id: '7', username: 'Alice' }).topics[0];
+    const detail = parseYaohuoTopicHtml('<title>Topic</title><div class="bbscontent">Body</div>', { id: '12' });
+    for (const topic of [standard, compact, profile, detail]) {
+      expect(topic.createdAt).toBe('');
+      expect(topic.lastReplyAt).toBeUndefined();
+    }
+    expect(standard.displayTimeText).toBe('时间待定');
+  });
+
   it('keeps literal HTML and repeated escapes in parsed list and reply excerpts', () => {
     const literal = '&amp;#32; &lt;x&gt;';
     const list = parseYaohuoListHtml(

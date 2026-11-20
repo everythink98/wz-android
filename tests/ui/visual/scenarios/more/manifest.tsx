@@ -38,7 +38,7 @@ function UtilityOverviewScenario() {
     },
     backup: {
       recovery: false,
-      busy: false,
+      operation: 'idle',
       exportFile: noop,
       importFile: noop
     },
@@ -137,6 +137,7 @@ function UpdateAvailableScenario({ phase = 'idle' }: { phase?: 'idle' | 'restori
         runtime={{
           phase,
           artifact: null,
+          restoreFailed: false,
           progress: null,
           info: phase === 'idle' ? updateInfo : null,
           message: '发现新版 1.4.0',
@@ -164,6 +165,7 @@ function UpdateProgressScenario({
       <MoreUpdatePanel
         runtime={{
           phase,
+          restoreFailed: false,
           artifact:
             phase === 'installing'
               ? { kind: 'verified', update: updateInfo, bytes: downloadedBytes }
@@ -200,6 +202,7 @@ function UpdateRetainedScenario({
       <MoreUpdatePanel
         runtime={{
           phase: 'idle',
+          restoreFailed: false,
           info: newer
             ? { ...updateInfo, version: '1.4.1', versionName: '1.4.1', versionCode: 141, sha256: '2'.repeat(64) }
             : null,

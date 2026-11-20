@@ -93,10 +93,14 @@ export function nextYaohuoPage(root: ReturnType<typeof parseHtml>, page: number,
   if (next) {
     return Number(next);
   }
+  return yaohuoNextPageFromTotal(root, page, limit);
+}
+
+function yaohuoNextPageFromTotal(root: ReturnType<typeof parseHtml>, page: number, limit: number) {
   const total = parsePositiveInteger(
     root.querySelector('input[name="getTotal"], input#Action_getTotal')?.getAttribute('value')
   );
-  return total && total > page * limit && itemCount ? page + 1 : null;
+  return total && total > page * limit ? page + 1 : null;
 }
 
 function queryValue(url: URL, name: string) {
@@ -108,7 +112,7 @@ function queryValue(url: URL, name: string) {
   return '';
 }
 
-function isYaohuoUserTopicListUrl(url: URL, userId: string) {
+export function isYaohuoUserTopicListUrl(url: URL, userId: string) {
   return (
     /\/bbs\/book_list(?:_search)?\.aspx$/i.test(url.pathname) &&
     queryValue(url, 'action').toLowerCase() === 'search' &&
@@ -117,7 +121,7 @@ function isYaohuoUserTopicListUrl(url: URL, userId: string) {
   );
 }
 
-function isYaohuoUserReplyListUrl(url: URL, userId: string) {
+export function isYaohuoUserReplyListUrl(url: URL, userId: string) {
   return /\/bbs\/book_re_my\.aspx$/i.test(url.pathname) && queryValue(url, 'touserid') === userId;
 }
 
@@ -179,54 +183,58 @@ export function yaohuoUserProfileReplyListUrlFromRoot(
   }
 }
 
-export function yaohuoTopicListNextPageUrlFromRoot(
+export function yaohuoUserActivityPage(url: URL) {
+  const parameters = [...url.searchParams].filter(([name]) => name.toLowerCase() === 'page');
+  if (parameters.length !== 1) return undefined;
+  const [name, value] = parameters[0];
+  const page = /^\d+$/.test(value) ? Number(value) : 0;
+  return Number.isSafeInteger(page) && page > 0 ? { name, page } : undefined;
+}
+
+function yaohuoUserNextPageLink(
   root: ReturnType<typeof parseHtml>,
   currentUrl: string,
-  page: number,
+  matchesActivity: (url: URL) => boolean
+) {
+  const currentPage = yaohuoUserActivityPage(new URL(currentUrl))?.page ?? 1;
+  const href = nextYaohuoPageHref(root, (candidate) => {
+    const url = absoluteUrl(candidate, currentUrl);
+    if (!url || !isYaohuoRequestUrl(url)) return false;
+    const next = new URL(url);
+    return matchesActivity(next) && (yaohuoUserActivityPage(next)?.page ?? 0) > currentPage;
+  });
+  return href ? requireYaohuoRequestUrl(href, currentUrl) : '';
+}
+
+export function yaohuoUserTopicNextPageUrlFromRoot(
+  root: ReturnType<typeof parseHtml>,
+  currentUrl: string,
+  userId: string,
   itemCount: number,
   limit = 30
 ) {
   if (!itemCount) {
     return '';
   }
-  const href = nextYaohuoPageHref(root, (candidate) => /\/bbs\/book_list(?:_search)?\.aspx/i.test(candidate));
-  const linkedUrl = absoluteUrl(href, currentUrl);
-  if (linkedUrl) {
-    try {
-      return requireYaohuoRequestUrl(linkedUrl, currentUrl);
-    } catch {
-      return '';
-    }
-  }
-  const nextPage = nextYaohuoPage(root, page, itemCount, limit);
-  if (!nextPage) {
-    return '';
-  }
+  const linkedUrl = yaohuoUserNextPageLink(root, currentUrl, (url) => isYaohuoUserTopicListUrl(url, userId));
+  if (linkedUrl) return linkedUrl;
   try {
     const parsed = new URL(currentUrl);
-    parsed.searchParams.set('page', String(nextPage));
+    const current = yaohuoUserActivityPage(parsed);
+    const nextPage = yaohuoNextPageFromTotal(root, current?.page ?? 1, limit);
+    if (!nextPage) return '';
+    parsed.searchParams.set(current?.name ?? 'page', String(nextPage));
     return parsed.toString();
   } catch {
     return '';
   }
 }
 
-export function yaohuoReplyListNextPageUrlFromRoot(
+export function yaohuoUserReplyNextPageUrlFromRoot(
   root: ReturnType<typeof parseHtml>,
   currentUrl: string,
+  userId: string,
   itemCount: number
 ) {
-  if (!itemCount) {
-    return '';
-  }
-  const href = nextYaohuoPageHref(root, (candidate) => /\/bbs\/book_re_my\.aspx/i.test(candidate));
-  const linkedUrl = absoluteUrl(href, currentUrl);
-  if (!linkedUrl) {
-    return '';
-  }
-  try {
-    return requireYaohuoRequestUrl(linkedUrl, currentUrl);
-  } catch {
-    return '';
-  }
+  return itemCount ? yaohuoUserNextPageLink(root, currentUrl, (url) => isYaohuoUserReplyListUrl(url, userId)) : '';
 }

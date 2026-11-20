@@ -437,7 +437,7 @@ export const nodeSeekNotificationAdapter = {
     const field =
       group === 'at-me' ? 'atMe' : group === 'reply-to-me' ? 'replys' : group === 'message' ? 'messages' : '';
     if (!field) return { confirmed: false, message: '该消息类型暂不支持标记已读' };
-    await runNodeSeekAction({
+    const result = await runNodeSeekAction({
       request: {
         path: `/api/notification/${group}/markViewed`,
         method: 'POST',
@@ -449,7 +449,9 @@ export const nodeSeekNotificationAdapter = {
       timeoutMs: options.timeoutMs,
       userAgent: options.userAgent
     });
-    return { confirmed: true };
+    return isRecord(result) && result.success === true
+      ? { confirmed: true }
+      : { confirmed: false, message: 'NodeSeek 未确认消息已读，请刷新核对原站状态' };
   },
 
   async replyToConversation(

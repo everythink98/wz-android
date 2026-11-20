@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
 import path from 'node:path';
+import { installDeviceApk } from './device-apk-install.mjs';
 import { buildDeviceProof } from './device-proof-build.mjs';
 import { runAgentDevice } from './agent-device-runtime.mjs';
 import { createStagedProofFiles } from './staged-proof-files.mjs';
@@ -33,14 +34,16 @@ const { values } = parseArgs({
 });
 if (!values.serial || !values.output || (!values['resume-restore'] && Boolean(values.apk) === Boolean(values.build)))
   throw new Error('Use --serial --output and exactly one of --apk / --build');
-if (values.acceptance && !['boundaries', 'recovery', 'notification'].includes(values.acceptance))
+const coldRecovery = values.acceptance === 'cold-recovery';
+const recovery = coldRecovery || values.acceptance === 'recovery';
+if (values.acceptance && !['boundaries', 'recovery', 'cold-recovery', 'notification'].includes(values.acceptance))
   throw new Error('Unknown acceptance mode');
 if (
   values['exercise-failure'] &&
   (!values.acceptance || !['after-replay', 'app-stop', 'cancel-import'].includes(values['exercise-failure']))
 )
   throw new Error('Use --exercise-failure after-replay, app-stop or cancel-import with --acceptance');
-if (values['exercise-failure'] === 'cancel-import' && values.acceptance !== 'recovery')
+if (values['exercise-failure'] === 'cancel-import' && !recovery)
   throw new Error('cancel-import requires recovery acceptance');
 if (values['resume-restore'] && (values.apk || values.build || values.acceptance || values['exercise-failure']))
   throw new Error('Resume cannot install or run new acceptance');
@@ -48,10 +51,17 @@ const output = path.resolve(values.output);
 const relative = path.relative(path.join(root, '.codex-tmp'), output);
 if (relative.startsWith('..') || path.isAbsolute(relative) || existsSync(output))
   throw new Error('Use a new receipt file under .codex-tmp');
-const checkpointDevice = proofDeviceForSerial(values.serial);
+const sdk =
+  coldRecovery || values['resume-restore']
+    ? Number(
+        execFileSync('adb', ['-s', values.serial, 'shell', 'getprop', 'ro.build.version.sdk'], {
+          encoding: 'utf8'
+        }).trim()
+      )
+    : undefined;
+const checkpointDevice = proofDeviceForSerial(values.serial, sdk);
 const { adb, avd, package: pkg } = checkpointDevice;
-const identity = () => checkpointDevice.identity().firstInstallTime;
-const before = identity();
+const before = checkpointDevice.identity();
 const checkpointDirectory = path.join(root, '.codex-tmp', 'review-remediation-checkpoints', avd);
 if (values['resume-restore']) {
   const checkpoint = await resumeProofCheckpoint({ directory: checkpointDirectory, device: checkpointDevice });
@@ -68,10 +78,7 @@ if (values.build) {
   }).apk;
   console.log(`Proof APK: ${values.apk}`);
 }
-const install = () => {
-  adb('install', '-r', path.resolve(values.apk));
-  if (identity() !== before) throw new Error('Installation identity changed; device changes frozen');
-};
+const install = () => installDeviceApk({ adb, pkg, apk: path.resolve(values.apk), expected: before });
 let context;
 
 function writeSuccessfulProof(outcome) {
@@ -132,7 +139,7 @@ if (values.acceptance) {
       device: checkpointDevice,
       prepare: install,
       run: async () => {
-        context = { ...checkpointDevice.identity(), serial: values.serial };
+        context = { ...checkpointDevice.identity(), serial: values.serial, ...(sdk ? { api: sdk } : {}) };
         /** @type {{ kind: 'none' } | { kind: 'failed', error: unknown }} */
         let replayFailure = { kind: 'none' };
         try {
@@ -157,7 +164,7 @@ if (values.acceptance) {
           }
           if (mode !== 'boundaries') {
             const environment = [];
-            if (mode === 'recovery') {
+            if (recovery) {
               for (const kind of ['valid', 'invalid']) {
                 const name = `acc-${token.slice(0, 8)}-${kind}.json`;
                 const file = path.join(path.dirname(output), name);
@@ -169,7 +176,7 @@ if (values.acceptance) {
                 environment.push('-e', `${kind.toUpperCase()}_FILE=${name}`);
               }
             }
-            let replay = `dev/review-remediation-proof/${mode}.ad`;
+            let replay = `dev/review-remediation-proof/${recovery ? 'recovery' : mode}.ad`;
             if (values['exercise-failure'] === 'cancel-import') {
               const canceled = readFileSync(path.join(root, replay), 'utf8').replace(
                 'press text="${INVALID_FILE}"',
@@ -201,6 +208,18 @@ if (values.acceptance) {
           if (
             !result.isHermes ||
             result.isDev !== false ||
+            (recovery &&
+              !(
+                result.notificationIntentChecks >= 2 &&
+                result.stages?.includes('recovery-preserved') &&
+                result.stages.includes('invalid-import-preserved')
+              )) ||
+            (coldRecovery &&
+              !(
+                result.legacyReads >= 2 &&
+                result.restoredHistoryCount === 5002 &&
+                result.stages?.includes('cold-legacy-merged')
+              )) ||
             (mode === 'boundaries' && (result.results?.length !== 27 || !result.restored))
           )
             throw new Error('Incomplete acceptance evidence');
@@ -347,4 +366,6 @@ if (values.acceptance) {
     throw error;
   }
 }
-if (identity() !== before) throw new Error('Installation identity changed');
+const after = checkpointDevice.identity();
+if (after.uid !== before.uid || after.firstInstallTime !== before.firstInstallTime)
+  throw new Error('Installation identity changed');

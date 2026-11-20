@@ -1,13 +1,15 @@
 import { projectTestAccountSessions, testAccountUser } from '../../helpers/accountSessions';
 import { describe, expect, it, jest } from '@jest/globals';
-import { act, fireEvent, render as renderNative, waitFor } from '../render';
-import React, { useState } from 'react';
+import { act, fireEvent, render as renderNative, waitFor, within } from '../render';
+import React, { Suspense, useState } from 'react';
 import { AppState, DeviceEventEmitter, Keyboard, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { recordUserInteraction, userPresent } from '@/platform/network/userPresence';
 import { createEmptyReaderData, type ReaderSettings } from '@/domain/reader/readerData';
 import { DEFAULT_SEARCH_FILTERS, type SearchFilterState, type SourceSearchFilter } from '@/domain/forum/searchFilters';
 import type { SearchGroup } from '@/features/search/listItems';
 import { SearchScreen } from '@/features/search/SearchScreen';
+import { SearchFilterSheet, type SearchFilterPlacement } from '@/features/search/SearchFilterSheet';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import type { Category, FeedSource, Source, Topic } from '@/domain/forum/models';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
@@ -121,9 +123,12 @@ jest.mock('@shopify/flash-list', () => {
 });
 
 jest.mock('lucide-react-native', () => ({
+  Check: () => null,
   ChevronDown: () => null,
+  ChevronLeft: () => null,
   ChevronRight: () => null,
   ChevronUp: () => null,
+  ExternalLink: () => null,
   Eye: () => null,
   History: () => null,
   MessageCircle: () => null,
@@ -136,6 +141,7 @@ jest.mock('lucide-react-native', () => ({
     return null;
   },
   SlidersHorizontal: () => null,
+  Sparkles: () => null,
   X: () => null
 }));
 
@@ -177,7 +183,18 @@ const categories: Category[] = [
   { source: 'nodeseek', id: 'daily', name: '日常' },
   { source: 'yaohuo', id: '177', name: '妖火茶馆' }
 ];
-const publicCandidateReadPlanScopes = { tags: 'public:omit', users: 'public:omit' };
+type FilterInputs = Omit<React.ComponentProps<typeof SearchFilterSheet>, keyof SearchFilterPlacement>;
+const filterDefaults: FilterInputs = {
+  active: true,
+  categories,
+  sessionEpochs: initialForumSessionEpochs,
+  requestsEnabled: true,
+  readPlanScopes: { tags: 'public:omit', users: 'public:omit' },
+  searchFilters: DEFAULT_SEARCH_FILTERS,
+  onLoadV2exNodes: async () => [],
+  onSearchDiscourseTags: async () => [],
+  onSearchDiscourseUsers: async () => []
+};
 
 function contentSourceReaderData(enabledSources: readonly Source[]) {
   const data = createEmptyReaderData();
@@ -218,7 +235,6 @@ function createSearchRouteRuntime({
     },
     catalogCategories: categories,
     notify: jest.fn(),
-    readerData,
     topicStateIndex: createTopicListItemStateIndex(readerData)
   };
 }
@@ -352,14 +368,22 @@ function SearchHarness({ initialSource = 'v2ex' }: { initialSource?: FeedSource 
   return (
     <SearchScreen
       busy={false}
-      categories={categories}
-      sessionEpochs={initialForumSessionEpochs}
-      searchCandidateReadPlanScopes={publicCandidateReadPlanScopes}
-      requestsEnabled={true}
+      renderFilters={(placement) => (
+        <SearchFilterSheet
+          {...filterDefaults}
+          {...placement}
+          searchFilters={searchFilters}
+          onSearchDiscourseTags={async () => [
+            { name: '人工智能', topicCount: 12 },
+            { name: '快问快答', topicCount: 3 }
+          ]}
+          onSearchDiscourseUsers={async () => [{ id: '7', username: 'alice', displayName: '山月' }]}
+        />
+      )}
       query={query}
+      readScope={`${searchSource}:${submittedQuery}`}
       recentSearches={[]}
       topicStateIndex={topicStateIndex}
-      searchFilters={searchFilters}
       searchGroups={searchGroups}
       expectedSearchSources={aggregateSearchSources}
       linuxDoAiState={{ status: 'idle', enabled: false, count: 0 }}
@@ -380,11 +404,6 @@ function SearchHarness({ initialSource = 'v2ex' }: { initialSource?: FeedSource 
       onSearchFilterApply={(source: Source, filter: SourceSearchFilter) => {
         setSearchFilters((current) => ({ ...current, [source]: filter }) as SearchFilterState);
       }}
-      onSearchDiscourseTags={async () => [
-        { name: '人工智能', topicCount: 12 },
-        { name: '快问快答', topicCount: 3 }
-      ]}
-      onSearchDiscourseUsers={async () => [{ id: '7', username: 'alice', displayName: 'Alice' }]}
       onToggleLinuxDoAiSearch={jest.fn()}
       onSearchSourceChange={setSearchSource}
     />
@@ -403,14 +422,11 @@ function RecentSearchHarness({
   return (
     <SearchScreen
       busy={false}
-      categories={categories}
-      sessionEpochs={initialForumSessionEpochs}
-      searchCandidateReadPlanScopes={publicCandidateReadPlanScopes}
-      requestsEnabled={true}
+      renderFilters={() => null}
       query={query}
+      readScope="recent-searches"
       recentSearches={['codex', 'react native']}
       topicStateIndex={topicStateIndex}
-      searchFilters={DEFAULT_SEARCH_FILTERS}
       searchGroups={[]}
       expectedSearchSources={aggregateSearchSources}
       linuxDoAiState={{ status: 'idle', enabled: false, count: 0 }}
@@ -426,26 +442,22 @@ function RecentSearchHarness({
       onRetryLinuxDoAiSearch={jest.fn()}
       onSearch={onSearch}
       onSearchFilterApply={jest.fn()}
-      onSearchDiscourseTags={jest.fn(async () => [])}
-      onSearchDiscourseUsers={jest.fn(async () => [])}
       onToggleLinuxDoAiSearch={jest.fn()}
       onSearchSourceChange={jest.fn()}
     />
   );
 }
 
-function createSearchScreenProps(
-  overrides: Partial<React.ComponentProps<typeof SearchScreen>> & { onManageContentSources?: () => void } = {}
-) {
+type SearchFixtureProps = Partial<React.ComponentProps<typeof SearchScreen>> & { filter?: Partial<FilterInputs> };
+
+function createSearchScreenProps({ filter, ...overrides }: SearchFixtureProps = {}) {
   const props: React.ComponentProps<typeof SearchScreen> = {
     busy: false,
-    categories,
-    sessionEpochs: initialForumSessionEpochs,
-    requestsEnabled: true,
+    renderFilters: (placement) => <SearchFilterSheet {...filterDefaults} {...filter} {...placement} />,
     query: 'codex',
+    readScope: `${overrides.searchSource ?? 'all'}:${overrides.submittedQuery ?? 'codex'}`,
     recentSearches: [],
     topicStateIndex,
-    searchFilters: DEFAULT_SEARCH_FILTERS,
     searchGroups: [],
     expectedSearchSources: aggregateSearchSources,
     linuxDoAiState: { status: 'idle', enabled: false, count: 0 },
@@ -461,31 +473,84 @@ function createSearchScreenProps(
     onRetryLinuxDoAiSearch: jest.fn(),
     onSearch: jest.fn(),
     onSearchFilterApply: jest.fn(),
-    onSearchDiscourseTags: jest.fn(async () => []),
-    onSearchDiscourseUsers: jest.fn(async () => []),
     onToggleLinuxDoAiSearch: jest.fn(),
     onSearchSourceChange: jest.fn(),
-    ...overrides,
-    searchCandidateReadPlanScopes: overrides.searchCandidateReadPlanScopes ?? publicCandidateReadPlanScopes
+    ...overrides
   };
   return props;
 }
 
-function renderSearchScreen(
-  overrides: Partial<React.ComponentProps<typeof SearchScreen>> & { onManageContentSources?: () => void } = {}
-) {
+function renderSearchScreen(overrides: SearchFixtureProps = {}) {
   return render(<SearchScreen {...createSearchScreenProps(overrides)} />);
 }
 
 describe('Search state', () => {
+  it('restores failed history edits when Search returns from a frozen stack', async () => {
+    const storageKey = 'reader-search-history';
+    const previous = await AsyncStorage.getItem(storageKey);
+    await AsyncStorage.setItem(storageKey, JSON.stringify(['saved query']));
+    const pendingWrite = Promise.withResolvers<void>();
+    const write = jest.spyOn(AsyncStorage, 'setItem').mockImplementationOnce(() => pendingWrite.promise);
+    const enabledSources = ['v2ex'] as const;
+    const sessionViewModels = projectTestAccountSessions(createSiteSessionStates());
+    const runtime = createSearchRouteRuntime({
+      readerData: contentSourceReaderData(enabledSources),
+      sessionViewModels,
+      readGateway: {
+        getReadPlan: (source: Source, operation: ForumReadOperation) =>
+          routeReadPlan(source, operation, enabledSources, sessionViewModels)
+      } as ReadGateway
+    });
+    const frozen = new Promise<never>(() => {});
+    function FreezeSearch({ hidden }: { hidden: boolean }) {
+      // React Native Screens retains the mounted route behind a Suspense fallback.
+      if (hidden) throw frozen;
+      return <SearchRoute />;
+    }
+    const route = (hidden: boolean) => (
+      <SearchRouteRuntimeProvider value={runtime}>
+        <Suspense fallback={<Text>覆盖搜索的页面</Text>}>
+          <FreezeSearch hidden={hidden} />
+        </Suspense>
+      </SearchRouteRuntimeProvider>
+    );
+    const searchLabel = '搜索最近记录 saved query';
+    const view = await render(route(false));
+    try {
+      await fireEvent.press(await view.findByLabelText('删除最近搜索 saved query'));
+      await waitFor(() => expect(write).toHaveBeenCalledWith(storageKey, '[]'));
+      expect(view.queryByLabelText(searchLabel)).toBeNull();
+      mockSearchFocused = false;
+      await view.rerender(route(false));
+      await view.rerender(route(true));
+      expect(view.getByText('覆盖搜索的页面')).toBeTruthy();
+      await act(async () => pendingWrite.reject(new Error('temporary local write failure')));
+      expect(runtime.notify).not.toHaveBeenCalled();
+
+      mockSearchFocused = true;
+      await view.rerender(route(false));
+      expect(view.getByLabelText(searchLabel)).toBeTruthy();
+      expect(runtime.notify).toHaveBeenCalledTimes(1);
+      expect(runtime.notify).toHaveBeenCalledWith(expect.stringContaining('最近搜索保存失败'));
+      expect(write).toHaveBeenCalledTimes(1);
+    } finally {
+      mockSearchFocused = true;
+      pendingWrite.resolve();
+      write.mockRestore();
+      await view.unmount();
+      if (previous === null) await AsyncStorage.removeItem(storageKey);
+      else await AsyncStorage.setItem(storageKey, previous);
+    }
+  });
+
   it('keeps unchanged search controls committed across focus-only changes', async () => {
     const props = createSearchScreenProps({ query: '', submittedQuery: '', recentSearches: ['Android', 'codex'] });
     const view = await render(<SearchScreen {...props} active />);
     const initialInputCommits = mockSearchInputCommit.mock.calls.length;
 
     for (let cycle = 0; cycle < 5; cycle += 1) {
-      await view.rerender(<SearchScreen {...props} active={false} requestsEnabled={false} />);
-      await view.rerender(<SearchScreen {...props} active requestsEnabled />);
+      await view.rerender(<SearchScreen {...props} active={false} />);
+      await view.rerender(<SearchScreen {...props} active />);
     }
 
     expect(mockSearchInputCommit.mock.calls.length - initialInputCommits).toBe(0);
@@ -551,20 +616,20 @@ describe('Search state', () => {
       await fireEvent.press(view.getByLabelText('提交搜索'));
       await waitFor(() => expect(searchSemanticTopics).toHaveBeenCalledTimes(1));
       await waitFor(() => expect(view.getByText('linux.do 主题')).toBeTruthy());
-      expect(view.getByText('AI 结果加载中')).toBeTruthy();
+      expect(view.getByText('加载中')).toBeTruthy();
       expect(indicators().some((indicator) => indicator.props.accessibilityState.busy)).toBe(true);
 
       mockSearchFocused = false;
       await view.rerender(route());
       await waitFor(() => expect(searchSemanticTopics.mock.calls[0]?.[0].signal?.aborted).toBe(true));
-      expect(view.getByText('AI 结果加载中')).toBeTruthy();
+      expect(view.getByText('加载中')).toBeTruthy();
       expect(view.getByText('linux.do 主题')).toBeTruthy();
       expect(indicators().every((indicator) => !indicator.props.accessibilityState.busy)).toBe(true);
 
       mockSearchFocused = true;
       await view.rerender(route());
       await waitFor(() => expect(indicators().some((indicator) => indicator.props.accessibilityState.busy)).toBe(true));
-      expect(view.getByText('AI 结果加载中')).toBeTruthy();
+      expect(view.getByText('加载中')).toBeTruthy();
     } finally {
       mockSearchFocused = true;
       await act(async () => appQueryClient.cancelQueries());
@@ -687,6 +752,114 @@ describe('Search state', () => {
         await appQueryClient.cancelQueries();
       });
       await view.unmount();
+    }
+  });
+
+  it('keeps pagination feedback with the search account that actually loaded the page', async () => {
+    const enabledSources = ['nodeseek'] as const;
+    const first: Topic = { ...firstTopic, source: 'nodeseek', title: '旧账号第一页' };
+    const second: Topic = { ...secondTopic, source: 'nodeseek', title: '旧账号第二页' };
+    const replacementFirst: Topic = { ...first, id: 'replacement-1', title: '新账号第一页' };
+    const replacementSecond: Topic = { ...second, id: 'replacement-2', title: '新账号第二页' };
+    const searchTopicsA = jest
+      .fn<ReadGateway['searchTopics']>()
+      .mockResolvedValueOnce({ items: [first], errors: {}, hasMore: true, nextPage: 2 })
+      .mockResolvedValue({ items: [second], errors: {}, hasMore: false, nextPage: null });
+    const searchTopicsB = jest
+      .fn<ReadGateway['searchTopics']>()
+      .mockResolvedValueOnce({ items: [replacementFirst], errors: {}, hasMore: true, nextPage: 2 })
+      .mockResolvedValue({ items: [replacementSecond], errors: {}, hasMore: false, nextPage: null });
+    const routeRuntime = (id: string, epoch: number, searchTopics: ReadGateway['searchTopics']) => {
+      const sessionViewModels = projectTestAccountSessions(
+        createSiteSessionStates({
+          nodeseek: {
+            site: 'nodeseek',
+            status: 'logged-in',
+            cookieSummary: ['session-present'],
+            isVerifying: false,
+            currentUser: { ...testAccountUser('nodeseek'), id }
+          }
+        })
+      );
+      const readGateway = {
+        getReadPlan: (source: Source, operation: ForumReadOperation) =>
+          resolveForumReadPlan(
+            source,
+            operation,
+            source === 'nodeseek',
+            source === 'nodeseek'
+              ? {
+                  source,
+                  authenticated: true,
+                  authSurfaceOpen: false,
+                  identityTrust: 'confirmed',
+                  identityKey: `nodeseek:${id}`,
+                  sessionEpoch: epoch,
+                  sourceEnabled: true
+                }
+              : undefined
+          ),
+        searchTopics,
+        searchTagOptions: jest.fn(async () => []),
+        searchUserOptions: jest.fn(async () => [])
+      } as unknown as ReadGateway;
+      const runtime = createSearchRouteRuntime({
+        readGateway,
+        readerData: contentSourceReaderData(enabledSources),
+        sessionViewModels
+      });
+      runtime.account.sessionEpochs = { ...runtime.account.sessionEpochs, nodeseek: epoch };
+      return runtime;
+    };
+    const tree = (runtime: SearchRouteRuntimeValue) => (
+      <SearchRouteRuntimeProvider value={runtime}>
+        <SearchRoute />
+      </SearchRouteRuntimeProvider>
+    );
+    const accountA = routeRuntime('123', 0, searchTopicsA);
+    const accountB = routeRuntime('456', 1, searchTopicsB);
+    const view = await render(tree(accountA));
+    const pageStatus = 'search-page-loaded-nodeseek-page-2';
+    const loadMore = async (topic: Topic) => {
+      const group: SearchGroup = { source: 'nodeseek', label: 'NodeSeek', items: [topic], hasMore: true, nextPage: 2 };
+      const sentinel = visibleLoadMore(group, 2, 1);
+      await fireEvent(view.getByTestId('search-complete'), 'scrollBeginDrag');
+      await fireEvent(view.getByTestId('search-complete'), 'viewableItemsChanged', {
+        viewableItems: [sentinel],
+        changed: [sentinel]
+      });
+    };
+    try {
+      await fireEvent.press(view.getByTestId('search-source-nodeseek'));
+      await fireEvent.changeText(view.getByLabelText('搜索关键词'), 'same');
+      await fireEvent.press(view.getByLabelText('提交搜索'));
+      await waitFor(() => expect(view.getByTestId('search-load-more-nodeseek-page-2')).toBeTruthy());
+      await loadMore(first);
+      await waitFor(() => expect(view.getByTestId(pageStatus)).toBeTruthy());
+      expect(view.getByText('已载入 2 条')).toBeTruthy();
+      expect(searchTopicsA.mock.calls.map(([request]) => request.page)).toEqual([1, 2]);
+
+      await view.rerender(tree(accountA));
+      expect(view.getByTestId(pageStatus)).toBeTruthy();
+      mockSearchFocused = false;
+      await view.rerender(tree(accountB));
+      mockSearchFocused = true;
+      await view.rerender(tree(accountB));
+      await waitFor(() => expect(view.getByText(replacementFirst.title)).toBeTruthy());
+      expect(view.queryByText(second.title)).toBeNull();
+      expect(view.getByTestId('search-load-more-nodeseek-page-2')).toBeTruthy();
+      expect(searchTopicsB.mock.calls.map(([request]) => request.page)).toEqual([1]);
+      expect(view.queryByTestId(pageStatus)).toBeNull();
+
+      await loadMore(replacementFirst);
+      await waitFor(() => expect(view.getByText(replacementSecond.title)).toBeTruthy());
+      expect(view.getByTestId(pageStatus)).toBeTruthy();
+      expect(view.getByText('已载入 2 条')).toBeTruthy();
+      expect(searchTopicsB.mock.calls.map(([request]) => request.page)).toEqual([1, 2]);
+    } finally {
+      mockSearchFocused = true;
+      await view.unmount();
+      appQueryClient.clear();
     }
   });
 
@@ -819,7 +992,9 @@ describe('Search state', () => {
       };
       try {
         await drag();
-        await view.rerender(<SearchScreen {...props} query="new query" submittedQuery="new query" />);
+        await view.rerender(
+          <SearchScreen {...props} query="new query" readScope="new-query" submittedQuery="new query" />
+        );
         await drag();
         expect(onLoadMoreSearchSource).toHaveBeenCalledTimes(2);
         await act(async () => oldRequest.resolve('stale'));
@@ -867,6 +1042,21 @@ describe('Search state', () => {
       AppState.currentState = previous;
     }
   });
+
+  it('keeps search actions within one input surface and submits through the visible button or keyboard', async () => {
+    const onSearch = jest.fn<(queryOverride?: string) => void>();
+    const view = await renderSearchScreen({ onSearch });
+    const bar = within(view.getByTestId('search-query-container'));
+
+    expect(bar.getByRole('button', { name: '清空搜索关键词' })).toBeTruthy();
+    const submit = bar.getByRole('button', { name: '提交搜索' });
+    await fireEvent.press(bar.getByRole('button', { name: '聚焦搜索关键词' }));
+    expect(onSearch).not.toHaveBeenCalled();
+    await fireEvent(bar.getByLabelText('搜索关键词'), 'submitEditing');
+    await fireEvent.press(submit);
+    expect(onSearch.mock.calls).toEqual([[], []]);
+  });
+
   it('invalidates the mounted result list when reader appearance changes', async () => {
     const darkSettings: ReaderSettings = { ...createEmptyReaderData().settings, theme: 'dark' };
     const lightSettings: ReaderSettings = { ...darkSettings, theme: 'light' };
@@ -899,7 +1089,7 @@ describe('Search state', () => {
     });
 
     expect(view.queryByText(pausedMessage)).toBeNull();
-    expect(view.getByText('输入关键词后开始搜索')).toBeTruthy();
+    expect(view.queryByTestId('search-complete')).toBeNull();
   });
 
   it('keeps settled results and the search input stable across equivalent runtime updates', async () => {
@@ -1224,6 +1414,49 @@ describe('Search state', () => {
     expect(onRetrySearchSource).toHaveBeenCalledWith('linuxdo');
   });
 
+  it('keeps cached aggregate results visible through their source refresh and failure', async () => {
+    const enabledSources = ['v2ex'] as const;
+    const sessionViewModels = projectTestAccountSessions(createSiteSessionStates());
+    const pending = Promise.withResolvers<Awaited<ReturnType<ReadGateway['searchTopics']>>>();
+    const searchTopics = jest
+      .fn<ReadGateway['searchTopics']>()
+      .mockResolvedValueOnce({ items: [firstTopic], errors: {}, hasMore: true, nextPage: 2 })
+      .mockImplementationOnce(() => pending.promise)
+      .mockResolvedValueOnce({ items: [secondTopic], errors: {}, hasMore: false, nextPage: null });
+    const readGateway = {
+      getReadPlan: (source: Source, operation: ForumReadOperation) =>
+        routeReadPlan(source, operation, enabledSources, sessionViewModels),
+      searchTopics
+    } as unknown as ReadGateway;
+    const runtime = createSearchRouteRuntime({
+      readGateway,
+      readerData: contentSourceReaderData(enabledSources),
+      sessionViewModels
+    });
+    const view = await render(
+      <SearchRouteRuntimeProvider value={runtime}>
+        <SearchRoute />
+      </SearchRouteRuntimeProvider>
+    );
+    await fireEvent.changeText(view.getByLabelText('搜索关键词'), 'cached refresh');
+    await fireEvent.press(view.getByLabelText('提交搜索'));
+    const result = await view.findByText(firstTopic.title);
+
+    await act(async () => {
+      void appQueryClient.invalidateQueries({ queryKey: ['forum', 'v2ex', 'search'] });
+    });
+    await view.findByText('1 条 · 刷新中');
+    expect(view.getByText(firstTopic.title)).toBe(result);
+    expect(view.queryByText('V2EX 搜索中')).toBeNull();
+
+    await act(async () => pending.reject(new Error('刷新失败，请重试')));
+    const retry = await view.findByRole('button', { name: '重试 V2EX' });
+    expect(view.getByText(firstTopic.title)).toBe(result);
+    await fireEvent.press(retry);
+    expect(await view.findByText(secondTopic.title)).toBeTruthy();
+    expect(searchTopics.mock.calls.map(([request]) => request.page)).toEqual([1, 1, 1]);
+  });
+
   it('keeps loading and pending sources out of terminal search states', async () => {
     const view = await renderSearchScreen({
       searchGroups: [
@@ -1243,7 +1476,7 @@ describe('Search state', () => {
 
     expect(view.getAllByText('第一页主题')).toHaveLength(2);
     expect(view.getByText('第 2 页请求失败')).toBeTruthy();
-    expect(view.getByText('NodeSeek 搜索中...')).toBeTruthy();
+    expect(view.getByText('NodeSeek 搜索中')).toBeTruthy();
     expect(view.getByText('等待账号状态')).toBeTruthy();
     expect(view.queryByText('NodeSeek 没有匹配结果')).toBeNull();
     expect(view.queryByText('妖火 没有匹配结果')).toBeNull();
@@ -1254,12 +1487,12 @@ describe('Search state', () => {
       <SearchScreen
         {...createSearchScreenProps({
           busy: true,
-          searchGroups: [{ source: 'v2ex', label: 'V2EX', items: [firstTopic], loading: true }]
+          searchGroups: [{ source: 'v2ex', label: 'V2EX', items: [], loading: true }]
         })}
       />
     );
 
-    expect(view.getByText('V2EX 搜索中...')).toBeTruthy();
+    expect(view.getByText('V2EX 搜索中')).toBeTruthy();
     expect(view.queryByText('第一页主题')).toBeNull();
 
     await view.rerender(
@@ -1347,7 +1580,6 @@ describe('Search state', () => {
     expect(view.getByLabelText('搜索结果，已完成，有可打开入口')).toBeTruthy();
     expect(view.queryByLabelText(/打开搜索筛选/)).toBeNull();
     expect(view.queryByText('linux.do 没有匹配结果')).toBeNull();
-    expect(view.getByText('打开主题后，可从浏览器菜单选择“在阅坛中打开当前主题”')).toBeTruthy();
     expect(view.getByText('再次去 Google 搜索')).toBeTruthy();
 
     await fireEvent.press(view.getByTestId('search-external-linuxdo'));
@@ -1415,7 +1647,6 @@ describe('Search state', () => {
     });
 
     expect(view.queryByText('第一页主题')).toBeNull();
-    expect(view.getByText('按键盘上的搜索键开始')).toBeTruthy();
     expect(view.queryByTestId('search-complete')).toBeNull();
   });
 
@@ -1446,7 +1677,7 @@ describe('Search state', () => {
     const onSearch = jest.fn<(queryOverride?: string) => void>();
     const view = await renderSearchScreen({ busy: true, onSearch });
 
-    expect(view.getByText('正在搜索...')).toBeTruthy();
+    expect(view.getByText('搜索中')).toBeTruthy();
     expect(view.getByTestId('search-list').props.accessibilityLiveRegion).toBe('polite');
     expect(view.getByTestId('search-list').props.accessibilityState.busy).toBe(true);
     expect(view.getByLabelText('提交搜索').props.accessibilityState.disabled).toBe(true);
@@ -1633,6 +1864,14 @@ describe('Search state', () => {
     );
     expect(view.getByTestId('search-page-loaded-v2ex-page-2')).toBeTruthy();
 
+    mockSearchScrollToOffset.mockClear();
+    await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
+    await fireEvent.press(view.getByText('确认筛选'));
+    expect(view.queryByText('确认筛选')).toBeNull();
+    expect(onSearchFilterApply).not.toHaveBeenCalled();
+    expect(mockSearchScrollToOffset).not.toHaveBeenCalled();
+    expect(view.getByTestId('search-page-loaded-v2ex-page-2')).toBeTruthy();
+
     await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
     await fireEvent.press(view.getByText('相关'));
     await fireEvent.press(view.getByText('确认筛选'));
@@ -1643,7 +1882,7 @@ describe('Search state', () => {
 
   it.each([
     ['query', { query: 'changed' }],
-    ['source', { searchSource: 'all' as const }]
+    ['source', { searchSource: 'all' as const, readScope: 'all:codex' }]
   ])('clears an armed sentinel when %s changes', async (_label, changedProps) => {
     const onLoadMoreSearchSource = jest.fn<(source: Source, page: number) => void>();
     const group: SearchGroup = {
@@ -1837,6 +2076,45 @@ describe('Search state', () => {
     expect(view.queryByTestId('search-load-more-v2ex-page-2')).toBeNull();
   });
 
+  it('keeps the author cache unobserved until the filter is opened with a default author', async () => {
+    const key = forumQueryKeys.searchAuthorLabels(
+      initialForumSessionEpochs.linuxdo,
+      filterDefaults.readPlanScopes.users
+    );
+    const observers = () =>
+      appQueryClient.getQueryCache().find({ queryKey: key, exact: true })?.getObserversCount() ?? 0;
+    const view = await renderSearchScreen({ searchSource: 'linuxdo' });
+    expect(observers()).toBe(0);
+    await fireEvent.press(view.getByTestId('search-filter-trigger'));
+    expect(observers()).toBe(1);
+    await fireEvent.press(view.getByTestId('search-filter-close'));
+    expect(observers()).toBe(0);
+  });
+
+  it('distinguishes linux.do authors with the same display name and submits the chosen username', async () => {
+    const onSearchFilterApply = jest.fn();
+    const view = await renderSearchScreen({
+      searchSource: 'linuxdo',
+      onSearchFilterApply,
+      filter: {
+        onSearchDiscourseUsers: async () => [
+          { id: '21', username: 'reader_one', displayName: '同名读者' },
+          { id: '22', username: 'reader_two', displayName: '同名读者' }
+        ]
+      }
+    });
+    await fireEvent.press(view.getByTestId('search-filter-trigger'));
+    await fireEvent.press(view.getByLabelText('展开更多筛选'));
+    await fireEvent.press(view.getByLabelText('选择作者'));
+    await fireEvent.changeText(view.getByLabelText('搜索作者'), 'reader');
+    const candidate = await view.findByTestId('search-filter-author-option-22');
+    expect(within(candidate).getByText('@reader_two')).toBeTruthy();
+    await fireEvent.press(candidate);
+    expect(view.getByLabelText('选择作者').props.accessibilityValue.text).toBe('同名读者');
+    await fireEvent.press(view.getByText('确认筛选'));
+    expect(onSearchFilterApply).toHaveBeenCalledWith('linuxdo', expect.objectContaining({ username: 'reader_two' }));
+  });
+
   it('applies linux.do, NodeSeek and Yaohuo filters without leaking state between sites', async () => {
     const view = await render(<SearchHarness initialSource="linuxdo" />);
 
@@ -1847,19 +2125,21 @@ describe('Search state', () => {
     await fireEvent.press(view.getByLabelText('选择标签'));
     await waitFor(() => expect(view.getByLabelText('标签 人工智能')).toBeTruthy());
     await fireEvent.press(view.getByLabelText('标签 人工智能'));
-    await fireEvent.press(view.getByText('完成'));
+    await fireEvent.press(view.getByLabelText('返回筛选'));
     await fireEvent.press(view.getByLabelText('展开更多筛选'));
     await fireEvent.press(view.getByLabelText('选择作者'));
     await fireEvent.changeText(view.getByLabelText('搜索作者'), 'alice');
-    await waitFor(() => expect(view.getByLabelText('用户 alice')).toBeTruthy());
-    await fireEvent.press(view.getByLabelText('用户 alice'));
+    await waitFor(() => expect(view.getByLabelText('用户 山月')).toBeTruthy());
+    await fireEvent.press(view.getByLabelText('用户 山月'));
+    await fireEvent.press(view.getByLabelText('选择时间范围'));
     await fireEvent.press(view.getByText('7天'));
     await fireEvent.press(view.getByText('确认筛选'));
-    expect(view.getByLabelText('打开搜索筛选，当前标题 · 开发调优 · 人工智能 · alice · 7天')).toBeTruthy();
+    expect(view.getByLabelText('打开搜索筛选，当前标题 · 开发调优 · 人工智能 · 山月 · 7天')).toBeTruthy();
 
     await fireEvent.press(view.getByTestId('search-source-nodeseek'));
     expect(view.getByLabelText('打开搜索筛选，当前默认')).toBeTruthy();
     await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
+    await fireEvent.press(view.getByLabelText('选择分类'));
     await fireEvent.press(view.getByText('日常'));
     await fireEvent.press(view.getByText('新评论'));
     await fireEvent.press(view.getByText('确认筛选'));
@@ -1867,12 +2147,120 @@ describe('Search state', () => {
 
     await fireEvent.press(view.getByTestId('search-source-yaohuo'));
     await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
+    await fireEvent.press(view.getByLabelText('选择版块'));
     await fireEvent.press(view.getByText('妖火茶馆'));
     await fireEvent.press(view.getByText('确认筛选'));
     expect(view.getByLabelText('打开搜索筛选，当前妖火茶馆')).toBeTruthy();
 
     await fireEvent.press(view.getByTestId('search-source-linuxdo'));
-    expect(view.getByLabelText('打开搜索筛选，当前标题 · 开发调优 · 人工智能 · alice · 7天')).toBeTruthy();
+    expect(view.getByLabelText('打开搜索筛选，当前标题 · 开发调优 · 人工智能 · 山月 · 7天')).toBeTruthy();
+  });
+
+  it('returns from a filter picker with draft values and applies only on confirmation', async () => {
+    const onSearchFilterApply = jest.fn<(source: Source, filter: SourceSearchFilter) => void>();
+    const view = await renderSearchScreen({
+      searchSource: 'linuxdo',
+      onSearchFilterApply,
+      filter: { onSearchDiscourseTags: async () => [{ name: '人工智能' }] }
+    });
+
+    await fireEvent.press(view.getByTestId('search-filter-trigger'));
+    await fireEvent.press(view.getByText('标题'));
+    await fireEvent.press(view.getByLabelText('选择标签'));
+    expect(view.getAllByTestId('modal-sheet')).toHaveLength(1);
+    expect(view.queryByText('搜索范围')).toBeNull();
+    expect(view.getByText('确认筛选')).toBeTruthy();
+    expect(view.getByText('重置')).toBeTruthy();
+    await waitFor(() => expect(view.getByLabelText('标签 人工智能')).toBeTruthy());
+    await fireEvent.press(view.getByLabelText('标签 人工智能'));
+    await fireEvent.press(view.getByLabelText('返回筛选'));
+
+    expect(view.getByLabelText('选择标签').props.accessibilityValue.text).toBe('人工智能');
+    expect(onSearchFilterApply).not.toHaveBeenCalled();
+    await fireEvent.press(view.getByText('确认筛选'));
+    expect(onSearchFilterApply).toHaveBeenCalledWith(
+      'linuxdo',
+      expect.objectContaining({ scope: 'title', tags: ['人工智能'] })
+    );
+  });
+
+  it('picks V2EX nodes without typing and preserves the applied choice when a change is dismissed', async () => {
+    const view = await render(<SearchHarness />);
+    await fireEvent.press(view.getByTestId('search-filter-trigger'));
+    await fireEvent.press(view.getByLabelText('选择节点'));
+    expect(view.getByLabelText('搜索节点').props.autoFocus).toBeFalsy();
+    await fireEvent.press(view.getByRole('radio', { name: '节点 问与答' }));
+    await fireEvent.press(view.getByText('确认筛选'));
+    await fireEvent.press(view.getByLabelText('打开搜索筛选，当前问与答'));
+    await fireEvent.press(view.getByLabelText('选择节点'));
+    expect(view.getByRole('radio', { name: '节点 问与答', checked: true })).toBeTruthy();
+    await fireEvent.press(view.getByRole('radio', { name: '节点 全部节点' }));
+    await fireEvent.press(view.getByTestId('search-filter-close'));
+    await fireEvent.press(view.getByLabelText('打开搜索筛选，当前问与答'));
+    await fireEvent.press(view.getByLabelText('清除节点'));
+    await fireEvent.press(view.getByText('确认筛选'));
+    expect(view.getByLabelText('打开搜索筛选，当前默认')).toBeTruthy();
+  });
+
+  it('cancels an unfinished V2EX directory read on leaving the node picker and starts a new read on return', async () => {
+    appQueryClient.removeQueries({ queryKey: forumQueryKeys.v2exNodeDirectory });
+    const stale = Promise.withResolvers<Category[]>();
+    const onLoadV2exNodes = jest
+      .fn<FilterInputs['onLoadV2exNodes']>()
+      .mockImplementationOnce(() => stale.promise)
+      .mockResolvedValue([{ source: 'v2ex', id: 'fresh', name: '本次节点' }]);
+    const view = await renderSearchScreen({ searchSource: 'v2ex', filter: { onLoadV2exNodes } });
+    try {
+      await fireEvent.press(view.getByTestId('search-filter-trigger'));
+      await fireEvent.press(view.getByLabelText('选择节点'));
+      await waitFor(() => expect(onLoadV2exNodes).toHaveBeenCalledTimes(1));
+      const [firstSignal] = onLoadV2exNodes.mock.calls[0];
+      await fireEvent.press(view.getByLabelText('返回筛选'));
+      expect(firstSignal.aborted).toBe(true);
+      await fireEvent.press(view.getByLabelText('选择节点'));
+      await view.findByRole('radio', { name: '节点 本次节点' });
+      await act(async () => stale.resolve([{ source: 'v2ex', id: 'old', name: '旧节点' }]));
+      expect(view.queryByRole('radio', { name: '节点 旧节点' })).toBeNull();
+      expect(onLoadV2exNodes).toHaveBeenCalledTimes(2);
+    } finally {
+      await act(async () => stale.resolve([]));
+    }
+  });
+
+  it('loads the V2EX directory on demand, recovers from failure and applies the slug of a matching node', async () => {
+    appQueryClient.removeQueries({ queryKey: forumQueryKeys.v2exNodeDirectory });
+    const onLoadV2exNodes = jest
+      .fn<FilterInputs['onLoadV2exNodes']>()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue([{ source: 'v2ex', id: 'rare_slug', name: '冷门节点' }]);
+    const onSearchFilterApply = jest.fn();
+    const view = await renderSearchScreen({
+      searchSource: 'v2ex',
+      onSearchFilterApply,
+      filter: {
+        searchFilters: { ...DEFAULT_SEARCH_FILTERS, v2ex: { ...DEFAULT_SEARCH_FILTERS.v2ex, node: 'older-node' } },
+        onLoadV2exNodes
+      }
+    });
+    await fireEvent.press(view.getByTestId('search-filter-trigger'));
+    expect(onLoadV2exNodes).not.toHaveBeenCalled();
+    await fireEvent.press(view.getByLabelText('选择节点'));
+    expect(view.getByRole('radio', { name: '节点 问与答' })).toBeTruthy();
+    expect(view.getByRole('radio', { name: '节点 older-node', checked: true })).toBeTruthy();
+    await fireEvent.press(await view.findByLabelText('节点目录加载失败，重试'));
+    await fireEvent.changeText(view.getByLabelText('搜索节点'), '冷门');
+    await view.findByRole('radio', { name: '节点 冷门节点' });
+    await fireEvent.changeText(view.getByLabelText('搜索节点'), 'does-not-exist');
+    expect(view.getByText('没有匹配节点')).toBeTruthy();
+    await fireEvent.changeText(view.getByLabelText('搜索节点'), 'RARE_SLUG');
+    await fireEvent.press(view.getByRole('radio', { name: '节点 冷门节点' }));
+    expect(view.getByLabelText('选择节点').props.accessibilityValue.text).toBe('冷门节点');
+    await fireEvent.press(view.getByLabelText('选择节点'));
+    expect(view.getByRole('radio', { name: '节点 冷门节点', checked: true })).toBeTruthy();
+    expect(view.getByLabelText('搜索节点').props.value).toBe('');
+    expect(onLoadV2exNodes).toHaveBeenCalledTimes(2);
+    await fireEvent.press(view.getByText('确认筛选'));
+    expect(onSearchFilterApply).toHaveBeenCalledWith('v2ex', expect.objectContaining({ node: 'rare_slug' }));
   });
 
   it('accepts linux.do tags only from the candidate picker', async () => {
@@ -1884,7 +2272,7 @@ describe('Search state', () => {
     await fireEvent.changeText(view.getByLabelText('搜索标签'), '任意手打');
     await waitFor(() => expect(view.getByLabelText('标签 人工智能')).toBeTruthy());
     await fireEvent.press(view.getByLabelText('标签 人工智能'));
-    await fireEvent.press(view.getByText('完成'));
+    await fireEvent.press(view.getByLabelText('返回筛选'));
     await fireEvent.press(view.getByText('确认筛选'));
 
     expect(view.getByLabelText('打开搜索筛选，当前人工智能')).toBeTruthy();
@@ -1897,7 +2285,7 @@ describe('Search state', () => {
     const onSearchDiscourseTags = jest.fn(({ query: term }: { query: string }) =>
       term === 'old' ? oldResponse.promise : freshResponse.promise
     );
-    const view = await renderSearchScreen({ searchSource: 'linuxdo', onSearchDiscourseTags });
+    const view = await renderSearchScreen({ searchSource: 'linuxdo', filter: { onSearchDiscourseTags } });
 
     await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
     await fireEvent.press(view.getByLabelText('选择标签'));
@@ -1928,10 +2316,10 @@ describe('Search state', () => {
       const oldResponse = Promise.withResolvers<{ name: string }[]>();
       const freshResponse = Promise.withResolvers<{ name: string }[]>();
       const onSearchDiscourseTags = jest
-        .fn<React.ComponentProps<typeof SearchScreen>['onSearchDiscourseTags']>()
+        .fn<FilterInputs['onSearchDiscourseTags']>()
         .mockImplementationOnce(() => oldResponse.promise)
         .mockImplementation(() => freshResponse.promise);
-      const view = await renderSearchScreen({ searchSource: 'linuxdo', onSearchDiscourseTags });
+      const view = await renderSearchScreen({ searchSource: 'linuxdo', filter: { onSearchDiscourseTags } });
       try {
         await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
         await fireEvent.press(view.getByLabelText('选择标签'));
@@ -1940,7 +2328,7 @@ describe('Search state', () => {
         const oldSignal = onSearchDiscourseTags.mock.calls[0][0].signal;
         expect(oldSignal?.aborted).toBe(false);
 
-        await fireEvent.press(view.getAllByLabelText('关闭标签选择')[1]);
+        await fireEvent.press(view.getByLabelText('返回筛选'));
         expect(oldSignal?.aborted).toBe(true);
         expect(view.queryByLabelText('搜索标签')).toBeNull();
         await fireEvent.press(view.getByLabelText('选择标签'));
@@ -1980,7 +2368,7 @@ describe('Search state', () => {
       })
       .catch(() => undefined);
     try {
-      await renderSearchScreen({ searchSource: 'linuxdo', requestsEnabled: false });
+      await renderSearchScreen({ searchSource: 'linuxdo', filter: { requestsEnabled: false } });
       expect(otherSignal?.aborted).toBe(false);
     } finally {
       await act(async () => {
@@ -1996,7 +2384,9 @@ describe('Search state', () => {
       const view = await render(<SearchHarness initialSource="linuxdo" />);
       await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
       await fireEvent.press(view.getByLabelText('展开更多筛选'));
-      await fireEvent.changeText(view.getByLabelText('帖子数最小值'), '3');
+      await fireEvent.press(view.getByLabelText('设置帖子数范围'));
+      await fireEvent.changeText(view.getByTestId('search-filter-input-minPosts'), '3');
+      await fireEvent.press(view.getByLabelText('返回筛选'));
       await fireEvent.press(view.getByLabelText('选择作者'));
       await act(() =>
         DeviceEventEmitter.emit('keyboardDidShow', {
@@ -2005,26 +2395,28 @@ describe('Search state', () => {
           endCoordinates: { height: 300, width: 400, screenX: 0, screenY: 500 }
         })
       );
-      await fireEvent.changeText(view.getByLabelText('搜索作者'), 'ali');
-      await waitFor(() => expect(view.getByLabelText('用户 alice')).toBeTruthy());
+      await fireEvent.changeText(view.getByTestId('search-filter-input-author'), 'ali');
+      await waitFor(() => expect(view.getByLabelText('用户 山月')).toBeTruthy());
       await act(() => DeviceEventEmitter.emit('keyboardDidHide', {}));
       expect(view.getByLabelText('搜索作者').props.value).toBe('ali');
-      expect(view.getByLabelText('用户 alice')).toBeTruthy();
-      await fireEvent.press(view.getByLabelText('用户 alice'));
-      expect(view.getByLabelText('帖子数最小值').props.value).toBe('3');
-      expect(view.getByText('alice')).toBeTruthy();
+      expect(view.getByLabelText('用户 山月')).toBeTruthy();
+      await fireEvent.press(view.getByLabelText('用户 山月'));
+      expect(view.getByLabelText('设置帖子数范围').props.accessibilityValue.text).toBe('至少 3');
+      expect(view.getByText('山月')).toBeTruthy();
 
       await fireEvent.press(view.getByLabelText('选择标签'));
       await waitFor(() => expect(view.getByLabelText('标签 人工智能')).toBeTruthy());
       await fireEvent.press(view.getByLabelText('标签 人工智能'));
-      await fireEvent.press(view.getByText('完成'));
+      await fireEvent.press(view.getByLabelText('返回筛选'));
       await fireEvent.press(view.getAllByLabelText('关闭筛选')[1]);
       await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
       expect(view.queryByLabelText('移除标签 人工智能')).toBeNull();
-      expect(view.queryByLabelText('帖子数最小值')).toBeNull();
+      expect(view.queryByLabelText('设置帖子数范围')).toBeNull();
       await fireEvent.press(view.getByLabelText('展开更多筛选'));
+      expect(view.getByLabelText('设置帖子数范围').props.accessibilityValue.text).toBe('不限');
+      await fireEvent.press(view.getByLabelText('设置帖子数范围'));
       expect(view.getByLabelText('帖子数最小值').props.value).toBe('');
-      expect(view.queryByText('alice')).toBeNull();
+      expect(view.queryByText('山月')).toBeNull();
     } finally {
       await act(() => DeviceEventEmitter.emit('keyboardDidHide', {}));
       platform.restore();
@@ -2038,7 +2430,10 @@ describe('Search state', () => {
     const onSearchDiscourseUsers = jest.fn(async ({ term }: { term: string }) =>
       term === 'old' ? [{ id: 'old', username: 'old-user' }] : [{ id: 'new', username: 'new-user' }]
     );
-    const view = await renderSearchScreen({ searchSource: 'linuxdo', onSearchDiscourseTags, onSearchDiscourseUsers });
+    const view = await renderSearchScreen({
+      searchSource: 'linuxdo',
+      filter: { onSearchDiscourseTags, onSearchDiscourseUsers }
+    });
 
     await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
     await fireEvent.press(view.getByLabelText('选择标签'));
@@ -2047,7 +2442,7 @@ describe('Search state', () => {
     await fireEvent.changeText(view.getByLabelText('搜索标签'), 'fresh');
     expect(view.queryByLabelText('标签 旧标签')).toBeNull();
     await waitFor(() => expect(view.getByLabelText('标签 新标签')).toBeTruthy());
-    await fireEvent.press(view.getByText('完成'));
+    await fireEvent.press(view.getByLabelText('返回筛选'));
 
     await fireEvent.press(view.getByLabelText('展开更多筛选'));
     await fireEvent.press(view.getByLabelText('选择作者'));
@@ -2059,11 +2454,11 @@ describe('Search state', () => {
   });
 
   it.each([
-    { kind: 'tag', field: '搜索标签', loading: '正在加载标签...', settled: '没有匹配标签', candidate: '标签 稳定候选' },
+    { kind: 'tag', field: '搜索标签', loading: '加载标签中', settled: '没有匹配标签', candidate: '标签 稳定候选' },
     {
       kind: 'user',
       field: '搜索作者',
-      loading: '正在加载作者...',
+      loading: '加载作者中',
       settled: '作者候选加载失败',
       candidate: '用户 stable-candidate'
     }
@@ -2075,8 +2470,10 @@ describe('Search state', () => {
     );
     const view = await renderSearchScreen({
       searchSource: 'linuxdo',
-      onSearchDiscourseTags: ({ query: term }) => readCandidates(term),
-      onSearchDiscourseUsers: ({ term }) => readCandidates(term)
+      filter: {
+        onSearchDiscourseTags: ({ query: term }) => readCandidates(term),
+        onSearchDiscourseUsers: ({ term }) => readCandidates(term)
+      }
     });
     try {
       await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
@@ -2113,7 +2510,7 @@ describe('Search state', () => {
       expect(StyleSheet.flatten(body.props.style)).toEqual(viewportStyle);
       expect(view.getByLabelText(picker.field)).toBe(input);
       expect(input.props.value).toBe('next');
-      if (picker.kind === 'tag') await fireEvent.press(view.getByText('完成'));
+      if (picker.kind === 'tag') await fireEvent.press(view.getByLabelText('返回筛选'));
       else await fireEvent.press(view.getByLabelText(picker.candidate));
       expect(view.queryByLabelText(picker.field)).toBeNull();
     } finally {
@@ -2123,14 +2520,14 @@ describe('Search state', () => {
 
   it('shows the empty-author prompt without a permanent loading state', async () => {
     const onSearchDiscourseUsers = jest.fn(async () => []);
-    const view = await renderSearchScreen({ searchSource: 'linuxdo', onSearchDiscourseUsers });
+    const view = await renderSearchScreen({ searchSource: 'linuxdo', filter: { onSearchDiscourseUsers } });
 
     await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
     await fireEvent.press(view.getByLabelText('展开更多筛选'));
     await fireEvent.press(view.getByLabelText('选择作者'));
 
     expect(view.getByText('输入用户名后选择')).toBeTruthy();
-    expect(view.queryByText('正在加载作者...')).toBeNull();
+    expect(view.queryByText('加载作者中')).toBeNull();
     expect(onSearchDiscourseUsers).not.toHaveBeenCalled();
   });
 
@@ -2142,12 +2539,12 @@ describe('Search state', () => {
       }
       return categoryId === '4' ? categoryResponse.promise : Promise.resolve([{ name: '旧分类候选' }]);
     });
-    const view = await renderSearchScreen({ searchSource: 'linuxdo', onSearchDiscourseTags });
+    const view = await renderSearchScreen({ searchSource: 'linuxdo', filter: { onSearchDiscourseTags } });
 
     await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
     await fireEvent.press(view.getByLabelText('选择标签'));
     await waitFor(() => expect(view.getByLabelText('标签 旧分类候选')).toBeTruthy());
-    await fireEvent.press(view.getByText('完成'));
+    await fireEvent.press(view.getByLabelText('返回筛选'));
     await fireEvent.press(view.getByLabelText('选择分类'));
     await fireEvent.press(view.getByLabelText('分类 技术 / 开发调优'));
     await fireEvent.press(view.getByLabelText('选择标签'));
@@ -2176,14 +2573,19 @@ describe('Search state', () => {
     await fireEvent.press(view.getByLabelText('选择分类'));
     await fireEvent.changeText(view.getByLabelText('搜索分类'), '开发');
     await fireEvent.press(view.getByLabelText('分类 技术 / 开发调优'));
+    expect(view.getByLabelText('选择分类').props.accessibilityValue.text).toBe('开发调优');
+    const categoryRow = within(view.getByLabelText('选择分类'));
+    expect(categoryRow.getByText('分类')).toBeTruthy();
+    expect(categoryRow.getByText('开发调优')).toBeTruthy();
     await fireEvent.press(view.getByLabelText('展开更多筛选'));
     await fireEvent.press(view.getByLabelText('选择作者'));
     await fireEvent.changeText(view.getByLabelText('搜索作者'), 'ali');
-    await waitFor(() => expect(view.getByLabelText('用户 alice')).toBeTruthy());
-    await fireEvent.press(view.getByLabelText('用户 alice'));
+    await waitFor(() => expect(view.getByLabelText('用户 山月')).toBeTruthy());
+    await fireEvent.press(view.getByLabelText('用户 山月'));
+    expect(view.getByLabelText('选择作者').props.accessibilityValue.text).toBe('山月');
     await fireEvent.press(view.getByText('确认筛选'));
 
-    expect(view.getByLabelText('打开搜索筛选，当前开发调优 · alice')).toBeTruthy();
+    expect(view.getByLabelText('打开搜索筛选，当前开发调优 · 山月')).toBeTruthy();
   });
 
   it('keeps selected linux.do candidates through pagination and Topic return', async () => {
@@ -2193,12 +2595,12 @@ describe('Search state', () => {
     await fireEvent.press(view.getByLabelText('选择标签'));
     await waitFor(() => expect(view.getByLabelText('标签 人工智能')).toBeTruthy());
     await fireEvent.press(view.getByLabelText('标签 人工智能'));
-    await fireEvent.press(view.getByText('完成'));
+    await fireEvent.press(view.getByLabelText('返回筛选'));
     await fireEvent.press(view.getByLabelText('展开更多筛选'));
     await fireEvent.press(view.getByLabelText('选择作者'));
     await fireEvent.changeText(view.getByLabelText('搜索作者'), 'alice');
-    await waitFor(() => expect(view.getByLabelText('用户 alice')).toBeTruthy());
-    await fireEvent.press(view.getByLabelText('用户 alice'));
+    await waitFor(() => expect(view.getByLabelText('用户 山月')).toBeTruthy());
+    await fireEvent.press(view.getByLabelText('用户 山月'));
     await fireEvent.press(view.getByText('确认筛选'));
     await fireEvent.changeText(view.getByLabelText('搜索关键词'), 'codex');
     await fireEvent.press(view.getByLabelText('提交搜索'));
@@ -2220,10 +2622,15 @@ describe('Search state', () => {
     await fireEvent.press(view.getByText('linux.do 主题'));
     await fireEvent.press(view.getByLabelText('返回搜索'));
     expect(view.getByText('第二页主题')).toBeTruthy();
-    expect(view.getByLabelText('打开搜索筛选，当前人工智能 · alice')).toBeTruthy();
-    await fireEvent.press(view.getByLabelText('打开搜索筛选，当前人工智能 · alice'));
+    expect(view.getByLabelText('打开搜索筛选，当前人工智能 · 山月')).toBeTruthy();
+    await fireEvent.press(view.getByLabelText('打开搜索筛选，当前人工智能 · 山月'));
     expect(view.getByLabelText('移除标签 人工智能')).toBeTruthy();
-    expect(view.getByLabelText('移除作者 alice')).toBeTruthy();
+    expect(view.getByLabelText('移除作者 山月')).toBeTruthy();
+    await fireEvent.press(view.getByLabelText('移除标签 人工智能'));
+    expect(view.queryByLabelText('移除标签 人工智能')).toBeNull();
+    expect(view.getByLabelText('移除作者 山月')).toBeTruthy();
+    await fireEvent.press(view.getByTestId('search-filter-close'));
+    expect(view.getByLabelText('打开搜索筛选，当前人工智能 · 山月')).toBeTruthy();
   });
 
   it('applies every linux.do advanced filter exposed by the original site', async () => {
@@ -2233,10 +2640,12 @@ describe('Search state', () => {
       query: '',
       submittedQuery: '',
       onSearchFilterApply,
-      onSearchDiscourseTags: jest.fn(async () => [
-        { name: '人工智能', topicCount: 12 },
-        { name: '快问快答', topicCount: 3 }
-      ])
+      filter: {
+        onSearchDiscourseTags: jest.fn(async () => [
+          { name: '人工智能', topicCount: 12 },
+          { name: '快问快答', topicCount: 3 }
+        ])
+      }
     });
 
     await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
@@ -2245,19 +2654,28 @@ describe('Search state', () => {
     await fireEvent.press(view.getByLabelText('标签 人工智能'));
     await waitFor(() => expect(view.getByLabelText('标签 快问快答')).toBeTruthy());
     await fireEvent.press(view.getByLabelText('标签 快问快答'));
-    await fireEvent.press(view.getByText('完成'));
+    await fireEvent.press(view.getByLabelText('返回筛选'));
     await fireEvent.press(view.getByLabelText('匹配全部标签'));
     await fireEvent.press(view.getByLabelText('展开更多筛选'));
+    await fireEvent.press(view.getByLabelText('选择回访范围'));
     await fireEvent.press(view.getByLabelText('我读过'));
     await fireEvent.press(view.getByLabelText('我赞过'));
+    await fireEvent.press(view.getByLabelText('返回筛选'));
+    await fireEvent.press(view.getByLabelText('选择话题状态'));
     await fireEvent.press(view.getByText('已解决'));
+    await fireEvent.press(view.getByLabelText('设置精确日期'));
     await fireEvent.press(view.getByText('之前'));
     await fireEvent.press(view.getByLabelText('选择精确日期'));
     await fireEvent.press(view.getByLabelText('确认日期 2026-07-01'));
+    await fireEvent.press(view.getByLabelText('返回筛选'));
+    await fireEvent.press(view.getByLabelText('设置帖子数范围'));
     await fireEvent.changeText(view.getByLabelText('帖子数最小值'), '2');
     await fireEvent.changeText(view.getByLabelText('帖子数最大值'), '20');
+    await fireEvent.press(view.getByLabelText('返回筛选'));
+    await fireEvent.press(view.getByLabelText('设置浏览量范围'));
     await fireEvent.changeText(view.getByLabelText('浏览量最小值'), '100');
     await fireEvent.changeText(view.getByLabelText('浏览量最大值'), '1000');
+    await fireEvent.press(view.getByLabelText('返回筛选'));
     await fireEvent.press(view.getByLabelText('有专家回应'));
     await fireEvent.press(view.getByText('确认筛选'));
 
@@ -2280,21 +2698,115 @@ describe('Search state', () => {
     );
   });
 
-  it('blocks an invalid linux.do numeric range and explains the field error', async () => {
-    const onSearchFilterApply = jest.fn<(source: Source, filter: SourceSearchFilter) => void>();
-    const view = await renderSearchScreen({ searchSource: 'linuxdo', onSearchFilterApply });
+  it('keeps a selected exact date distinct from the unrestricted time option', async () => {
+    const view = await render(<SearchHarness initialSource="linuxdo" />);
 
-    await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
+    await fireEvent.press(view.getByTestId('search-filter-trigger'));
     await fireEvent.press(view.getByLabelText('展开更多筛选'));
-    await fireEvent.changeText(view.getByLabelText('帖子数最小值'), '-1');
-    expect(view.getByLabelText('帖子数最小值').props.value).toBe('');
-    await fireEvent.changeText(view.getByLabelText('帖子数最小值'), '20');
-    await fireEvent.changeText(view.getByLabelText('帖子数最大值'), '2');
+    await fireEvent.press(view.getByLabelText('设置精确日期'));
+    await fireEvent.press(view.getByLabelText('选择精确日期'));
+    await fireEvent.press(view.getByLabelText('确认日期 2026-07-01'));
+
+    expect(view.getByLabelText('选择精确日期').props.accessibilityValue.text).toBe('2026-07-01');
+    await fireEvent.press(view.getByLabelText('返回筛选'));
+    expect(view.getByLabelText('选择时间范围').props.accessibilityValue.text).toBe('2026-07-01 之后');
+    await fireEvent.press(view.getByLabelText('选择时间范围'));
+    expect(view.getByRole('radio', { name: '不限时间' }).props.accessibilityState.checked).toBe(false);
+    await fireEvent.press(view.getByLabelText('返回筛选'));
+    await fireEvent.press(view.getByLabelText('清除精确日期'));
+    await fireEvent.press(view.getByLabelText('选择时间范围'));
+    expect(view.getByRole('radio', { name: '不限时间' }).props.accessibilityState.checked).toBe(true);
+  });
+
+  it('discards the open filter and candidate picker when the selected site changes', async () => {
+    const props = createSearchScreenProps({ searchSource: 'linuxdo' });
+    const view = await render(<SearchScreen {...props} />);
+
+    await fireEvent.press(view.getByTestId('search-filter-trigger'));
+    await fireEvent.press(view.getByLabelText('选择标签'));
+    expect(view.getByLabelText('搜索标签')).toBeTruthy();
+
+    await view.rerender(<SearchScreen {...props} searchSource="nodeseek" />);
+    expect(view.queryByLabelText('搜索标签')).toBeNull();
+    expect(view.queryByText('确认筛选')).toBeNull();
+    expect(props.onSearchFilterApply).not.toHaveBeenCalled();
+
+    await fireEvent.press(view.getByTestId('search-filter-trigger'));
+    expect(view.getByText('确认筛选')).toBeTruthy();
+    expect(view.queryByLabelText('选择标签')).toBeNull();
+  });
+
+  it.each([
+    { name: '帖子数', page: 'posts', min: 'minPosts', max: 'maxPosts', confirmFrom: null },
+    { name: '浏览量', page: 'views', min: 'minViews', max: 'maxViews', confirmFrom: '选择话题状态' }
+  ] as const)(
+    'returns to the invalid $name range and keeps other draft values when correcting it',
+    async ({ name, page, min, max, confirmFrom }) => {
+      const onSearchFilterApply = jest.fn<(source: Source, filter: SourceSearchFilter) => void>();
+      const view = await renderSearchScreen({ searchSource: 'linuxdo', onSearchFilterApply });
+      const minField = `${name}最小值`;
+      const maxField = `${name}最大值`;
+      const message = `${name}最小值不能大于最大值`;
+
+      await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
+      await fireEvent.press(view.getByText('标题'));
+      await fireEvent.press(view.getByLabelText('展开更多筛选'));
+      await fireEvent.press(view.getByLabelText(`设置${name}范围`));
+      await fireEvent.changeText(view.getByLabelText(minField), '-1');
+      expect(view.getByLabelText(minField).props.value).toBe('');
+      await fireEvent.changeText(view.getByLabelText(minField), '20');
+      await fireEvent.changeText(view.getByLabelText(maxField), '2');
+      await fireEvent.press(view.getByTestId('search-filter-back'));
+      if (confirmFrom) await fireEvent.press(view.getByLabelText(confirmFrom));
+      await fireEvent.press(view.getByText('确认筛选'));
+
+      expect(view.getByRole('header', { name: `${name}范围` })).toBeTruthy();
+      expect(within(view.getByTestId(`search-filter-body-${page}`)).getByRole('alert')).toHaveTextContent(message);
+      expect(view.getByLabelText(maxField).props.accessibilityHint).toBe(message);
+      expect(onSearchFilterApply).not.toHaveBeenCalled();
+      expect(view.getByLabelText(minField).props.value).toBe('20');
+      expect(view.getByLabelText(maxField).props.value).toBe('2');
+
+      await fireEvent.changeText(view.getByLabelText(maxField), '30');
+      expect(view.queryByRole('alert')).toBeNull();
+      await fireEvent.press(view.getByText('确认筛选'));
+      expect(onSearchFilterApply).toHaveBeenCalledTimes(1);
+      expect(onSearchFilterApply).toHaveBeenCalledWith(
+        'linuxdo',
+        expect.objectContaining({ scope: 'title', [min]: 20, [max]: 30 })
+      );
+    }
+  );
+
+  it('opens the calendar field for an invalid existing date and applies the corrected date', async () => {
+    const onSearchFilterApply = jest.fn<(source: Source, filter: SourceSearchFilter) => void>();
+    const view = await renderSearchScreen({
+      searchSource: 'linuxdo',
+      onSearchFilterApply,
+      filter: {
+        searchFilters: {
+          ...DEFAULT_SEARCH_FILTERS,
+          linuxdo: { ...DEFAULT_SEARCH_FILTERS.linuxdo, date: 'invalid-date', minViews: 200 }
+        }
+      }
+    });
+
+    await fireEvent.press(view.getByTestId('search-filter-trigger'));
     await fireEvent.press(view.getByText('确认筛选'));
 
-    expect(view.getByText('帖子数最小值不能大于最大值')).toBeTruthy();
+    expect(view.getByRole('header', { name: '精确日期' })).toBeTruthy();
+    expect(within(view.getByTestId('search-filter-body-date')).getByRole('alert')).toHaveTextContent('请选择有效日期');
     expect(onSearchFilterApply).not.toHaveBeenCalled();
-    expect(view.getByText('确认筛选')).toBeTruthy();
+
+    await fireEvent.press(view.getByLabelText('选择精确日期'));
+    await fireEvent.press(view.getByLabelText('确认日期 2026-07-01'));
+    expect(view.queryByRole('alert')).toBeNull();
+    await fireEvent.press(view.getByText('确认筛选'));
+    expect(onSearchFilterApply).toHaveBeenCalledTimes(1);
+    expect(onSearchFilterApply).toHaveBeenCalledWith(
+      'linuxdo',
+      expect.objectContaining({ date: '2026-07-01', minViews: 200 })
+    );
   });
 
   it('shows cached AI results as an optional marked extension of linux.do results', async () => {
@@ -2327,7 +2839,7 @@ describe('Search state', () => {
       linuxDoAiVisible: true,
       linuxDoAiState: { status: 'loading', enabled: false, count: 0 }
     });
-    expect(loadingView.getByText('AI 结果加载中')).toBeTruthy();
+    expect(loadingView.getByText('加载中')).toBeTruthy();
     expect(loadingView.getByLabelText('AI 搜索').props.accessibilityState.disabled).toBe(true);
   });
 
@@ -2340,7 +2852,8 @@ describe('Search state', () => {
       onRetryLinuxDoAiSearch
     });
     expect(errorView.getByText('AI 搜索失败，可重试')).toBeTruthy();
-    await fireEvent.press(errorView.getByText('重试 AI 搜索'));
+    expect(errorView.queryByLabelText('AI 搜索')).toBeNull();
+    await fireEvent.press(errorView.getByRole('button', { name: '重试 AI 搜索' }));
     expect(onRetryLinuxDoAiSearch).toHaveBeenCalledTimes(1);
   });
 
@@ -2349,14 +2862,16 @@ describe('Search state', () => {
 
     await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
     await fireEvent.press(view.getByText('相关'));
+    await fireEvent.press(view.getByLabelText('选择时间范围'));
     await fireEvent.press(view.getByText('30天'));
-    await fireEvent.changeText(view.getByLabelText('节点'), 'qna');
+    await fireEvent.press(view.getByLabelText('选择节点'));
+    await fireEvent.press(view.getByLabelText('节点 问与答'));
     await fireEvent.press(view.getByLabelText('展开 V2EX 更多筛选'));
     await fireEvent.changeText(view.getByLabelText('作者'), 'alice');
     await fireEvent.press(view.getByText('全部关键词'));
     await fireEvent.press(view.getByText('确认筛选'));
 
-    expect(view.getByLabelText('打开搜索筛选，当前相关 · qna · alice · 全部关键词 · 30天')).toBeTruthy();
+    expect(view.getByLabelText('打开搜索筛选，当前相关 · 问与答 · alice · 全部关键词 · 30天')).toBeTruthy();
   });
 
   it.each([
@@ -2366,7 +2881,7 @@ describe('Search state', () => {
       collapse: '收起 V2EX 更多筛选',
       field: '作者',
       value: 'alice',
-      scrollY: 0
+      rangeEntry: null
     },
     {
       source: 'linuxdo',
@@ -2374,27 +2889,33 @@ describe('Search state', () => {
       collapse: '收起更多筛选，已设置',
       field: '帖子数最小值',
       value: '3',
-      scrollY: 640
+      rangeEntry: '设置帖子数范围'
     }
   ] as const)(
     'preserves $source expanded filters, draft fields and scroll position when Android dismisses the keyboard',
-    async ({ source, expand, collapse, field, value, scrollY }) => {
+    async ({ source, expand, collapse, field, value, rangeEntry }) => {
       const platform = jest.replaceProperty(Platform, 'OS', 'android');
       try {
         const view = await render(<SearchHarness initialSource={source} />);
         await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
         await fireEvent.press(view.getByLabelText(expand));
-        const filterBody = () => {
-          let node = view.getByText('排序').parent;
-          while (node && node.type !== 'RCTScrollView') node = node.parent;
-          if (!node) throw new Error('The filter fields must belong to a native ScrollView');
-          return node;
-        };
+        const mainBody = () => view.getByTestId('search-filter-body-main');
+        const filterBody = () => (rangeEntry ? view.getByTestId('search-filter-body-posts') : mainBody());
+        if (rangeEntry) {
+          await fireEvent.scroll(mainBody(), {
+            nativeEvent: {
+              contentOffset: { x: 0, y: 120 },
+              contentSize: { width: 400, height: 650 },
+              layoutMeasurement: { width: 400, height: 400 }
+            }
+          });
+          await fireEvent.press(view.getByLabelText(rangeEntry));
+        }
 
         for (let cycle = 0; cycle < 2; cycle += 1) {
           const body = filterBody();
           const initialOffset = body.props.contentOffset ?? { x: 0, y: 0 };
-          const offset = { x: 0, y: scrollY ? scrollY + cycle * 80 : 0 };
+          const offset = { x: 0, y: rangeEntry ? 0 : 16 + cycle * 12 };
           await act(() =>
             DeviceEventEmitter.emit('keyboardDidShow', {
               duration: 250,
@@ -2419,15 +2940,20 @@ describe('Search state', () => {
           expect(restoredBody).not.toBe(body);
           // The native ScrollView consumes this starting offset after the KAV remount.
           expect(restoredBody.props.contentOffset ?? { x: 0, y: 0 }).toEqual(offset);
-          expect(view.getByLabelText(collapse).props.accessibilityState.expanded).toBe(true);
           expect(view.getByLabelText(field).props.value).toBe(value);
         }
+        if (rangeEntry) {
+          await fireEvent.press(view.getByLabelText('返回筛选'));
+          expect(mainBody().props.contentOffset).toEqual({ x: 0, y: 120 });
+        }
+        expect(view.getByLabelText(collapse).props.accessibilityState.expanded).toBe(true);
 
         await fireEvent.press(view.getByTestId('search-filter-close'));
         await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
-        expect(filterBody().props.contentOffset ?? { x: 0, y: 0 }).toEqual({ x: 0, y: 0 });
+        expect(mainBody().props.contentOffset).toEqual({ x: 0, y: 0 });
         expect(view.getByLabelText(expand)).toBeTruthy();
         await fireEvent.press(view.getByLabelText(expand));
+        if (rangeEntry) await fireEvent.press(view.getByLabelText(rangeEntry));
         expect(view.getByLabelText(field).props.value).toBe('');
       } finally {
         await act(() => DeviceEventEmitter.emit('keyboardDidHide', {}));
@@ -2449,13 +2975,14 @@ describe('Search state', () => {
     expect(view.queryByLabelText('选择作者')).toBeNull();
 
     await fireEvent.press(view.getByLabelText('展开更多筛选'));
+    await fireEvent.press(view.getByLabelText('选择话题状态'));
     await fireEvent.press(view.getByText('已解决'));
     await fireEvent.press(view.getByLabelText('收起更多筛选，已设置'));
     expect(view.queryByText('话题状态')).toBeNull();
     expect(view.getByText('更多筛选 · 已设置')).toBeTruthy();
     await fireEvent.press(view.getByText('确认筛选'));
 
-    await fireEvent.press(view.getByLabelText(/打开搜索筛选/));
+    await fireEvent.press(view.getByLabelText('打开搜索筛选，当前已解决'));
     expect(view.getByLabelText('收起更多筛选，已设置')).toBeTruthy();
     expect(view.getByText('话题状态')).toBeTruthy();
     expect(view.getByLabelText('选择作者')).toBeTruthy();

@@ -27,6 +27,40 @@ describe('topic share content', () => {
     );
   });
 
+  it('includes a linked picture cover in an image-only share', () => {
+    const { html, imageCount } = prepareTopicShareContent({
+      ...topic,
+      contentHtml:
+        '<a href="/packet"><picture><source type="image/svg+xml" srcset="/cover.svg 1x"><img alt="红包"></picture></a>'
+    });
+    const root = parseForumContentHtml(html);
+    expect(imageCount).toBe(1);
+    expect(root.querySelector('a img')?.getAttribute('src')).toBe('https://linux.do/cover.svg');
+    expect(root.querySelector('a img')?.getAttribute('data-share-svg')).toBe('true');
+    expect(root.querySelector('source')).toBeNull();
+    expect(root.querySelector('a')?.getAttribute('href')).toBe('https://linux.do/packet');
+  });
+
+  it('uses the format of the selected picture source only for its own image', () => {
+    const { html } = prepareTopicShareContent({
+      ...topic,
+      contentHtml:
+        '<picture><source media="print" type="image/svg+xml" srcset="/print"><img src="/print"></picture>' +
+        '<picture><source type="image/png" srcset="/shared"><source type="image/svg+xml" srcset="/shared"><img></picture>' +
+        '<picture><source type="image/svg+xml" srcset="/shared"><img></picture>' +
+        '<picture><source type="image/svg+xml" srcset="/shared"><img data-original="/original.jpg"></picture>' +
+        '<picture><source type="image/svg+xml" srcset="/small 1x, /big 2x"><img data-original="/small"></picture>'
+    });
+    const images = parseForumContentHtml(html).querySelectorAll('[data-share-image-index]');
+    expect(images.map((image) => image.getAttribute('data-share-svg'))).toEqual([
+      undefined,
+      undefined,
+      'true',
+      undefined,
+      'true'
+    ]);
+  });
+
   it('keeps complete paragraphs, emphasis, lists, code whitespace and table cells without source layout', () => {
     const { html, imageCount } = prepareTopicShareContent({
       ...topic,

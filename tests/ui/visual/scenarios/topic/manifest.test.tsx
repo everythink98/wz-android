@@ -224,7 +224,7 @@ describe('topic visual scenarios', () => {
     await replies.unmount();
 
     const loading = await renderScenario('topic.replies.loading');
-    expect(loading.getByText('正在读取回复...')).toBeTruthy();
+    expect(loading.getByText('加载回复中')).toBeTruthy();
     await loading.unmount();
 
     const empty = await renderScenario('topic.replies.empty');
@@ -237,7 +237,7 @@ describe('topic visual scenarios', () => {
     await partial.unmount();
 
     const loadingMore = await renderScenario('topic.replies.loading-more');
-    expect(loadingMore.getByLabelText('正在加载...')).toBeTruthy();
+    expect(loadingMore.getByLabelText('加载中')).toBeTruthy();
     await loadingMore.unmount();
 
     const favorite = await renderScenario('topic.favorite.selected');

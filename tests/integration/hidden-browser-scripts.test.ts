@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import type {} from 'vitest/jsdom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   LINUXDO_BROWSER_FETCH_SCRIPT,
@@ -19,7 +20,7 @@ import { linuxDoBrowserResponse, nodeSeekBrowserResponse } from '@/features/acco
 import type { BrowserFetchOwner } from '@/platform/network/browserFetchIntent';
 
 function runNodeSeekBrowserFetchScript(url: string, html: string, owner?: BrowserFetchOwner, title = '') {
-  window.history.pushState(null, '', url);
+  jsdom.reconfigure({ url: new URL(url, 'https://www.nodeseek.com/').href });
   document.title = title;
   document.body.innerHTML = html;
   Object.defineProperty(document.body, 'innerText', {
@@ -47,7 +48,7 @@ function runNodeSeekBrowserFetchScript(url: string, html: string, owner?: Browse
 }
 
 function runLinuxDoBrowserFetchScript(url: string, html: string, innerText?: string, title = '') {
-  window.history.pushState(null, '', url);
+  jsdom.reconfigure({ url: new URL(url, 'https://linux.do/').href });
   document.title = title;
   document.body.innerHTML = html;
   Object.defineProperty(document.body, 'innerText', {
@@ -149,15 +150,19 @@ describe('hidden browser fetch scripts', () => {
     expect(stop).toHaveBeenCalled();
   });
 
-  it('waits for NodeSeek identity evidence during account probes', () => {
+  it('waits for visible NodeSeek guest navigation before confirming a browser account probe', async () => {
     vi.useFakeTimers();
     try {
       const { postMessage } = runNodeSeekBrowserFetchScript(
         '/',
         `
         <ul class="post-list">
-          <li class="post-list-item">Public topic</li>
+          <li class="post-list-item"><article><header>
+            <a class="btn" href="/signIn.html">登录</a><a class="btn" href="/register.html">注册</a>
+          </header></article></li>
         </ul>
+        <style>.desktop-account { display: none }</style>
+        <nav class="desktop-account"><a href="/signIn.html">登录</a><a href="/register.html">注册</a></nav>
       `,
         'account'
       );
@@ -176,7 +181,45 @@ describe('hidden browser fetch scripts', () => {
       const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
       expect(payload.html).toContain('/signIn.html');
       expect(payload.html).toContain('/register.html');
+      const fetcher = vi.fn(async () =>
+        nodeSeekBrowserResponse(payload.html, payload.challenge, undefined, payload.url)
+      );
+      await expect(
+        getCurrentUserIdentity({ source: 'nodeseek', fetcher, nodeSeekAuthenticated: true })
+      ).rejects.toMatchObject({ reason: 'expired' });
+      expect(fetcher).toHaveBeenCalledTimes(1);
     } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps browser-hidden guest controls unknown after the deadline and checks settings', async () => {
+    vi.useFakeTimers();
+    const css = document.createElement('style');
+    document.head.append(css);
+    css.sheet!.insertRule('.unavailable-account-nav { display:none }');
+    try {
+      const { postMessage } = runNodeSeekBrowserFetchScript(
+        '/',
+        '<header class="unavailable-account-nav"><a href="/signIn.html">登录</a><a href="/register.html">注册</a></header>',
+        'account'
+      );
+      expect(postMessage).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(15_000);
+      expect(postMessage).toHaveBeenCalledTimes(1);
+      const payload = JSON.parse(postMessage.mock.calls[0]![0]);
+      const fetcher = vi.fn(async (url: string) =>
+        new URL(url).pathname === '/'
+          ? nodeSeekBrowserResponse(payload.html, payload.challenge, undefined, payload.url)
+          : new Response('<a class="Username" href="/space/7">测试账号</a>')
+      );
+      await expect(
+        getCurrentUserIdentity({ source: 'nodeseek', fetcher, nodeSeekAuthenticated: true })
+      ).resolves.toMatchObject({ id: '7' });
+      expect(fetcher.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(['/', '/setting']);
+    } finally {
+      css.remove();
       vi.clearAllTimers();
       vi.useRealTimers();
     }

@@ -11,9 +11,9 @@ import { createNotificationConversationHistory } from './notificationConversatio
 import { topicLocationForReply } from '@/domain/forum/topicLocation';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Alert } from 'react-native';
-import * as DocumentPicker from 'expo-document-picker';
+import { withPickedAttachmentCopies } from '@/platform/media/pickedAttachmentCopies';
 import * as WebBrowser from 'expo-web-browser';
-import { useFocusEffect, useIsFocused, type CompositeScreenProps } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused, useNavigation, type CompositeScreenProps } from '@react-navigation/native';
 import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import { focusManager, useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -31,7 +31,6 @@ import type {
   PendingNodeSeekPoll
 } from '@/domain/forum/structuredComposer';
 import { parseForumTopicLink } from '@/domain/forum/links';
-import { manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
 import type { MainTabParamList, RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 import { errorMessage } from '@/platform/network/errors';
@@ -44,7 +43,7 @@ import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { retryEmojiCatalog } from '@/sources/discourse/retryEmojiCatalog';
-import { normalizeReplyImageAsset } from '@/sources/imageUpload';
+import { MAX_REPLY_IMAGE_UPLOAD_BYTES, normalizeReplyImageAsset } from '@/sources/imageUpload';
 import { currentNodeImageApiKeyGeneration } from '@/sources/nodeimage/credentials';
 import { isNodeImageApiKeyExpiredError } from '@/sources/nodeimage/upload';
 import { ContentSourceDisabledState } from '@/ui/controls/FeedbackStates';
@@ -199,12 +198,32 @@ export function NotificationsRoute({
     },
     [source, categoryId, unreadOnly, isFocused, listRecoveries]
   );
-  const listQueryKey = forumQueryKeys.notificationList({
-    source,
-    categoryId: source === 'all' ? null : categoryId,
-    identityKey,
-    unreadOnly
-  });
+  useEffect(
+    () =>
+      focusManager.subscribe((focused) => {
+        if (!focused && listRecoveries.pending) listRecoveries.cancel();
+      }),
+    [listRecoveries]
+  );
+  const listQueryKey = useMemo(
+    () =>
+      forumQueryKeys.notificationList({
+        source,
+        categoryId: source === 'all' ? null : categoryId,
+        identityKey,
+        unreadOnly
+      }),
+    [categoryId, identityKey, source, unreadOnly]
+  );
+  const activeList = useMemo(
+    () => (isFocused && runtime.ready ? { queryKey: listQueryKey, sourceAvailable } : null),
+    [isFocused, listQueryKey, runtime.ready, sourceAvailable]
+  );
+  const activeListRef = useCommittedRef(activeList);
+  const currentList = useCallback(
+    () => (activeListRef.current === activeList ? activeList : null),
+    [activeList, activeListRef]
+  );
   const listQuery = useInfiniteQuery<
     NotificationListPage,
     Error,
@@ -315,21 +334,14 @@ export function NotificationsRoute({
   const fetchNextPage = listQuery.fetchNextPage;
   const hasNextPage = listQuery.hasNextPage;
   const isFetchingNextPage = listQuery.isFetchingNextPage;
-  const loadMore = useLatestCallback(() => {
-    if (
-      !isFocused ||
-      !runtime.ready ||
-      !sourceAvailable ||
-      !hasNextPage ||
-      listReads.refreshing ||
-      (source !== 'all' && !categoryId)
-    )
-      return;
-    const current = queryClient.getQueryState(listQueryKey);
+  const loadMore = useCallback(() => {
+    const visit = currentList();
+    if (!visit?.sourceAvailable || !hasNextPage || listReads.refreshing) return;
+    const current = queryClient.getQueryState(visit.queryKey);
     if (!current?.data || current.data !== listQuery.data) return;
     const fetchingNextPage = current?.fetchStatus !== 'idle' && current?.fetchMeta?.fetchMore?.direction === 'forward';
     if (!fetchingNextPage) void fetchNextPage();
-  });
+  }, [currentList, fetchNextPage, hasNextPage, listQuery.data, listReads, queryClient]);
   useEffect(() => {
     if (source === 'all' || !isFocused || items.length || !hasNextPage || isFetchingNextPage) {
       return;
@@ -396,8 +408,8 @@ export function NotificationsRoute({
     return result;
   }, [errors, listQuery.data, runtime.activeSources, source]);
   const refetch = listQuery.refetch;
-  const refresh = useLatestCallback(() => {
-    if (!isFocused || !runtime.ready || !sourceAvailable || listReads.refreshing) return;
+  const refresh = useCallback(() => {
+    if (!currentList()?.sourceAvailable || listReads.refreshing) return;
     const request = listReads.beginRefresh();
     if (!request) return;
     publishRefresh();
@@ -405,7 +417,7 @@ export function NotificationsRoute({
       listReads.finishRefresh(request);
       publishRefresh();
     });
-  });
+  }, [currentList, listReads, publishRefresh, refetch, refreshSnapshots]);
   const retryReadSource = useCallback(
     async (candidate: NotificationSource): Promise<LinuxDoReadResumeOutcome> => {
       const expectedIdentityKey = runtime.identityKeys[candidate];
@@ -527,14 +539,21 @@ export function NotificationsRoute({
   );
   const retrySource = useCallback(
     (candidate: NotificationSource) => {
-      if (!isFocused || !runtime.enabledNotificationSources.includes(candidate) || listRecoveries.pending) return;
+      if (
+        !currentList() ||
+        !focusManager.isFocused() ||
+        !runtime.enabledNotificationSources.includes(candidate) ||
+        listRecoveries.pending
+      )
+        return;
       const intent = listRecoveries.begin();
       if (!intent) return;
       const epoch = runtime.sessionEpochs[candidate];
-      const current = () =>
+      const surfaceCurrent = () =>
         listRecoveries.current(intent) &&
-        latestRuntimeRef.current.enabledNotificationSources.includes(candidate) &&
-        latestRuntimeRef.current.sessionEpochs[candidate] === epoch;
+        focusManager.isFocused() &&
+        latestRuntimeRef.current.enabledNotificationSources.includes(candidate);
+      const current = () => surfaceCurrent() && latestRuntimeRef.current.sessionEpochs[candidate] === epoch;
       const recovery: LinuxDoReadRecovery = {
         queryKey: source !== 'all' && categoriesQuery.error ? categoriesQueryKey : listQueryKey,
         resume: () => (current() ? retryReadSource(candidate) : Promise.resolve('stale'))
@@ -543,11 +562,7 @@ export function NotificationsRoute({
         let info = errors[candidate];
         if (notificationErrorAction(info) === '重试') {
           const result = await runtime.reconcileAccountStatus(candidate);
-          if (
-            result.status === 'anonymous' &&
-            !intent.controller.signal.aborted &&
-            latestRuntimeRef.current.enabledNotificationSources.includes(candidate)
-          ) {
+          if (result.status === 'anonymous' && surfaceCurrent()) {
             await runtime.openAccountSurface(candidate, '登录已失效，请重新登录。');
             return;
           }
@@ -580,8 +595,8 @@ export function NotificationsRoute({
     [
       categoriesQuery.error,
       categoriesQueryKey,
+      currentList,
       errors,
-      isFocused,
       latestRuntimeRef,
       listQueryKey,
       retryReadSource,
@@ -593,7 +608,7 @@ export function NotificationsRoute({
   const markAll = useCallback(() => {
     if (
       markAllRef.current.phase !== 'idle' ||
-      !isFocused ||
+      !currentList()?.sourceAvailable ||
       source === 'all' ||
       source === 'yaohuo' ||
       !runtime.enabledNotificationSources.includes(source) ||
@@ -618,7 +633,13 @@ export function NotificationsRoute({
       {
         text: '确认',
         onPress: () => {
-          if (run.phase === 'submitting' || markAllRef.current !== run || controller.signal.aborted) return;
+          if (
+            !currentList()?.sourceAvailable ||
+            run.phase === 'submitting' ||
+            markAllRef.current !== run ||
+            controller.signal.aborted
+          )
+            return;
           run.phase = 'submitting';
           setMarkAllBusy(true);
           void runtime.gateway
@@ -629,9 +650,13 @@ export function NotificationsRoute({
             })
             .finally(async () => {
               await Promise.all([
-                queryClient.invalidateQueries({ queryKey: forumQueryKeys.notifications(source) }),
-                queryClient.invalidateQueries({ queryKey: forumQueryKeys.notifications('all') }),
-                runtime.refreshSnapshots()
+                queryClient.invalidateQueries({ queryKey: [...forumQueryKeys.notifications(source), 'list'] }),
+                queryClient.invalidateQueries({ queryKey: [...forumQueryKeys.notifications('all'), 'list'] }),
+                runtime.refreshSnapshots({
+                  source,
+                  identityKey: expectedIdentityKey,
+                  sessionEpoch: selectedSourceEpoch
+                })
               ]);
             })
             .catch((error) => {
@@ -647,7 +672,7 @@ export function NotificationsRoute({
         }
       }
     ]);
-  }, [cancelMarkAll, categories, categoryId, isFocused, queryClient, runtime, source]);
+  }, [cancelMarkAll, categories, categoryId, currentList, queryClient, runtime, selectedSourceEpoch, source]);
   const changeSource = useCallback(
     (nextSource: NotificationFilterSource) => {
       if (nextSource === source) return;
@@ -730,13 +755,7 @@ export function NotificationDetailRoute({ navigation, route }: NotificationDetai
   const runtime = useNotificationRouteRuntime();
   const source = route.params.notification.source;
   if (!runtime.enabledNotificationSources.includes(source)) {
-    return (
-      <ContentSourceDisabledState
-        source={source}
-        onBack={navigation.goBack}
-        onManage={() => navigation.dispatch(manageContentSourcesAction())}
-      />
-    );
+    return <ContentSourceDisabledState source={source} navigation={navigation} />;
   }
   return (
     <EnabledNotificationDetailRoute
@@ -855,12 +874,13 @@ function EnabledNotificationDetailRoute({
   const detailQueryKey = forumQueryKeys.notificationDetail({
     source: item.source,
     identityKey,
-    notificationId: item.id
+    notificationId: item.id,
+    sessionEpoch: replySessionEpoch
   });
-  const detailReadEpochRef = useRef<number | undefined>(undefined);
   const detailReadTraceRef = useRef<DiagnosticTrace | undefined>(undefined);
   const detailQuery = useQuery({
     queryKey: detailQueryKey,
+    subscribed: routeFocused,
     enabled: canAccessSource && routeFocused,
     staleTime: 0,
     refetchOnMount: 'always',
@@ -868,13 +888,10 @@ function EnabledNotificationDetailRoute({
     refetchInterval:
       nodeSeekConversation && routeFocused && canAccessSource && !runtime.getReadBlock(item.source) ? 60_000 : false,
     refetchIntervalInBackground: false,
-    queryFn: async ({ signal }) => {
-      const detail = detailReadTraceRef.current
-        ? await runtime.gateway.loadDetail(item, identityKey, signal, detailReadTraceRef.current)
-        : await runtime.gateway.loadDetail(item, identityKey, signal);
-      if (!signal.aborted) detailReadEpochRef.current = replySessionEpoch;
-      return detail;
-    }
+    queryFn: ({ signal }) =>
+      detailReadTraceRef.current
+        ? runtime.gateway.loadDetail(item, identityKey, signal, detailReadTraceRef.current)
+        : runtime.gateway.loadDetail(item, identityKey, signal)
   });
   const [detailRecoveries] = useState(createNotificationRecoveryOwner);
   const detailRecoveryScopeRef = useCommittedRef({ runtime, routeFocused });
@@ -1061,7 +1078,7 @@ function EnabledNotificationDetailRoute({
       !pagination ||
       !detailQuery.isSuccess ||
       detailQuery.isFetching ||
-      detailReadEpochRef.current !== replySessionEpoch
+      !routeFocused
     )
       return;
     historyFlow.latest(replySessionEpoch, messages, pagination.olderCursor);
@@ -1075,6 +1092,7 @@ function EnabledNotificationDetailRoute({
     detailQuery.isSuccess,
     historyFlow,
     replySessionEpoch,
+    routeFocused,
     publishHistory
   ]);
   const historyRequestCurrent = useCallback(
@@ -1160,7 +1178,7 @@ function EnabledNotificationDetailRoute({
       !policy ||
       !detailQuery.isSuccess ||
       detailQuery.isFetching ||
-      detailReadEpochRef.current !== replySessionEpoch
+      !routeFocused
     )
       return;
     syncDiscoursePolicyCaches(queryClient, { topicId: item.target.topicId, sessionEpoch: replySessionEpoch, policy });
@@ -1173,7 +1191,8 @@ function EnabledNotificationDetailRoute({
     item.target,
     policy,
     queryClient,
-    replySessionEpoch
+    replySessionEpoch,
+    routeFocused
   ]);
   const actorUser = useMemo(
     () =>
@@ -1257,8 +1276,7 @@ function EnabledNotificationDetailRoute({
     cancelReply();
     composerControllersRef.current.forEach((controller) => controller.abort());
     composerControllersRef.current.clear();
-    void queryClient.cancelQueries({ queryKey: detailQueryKey });
-  }, [cancelReply, detailQueryKey, queryClient, routeFocused]);
+  }, [cancelReply, routeFocused]);
   useEffect(() => {
     if (canAccessSource) return;
     cancelReply();
@@ -1302,6 +1320,7 @@ function EnabledNotificationDetailRoute({
     const controller = attempt.controller;
     publishMark();
     const current = () => readReceipt.owns(attempt) && focusManager.isFocused();
+    let attemptedWrite = false;
     try {
       const refreshed = refreshDetail ? await detailQuery.refetch() : undefined;
       if (!current()) return;
@@ -1316,6 +1335,7 @@ function EnabledNotificationDetailRoute({
         return;
       }
       readReceipt.willSend(attempt);
+      attemptedWrite = true;
       const result = await gateway.markRead(
         item,
         nodeSeekConversation ? { ...detail, unreadMessageIds } : detail,
@@ -1346,11 +1366,13 @@ function EnabledNotificationDetailRoute({
     } finally {
       // A canceled response cannot undo a server write. Reconciliation failure
       // must not turn a confirmed write back into a retryable attempt.
-      await Promise.allSettled([
-        queryClient.invalidateQueries({ queryKey: [...forumQueryKeys.notifications(item.source), 'list'] }),
-        queryClient.invalidateQueries({ queryKey: [...forumQueryKeys.notifications('all'), 'list'] }),
-        refreshSnapshots()
-      ]);
+      if (attemptedWrite) {
+        await Promise.allSettled([
+          queryClient.invalidateQueries({ queryKey: [...forumQueryKeys.notifications(item.source), 'list'] }),
+          queryClient.invalidateQueries({ queryKey: [...forumQueryKeys.notifications('all'), 'list'] }),
+          refreshSnapshots({ source: item.source, identityKey, sessionEpoch: replySessionEpoch })
+        ]);
+      }
     }
   });
   useEffect(() => {
@@ -1389,7 +1411,12 @@ function EnabledNotificationDetailRoute({
           ...(item.target.postNumber ? { floor: item.target.postNumber } : {})
         })
       : undefined;
-  const openExternalUrl = useCallback((url: string) => openHttpUrl(url, notify, WebBrowser.openBrowserAsync), [notify]);
+  const openExternalUrl = useCallback(
+    (url: string) => {
+      if (navigation.isFocused()) return openHttpUrl(url, notify, WebBrowser.openBrowserAsync);
+    },
+    [navigation, notify]
+  );
   const runComposerRequest = useCallback(async <T,>(operation: (signal: AbortSignal) => Promise<T>) => {
     const controller = new AbortController();
     composerControllersRef.current.add(controller);
@@ -1540,7 +1567,7 @@ function EnabledNotificationDetailRoute({
               queryClient.invalidateQueries({ queryKey: detailQueryKey }),
               queryClient.invalidateQueries({ queryKey: [...forumQueryKeys.notifications(item.source), 'list'] }),
               queryClient.invalidateQueries({ queryKey: [...forumQueryKeys.notifications('all'), 'list'] }),
-              refreshSnapshots()
+              refreshSnapshots({ source: item.source, identityKey, sessionEpoch: replySessionEpoch })
             ]);
           })
           .catch((error) => {
@@ -1668,24 +1695,24 @@ function EnabledNotificationDetailRoute({
           throw new Error('NodeImage API Key 不可用，请到账号中心重新获取授权或手动粘贴');
         }
       }
-      const picked = await DocumentPicker.getDocumentAsync({
-        type: 'image/*',
-        copyToCacheDirectory: true,
-        multiple: false
-      });
-      assertCurrent();
-      if (picked.canceled || !picked.assets?.[0]) return undefined;
-      const file = normalizeReplyImageAsset(picked.assets[0]);
-      const result = await gateway.uploadReplyImage(item.source, {
-        expectedIdentityKey: identityKey,
-        file,
-        nodeImageApiKey,
-        beforeSend: assertCurrent,
-        signal: controller.signal
-      });
-      assertCurrent();
-      setReplyStatus('图片已插入草稿');
-      return result.markup;
+      return await withPickedAttachmentCopies(
+        { type: 'image/*', maxFiles: 1, maxBytes: MAX_REPLY_IMAGE_UPLOAD_BYTES },
+        async (picked) => {
+          assertCurrent();
+          if (picked.canceled || !picked.assets?.[0]) return undefined;
+          const file = normalizeReplyImageAsset(picked.assets[0]);
+          const result = await gateway.uploadReplyImage(item.source, {
+            expectedIdentityKey: identityKey,
+            file,
+            nodeImageApiKey,
+            beforeSend: assertCurrent,
+            signal: controller.signal
+          });
+          assertCurrent();
+          setReplyStatus('图片已插入草稿');
+          return result.markup;
+        }
+      );
     } catch (error) {
       if (controller.signal.aborted || (error instanceof Error && error.name === 'AbortError')) return undefined;
       setReplyError(
@@ -1792,16 +1819,27 @@ function EnabledNotificationDetailRoute({
 }
 
 export function NotificationSettingsRoute() {
+  const navigation = useNavigation();
   const runtime = useNotificationRouteRuntime();
   const [busy, setBusy] = useState(false);
+  const pendingOptIn = useRef<object | null>(null);
+  useFocusEffect(
+    useCallback(
+      () => () => {
+        pendingOptIn.current = null;
+      },
+      []
+    )
+  );
   const run = useCallback(
     (operation: () => Promise<unknown>) => {
+      if (!navigation.isFocused()) return;
       setBusy(true);
       void operation()
         .catch((error) => runtime.notify(errorMessage(error)))
         .finally(() => setBusy(false));
     },
-    [runtime]
+    [navigation, runtime]
   );
   const toggleGlobal = useCallback(
     (enabled: boolean) => {
@@ -1811,19 +1849,33 @@ export function NotificationSettingsRoute() {
           if (enabled && !granted) runtime.notify('系统通知权限未开启，已保留你的设置');
         });
       if (enabled && !runtime.state.hasOptedIn) {
+        if (!navigation.isFocused() || pendingOptIn.current) return;
+        const confirmation = {};
+        pendingOptIn.current = confirmation;
+        const retire = () => {
+          if (pendingOptIn.current !== confirmation) return false;
+          pendingOptIn.current = null;
+          return true;
+        };
         Alert.alert(
           '开启 Android 消息通知',
           'App 会在本机约每 15 分钟检查一次。Android 可能延迟调度；消息正文、Cookie 和 token 不会写入通知存储。',
           [
-            { text: '取消', style: 'cancel' },
-            { text: '继续', onPress: apply }
-          ]
+            { text: '取消', style: 'cancel', onPress: retire },
+            {
+              text: '继续',
+              onPress: () => {
+                if (navigation.isFocused() && retire()) apply();
+              }
+            }
+          ],
+          { onDismiss: retire }
         );
         return;
       }
       apply();
     },
-    [run, runtime]
+    [navigation, run, runtime]
   );
   return (
     <NotificationSettingsScreen
@@ -1836,7 +1888,9 @@ export function NotificationSettingsRoute() {
       permission={runtime.permission}
       sessions={runtime.sessions}
       state={runtime.state}
-      onOpenSystemSettings={() => void runtime.openSystemSettings()}
+      onOpenSystemSettings={() => {
+        if (navigation.isFocused()) void runtime.openSystemSettings();
+      }}
       onToggleGlobal={toggleGlobal}
       onToggleSource={(source, enabled) => run(() => runtime.setSourceEnabled(source, enabled))}
     />

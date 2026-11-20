@@ -53,7 +53,9 @@ async function controller(
 ) {
   const getAttendance = jest.fn(async ({ userId }: { userId: string }) => board(userId));
   const gateway: NodeSeekCreditsGateway & Pick<ReadGateway, 'getNodeSeekAttendanceBoard'> = {
-    getReadPlan: () => ({
+    getReadPlan: (source, operation) => ({
+      source,
+      operation,
       state: 'ready',
       lane: 'authenticated',
       transport: 'managed-session',

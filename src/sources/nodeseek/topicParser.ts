@@ -21,6 +21,7 @@ import { accessRequirementFromObject, accessRequirementFromPlainText } from '@/d
 import {
   NODESEEK_BASE_URL,
   arrayField,
+  nodeSeekCreatedAt,
   nodeSeekExplicitReplyCount,
   nodeSeekEmbeddedUserId,
   nodeSeekRoleLabel,
@@ -817,14 +818,13 @@ export function normalizePostData(
   const replies = allReplies.slice(0, replyLimit);
   const replyCount = nodeSeekExplicitReplyCount(data);
   const hasLocalRemainder = allReplies.length > replyLimit;
-  const createdAt =
-    toIsoString(isRecord(first.time) ? first.time.createdDate : data.createdDate) || new Date().toISOString();
+  const createdAt = nodeSeekCreatedAt(first) || nodeSeekCreatedAt(data);
   const lastComment = comments.at(-1);
-  let lastCommentDate: unknown;
-  if (isRecord(lastComment)) {
-    lastCommentDate = isRecord(lastComment.time) ? lastComment.time.createdDate : lastComment.createdDate;
-  }
-  const lastReplyAt = toIsoString(lastCommentDate || data.updatedDate) || createdAt;
+  const lastReplyAt =
+    (isRecord(lastComment) && nodeSeekCreatedAt(lastComment)) ||
+    toIsoString(data.updatedDate) ||
+    createdAt ||
+    undefined;
   const accessRequirement = accessRequirementFromObject(data);
   const authorId = nodeSeekEmbeddedUserId(op) || nodeSeekEmbeddedUserId(poster);
   const authorUrl =
@@ -922,6 +922,7 @@ export function mergeRenderedNodeSeekTopic(rendered: TopicDetail, embedded?: Top
     author: rendered.author || embedded.author,
     contentHtml: rendered.contentHtml || embedded.contentHtml,
     createdAt: rendered.createdAt || embedded.createdAt,
+    lastReplyAt: rendered.lastReplyAt || embedded.lastReplyAt,
     commentId: rendered.commentId ?? embedded.commentId,
     canEdit: embedded.canEdit ?? rendered.canEdit,
     upvoteCount: rendered.upvoteCount ?? embedded.upvoteCount,
@@ -1299,13 +1300,12 @@ export function parseRenderedNodeSeekTopicHtml(
     root.querySelector('.post-info a[href*="/categories/"]') ||
     root.querySelector('a[href*="/categories/"]');
   const categoryHref = categoryLink?.getAttribute('href') || '';
-  const createdAt =
-    renderedNodeSeekTime(
-      firstContentItem?.querySelector('time') ||
-        root.querySelector('article time') ||
-        root.querySelector('.post-detail time') ||
-        root.querySelector('time')
-    ) || new Date().toISOString();
+  const createdAt = renderedNodeSeekTime(
+    firstContentItem?.querySelector('time') ||
+      root.querySelector('article time') ||
+      root.querySelector('.post-detail time') ||
+      root.querySelector('time')
+  );
   const cleanedContentHtml = nodeSeekTerminalSourceHtml(
     renderedContentHtml ? renderedPolls.html : contentHtml,
     sourceMarkdownFor(firstContentItem)
@@ -1363,7 +1363,7 @@ export function parseRenderedNodeSeekTopicHtml(
     };
   });
   const replies = allReplies.slice(0, replyLimit);
-  const lastReplyAt = allReplies.at(-1)?.createdAt || createdAt;
+  const lastReplyAt = allReplies.at(-1)?.createdAt || createdAt || undefined;
   const authorHref = renderedNodeSeekFirst(authorContainer, 'a[href*="/space/"]', elements)?.getAttribute('href') || '';
   const authorId = authorHref.match(/\/space\/(\d+)/)?.[1];
   const authorLevelLabel = renderedNodeSeekRoleLabel(authorContainer, elements);

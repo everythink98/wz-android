@@ -1,4 +1,4 @@
-export function createNotificationWorkerDeadline(durationMs: number) {
+export function createNotificationWorkerDeadline(durationMs = 50_000) {
   const controller = new AbortController();
   const error = new Error('后台消息检查已超时');
   const reached = new Promise<never>((_resolve, reject) => {

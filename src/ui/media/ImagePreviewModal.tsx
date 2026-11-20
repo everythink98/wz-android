@@ -1004,7 +1004,7 @@ function ImagePreviewModalContent({
               min: 1,
               max: previewCount,
               now: activeIndex + 1,
-              text: `第 ${activeIndex + 1} 张，共 ${previewCount} 张`
+              text: [activeItem?.alt, `第 ${activeIndex + 1} 张，共 ${previewCount} 张`].filter(Boolean).join('，')
             }}
             pointerEvents="none"
             style={componentStyles.accessibilityPager}

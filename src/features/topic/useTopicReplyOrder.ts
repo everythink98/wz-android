@@ -41,6 +41,9 @@ export function useTopicReplyOrder({
   const current = useRef<MenuState>({ phase: 'closed', placement: DEFAULT_PLACEMENT });
   const [menu, publish] = useState(current.current);
   const pendingOrderScroll = useRef(false);
+  const cancelPendingScroll = useCallback(() => {
+    pendingOrderScroll.current = false;
+  }, []);
   const close = useCallback(() => {
     const next: MenuState = { phase: 'closed', placement: current.current.placement };
     current.current = next;
@@ -84,12 +87,12 @@ export function useTopicReplyOrder({
     [changeOrder, close, order]
   );
   useEffect(() => {
-    if (!listReady || !pendingOrderScroll.current || repliesLoading || repliesError) return;
+    if (!active || !listReady || !pendingOrderScroll.current || repliesLoading || repliesError) return;
     const index = items.findIndex((item) => item.type === 'reply' || item.type === 'replyStart');
     if (index < 0) return;
     pendingOrderScroll.current = false;
     recordScroll('reply-order', { targetIndex: index });
     void list.current?.scrollToIndex({ animated: true, index, viewPosition: 0 });
-  }, [items, list, listReady, recordScroll, repliesError, repliesLoading]);
-  return { open, close, select, visible: menu.phase === 'open', placement: menu.placement };
+  }, [active, items, list, listReady, recordScroll, repliesError, repliesLoading]);
+  return { open, close, select, cancelPendingScroll, visible: menu.phase === 'open', placement: menu.placement };
 }

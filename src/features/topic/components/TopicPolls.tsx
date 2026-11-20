@@ -1,7 +1,7 @@
 import type { TopicStyles } from '../styles';
 import { Pressable, Text, View } from 'react-native';
 import { useMappingHelper } from '@shopify/flash-list';
-import { CheckCircle, CheckSquare, Circle, Square, Users } from 'lucide-react-native';
+import { CheckCircle, CheckSquare, Circle, Square } from 'lucide-react-native';
 import type { Source, TopicPoll } from '@/domain/forum/models';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import { pollParticipationLabel, pollTotalVotes } from '@/domain/forum/topicPollDisplay';
@@ -98,8 +98,11 @@ export function TopicPolls({
         const selectedSet = new Set(selectedOptionIds);
         const discoursePollReady = !isDiscourseSource(source) || Boolean(poll.postId && poll.name);
         const pollReadonly = Boolean(poll.readonly || decision.reason === 'unsupported');
-        const pollOptionDisabled =
-          actionBusy || pollReadonly || Boolean(poll.closed || poll.voted || !decision.allowed || !discoursePollReady);
+        const voteAvailable = !pollReadonly && !poll.closed && !poll.voted && discoursePollReady;
+        const canParticipate = voteAvailable && decision.allowed;
+        const votePending = voteAvailable && decision.reason === 'pending';
+        const showVoteAction = canParticipate || votePending;
+        const pollOptionDisabled = actionBusy || !canParticipate;
         const selectionRangeStatus = pollSelectionRangeStatus(poll, selectedOptionIds.length);
         const pollStatus = poll.closed
           ? source === 'nodeseek'
@@ -110,7 +113,7 @@ export function TopicPolls({
             : pollReadonly
               ? '只读结果'
               : decision.reason === 'login-required'
-                ? '未登录'
+                ? '登录后投票'
                 : decision.reason === 'identity-pending' || decision.reason === 'pending'
                   ? '状态确认中'
                   : decision.reason === 'identity-unavailable'
@@ -118,33 +121,15 @@ export function TopicPolls({
                     : !decision.allowed
                       ? '不可操作'
                       : !discoursePollReady
-                        ? '信息不完整'
-                        : '可投票';
+                        ? '刷新后投票'
+                        : '';
         const pollMetaItems = [
           pollTypeLabel(poll),
           pollChoiceRangeLabel(poll),
           typeof poll.public === 'boolean' ? (poll.public ? '公开' : '不公开') : undefined
         ].filter((item): item is string => Boolean(item));
         const pollParticipation = pollParticipationLabel(poll);
-        const submitLabel = poll.closed
-          ? source === 'nodeseek'
-            ? '投票已锁定'
-            : '投票已关闭'
-          : poll.voted
-            ? '已投票'
-            : pollReadonly
-              ? '只读结果'
-              : decision.reason === 'login-required'
-                ? '登录后投票'
-                : decision.reason === 'identity-pending' || decision.reason === 'pending'
-                  ? '请稍后重试'
-                  : decision.reason === 'identity-unavailable'
-                    ? '核对后投票'
-                    : !decision.allowed
-                      ? '不可操作'
-                      : !discoursePollReady
-                        ? '刷新后投票'
-                        : selectionRangeStatus || '提交投票';
+        const submitLabel = selectionRangeStatus || '提交投票';
         const submitDisabled = pollOptionDisabled || !selectedOptionIds.length || Boolean(selectionRangeStatus);
         return (
           <View
@@ -199,20 +184,15 @@ export function TopicPolls({
             </View>
             <View style={styles.pollFooter}>
               <View style={styles.pollMetaWrap}>
-                {pollParticipation ? (
-                  <View style={styles.pollParticipationPill}>
-                    <Users size={14} color={theme.primary} strokeWidth={2} />
-                    <Text style={styles.pollParticipationText}>{pollParticipation}</Text>
-                  </View>
-                ) : null}
-                {pollMetaItems.map((item, index) => (
-                  <Text key={getMappingKey(item, index)} style={styles.pollMetaPill}>
-                    {item}
+                {pollParticipation ? <Text style={styles.pollMetaSummary}>{pollParticipation}</Text> : null}
+                {pollMetaItems.length ? (
+                  <Text style={styles.pollMetaSummary}>
+                    {pollParticipation ? `· ${pollMetaItems.join(' · ')}` : pollMetaItems.join(' · ')}
                   </Text>
-                ))}
-                <Text style={styles.pollStatePill}>{pollStatus}</Text>
+                ) : null}
+                {pollStatus ? <Text style={styles.pollStatePill}>{pollStatus}</Text> : null}
               </View>
-              {showPollSubmit ? (
+              {showPollSubmit && (showVoteAction || showPollLock) ? (
                 <View style={styles.pollSubmitRow}>
                   {showPollLock ? (
                     <AppButton
@@ -223,13 +203,16 @@ export function TopicPolls({
                       onPress={() => onLockPoll?.(poll)}
                     />
                   ) : null}
-                  <AppButton
-                    compact
-                    label={submitLabel}
-                    variant={submitDisabled ? 'ghost' : 'primary'}
-                    disabled={submitDisabled}
-                    onPress={() => onVotePoll(poll, selectedOptionIds)}
-                  />
+                  {showVoteAction ? (
+                    <AppButton
+                      compact
+                      label={submitLabel}
+                      loading={votePending}
+                      variant="solid"
+                      disabled={submitDisabled}
+                      onPress={() => onVotePoll(poll, selectedOptionIds)}
+                    />
+                  ) : null}
                 </View>
               ) : null}
             </View>

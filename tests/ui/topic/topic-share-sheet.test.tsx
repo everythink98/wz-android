@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import React, { type ComponentProps } from 'react';
-import { PixelRatio, Platform, StyleSheet } from 'react-native';
+import { AccessibilityInfo, PixelRatio, Platform, StyleSheet } from 'react-native';
 import { TouchableRipple } from 'react-native-paper';
 import type { Image } from 'expo-image';
 import { TopicShareSheet } from '@/features/topic/components/TopicShareSheet';
+import { recoverCompatibleSvgArtifact } from '@/platform/media/compatibleImageSources';
+import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
+import * as svgPosterRenderer from '@/platform/media/svgPosterRenderer';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { createTheme } from '@/ui/theme/tokens';
@@ -151,7 +154,10 @@ beforeEach(() => {
   jest.useFakeTimers({ doNotFake: ['performance'] });
   jest.spyOn(PixelRatio, 'get').mockReturnValue(1);
   jest.spyOn(native, 'findNodeHandle').mockReturnValue(73);
-  mockCaptureRef.mockReset().mockResolvedValue(captureUri);
+  mockCaptureRef.mockReset().mockImplementation(async () => {
+    mockFiles.set(captureUri, imageBytes);
+    return captureUri;
+  });
   mockLongCapture.mockReset().mockImplementation(async () => {
     mockFiles.set(captureUri, imageBytes);
     return { uri: captureUri, width: 1080, height: 30_000 };
@@ -249,6 +255,174 @@ describe('Topic body image sharing', () => {
     });
     await view.unmount();
     expect(mockReleaseImage).toHaveBeenCalledTimes(1);
+  });
+
+  it('prepares and exports all images in an image-heavy topic within a shared decode budget', async () => {
+    const count = 64;
+    const view = await render(
+      <TopicShareSheet
+        topic={{
+          ...topic,
+          contentHtml: Array.from(
+            { length: count },
+            (_, index) => `<img src="https://example.com/picture-${index}.png" alt="图片 ${index}">`
+          ).join('')
+        }}
+        mediaContext={mediaContext}
+        onClose={jest.fn()}
+      />
+    );
+    for (let first = 0; first < count; first += 4) {
+      const batch = Array.from({ length: 4 }, (_, index) => view.getByLabelText(`图片 ${first + index}`));
+      await act(async () => {
+        for (const node of batch) {
+          node.props.onLoad({ source: { width: 640, height: 480 } });
+          node.props.onDisplay();
+        }
+      });
+    }
+    expect(mockLoadImage).toHaveBeenCalledTimes(count);
+    const maxDecodedPixels = mockLoadImage.mock.calls.reduce((total, [, options]) => {
+      const { maxWidth, maxHeight } = options as { maxWidth: number; maxHeight: number };
+      return total + maxWidth * maxHeight;
+    }, 0);
+    expect(maxDecodedPixels).toBeLessThanOrEqual(48 * 1024 * 1024);
+    await layout(view, 24_000);
+    const share = view.getByRole('button', { name: '分享图片' });
+    expect(share).toBeEnabled();
+    await fireEvent.press(share);
+    await settleFrames();
+    expect(mockShareAsync).toHaveBeenCalledTimes(1);
+    await view.unmount();
+    expect(mockReleaseImage).toHaveBeenCalledTimes(count);
+  });
+
+  it('keeps a tall original the same size on paper when other images reduce its decode budget', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android');
+    // Expo reports the dimensions of the downsampled Android drawable, not the original dimensions.
+    mockLoadImage.mockImplementation(async ({ uri }, options) => {
+      const { maxWidth, maxHeight } = options as { maxWidth: number; maxHeight: number };
+      const width = Math.min(1000, maxWidth, Math.floor(maxHeight / 5));
+      return { uri, width, height: width * 5, release: mockReleaseImage };
+    });
+    const picture = '<img src="https://example.com/tall.png" alt="长原图">';
+    const measure = async (otherImageCount: number) => {
+      const view = await render(
+        <TopicShareSheet
+          topic={{
+            ...topic,
+            contentHtml:
+              picture +
+              Array.from(
+                { length: otherImageCount },
+                (_, index) => `<img src="https://example.com/other-${index}.png">`
+              ).join('')
+          }}
+          mediaContext={mediaContext}
+          onClose={jest.fn()}
+        />
+      );
+      const first = view.getByLabelText('长原图');
+      const decoded = first.props.source as { width: number; height: number };
+      await fireEvent(first, 'load', { source: decoded });
+      await fireEvent(first, 'display');
+      const { width, height } = StyleSheet.flatten(view.getByLabelText('长原图').props.style);
+      await view.unmount();
+      return { decodedWidth: decoded.width, width, height };
+    };
+
+    const single = await measure(0);
+    const crowded = await measure(29);
+
+    expect(crowded.decodedWidth).toBeLessThan(single.decodedWidth);
+    expect(crowded.width).toBe(single.width);
+    expect(crowded.height).toBeCloseTo(single.height, 0);
+  });
+
+  it('exports the existing request-matched PNG for a linked SVG picture and retains its document dimensions', async () => {
+    const uri = 'https://images.example/packet-cover';
+    const posterUri = 'file:///cache/linked-packet.png';
+    const context = {
+      contentSource: 'linuxdo',
+      sessionIdentity: 'linuxdo:2',
+      referrer: { documentUrl: 'https://linux.do/t/42' }
+    } as const;
+    const source = { uri, ...imageSourceFromUrl(uri, { mediaContext: context, referrerPolicy: 'no-referrer' }) };
+    await recoverCompatibleSvgArtifact(source, {
+      fetcher: async () =>
+        new Response('<svg width="42" height="56"/>', { headers: { 'content-type': 'image/svg+xml' } }),
+      renderPoster: async () => ({ uri: posterUri, documentWidth: 42, documentHeight: 56, width: 840, height: 1120 })
+    });
+    const view = await render(
+      <TopicShareSheet
+        topic={{
+          ...topic,
+          source: 'linuxdo',
+          url: context.referrer.documentUrl,
+          contentHtml: `<a href="https://packet.example/open"><picture><source type="image/svg+xml" srcset="${uri} 1x"><img alt="入口" referrerpolicy="no-referrer"></picture></a>`
+        }}
+        mediaContext={context}
+        onClose={jest.fn()}
+      />
+    );
+    expect(mockLoadImage.mock.calls.map(([source]) => source.uri)).toEqual([posterUri]);
+    const picture = view.container.queryAll(
+      ({ props }) => props.accessibilityLabel === '入口' && typeof props.onDisplay === 'function'
+    )[0];
+    await layout(view);
+    await fireEvent(picture, 'display');
+    expect(view.getByRole('button', { name: '分享图片' })).toBeDisabled();
+    await fireEvent(picture, 'load', { source: { width: 840, height: 1120 } });
+    expect(picture).toHaveStyle({ width: 42, height: 56 });
+    expect(view.getByRole('button', { name: '分享图片' })).toBeEnabled();
+  });
+
+  it('retries an uncached extensionless picture through the bounded SVG renderer with the original request policy', async () => {
+    const uri = 'https://images.example/fresh-packet';
+    const posterUri = 'file:///cache/fresh-packet.png';
+    const fetchDocument = jest
+      .spyOn(svgPosterRenderer, 'fetchBoundedSvgDocument')
+      .mockRejectedValueOnce(new Error('unavailable'))
+      .mockResolvedValue({ base64: Buffer.from('<svg width="420" height="560"/>').toString('base64') });
+    const poster = jest
+      .spyOn(svgPosterRenderer, 'renderSvgPoster')
+      .mockResolvedValue({ uri: posterUri, documentWidth: 420, documentHeight: 560, width: 840, height: 1120 });
+    mockLoadImage.mockRejectedValueOnce(new Error('native SVG decode failed'));
+    const context = {
+      contentSource: 'linuxdo',
+      sessionIdentity: 'linuxdo:3',
+      referrer: { documentUrl: 'https://linux.do/t/42' }
+    } as const;
+    const view = await render(
+      <TopicShareSheet
+        topic={{
+          ...topic,
+          source: 'linuxdo',
+          url: context.referrer.documentUrl,
+          contentHtml: `<a href="/entry"><picture><source type="image/svg+xml" srcset="${uri} 1x"><img alt="新封面" referrerpolicy="origin"></picture></a>`
+        }}
+        mediaContext={context}
+        onClose={jest.fn()}
+      />
+    );
+    expect(view.getByRole('alert')).toHaveTextContent(/有图片未能加载/);
+    await fireEvent.press(view.getByRole('button', { name: '重新加载图片' }));
+    await layout(view);
+    expect(fetchDocument).toHaveBeenCalledTimes(2);
+    expect(fetchDocument).toHaveBeenCalledWith(
+      uri,
+      expect.objectContaining({ Referer: 'https://linux.do/', 'X-WZ-Forum-Media-Identity': 'linuxdo:3' }),
+      expect.any(Number)
+    );
+    expect(poster).toHaveBeenCalledTimes(1);
+    expect(mockLoadImage.mock.calls.map(([source]) => source.uri)).toEqual([uri, posterUri]);
+    const picture = view.container.queryAll(
+      ({ props }) => props.accessibilityLabel === '新封面' && typeof props.onDisplay === 'function'
+    )[0];
+    await fireEvent(picture, 'load', { source: { width: 840, height: 1120 } });
+    expect(view.getByRole('button', { name: '分享图片' })).toBeDisabled();
+    await fireEvent(picture, 'display');
+    expect(view.getByRole('button', { name: '分享图片' })).toBeEnabled();
   });
 
   it('releases a decode that finishes after closing and lets a failed decode reload', async () => {
@@ -393,9 +567,40 @@ describe('Topic body image sharing', () => {
     }
   );
 
+  it('keeps an explicit error through the timer and recovers a timeout only after every valid image displays', async () => {
+    const show = () =>
+      render(
+        <TopicShareSheet
+          topic={{
+            ...topic,
+            contentHtml:
+              '<img alt="甲图" src="https://example.com/a.png"><img alt="乙图" src="https://example.com/b.png">'
+          }}
+          mediaContext={mediaContext}
+          onClose={jest.fn()}
+        />
+      );
+    const view = await show();
+    await layout(view);
+    await fireEvent(view.getByLabelText('甲图'), 'error', { error: 'native decode failed' });
+    await act(async () => jest.advanceTimersByTime(31_000));
+    expect(view.getByRole('alert')).toHaveTextContent(/有图片未能加载/);
+    await fireEvent.press(view.getByRole('button', { name: '重新加载图片' }));
+    await layout(view);
+    await act(async () => jest.advanceTimersByTime(31_000));
+    expect(view.getByRole('alert')).toHaveTextContent(/图片加载超时/);
+    for (const label of ['甲图', '乙图']) await fireEvent(view.getByLabelText(label), 'display');
+    await fireEvent(view.getByLabelText('甲图'), 'load', { source: { width: 420, height: 560 } });
+    expect(view.getByRole('button', { name: '分享图片' })).toBeDisabled();
+    await fireEvent(view.getByLabelText('乙图'), 'load', { source: { width: 420, height: 560 } });
+    expect(view.queryByRole('alert')).toBeNull();
+    expect(view.getByRole('button', { name: '分享图片' })).toBeEnabled();
+  });
+
   it('saves the captured PNG on Android 35 and releases it only after the media library finishes', async () => {
     jest.replaceProperty(Platform, 'OS', 'android');
     jest.spyOn(Platform, 'Version', 'get').mockReturnValue(35);
+    const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility').mockClear();
     // Paper computes this platform capability once at module evaluation.
     jest.replaceProperty(TouchableRipple, 'supported', true);
     const saving = Promise.withResolvers<void>();
@@ -416,6 +621,7 @@ describe('Topic body image sharing', () => {
     expect(view.getByRole('button', { name: '保存到相册' })).toBeDisabled();
     expect(view.getByRole('button', { name: '分享图片' })).toBeDisabled();
     expect(mockReleaseLongCapture).not.toHaveBeenCalled();
+    expect(announce).not.toHaveBeenCalled();
     expect(mockFiles.get(captureUri)).toEqual(imageBytes);
     await act(async () => {
       saving.resolve();
@@ -424,7 +630,10 @@ describe('Topic body image sharing', () => {
     expect(view.getByText('已保存到相册')).toBeTruthy();
     expect(mockReleaseLongCapture).toHaveBeenCalledWith('long-capture');
     expect(mockFiles.has(captureUri)).toBe(false);
-    expect(view.getByRole('button', { name: '保存到相册' })).toBeDisabled();
+    const saved = view.getByRole('button', { name: '已保存到相册' });
+    expect(saved).toBeDisabled();
+    expect(announce).toHaveBeenCalledTimes(1);
+    expect(announce).toHaveBeenCalledWith('已保存到相册');
     expect(view.getByRole('button', { name: '分享图片' })).toBeEnabled();
   });
 
@@ -503,6 +712,56 @@ describe('Topic body image sharing', () => {
     });
     await fireEvent(view.getByLabelText('混排图'), 'load', { source: { width: 640, height: 480 } });
     expect(view.getByLabelText('混排图')).toHaveStyle({ width: 96, height: 72 });
+  });
+
+  it.each(['before', 'after'] as const)(
+    'fits a tall table image when the column is measured %s image load',
+    async (order) => {
+      const view = await render(
+        <TopicShareSheet
+          topic={{
+            ...topic,
+            contentHtml:
+              '<table><tr><td><img src="https://example.com/tall.png" alt="长图"></td><td>另一列</td></tr></table>'
+          }}
+          mediaContext={mediaContext}
+          onClose={jest.fn()}
+        />
+      );
+      const measureColumn = () =>
+        fireEvent(view.getAllByTestId('topic-share-cell-content')[0], 'layout', {
+          nativeEvent: { layout: { width: 64, height: 100, x: 0, y: 0 } }
+        });
+
+      if (order === 'before') await measureColumn();
+      await fireEvent(view.getByLabelText('长图'), 'load', { source: { width: 100, height: 5_000 } });
+      if (order === 'after') await measureColumn();
+      await fireEvent(view.getByLabelText('长图'), 'display');
+      await layout(view, 4_000);
+
+      expect(view.getByLabelText('长图')).toHaveStyle({ width: 64, height: 3_200 });
+      expect(view.queryByRole('alert')).toBeNull();
+      expect(view.getByRole('button', { name: '分享图片' })).toBeEnabled();
+    }
+  );
+
+  it('scales an oversized projected image to a bounded height without cropping', async () => {
+    const view = await render(
+      <TopicShareSheet
+        topic={{
+          ...topic,
+          contentHtml: '<img src="https://example.com/tall.png" width="240" alt="超长图">'
+        }}
+        mediaContext={mediaContext}
+        onClose={jest.fn()}
+      />
+    );
+    await fireEvent(view.getByLabelText('超长图'), 'load', { source: { width: 40, height: 4_000 } });
+    await fireEvent(view.getByLabelText('超长图'), 'display');
+    await layout(view, 12_000);
+
+    expect(view.getByLabelText('超长图')).toHaveStyle({ width: 100, height: 10_000 });
+    expect(view.getByRole('button', { name: '分享图片' })).toBeEnabled();
   });
 
   it.each(['share', 'save'])(
@@ -590,38 +849,61 @@ describe('Topic body image sharing', () => {
     expect(view.getByRole('button', { name: '分享图片' })).toBeEnabled();
   });
 
-  it('invalidates a long capture when decoding restarts and redisplays in one React batch', async () => {
-    jest.replaceProperty(Platform, 'OS', 'android');
-    jest.spyOn(native, 'findNodeHandle').mockReturnValue(73);
-    const pending = Promise.withResolvers<{ uri: string; width: number; height: number }>();
-    mockLongCapture.mockReturnValueOnce(pending.promise);
-    const view = await render(
-      <TopicShareSheet
-        topic={{ ...topic, contentHtml: '<p>正文</p><img src="https://example.com/image.png" alt="正文图">' }}
-        mediaContext={mediaContext}
-        onClose={jest.fn()}
-      />
-    );
-    await fireEvent(view.getByLabelText('正文图'), 'load', { source: { width: 640, height: 480 } });
-    await fireEvent(view.getByLabelText('正文图'), 'display');
-    await layout(view, 100_000);
-    await fireEvent.press(view.getByRole('button', { name: '分享图片' }));
-    await settleFrames();
-    expect(mockLongCapture).toHaveBeenCalledTimes(1);
-    const image: ComponentProps<typeof Image> = view.getByLabelText('正文图').props;
-    await act(() => {
-      image.onLoadStart?.();
-      image.onDisplay?.();
-    });
-    await act(async () => {
-      pending.resolve({ uri: captureUri, width: 1080, height: 100_000 });
-      await pending.promise;
-    });
-    expect(mockShareAsync).not.toHaveBeenCalled();
-    expect(mockCancelLongCapture).toHaveBeenCalledWith('long-capture');
-    expect(mockReleaseLongCapture).toHaveBeenCalledWith('long-capture');
-    expect(view.getByRole('button', { name: '分享图片' })).toBeEnabled();
-  });
+  it.each(['android', 'ios'] as const)(
+    'discards a pending capture on %s when an image reloads and preserves an image already shared',
+    async (platform) => {
+      jest.replaceProperty(Platform, 'OS', platform);
+      jest.spyOn(native, 'findNodeHandle').mockReturnValue(73);
+      const android = platform === 'android';
+      const pending = Promise.withResolvers<void>();
+      if (android)
+        mockLongCapture.mockReturnValueOnce(
+          pending.promise.then(() => ({ uri: captureUri, width: 1080, height: 100_000 }))
+        );
+      else mockCaptureRef.mockReturnValueOnce(pending.promise.then(() => captureUri));
+      const view = await render(
+        <TopicShareSheet
+          topic={{ ...topic, contentHtml: '<p>正文</p><img src="https://example.com/image.png" alt="正文图">' }}
+          mediaContext={mediaContext}
+          onClose={jest.fn()}
+        />
+      );
+      await fireEvent(view.getByLabelText('正文图'), 'load', { source: { width: 640, height: 480 } });
+      await fireEvent(view.getByLabelText('正文图'), 'display');
+      await layout(view, android ? 100_000 : 1200);
+      await fireEvent.press(view.getByRole('button', { name: '分享图片' }));
+      await settleFrames();
+      expect(android ? mockLongCapture : mockCaptureRef).toHaveBeenCalledTimes(1);
+      const image: ComponentProps<typeof Image> = view.getByLabelText('正文图').props;
+      await act(() => {
+        image.onLoadStart?.();
+        image.onDisplay?.();
+      });
+      await act(async () => {
+        pending.resolve();
+        await pending.promise;
+      });
+      expect(mockShareAsync).not.toHaveBeenCalled();
+      if (android) expect(mockCancelLongCapture).toHaveBeenCalledWith('long-capture');
+      expect(android ? mockReleaseLongCapture : mockReleaseCapture).toHaveBeenCalledWith(
+        android ? 'long-capture' : captureUri
+      );
+      const chooser = Promise.withResolvers<void>();
+      mockShareAsync.mockReturnValueOnce(chooser.promise);
+      await fireEvent.press(view.getByRole('button', { name: '分享图片' }));
+      await settleFrames();
+      expect(mockShareAsync).toHaveBeenCalledTimes(1);
+      const [sharedUri] = mockShareAsync.mock.calls[0];
+      await act(() => {
+        image.onLoadStart?.();
+        image.onDisplay?.();
+      });
+      expect(mockFiles.get(sharedUri)).toEqual(imageBytes);
+      await act(async () => chooser.resolve());
+      expect(android ? mockReleaseLongCapture : mockReleaseCapture).toHaveBeenCalledTimes(2);
+      expect(mockFiles.get(sharedUri)).toEqual(imageBytes);
+    }
+  );
 
   it.each(['standard', 'long', 'unsupported'])(
     'shows a %s capture failure and lets the user retry successfully',

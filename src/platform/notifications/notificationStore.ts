@@ -83,12 +83,12 @@ export function normalizeNotificationState(value: unknown): NotificationState {
 
 export async function loadNotificationState() {
   const raw = await AsyncStorage.getItem(NOTIFICATION_STORAGE_KEY);
-  if (!raw) return defaultNotificationState();
+  if (raw === null) return defaultNotificationState();
   try {
     return normalizeNotificationState(JSON.parse(raw));
   } catch (error) {
     recordDiagnosticError('app', 'notification-state-load', error);
-    return defaultNotificationState();
+    throw Object.assign(new Error('通知存储格式损坏'), { reason: 'invalid_response' });
   }
 }
 
@@ -100,8 +100,12 @@ export async function saveNotificationState(state: NotificationState) {
 
 let mutationQueue = Promise.resolve<unknown>(undefined);
 
-function updateNotificationState(update: (state: NotificationState) => NotificationState) {
-  const operation = mutationQueue.then(async () => saveNotificationState(update(await loadNotificationState())));
+function updateNotificationState(update: (state: NotificationState) => NotificationState | Promise<NotificationState>) {
+  const operation = mutationQueue.then(async () => {
+    const current = await loadNotificationState();
+    const next = await update(current);
+    return next === current ? current : saveNotificationState(next);
+  });
   mutationQueue = operation.catch(() => undefined);
   return operation;
 }
@@ -119,8 +123,7 @@ export function setGlobalNotificationIntent(enabled: boolean) {
         sources[source] = {
           ...sources[source],
           baselineReady: false,
-          deliveredIds: [],
-          notificationIdentifier: undefined
+          deliveredIds: []
         };
       }
     }
@@ -142,7 +145,7 @@ export function setSourceNotificationIntent(source: NotificationSource, enabled:
         ...current.sources[source],
         intentEnabled: enabled,
         ...(!enabled
-          ? { baselineReady: false, deliveredIds: [], notificationIdentifier: undefined }
+          ? { baselineReady: false, deliveredIds: [] }
           : current.sources[source].intentEnabled
             ? {}
             : { baselineReady: false, deliveredIds: [] })
@@ -151,19 +154,51 @@ export function setSourceNotificationIntent(source: NotificationSource, enabled:
   }));
 }
 
-export function clearNotificationSourceForContentDisable(source: NotificationSource) {
-  return updateNotificationState((current) => ({
-    ...current,
-    sources: {
-      ...current.sources,
-      [source]: {
-        intentEnabled: current.sources[source].intentEnabled,
-        ...(current.sources[source].identityKey ? { identityKey: current.sources[source].identityKey } : {}),
-        baselineReady: false,
-        deliveredIds: []
+export function confirmDisabledNotificationDismissal(
+  source: NotificationSource,
+  identityKey: string | undefined,
+  identifier: string
+) {
+  return updateNotificationState((current) => {
+    const state = current.sources[source];
+    if (
+      (current.globalEnabled && state.intentEnabled) ||
+      state.identityKey !== identityKey ||
+      state.notificationIdentifier !== identifier
+    )
+      return current;
+    return {
+      ...current,
+      sources: { ...current.sources, [source]: { ...state, notificationIdentifier: undefined } }
+    };
+  });
+}
+
+export type NotificationContentDisableGuard = {
+  identityKey: string;
+  sourceStillDisabled(): Promise<boolean>;
+};
+
+export function clearNotificationSourceForContentDisable(
+  source: NotificationSource,
+  guard?: NotificationContentDisableGuard
+) {
+  return updateNotificationState(async (current) => {
+    const { identityKey, intentEnabled } = current.sources[source];
+    if (guard && (identityKey !== guard.identityKey || !(await guard.sourceStillDisabled()))) return current;
+    return {
+      ...current,
+      sources: {
+        ...current.sources,
+        [source]: {
+          intentEnabled,
+          ...(identityKey ? { identityKey } : {}),
+          baselineReady: false,
+          deliveredIds: []
+        }
       }
-    }
-  }));
+    };
+  });
 }
 
 export function advanceNotificationDelivery(
@@ -260,6 +295,9 @@ export function recordNotificationDelivery(
           : updateNotificationState((current) => {
               const sourceState = current.sources[source];
               if (
+                !current.globalEnabled ||
+                !sourceState.intentEnabled ||
+                !sourceState.baselineReady ||
                 sourceState.identityKey !== identityKey ||
                 sourceState.notificationIdentifier !== delivery.notificationIdentifier
               ) {
@@ -299,18 +337,22 @@ export function recordNotificationSnapshot(
   source: NotificationSource,
   identityKey: string,
   unreadCount: number,
-  lastSuccessAt: string
+  lastSuccessAt: string,
+  canCommit: () => boolean = () => true
 ) {
-  return updateNotificationState((current) => ({
-    ...current,
-    sources: {
-      ...current.sources,
-      [source]: {
-        ...current.sources[source],
-        identityKey,
-        unreadCount,
-        lastSuccessAt
+  return updateNotificationState((current) => {
+    if (!canCommit()) return current;
+    return {
+      ...current,
+      sources: {
+        ...current.sources,
+        [source]: {
+          ...current.sources[source],
+          identityKey,
+          unreadCount,
+          lastSuccessAt
+        }
       }
-    }
-  }));
+    };
+  });
 }

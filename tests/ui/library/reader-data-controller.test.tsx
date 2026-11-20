@@ -15,8 +15,13 @@ const mockLoad = jest.fn<() => Promise<ReaderState>>();
 const mockCommit = jest.fn<(command: ReaderCommand) => Promise<ReaderChange>>();
 const mockImport = jest.fn<(json: string, recovery: boolean) => Promise<ReaderState>>();
 const mockExport = jest.fn<() => Promise<string>>();
+const mockFreezeListeners = new Set<() => void>();
 jest.mock('@/platform/storage/readerDataStore', () => ({
   loadReaderState: () => mockLoad(),
+  subscribeReaderStorageFreeze: (listener: () => void) => {
+    mockFreezeListeners.add(listener);
+    return () => mockFreezeListeners.delete(listener);
+  },
   commitReaderCommand: (command: ReaderCommand) => mockCommit(command),
   importReaderDataBackup: (json: string, recovery: boolean) => mockImport(json, recovery),
   exportReaderDataBackup: () => mockExport()
@@ -46,6 +51,7 @@ async function setup() {
 }
 beforeEach(() => {
   jest.clearAllMocks();
+  mockFreezeListeners.clear();
   mockLoad.mockResolvedValue(createEmptyReaderState());
   mockCommit.mockResolvedValue(added);
   mockImport.mockResolvedValue(createEmptyReaderState());
@@ -256,7 +262,10 @@ describe('reader command optimistic persistence', () => {
     expect(mockCommit).toHaveBeenCalledTimes(1);
   });
   it('blocks later mutations when rollback cannot establish committed state', async () => {
-    mockCommit.mockRejectedValueOnce(new AggregateError([], 'rollback failed'));
+    mockCommit.mockImplementationOnce(async () => {
+      for (const listener of mockFreezeListeners) listener();
+      throw new AggregateError([], 'rollback failed');
+    });
     const { hook } = await setup();
     expect(hook.result.current.readerStatus).toBe('ready');
     await act(async () => {
@@ -270,12 +279,38 @@ describe('reader command optimistic persistence', () => {
   });
   it('protects settings when backup import rollback fails after a ready startup', async () => {
     const { hook } = await setup();
-    mockImport.mockRejectedValueOnce(new AggregateError([], 'import rollback failed'));
+    mockImport.mockImplementationOnce(async () => {
+      for (const listener of mockFreezeListeners) listener();
+      throw new AggregateError([], 'import rollback failed');
+    });
     await act(async () => {
       await expect(hook.result.current.importBackup('backup')).rejects.toThrow('import rollback failed');
       hook.result.current.commitReaderData(favorite);
     });
     expect(hook.result.current.readerStatus).toBe('recovery');
     expect(mockCommit).not.toHaveBeenCalled();
+  });
+
+  it('blocks further changes and preserves the known data after a backup export freezes storage', async () => {
+    const { hook } = await setup();
+    await act(async () => hook.result.current.commitReaderData(favorite));
+    const trusted = hook.result.current.readerData;
+    const recoveryError = new Error('本机资料事务状态不明，请重新启动后恢复。');
+    mockExport.mockImplementationOnce(async () => {
+      for (const listener of mockFreezeListeners) listener();
+      throw new AggregateError([], 'export rollback failed');
+    });
+    mockImport.mockRejectedValueOnce(recoveryError);
+
+    await act(async () => {
+      await expect(hook.result.current.exportBackup()).rejects.toThrow('export rollback failed');
+      hook.result.current.commitReaderData({ ...favorite, enabled: false });
+      await expect(hook.result.current.importBackup('backup')).rejects.toBe(recoveryError);
+    });
+
+    expect(mockCommit).toHaveBeenCalledTimes(1);
+    expect(mockImport).toHaveBeenCalledWith('backup', true);
+    expect(hook.result.current.readerStatus).toBe('recovery');
+    expect(hook.result.current.readerData).toBe(trusted);
   });
 });

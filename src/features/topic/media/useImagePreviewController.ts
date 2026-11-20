@@ -8,9 +8,9 @@ import {
   imagePreviewListFromCatalog,
   prepareImagePreviewCatalog,
   projectImagePreviewCatalog,
-  type ImageDisplaySize,
   type ImagePreviewCatalog,
   type ImagePreviewList,
+  type OpenImagePreview,
   type PreparedImagePreviewCatalog
 } from '@/platform/media/imagePreviewCatalog';
 import { errorMessage } from '@/platform/network/errors';
@@ -18,16 +18,10 @@ import { saveImageUriToLibrary } from '@/platform/media/imageSave';
 import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import type { Source } from '@/domain/forum/models';
-import type { MediaReferrerContext, MediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
+import type { MediaReferrerContext } from '@/domain/forum/mediaReferrer';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
-
-function normalizeImageCacheKey(url: string) {
-  return normalizeImagePreviewUrl(url).trim();
-}
-
-type PreviewSaveState = { phase: 'idle' | 'acquiring' } | { phase: 'saving'; controller: AbortController };
 
 export function useImagePreviewController({
   beforeSave,
@@ -35,7 +29,8 @@ export function useImagePreviewController({
   contentWidth,
   mediaReferrer,
   nodeSeekMediaUserAgent,
-  notify
+  notify,
+  scope
 }: {
   beforeSave?: () => Promise<void>;
   contentSource: Source | null;
@@ -43,8 +38,14 @@ export function useImagePreviewController({
   mediaReferrer?: MediaReferrerContext;
   nodeSeekMediaUserAgent?: string;
   notify: (message: string) => void;
+  scope: string | null;
 }) {
-  const [imagePreview, setImagePreview] = useState<ImagePreviewList | null>(null);
+  const [selection, setSelection] = useState<{ scope: string; gallery: ImagePreviewList } | null>(null);
+  const imagePreview = selection && selection.scope === scope ? selection.gallery : null;
+  const currentScope = useCommittedRef(scope);
+  useEffect(() => {
+    setSelection((current) => (current?.scope === scope ? current : null));
+  }, [scope]);
   const catalogSessionContext = useForumMediaRequestContext(contentSource);
   const catalogMediaContext = useMemo<ForumMediaRequestContext>(
     () => (mediaReferrer ? { ...catalogSessionContext, referrer: mediaReferrer } : catalogSessionContext),
@@ -56,22 +57,21 @@ export function useImagePreviewController({
       imagePreview?.referrer ? { ...previewSessionContext, referrer: imagePreview.referrer } : previewSessionContext,
     [imagePreview?.referrer, previewSessionContext]
   );
-  const saveRef = useRef<PreviewSaveState>({ phase: 'idle' });
+  const saveRef = useRef<AbortController | null>(null);
   const previewMediaContextRef = useCommittedRef(previewMediaContext);
   useEffect(
     () => () => {
-      const save = saveRef.current;
-      if (save.phase === 'saving') save.controller.abort();
+      saveRef.current?.abort();
     },
-    [previewMediaContext.sessionIdentity]
+    [previewMediaContext.sessionIdentity, scope]
   );
-  const catalogRef = useRef<ImagePreviewCatalog | null>(null);
   const catalogRegistrationRef = useRef<{
+    catalog: ImagePreviewCatalog;
     descriptors: readonly ForumImagePreviewDescriptor[];
     mediaRevision: string;
     prepared: PreparedImagePreviewCatalog;
+    scope: string | null;
   } | null>(null);
-  const contentSourceRef = useCommittedRef(contentSource);
   const catalogMediaContextRef = useCommittedRef(catalogMediaContext);
   const mediaRevision = [
     catalogMediaContext.contentSource || '',
@@ -88,37 +88,44 @@ export function useImagePreviewController({
         sameMediaSequence(current.descriptors, descriptors) &&
         current.prepared.pixelRatio === pixelRatio &&
         current.prepared.contentWidth === contentWidth;
-      if (canReusePrepared && current.mediaRevision === mediaRevision) {
+      if (canReusePrepared && current.mediaRevision === mediaRevision && current.scope === scope) {
         return;
       }
       const prepared = canReusePrepared
         ? current.prepared
         : prepareImagePreviewCatalog(descriptors, contentWidth, pixelRatio, current?.prepared);
-      catalogRef.current = projectImagePreviewCatalog(prepared, catalogMediaContext);
       catalogRegistrationRef.current = {
+        catalog: projectImagePreviewCatalog(prepared, catalogMediaContext),
         descriptors,
         mediaRevision,
-        prepared
+        prepared,
+        scope
       };
     },
-    [catalogMediaContext, contentWidth, mediaRevision, pixelRatio]
+    [catalogMediaContext, contentWidth, mediaRevision, pixelRatio, scope]
   );
 
-  const openImagePreview = useCallback(
-    (url: string, displaySize?: ImageDisplaySize, renderedPosterUri?: string, referrerPolicy?: MediaReferrerPolicy) => {
-      const clean = normalizeImageCacheKey(url);
-      if (!clean) return;
-      const catalog = catalogRef.current || {
-        items: [],
-        itemIndexBySourceUrl: {},
-        mediaContext: catalogMediaContextRef.current
-      };
+  const openImagePreview = useCallback<OpenImagePreview>(
+    (url, displaySize, renderedPosterUri, referrerPolicy, originalUri) => {
+      const owner = currentScope.current;
+      if (!owner) return;
+      const context = catalogMediaContextRef.current;
+      const registration = catalogRegistrationRef.current;
+      const catalog =
+        registration?.scope === owner
+          ? registration.catalog
+          : {
+              items: [],
+              indexForUrl: () => undefined,
+              referrer: context.referrer
+            };
       const nextPreview = imagePreviewListFromCatalog(
         catalog,
         url,
-        contentSourceRef.current,
+        context.contentSource,
         displaySize,
-        referrerPolicy
+        referrerPolicy,
+        originalUri
       );
       const posterUri = normalizeImagePreviewUrl(renderedPosterUri || '');
       const selectedItem = imagePreviewItemAt(nextPreview, nextPreview.index);
@@ -130,18 +137,18 @@ export function useImagePreviewController({
         nextPreview.itemOverrideIndex = nextPreview.index;
       }
       if (nextPreview.items.length > 0) {
-        setImagePreview(nextPreview);
+        setSelection({ scope: owner, gallery: nextPreview });
       }
     },
-    []
+    [catalogMediaContextRef, currentScope]
   );
-  const closeImagePreview = useCallback(() => setImagePreview(null), []);
+  const closeImagePreview = useCallback(() => setSelection(null), []);
   const selectPreviewImage = useCallback((index: number) => {
-    setImagePreview((current) =>
+    setSelection((current) =>
       current
         ? {
             ...current,
-            index: Math.max(0, Math.min(index, current.items.length - 1))
+            gallery: { ...current.gallery, index: Math.max(0, Math.min(index, current.gallery.items.length - 1)) }
           }
         : current
     );
@@ -150,22 +157,22 @@ export function useImagePreviewController({
     const trace = beginDiagnosticTrace('media', 'save-preview', {
       itemCount: imagePreview?.items.length || 0
     });
-    if (!imagePreview?.items.length) {
+    if (!imagePreview?.items.length || currentScope.current !== scope) {
       markDiagnosticStage(trace, 'guard', { state: 'empty-preview' });
       finishDiagnosticTrace(trace, 'noop', { reason: 'not_ready' });
       return;
     }
-    if (saveRef.current.phase !== 'idle') {
+    if (saveRef.current) {
       markDiagnosticStage(trace, 'guard', { state: 'busy' });
       finishDiagnosticTrace(trace, 'blocked', { reason: 'busy' });
       return;
     }
-    saveRef.current = { phase: 'acquiring' };
     const abortController = new AbortController();
-    saveRef.current = { phase: 'saving', controller: abortController };
+    saveRef.current = abortController;
     const assertCurrent = () => {
       if (
         abortController.signal.aborted ||
+        currentScope.current !== scope ||
         previewMediaContextRef.current.sessionIdentity !== previewMediaContext.sessionIdentity
       ) {
         throw new Error('图片保存已取消');
@@ -196,9 +203,9 @@ export function useImagePreviewController({
       finishDiagnosticTrace(trace, reason === 'permission_denied' ? 'blocked' : 'failure', { reason });
       if (!abortController.signal.aborted) notify(errorMessage(error));
     } finally {
-      saveRef.current = { phase: 'idle' };
+      saveRef.current = null;
     }
-  }, [beforeSave, imagePreview, nodeSeekMediaUserAgent, notify, previewMediaContext]);
+  }, [beforeSave, currentScope, imagePreview, nodeSeekMediaUserAgent, notify, previewMediaContext, scope]);
 
   return {
     closeImagePreview,

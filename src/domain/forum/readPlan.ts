@@ -20,7 +20,7 @@ export type ForumReadOperation =
   | 'account-data'
   | 'level';
 
-export type ForumReadPlan =
+type ReadDecision =
   | {
       state: 'ready';
       lane: 'local' | 'public' | 'authenticated';
@@ -33,6 +33,34 @@ export type ForumReadPlan =
         'source-disabled' | 'identity-pending' | 'identity-unavailable' | 'login-required' | 'capability-unavailable';
       cacheScope: string;
     };
+
+export type ForumReadPlan = ReadDecision & { source: Source; operation: ForumReadOperation };
+
+export type AggregateForumReadPlan = {
+  source: 'all';
+  operation: ForumReadOperation;
+  sites: readonly ForumReadPlan[];
+  cacheScope: string;
+};
+
+export function forumReadSites(plan: ForumReadPlan | AggregateForumReadPlan): readonly ForumReadPlan[] {
+  return plan.source === 'all' ? plan.sites : [plan];
+}
+
+export function aggregateForumReadPlan(
+  operation: ForumReadOperation,
+  sites: readonly ForumReadPlan[]
+): AggregateForumReadPlan {
+  const scopes = new Map(sites.map((site) => [site.source, site.cacheScope]));
+  return {
+    source: 'all',
+    operation,
+    sites,
+    cacheScope: sourceValues
+      .flatMap((source) => (scopes.has(source) ? [`${source}:${scopes.get(source)}`] : []))
+      .join(',')
+  };
+}
 
 const publicOperations: Record<Source, ReadonlySet<ForumReadOperation>> = {
   v2ex: new Set(['categories', 'feed', 'search', 'topic', 'replies', 'reply', 'user-profile']),
@@ -59,14 +87,7 @@ export function forumReadOperationIsPublic(source: Source, operation: ForumReadO
   return publicOperations[source].has(operation);
 }
 
-export function forumReadPlanScopesKey(scopes: readonly (readonly [Source, string])[]) {
-  const bySource = new Map(scopes);
-  return sourceValues
-    .flatMap((source) => (bySource.has(source) ? [`${source}:${bySource.get(source)}`] : []))
-    .join(',');
-}
-
-function blocked(reason: Extract<ForumReadPlan, { state: 'blocked' }>['reason']): ForumReadPlan {
+function blocked(reason: Extract<ReadDecision, { state: 'blocked' }>['reason']): ReadDecision {
   return { state: 'blocked', reason, cacheScope: `blocked:${reason}` };
 }
 
@@ -86,6 +107,15 @@ export function resolveForumReadPlan(
   enabled: boolean,
   session?: SessionRuntimeSnapshot
 ): ForumReadPlan {
+  return { source, operation, ...readDecision(source, operation, enabled, session) };
+}
+
+function readDecision(
+  source: Source,
+  operation: ForumReadOperation,
+  enabled: boolean,
+  session?: SessionRuntimeSnapshot
+): ReadDecision {
   if (!enabled || session?.sourceEnabled === false) return blocked('source-disabled');
   if (session && session.source !== source) return blocked('capability-unavailable');
   if (localOperations[source]?.has(operation)) {

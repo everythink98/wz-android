@@ -68,39 +68,23 @@ function referrerForParsedMediaUrls(targetUrl: URL, documentUrl: URL, policy: Me
   }
 }
 
-function referrerForMediaUrl(targetUrl: URL, options: ImageRequestOptions) {
-  const context = options.mediaContext?.referrer;
-  if (!context) {
-    const contentSource = options.mediaContext?.contentSource;
-    return contentSource ? `${new URL(sourceCatalog[contentSource].baseUrl).origin}/` : undefined;
-  }
-  const documentUrl = cleanReferrerUrl(context.documentUrl);
-  if (!documentUrl) {
-    return undefined;
-  }
-  const policy =
-    normalizeMediaReferrerPolicy(options.referrerPolicy) ||
-    normalizeMediaReferrerPolicy(context.documentPolicy) ||
-    DEFAULT_REFERRER_POLICY;
-  return referrerForParsedMediaUrls(targetUrl, documentUrl, policy);
-}
-
-export function createImageRequestReferrerResolver(mediaContext: ForumMediaRequestContext) {
-  const context = mediaContext.referrer;
+export function createImageRequestReferrerResolver(mediaContext: ForumMediaRequestContext | undefined) {
+  const context = mediaContext?.referrer;
   const documentUrl = context ? cleanReferrerUrl(context.documentUrl) : null;
-  const contentSource = mediaContext.contentSource;
+  const documentPolicy = normalizeMediaReferrerPolicy(context?.documentPolicy) || DEFAULT_REFERRER_POLICY;
+  const contentSource = mediaContext?.contentSource;
   const defaultReferrer =
     !context && contentSource ? `${new URL(sourceCatalog[contentSource].baseUrl).origin}/` : undefined;
-  return (url: string, referrerPolicy?: MediaReferrerPolicy) => {
-    const targetUrl = cleanReferrerUrl(url);
-    if (!targetUrl) return undefined;
+  return (url: string | URL, referrerPolicy?: MediaReferrerPolicy) => {
+    const targetUrl = typeof url === 'string' ? cleanReferrerUrl(url) : url;
+    if (!targetUrl || (targetUrl.protocol !== 'http:' && targetUrl.protocol !== 'https:')) return undefined;
     if (!context) return defaultReferrer;
     if (!documentUrl) return undefined;
-    const policy =
-      normalizeMediaReferrerPolicy(referrerPolicy) ||
-      normalizeMediaReferrerPolicy(context.documentPolicy) ||
-      DEFAULT_REFERRER_POLICY;
-    return referrerForParsedMediaUrls(targetUrl, documentUrl, policy);
+    return referrerForParsedMediaUrls(
+      targetUrl,
+      documentUrl,
+      normalizeMediaReferrerPolicy(referrerPolicy) || documentPolicy
+    );
   };
 }
 
@@ -119,13 +103,7 @@ export function isHttpOrHttpsUrl(url: unknown): boolean {
 
 export function normalizeImagePreviewUrl(url: string): string {
   const clean = String(url || '').trim();
-  if (/^(?:https?:|data:)/i.test(clean)) {
-    return clean;
-  }
-  if (clean.startsWith('//')) {
-    return `https:${clean}`;
-  }
-  return clean;
+  return clean.startsWith('//') ? `https:${clean}` : clean;
 }
 
 export function imageRequestHeadersForUrl(
@@ -145,7 +123,7 @@ export function imageRequestHeadersForUrl(
       [FORUM_MEDIA_SOURCE_HEADER]: forumMediaSourceHeaderValue(options?.mediaContext)
     };
     const contentSource = options?.mediaContext?.contentSource;
-    const referrer = referrerForMediaUrl(parsed, options);
+    const referrer = createImageRequestReferrerResolver(options.mediaContext)(parsed, options.referrerPolicy);
     if (referrer) {
       headers.Referer = referrer;
     }

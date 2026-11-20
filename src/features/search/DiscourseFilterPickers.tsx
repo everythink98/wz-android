@@ -1,19 +1,14 @@
-import { AppTextInput as TextInput } from '@/ui/controls/InputControls';
-import { recordUserInteraction } from '@/platform/network/userPresence';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Pressable, ScrollView, Text, type ViewStyle, View } from 'react-native';
-import type { Category, DiscourseTagOption, DiscourseUserOption } from '@/domain/forum/models';
+import { useEffect, useMemo, useState } from 'react';
+import { skipToken, useQuery } from '@tanstack/react-query';
+import { Text, View } from 'react-native';
+import type { DiscourseTagOption, DiscourseUserOption } from '@/domain/forum/models';
 import type { DiscourseSource } from '@/domain/forum/sourceCatalog';
-import type { DiscourseSearchFilter, SourceSearchFilter } from '@/domain/forum/searchFilters';
+import type { DiscourseSearchFilter } from '@/domain/forum/searchFilters';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { forumQueryKeys } from '@/platform/query/serverState';
-import { type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton } from '@/ui/controls/ButtonControls';
 import { EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
-import { ModalSheetFrame, ModalSheetHeader } from '@/ui/controls/ModalSheetFrame';
-import type { SearchStyles } from './styles';
-import { createSearchPickerSession } from './searchPickerSession';
+import { FilterOptionRow, type FilterAppearance } from './SearchFilterControls';
 
 type SearchTagCandidatesRequest = {
   categoryId?: string;
@@ -28,6 +23,17 @@ type SearchUserCandidatesRequest = {
   term: string;
 };
 
+type CandidateReads = {
+  sessionEpochs: ForumSessionEpochs;
+  readPlanScopes: { tags: string; users: string };
+  searchDiscourseTags: (
+    options: SearchTagCandidatesRequest & { signal?: AbortSignal }
+  ) => Promise<DiscourseTagOption[]>;
+  searchDiscourseUsers: (
+    options: SearchUserCandidatesRequest & { signal?: AbortSignal }
+  ) => Promise<DiscourseUserOption[]>;
+};
+
 export function useSearchCandidateQueries({
   sessionEpochs,
   enabled,
@@ -36,20 +42,11 @@ export function useSearchCandidateQueries({
   searchDiscourseUsers,
   tagRequest,
   userRequest
-}: {
-  sessionEpochs: ForumSessionEpochs;
+}: CandidateReads & {
   enabled: boolean;
-  readPlanScopes: { tags: string; users: string };
-  searchDiscourseTags: (
-    options: SearchTagCandidatesRequest & { signal?: AbortSignal }
-  ) => Promise<DiscourseTagOption[]>;
-  searchDiscourseUsers: (
-    options: SearchUserCandidatesRequest & { signal?: AbortSignal }
-  ) => Promise<DiscourseUserOption[]>;
   tagRequest: SearchTagCandidatesRequest | null;
   userRequest: SearchUserCandidatesRequest | null;
 }) {
-  const queryClient = useQueryClient();
   const tagQueryKey = forumQueryKeys.searchTags({
     categoryId: tagRequest?.categoryId,
     query: tagRequest?.query || '',
@@ -65,31 +62,16 @@ export function useSearchCandidateQueries({
     source: userRequest?.source || 'linuxdo',
     term: userRequest?.term || ''
   });
-  const activeTagKey = useRef<typeof tagQueryKey | null>(null);
-  const activeUserKey = useRef<typeof userQueryKey | null>(null);
   const tagCandidatesQuery = useQuery<DiscourseTagOption[]>({
     queryKey: tagQueryKey,
-    enabled: Boolean(enabled && tagRequest),
-    queryFn: ({ signal }) => (tagRequest ? searchDiscourseTags({ ...tagRequest, signal }) : Promise.resolve([]))
+    subscribed: enabled && tagRequest !== null,
+    queryFn: enabled && tagRequest ? ({ signal }) => searchDiscourseTags({ ...tagRequest, signal }) : skipToken
   });
   const userCandidatesQuery = useQuery<DiscourseUserOption[]>({
     queryKey: userQueryKey,
-    enabled: Boolean(enabled && userRequest),
-    queryFn: ({ signal }) => (userRequest ? searchDiscourseUsers({ ...userRequest, signal }) : Promise.resolve([]))
+    subscribed: enabled && userRequest !== null,
+    queryFn: enabled && userRequest ? ({ signal }) => searchDiscourseUsers({ ...userRequest, signal }) : skipToken
   });
-
-  useEffect(() => {
-    const previousTagKey = activeTagKey.current;
-    const previousUserKey = activeUserKey.current;
-    activeTagKey.current = enabled && tagRequest ? tagQueryKey : null;
-    activeUserKey.current = enabled && userRequest ? userQueryKey : null;
-    if (previousTagKey && !activeTagKey.current) {
-      void queryClient.cancelQueries({ queryKey: previousTagKey, exact: true });
-    }
-    if (previousUserKey && !activeUserKey.current) {
-      void queryClient.cancelQueries({ queryKey: previousUserKey, exact: true });
-    }
-  }, [enabled, queryClient, tagQueryKey, tagRequest, userQueryKey, userRequest]);
 
   return {
     tags: {
@@ -108,381 +90,150 @@ export function useSearchCandidateQueries({
 }
 
 export function useDiscourseFilterPickers({
-  categories,
   discourseDraft,
-  filterSheetVisible,
-  requestsEnabled,
-  readPlanScopes,
-  sessionEpochs,
-  searchDiscourseTags,
-  searchDiscourseUsers
-}: {
-  categories: Category[];
+  picker,
+  query,
+  enabled,
+  ...reads
+}: CandidateReads & {
   discourseDraft: DiscourseSearchFilter | null;
-  filterSheetVisible: boolean;
-  requestsEnabled: boolean;
-  readPlanScopes: { tags: string; users: string };
-  sessionEpochs: ForumSessionEpochs;
-  searchDiscourseTags: (
-    options: SearchTagCandidatesRequest & { signal?: AbortSignal }
-  ) => Promise<DiscourseTagOption[]>;
-  searchDiscourseUsers: (
-    options: SearchUserCandidatesRequest & { signal?: AbortSignal }
-  ) => Promise<DiscourseUserOption[]>;
+  picker: 'tags' | 'author' | null;
+  query: string;
+  enabled: boolean;
 }) {
-  const [tagSession] = useState(() => createSearchPickerSession('tags'));
-  const [tagView, setTagView] = useState(tagSession.snapshot);
-  const { visible: tagPickerVisible, query: tagQuery, submitted: debouncedTagQuery } = tagView;
-  const publishTags = useCallback(() => setTagView(tagSession.snapshot), [tagSession]);
-  const closeTags = useCallback(() => {
-    tagSession.close();
-    publishTags();
-  }, [publishTags, tagSession]);
-  const openTags = useCallback(() => {
-    tagSession.open();
-    publishTags();
-  }, [publishTags, tagSession]);
-  const changeTagQuery = useCallback(
-    (query: string) => {
-      tagSession.edit(query);
-      publishTags();
-    },
-    [publishTags, tagSession]
-  );
-  const [categoryPickerVisible, setCategoryPickerVisible] = useState(false);
-  const [categoryQuery, setCategoryQuery] = useState('');
-  const [userSession] = useState(() => createSearchPickerSession('users'));
-  const [userView, setUserView] = useState(userSession.snapshot);
-  const { visible: userPickerVisible, query: userQuery, submitted: debouncedUserQuery } = userView;
-  const publishUsers = useCallback(() => setUserView(userSession.snapshot), [userSession]);
-  const closeUsers = useCallback(() => {
-    userSession.close();
-    publishUsers();
-  }, [publishUsers, userSession]);
-  const openUsers = useCallback(() => {
-    userSession.open();
-    publishUsers();
-  }, [publishUsers, userSession]);
-  const changeUserQuery = useCallback(
-    (query: string) => {
-      userSession.edit(query);
-      publishUsers();
-    },
-    [publishUsers, userSession]
-  );
-  const discourseSource = discourseDraft?.source;
-  const discourseCategories = useMemo(
-    () => (discourseSource ? categories.filter((category) => category.source === discourseSource) : []),
-    [categories, discourseSource]
-  );
-  const categoryNames = useMemo(
-    () => new Map(discourseCategories.map((category) => [category.id, category.name])),
-    [discourseCategories]
-  );
-  const categoryOptions = useMemo(() => {
-    const query = categoryQuery.trim().toLowerCase();
-    return discourseCategories.filter((category) => {
-      const parentName = category.parentId ? categoryNames.get(category.parentId) || '' : '';
-      return !query || `${parentName} ${category.name} ${category.slug || ''}`.toLowerCase().includes(query);
-    });
-  }, [categoryNames, categoryQuery, discourseCategories]);
-
-  const closeAll = useCallback(() => {
-    closeTags();
-    setCategoryPickerVisible(false);
-    closeUsers();
-  }, [closeTags, closeUsers]);
-
+  const input = useMemo(() => {
+    if (picker === 'tags') return { picker, term: query };
+    if (picker === 'author' && query.trim()) return { picker, term: query.trim() };
+    return null;
+  }, [picker, query]);
+  const [submitted, setSubmitted] = useState<typeof input>(null);
   useEffect(() => {
-    closeAll();
-  }, [closeAll, discourseSource, filterSheetVisible]);
-
-  useEffect(() => {
-    const ticket = tagSession.debounce();
-    publishTags();
-    if (!ticket) return;
-    const timer = setTimeout(() => {
-      tagSession.submitted(ticket);
-      publishTags();
-    }, 300);
+    if (!input) return;
+    const timer = setTimeout(() => setSubmitted(input), 300);
     return () => clearTimeout(timer);
-  }, [tagPickerVisible, tagQuery, tagSession, publishTags]);
-
-  useEffect(() => {
-    const ticket = userSession.debounce();
-    publishUsers();
-    if (!ticket) return;
-    const timer = setTimeout(() => {
-      userSession.submitted(ticket);
-      publishUsers();
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [userPickerVisible, userQuery, userSession, publishUsers]);
-
+  }, [input]);
+  const ready = input !== null && input === submitted;
   const candidates = useSearchCandidateQueries({
-    sessionEpochs,
-    enabled: requestsEnabled && filterSheetVisible,
-    readPlanScopes,
-    searchDiscourseTags,
-    searchDiscourseUsers,
+    ...reads,
+    enabled,
     tagRequest:
-      tagPickerVisible && discourseDraft && debouncedTagQuery !== null
+      ready && input.picker === 'tags' && discourseDraft
         ? {
             source: discourseDraft.source,
-            query: debouncedTagQuery,
+            query: input.term,
             categoryId: discourseDraft.category || undefined,
             selectedTags: discourseDraft.tags
           }
         : null,
     userRequest:
-      userPickerVisible && discourseDraft && debouncedUserQuery
-        ? {
-            source: discourseDraft.source,
-            term: debouncedUserQuery,
-            categoryId: discourseDraft.category || undefined
-          }
+      ready && input.picker === 'author' && discourseDraft
+        ? { source: discourseDraft.source, term: input.term, categoryId: discourseDraft.category || undefined }
         : null
   });
-  const normalizedUserQuery = userQuery.trim();
-  const tagDebouncing = tagPickerVisible && debouncedTagQuery !== tagQuery;
-  const userDebouncing =
-    userPickerVisible && Boolean(normalizedUserQuery) && debouncedUserQuery !== normalizedUserQuery;
-
   return {
-    category: {
-      close: () => setCategoryPickerVisible(false),
-      names: categoryNames,
-      open: () => {
-        setCategoryQuery('');
-        setCategoryPickerVisible(true);
-      },
-      options: categoryOptions,
-      query: categoryQuery,
-      setQuery: setCategoryQuery,
-      visible: categoryPickerVisible
-    },
     tags: {
-      close: closeTags,
-      error: !tagDebouncing && candidates.tags.error ? '标签候选加载失败' : '',
-      loading: tagDebouncing || candidates.tags.loading,
-      open: openTags,
-      options: tagDebouncing ? [] : candidates.tags.options,
-      query: tagQuery,
-      retry: candidates.tags.retry,
-      setQuery: changeTagQuery,
-      visible: tagPickerVisible
+      error: ready && candidates.tags.error ? '标签候选加载失败' : '',
+      loading: (!!input && !ready) || candidates.tags.loading,
+      options: ready ? candidates.tags.options : [],
+      retry: candidates.tags.retry
     },
     users: {
-      close: closeUsers,
-      error: !userDebouncing && candidates.users.error ? '作者候选加载失败' : '',
-      loading: userDebouncing || candidates.users.loading,
-      open: openUsers,
-      options: userDebouncing ? [] : candidates.users.options,
-      query: userQuery,
-      retry: candidates.users.retry,
-      setQuery: changeUserQuery,
-      visible: userPickerVisible
+      error: ready && candidates.users.error ? '作者候选加载失败' : '',
+      loading: (!!input && !ready) || candidates.users.loading,
+      options: ready ? candidates.users.options : [],
+      retry: candidates.users.retry
     }
   };
 }
 
 type DiscourseFilterPickerController = ReturnType<typeof useDiscourseFilterPickers>;
 
-export function DiscourseFilterPickers({
+export function DiscourseFilterPickerPage({
+  picker,
   controller,
-  discourseDraft,
-  filterBodyStyle,
+  query,
+  draftFilter,
   styles,
   theme,
   toggleTag,
-  updateDraft
-}: {
+  selectAuthor
+}: FilterAppearance & {
+  picker: 'tags' | 'author';
   controller: DiscourseFilterPickerController;
-  discourseDraft: DiscourseSearchFilter | null;
-  filterBodyStyle: ViewStyle;
-  styles: SearchStyles;
-  theme: ReaderTheme;
+  query: string;
+  draftFilter: DiscourseSearchFilter;
   toggleTag: (name: string) => void;
-  updateDraft: (partial: Partial<SourceSearchFilter>) => void;
+  selectAuthor: (user: DiscourseUserOption) => void;
 }) {
-  const { category, tags, users } = controller;
-  const candidateBodyStyle = { ...filterBodyStyle, height: filterBodyStyle.maxHeight, flexShrink: 1 };
+  const { tags, users } = controller;
+  const appearance = { styles, theme };
+  if (picker === 'tags') {
+    const selected = new Set(draftFilter.tags);
+    const visibleNames = new Set(tags.options.map(({ name }) => name));
+    const options = [
+      ...draftFilter.tags.filter((name) => !visibleNames.has(name)).map((name): DiscourseTagOption => ({ name })),
+      ...tags.options
+    ];
+    return (
+      <>
+        {tags.error ? (
+          <CandidateError {...appearance} message={tags.error} retryLabel="重试标签候选" retry={tags.retry} />
+        ) : null}
+        {!tags.loading && !tags.error && !options.length ? <EmptyText text="没有匹配标签" /> : null}
+        {options.map((option) => (
+          <FilterOptionRow
+            {...appearance}
+            key={option.name}
+            title={option.name}
+            label={`标签 ${option.name}`}
+            checked={selected.has(option.name)}
+            role="checkbox"
+            detail={option.topicCount === undefined ? undefined : `${option.topicCount} 个主题`}
+            onPress={() => toggleTag(option.name)}
+          />
+        ))}
+        {tags.loading ? <LoadingState compact text="加载标签中" /> : null}
+      </>
+    );
+  }
+
+  const hasQuery = Boolean(query.trim());
   return (
     <>
-      <ModalSheetFrame backdropLabel="关闭标签选择" visible={tags.visible} onRequestClose={tags.close}>
-        <ModalSheetHeader title="选择标签" closeLabel="关闭标签选择" onClose={tags.close} />
-        <View style={styles.searchFilterBodyInner}>
-          <TextInput
-            accessibilityLabel="搜索标签"
-            style={styles.input}
-            value={tags.query}
-            onChange={recordUserInteraction}
-            onChangeText={tags.setQuery}
-            placeholder="搜索站点标签"
-            placeholderTextColor={theme.muted}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-        </View>
-        <ScrollView
-          overScrollMode="never"
-          style={[styles.searchFilterBody, candidateBodyStyle]}
-          contentContainerStyle={styles.searchFilterBodyInner}
-          keyboardShouldPersistTaps="handled"
-        >
-          {tags.loading ? <LoadingState text="正在加载标签..." /> : null}
-          {tags.error ? (
-            <View style={styles.errorBox}>
-              <Text style={styles.errorText}>{tags.error}</Text>
-              <AppButton compact label="重试标签候选" variant="ghost" onPress={() => void tags.retry()} />
-            </View>
-          ) : null}
-          {!tags.loading && !tags.error && !tags.options.length ? <EmptyText text="没有匹配标签" /> : null}
-          {tags.options.map((option) => {
-            const selected = Boolean(discourseDraft?.tags.includes(option.name));
-            return (
-              <Pressable
-                key={option.name}
-                accessibilityRole="checkbox"
-                accessibilityLabel={`标签 ${option.name}`}
-                accessibilityState={{ checked: selected }}
-                style={[styles.searchFilterOption, selected && styles.searchFilterOptionActive]}
-                onPress={() => toggleTag(option.name)}
-              >
-                <Text style={[styles.searchFilterOptionText, selected && styles.searchFilterOptionTextActive]}>
-                  {option.name}
-                  {option.topicCount === undefined ? '' : ` · ${option.topicCount}`}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-        <View style={styles.searchFilterActions}>
-          <AppButton compact label="完成" variant="primary" onPress={tags.close} />
-        </View>
-      </ModalSheetFrame>
-      <ModalSheetFrame backdropLabel="关闭分类选择" visible={category.visible} onRequestClose={category.close}>
-        <ModalSheetHeader title="选择分类" closeLabel="关闭分类选择" onClose={category.close} />
-        <View style={styles.searchFilterBodyInner}>
-          <TextInput
-            accessibilityLabel="搜索分类"
-            style={styles.input}
-            value={category.query}
-            onChange={recordUserInteraction}
-            onChangeText={category.setQuery}
-            placeholder="搜索分类"
-            placeholderTextColor={theme.muted}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-        </View>
-        <ScrollView
-          overScrollMode="never"
-          style={[styles.searchFilterBody, filterBodyStyle]}
-          contentContainerStyle={styles.searchFilterBodyInner}
-          keyboardShouldPersistTaps="handled"
-        >
-          <Pressable
-            accessibilityRole="radio"
-            accessibilityLabel="分类 全部分类"
-            accessibilityState={{ checked: !discourseDraft?.category }}
-            style={[styles.searchFilterOption, !discourseDraft?.category && styles.searchFilterOptionActive]}
-            onPress={() => {
-              updateDraft({ category: '' });
-              category.close();
-            }}
-          >
-            <Text
-              style={[styles.searchFilterOptionText, !discourseDraft?.category && styles.searchFilterOptionTextActive]}
-            >
-              全部分类
-            </Text>
-          </Pressable>
-          {category.options.map((option) => {
-            const parentName = option.parentId ? category.names.get(option.parentId) : '';
-            const label = parentName ? `${parentName} / ${option.name}` : option.name;
-            const selected = discourseDraft?.category === option.id;
-            return (
-              <Pressable
-                key={option.id}
-                accessibilityRole="radio"
-                accessibilityLabel={`分类 ${label}`}
-                accessibilityState={{ checked: selected }}
-                style={[styles.searchFilterOption, selected && styles.searchFilterOptionActive]}
-                onPress={() => {
-                  updateDraft({ category: option.id });
-                  category.close();
-                }}
-              >
-                <Text style={[styles.searchFilterOptionText, selected && styles.searchFilterOptionTextActive]}>
-                  {label}
-                  {option.readRestricted ? ' · 🔒' : ''}
-                  {option.topicCount === undefined ? '' : ` · ${option.topicCount}`}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-      </ModalSheetFrame>
-      <ModalSheetFrame backdropLabel="关闭作者选择" visible={users.visible} onRequestClose={users.close}>
-        <ModalSheetHeader title="选择发帖人" closeLabel="关闭作者选择" onClose={users.close} />
-        <View style={styles.searchFilterBodyInner}>
-          <TextInput
-            accessibilityLabel="搜索作者"
-            style={styles.input}
-            value={users.query}
-            onChange={recordUserInteraction}
-            onChangeText={users.setQuery}
-            placeholder="输入用户名"
-            placeholderTextColor={theme.muted}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-        </View>
-        <ScrollView
-          overScrollMode="never"
-          style={[styles.searchFilterBody, candidateBodyStyle]}
-          contentContainerStyle={styles.searchFilterBodyInner}
-          keyboardShouldPersistTaps="handled"
-        >
-          {users.loading ? <LoadingState text="正在加载作者..." /> : null}
-          {users.error ? (
-            <View style={styles.errorBox}>
-              <Text style={styles.errorText}>{users.error}</Text>
-              <AppButton compact label="重试作者候选" variant="ghost" onPress={() => void users.retry()} />
-            </View>
-          ) : null}
-          {!users.query.trim() ? <EmptyText text="输入用户名后选择" /> : null}
-          {!users.loading && !users.error && users.query.trim() && !users.options.length ? (
-            <EmptyText text="没有匹配用户" />
-          ) : null}
-          {users.options.map((user) => (
-            <Pressable
-              key={user.id}
-              accessibilityRole="radio"
-              accessibilityLabel={`用户 ${user.username}`}
-              accessibilityState={{ checked: discourseDraft?.username === user.username }}
-              style={[
-                styles.searchFilterOption,
-                discourseDraft?.username === user.username && styles.searchFilterOptionActive
-              ]}
-              onPress={() => {
-                updateDraft({ username: user.username });
-                users.close();
-              }}
-            >
-              <Text
-                style={[
-                  styles.searchFilterOptionText,
-                  discourseDraft?.username === user.username && styles.searchFilterOptionTextActive
-                ]}
-              >
-                {user.displayName && user.displayName !== user.username ? `${user.displayName} · ` : ''}@{user.username}
-              </Text>
-            </Pressable>
-          ))}
-        </ScrollView>
-      </ModalSheetFrame>
+      {users.error ? (
+        <CandidateError {...appearance} message={users.error} retryLabel="重试作者候选" retry={users.retry} />
+      ) : null}
+      {!hasQuery ? <EmptyText text="输入用户名后选择" /> : null}
+      {!users.loading && !users.error && hasQuery && !users.options.length ? <EmptyText text="没有匹配用户" /> : null}
+      {users.options.map((user) => (
+        <FilterOptionRow
+          {...appearance}
+          key={user.id}
+          title={user.displayName || `@${user.username}`}
+          label={`用户 ${user.displayName || user.username}`}
+          testID={`search-filter-author-option-${user.id}`}
+          checked={draftFilter.username === user.username}
+          detail={user.displayName && user.displayName !== user.username ? `@${user.username}` : undefined}
+          onPress={() => selectAuthor(user)}
+        />
+      ))}
+      {users.loading ? <LoadingState compact text="加载作者中" /> : null}
     </>
+  );
+}
+
+function CandidateError({
+  message,
+  retryLabel,
+  styles,
+  retry
+}: FilterAppearance & { message: string; retryLabel: string; retry: () => Promise<unknown> }) {
+  return (
+    <View style={styles.errorBox}>
+      <Text accessibilityRole="alert" style={styles.errorText}>
+        {message}
+      </Text>
+      <AppButton compact label={retryLabel} variant="ghost" onPress={() => void retry()} />
+    </View>
   );
 }

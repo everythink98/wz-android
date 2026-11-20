@@ -36,6 +36,7 @@ type TopicScene =
   | 'replies-boosts-wrap'
   | 'replies-long'
   | 'entities'
+  | 'carousel-content'
   | 'structured-content';
 
 const FIXED_TIME = '2026-08-29T08:00:00.000Z';
@@ -100,6 +101,23 @@ const STRUCTURED_CONTENT = [
   '<tr><td>手动刷新</td><td>已有旧版本</td><td>暂时失败</td><td>保留当前位置</td><td>保持当前状态</td><td>显示重试入口</td></tr>',
   '</tbody></table>',
   '<p>完成这些检查后，再观察长帖滚动、连续展开与收起，以及浅色和深色主题下的文字层级。</p>'
+].join('');
+
+const CAROUSEL_SLIDE_1 =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAUAAAADICAYAAACZBDirAAACcElEQVR4Ae3BsQ3CAAADsBBxDw925kGuYOaB8gBzhRTbt/fnPAMwqAEY1QCMagBGNQCjGoBRDcCoBmBUAzCqARjVAIxqAEY1AKMagFENwKgGYFQDMKoBGNUAjGoARjUAoxqAUQ3AqAZg1D0XezwD8NPryKUagFENwKgGYFQDMKoBGNUAjGoARjUAoxqAUQ3AqAZgVAMwqgEY1QCMagBGNQCjGoBRDcCoBmBUAzCqARjVAIxqAEY1AKMagFENwKgGYFQDMKoBGNUAjGoARjUAoxqAUQ3AqAZgVAMwqgEY1QCMagBGNQCjGoBRDcCoBmBUAzCqARjVAIxqAEY1AKMagFENwKgGYFQDMKoBGNUAjGoARjUAoxqAUQ3AqAZgVAMwqgEY1QCMagBGNQCjGoBRDcCoBmBUAzCqARjVAIxqAEY1AKMagFENwKgGYFQDMKoBGNUAjGoARjUAoxqAUQ3AqAZgVAMwqgEY1QCMagBGNQCjGoBRDcCoBmBUAzCqARjVAIxqAEY1AKMagFENwKgGYFQDMKoBGNUAjGoARjUAoxqAUQ3AqAZgVAMwqgEY1QCMagBGNQCjGoBRDcCoBmBUAzCqARjVAIxqAEY1AKMagFENwKgGYFQDMKoBGNUAjGoARt1zsdcRgL/QAIxqAEY1AKMagFENwKgGYFQDMKoBGNUAjGoARjUAoxqAUQ3AqAZgVAMwqgEY1QCMagBGNQCjGoBRDcCoBmBUAzDqC5CbCLluSYwrAAAAAElFTkSuQmCC';
+const CAROUSEL_SLIDE_2 =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAUAAAADICAYAAACZBDirAAACd0lEQVR4Ae3BsWnDAAAEwM+jSbKlwWVAW4rskMZdsoBrEfi7+/h+/fwGYFADMKoBGNUAjGoARjUAoxqAUQ3AqAZgVAMwqgEY1QCMagBGNQCjGoBRDcCoBmBUAzCqARjVAIxqAEY1AKMagFENwKgjN/v8egTgnet55k4NwKgGYFQDMKoBGNUAjGoARjUAoxqAUQ3AqAZgVAMwqgEY1QCMagBGNQCjGoBRDcCoBmBUAzCqARjVAIxqAEY1AKMagFENwKgGYFQDMKoBGNUAjGoARjUAoxqAUQ3AqAZgVAMwqgEY1QCMagBGNQCjGoBRDcCoBmBUAzCqARjVAIxqAEY1AKMagFENwKgGYFQDMKoBGNUAjGoARjUAoxqAUQ3AqAZgVAMwqgEY1QCMagBGNQCjGoBRDcCoBmBUAzCqARjVAIxqAEY1AKMagFENwKgGYFQDMKoBGNUAjGoARjUAoxqAUQ3AqAZgVAMwqgEY1QCMagBGNQCjGoBRDcCoBmBUAzCqARjVAIxqAEY1AKMagFENwKgGYFQDMKoBGNUAjGoARjUAoxqAUQ3AqAZgVAMwqgEY1QCMagBGNQCjGoBRDcCoBmBUAzCqARjVAIxqAEY1AKMagFENwKgGYFQDMKoBGNUAjGoARjUAoxqAUQ3AqAZgVAMwqgEY1QCMagBGNQCjGoBRDcCoBmBUAzCqARjVAIxqAEY1AKMagFENwKgGYFQDMKoBGNUAjGoARjUAo47c7HqeAfgPGoBRDcCoBmBUAzCqARjVAIxqAEY1AKMagFENwKgGYFQDMKoBGNUAjGoARjUAoxqAUQ3AqAZgVAMwqgEY1QCMagBG/QEQGwo/0ifCGwAAAABJRU5ErkJggg==';
+const CAROUSEL_SLIDE_3 =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAUAAAADICAYAAACZBDirAAACeElEQVR4Ae3BQVHDAAAEwOMm1uKjFlASC/WBKR68KQb6zjBzu/vx8/37CsCgBmBUAzCqARjVAIxqAEY1AKMagFENwKgGYFQDMKoBGNUAjGoARjUAoxqAUQ3AqAZgVAMwqgEY1QCMagBGNQCjGoBRR272+fgKwDvX88ydGoBRDcCoBmBUAzCqARjVAIxqAEY1AKMagFENwKgGYFQDMKoBGNUAjGoARjUAoxqAUQ3AqAZgVAMwqgEY1QCMagBGNQCjGoBRDcCoBmBUAzCqARjVAIxqAEY1AKMagFENwKgGYFQDMKoBGNUAjGoARjUAoxqAUQ3AqAZgVAMwqgEY1QCMagBGNQCjGoBRDcCoBmBUAzCqARjVAIxqAEY1AKMagFENwKgGYFQDMKoBGNUAjGoARjUAoxqAUQ3AqAZgVAMwqgEY1QCMagBGNQCjGoBRDcCoBmBUAzCqARjVAIxqAEY1AKMagFENwKgGYFQDMKoBGNUAjGoARjUAoxqAUQ3AqAZgVAMwqgEY1QCMagBGNQCjGoBRDcCoBmBUAzCqARjVAIxqAEY1AKMagFENwKgGYFQDMKoBGNUAjGoARjUAoxqAUQ3AqAZgVAMwqgEY1QCMagBGNQCjGoBRDcCoBmBUAzCqARjVAIxqAEY1AKMagFENwKgGYFQDMKoBGNUAjGoARjUAoxqAUQ3AqAZgVAMwqgEY1QCMagBGNQCjGoBRDcCoBmBUAzCqARjVAIxqAEYdudn1PAPwHzQAoxqAUQ3AqAZgVAMwqgEY1QCMagBGNQCjGoBRDcCoBmBUAzCqARjVAIxqAEY1AKMagFENwKgGYFQDMKoBGNUAjPoDzCsJ6XhX0tAAAAAASUVORK5CYII=';
+
+const CAROUSEL_CONTENT = [
+  '<p>在多图分享帖中，轮播切换移至图片下方独立步进条，画面完整呈现，不再被两侧悬浮箭头遮挡。</p>',
+  '<div class="d-image-grid" data-mode="carousel">',
+  `<img src="${CAROUSEL_SLIDE_1}" alt="示例图片 1" width="320" height="200">`,
+  `<img src="${CAROUSEL_SLIDE_2}" alt="示例图片 2" width="320" height="200">`,
+  `<img src="${CAROUSEL_SLIDE_3}" alt="示例图片 3" width="320" height="200">`,
+  '</div>',
+  '<p>支持左右手势滑动切换，也可直接点按下方居中步进器快速翻阅，点击图片进入全屏预览。</p>'
 ].join('');
 
 const ENTITY_CONTENT = [
@@ -199,13 +217,23 @@ function createTopic(source: Source, state: ActionState, scene: TopicScene) {
   const base: TopicDetail = {
     author: '示例作者',
     commentId: 101,
-    contentHtml: scene === 'structured-content' ? STRUCTURED_CONTENT : '<p>用于检查主帖操作区的纯文本正文。</p>',
+    contentHtml:
+      scene === 'structured-content'
+        ? STRUCTURED_CONTENT
+        : scene === 'carousel-content'
+          ? CAROUSEL_CONTENT
+          : '<p>用于检查主帖操作区的纯文本正文。</p>',
     createdAt: FIXED_TIME,
     id: `visual-${source}-${scene}-${state}`,
     replies,
     replyCount: replies.length,
     source,
-    title: scene.startsWith('replies-') ? '回复列表视觉状态' : `${source} 主帖视觉状态`,
+    title:
+      scene === 'carousel-content'
+        ? '多图轮播与下方步进切换'
+        : scene.startsWith('replies-')
+          ? '回复列表视觉状态'
+          : `${source} 主帖视觉状态`,
     url: `https://visual.invalid/${source}/${scene}/${state}`
   };
 
@@ -350,13 +378,6 @@ function TopicScenarioScreen({
         loadingQuotedFloors: {},
         locateReply: async () => 'completed' as const,
         cancelReplyLocation: () => undefined,
-        replyCollectionComplete:
-          scene === 'replies-empty' ||
-          scene === 'replies-populated' ||
-          scene === 'replies-boosts-inline' ||
-          scene === 'replies-boosts-wrap' ||
-          scene === 'replies-long' ||
-          scene === 'entities',
         replyEndError,
         replyHasMore: scene === 'replies-loading-more',
         replyHasPrevious: false,
@@ -409,7 +430,6 @@ function TopicScenarioScreen({
           back: noop,
           favorite,
           getDiscourseEmojiUrls: getEmptyDiscourseEmojiUrls,
-          onScroll: noop,
           openOriginal: noop,
           openReadingSettings: noop,
           openTopic: noop,
@@ -531,6 +551,14 @@ export const topicVisualScenarios: readonly VisualScenarioDefinition[] = [
     tags: ['topic', 'content', 'typography', 'table', 'code'],
     title: '正文结构与排版',
     render: () => <TopicScenarioScreen scene="structured-content" source="linuxdo" />
+  },
+  {
+    capabilityIds: ['TOPIC-02'],
+    id: 'topic.content.carousel',
+    kind: 'rendered',
+    tags: ['topic', 'content', 'carousel', 'gallery', 'linuxdo'],
+    title: 'linux.do 正文图片轮播',
+    render: () => <TopicScenarioScreen scene="carousel-content" source="linuxdo" />
   },
   {
     capabilityIds: ['TOPIC-02'],

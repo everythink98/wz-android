@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { installDeviceApk } from './device-apk-install.mjs';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual, parseArgs } from 'node:util';
 import { PNG } from 'pngjs';
@@ -121,6 +122,7 @@ async function main() {
   const baseline = values['capture-baseline'] ? undefined : loadApprovedVisualBaseline(baselineDirectory);
   const version = assertAgentDeviceVersion(root);
   const device = proofDeviceForSerial(values.serial);
+  const before = device.identity();
   const runs = path.join(root, '.codex-tmp', 'visual-runs');
   mkdirSync(runs, { recursive: true });
   const directory = mkdtempSync(path.join(runs, 'capture-'));
@@ -131,7 +133,7 @@ async function main() {
     const outcome = await withProofCheckpoint({
       directory: path.join(root, '.codex-tmp', 'review-remediation-checkpoints', device.avd),
       device,
-      prepare: () => device.adb('install', '-r', apk),
+      prepare: () => installDeviceApk({ adb: device.adb, pkg: device.package, apk, expected: before }),
       run: async () => {
         const { adb } = device;
         const environment = {

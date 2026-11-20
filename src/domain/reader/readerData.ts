@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { parseForumUserLink } from '@/domain/forum/links';
-import { decodeHtml } from '@/domain/forum/html';
 import { accessRequirementFromText } from '@/domain/forum/accessRequirements';
 import { sourceCatalog, sourceValues } from '@/domain/forum/sourceCatalog';
 import type {
@@ -63,6 +62,9 @@ export interface ReaderData {
   settings: ReaderSettings;
 }
 
+type ReaderDecodeMode = 'sanitize' | 'migration' | 'backup';
+type ReaderBackupContent = Omit<ReaderData, 'settings'> & { settings: Partial<ReaderSettings> };
+
 function createDefaultReaderSettings(): ReaderSettings {
   return {
     listDensity: 'standard',
@@ -111,18 +113,6 @@ const followedUserRecordSchema = z
   .object({
     user: userProfileShapeSchema,
     followedAt: dateStringSchema
-  })
-  .loose();
-const readerSettingsSchema = z
-  .object({
-    listDensity: z.unknown().optional(),
-    theme: z.unknown().optional(),
-    fontScale: z.unknown().optional(),
-    nodeSeekRecoveryThreshold: z.unknown().optional(),
-    lineHeight: z.unknown().optional(),
-    contentWidth: z.unknown().optional(),
-    fontFamily: z.unknown().optional(),
-    contentSources: z.unknown().optional()
   })
   .loose();
 const readerDataSchema = z
@@ -181,11 +171,6 @@ function isTopic(value: unknown): value is Topic {
   return topicShapeSchema.safeParse(value).success;
 }
 
-function isUserProfile(value: unknown): value is UserProfile {
-  const parsed = userProfileShapeSchema.safeParse(value);
-  return parsed.success && (parsed.data.source !== 'nodeseek' || /^\d+$/.test(parsed.data.id));
-}
-
 function cleanString(value: unknown, fallback = '') {
   if (typeof value !== 'string' || value.length > MAX_READER_STRING_LENGTH) {
     return fallback;
@@ -196,6 +181,10 @@ function cleanString(value: unknown, fallback = '') {
 function cleanOptionalString(value: unknown) {
   const clean = cleanString(value).trim();
   return clean || undefined;
+}
+
+function hasPortableUrl(summary: { url: string }) {
+  return summary.url.length > 0 && summary.url.length <= MAX_READER_STRING_LENGTH;
 }
 
 function cleanOptionalLabelString(value: unknown) {
@@ -264,7 +253,7 @@ export function topicSummary(topic: Topic): Topic {
   return {
     source: topic.source,
     id: cleanString(topic.id),
-    title: decodeHtml(cleanString(topic.title)),
+    title: cleanString(topic.title),
     author: cleanString(topic.author),
     authorId: cleanOptionalString(topic.authorId),
     authorAvatar: cleanOptionalString(topic.authorAvatar)
@@ -301,6 +290,7 @@ export function userSummary(user: UserDetails & Partial<UserTopicsPage>): UserPr
     ? user.topics
         .filter(isTopic)
         .map(topicSummary)
+        .filter(hasPortableUrl)
         .map((topic) =>
           user.source === 'yaohuo' && isPollutedYaohuoUserText(topic.author)
             ? { ...topic, author: displayName || username || id }
@@ -382,35 +372,40 @@ export function userKey(user: Pick<UserProfile, 'source' | 'id'>) {
   return `${user.source}:${user.id}`;
 }
 
-function normalizeRecordMap(value: unknown): Record<string, TopicRecord> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return {};
-  }
+function recordMap(value: unknown, mode: ReaderDecodeMode): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+  if (value !== undefined && mode !== 'sanitize') throw new Error('本机资料记录格式不完整，未修改原资料。');
+  return {};
+}
+
+function normalizeRecordMap(value: unknown, mode: ReaderDecodeMode): Record<string, TopicRecord> {
+  const records = recordMap(value, mode);
   const next: Record<string, TopicRecord> = {};
-  for (const record of Object.values(value)) {
+  for (const [key, record] of Object.entries(records)) {
     const parsed = topicRecordSchema.safeParse(record);
     if (!parsed.success) {
+      if (mode !== 'sanitize') throw new Error('本机主题记录无法完整迁移，未修改原资料。');
       continue;
     }
-    const candidate = parsed.data as unknown as Partial<TopicRecord>;
-    if (!candidate.topic || !isTopic(candidate.topic)) {
-      continue;
-    }
-    const savedAt = typeof candidate.savedAt === 'string' ? candidate.savedAt : '';
-    if (dateValue(savedAt) <= 0) {
-      continue;
+    const candidate = parsed.data as unknown as TopicRecord;
+    if (mode !== 'sanitize') {
+      const count = candidate.visitCount;
+      if (key !== topicKey(candidate.topic) || (count !== undefined && (!Number.isSafeInteger(count) || count < 0)))
+        throw new Error('本机主题记录无法完整迁移，未修改原资料。');
+      if (mode === 'migration') continue;
     }
     const topic = topicSummary(candidate.topic);
+    if (!hasPortableUrl(topic)) continue;
     next[topicKey(topic)] = {
       topic,
-      savedAt,
+      savedAt: candidate.savedAt,
       visitCount:
         typeof candidate.visitCount === 'number' && Number.isFinite(candidate.visitCount) && candidate.visitCount > 0
           ? Math.round(candidate.visitCount)
           : undefined
     };
   }
-  return next;
+  return mode === 'migration' ? (records as ReaderData['favorites']) : next;
 }
 
 function limitRecordMap<T>(records: Record<string, T>, limit: number, getTime: (record: T) => string | undefined) {
@@ -423,66 +418,46 @@ function limitRecordMap<T>(records: Record<string, T>, limit: number, getTime: (
   );
 }
 
-function normalizeFollowedUsers(value: unknown): Record<string, FollowedUserRecord> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return {};
-  }
+function normalizeFollowedUsers(value: unknown, mode: ReaderDecodeMode): Record<string, FollowedUserRecord> {
+  const records = recordMap(value, mode);
   const next: Record<string, FollowedUserRecord> = {};
-  for (const record of Object.values(value)) {
+  for (const [key, record] of Object.entries(records)) {
     const parsed = followedUserRecordSchema.safeParse(record);
-    if (!parsed.success) {
+    if (!parsed.success || (parsed.data.user.source === 'nodeseek' && !/^\d+$/.test(parsed.data.user.id))) {
+      if (mode !== 'sanitize') throw new Error('本机关注记录无法完整迁移，未修改原资料。');
       continue;
     }
-    const candidate = parsed.data as Partial<FollowedUserRecord>;
-    if (!candidate.user || !isUserProfile(candidate.user)) {
-      continue;
-    }
-    const followedAt = typeof candidate.followedAt === 'string' ? candidate.followedAt : '';
-    if (dateValue(followedAt) <= 0) {
-      continue;
+    const candidate = parsed.data as FollowedUserRecord;
+    if (mode !== 'sanitize') {
+      if (key !== userKey(candidate.user)) throw new Error('本机关注记录无法完整迁移，未修改原资料。');
+      if (mode === 'migration') continue;
     }
     const user = userSummary(candidate.user);
-    next[userKey(user)] = {
-      user,
-      followedAt
-    };
+    if (!user.id || !hasPortableUrl(user)) continue;
+    next[userKey(user)] = { user, followedAt: candidate.followedAt };
   }
-  return next;
+  return mode === 'migration' ? (records as ReaderData['followedUsers']) : next;
 }
 
-function normalizeDeletedRecordMap(value: unknown, normalizeKey?: (key: string) => string): Record<string, string> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return {};
-  }
+function normalizeDeletedRecordMap(value: unknown, mode: ReaderDecodeMode): Record<string, string> {
+  const records = recordMap(value, mode);
   const next: Record<string, string> = {};
-  for (const [key, deletedAt] of Object.entries(value)) {
-    if (typeof key === 'string' && key && typeof deletedAt === 'string' && dateValue(deletedAt) > 0) {
-      const nextKey = normalizeKey ? normalizeKey(key) : key;
-      if (nextKey && dateValue(deletedAt) > dateValue(next[nextKey])) {
-        next[nextKey] = deletedAt;
-      }
+  for (const [key, deletedAt] of Object.entries(records)) {
+    if (!key || typeof deletedAt !== 'string' || dateValue(deletedAt) <= 0) {
+      if (mode !== 'sanitize') throw new Error('本机删除标记无法完整迁移，未修改原资料。');
+    } else if (mode === 'sanitize') {
+      next[key] = deletedAt;
     }
   }
-  return next;
+  return mode === 'sanitize' ? next : (records as Record<string, string>);
 }
 
 function limitDeletedRecordMap(records: Record<string, string>) {
   return limitRecordMap(records, MAX_DELETED_RECORDS, (time) => time);
 }
 
-function normalizeDeletedRecords(value: unknown): DeletedRecords {
-  const base = value && typeof value === 'object' && !Array.isArray(value) ? (value as Partial<DeletedRecords>) : {};
-  return {
-    favorites: normalizeDeletedRecordMap(base.favorites),
-    history: normalizeDeletedRecordMap(base.history),
-    followedUsers: normalizeDeletedRecordMap(base.followedUsers)
-  };
-}
-
 export function sanitizeReaderSettings(value: unknown): ReaderSettings {
-  const parsed = readerSettingsSchema.safeParse(value);
-  const base = parsed.success ? (parsed.data as Record<string, unknown>) : {};
-  return mergeReaderSettings(createDefaultReaderSettings(), base);
+  return { ...createDefaultReaderSettings(), ...readerSettingsPatch(value) };
 }
 
 export function normalizeFontScale(value: unknown, fallback = 1) {
@@ -494,111 +469,70 @@ export function normalizeFontScale(value: unknown, fallback = 1) {
     : fallback;
 }
 
-function mergeReaderSettings(local: ReaderSettings, value: unknown): ReaderSettings {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return local;
-  }
+function readerSettingsPatch(value: unknown): Partial<ReaderSettings> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   const base = value as Record<string, unknown>;
+  const patch: Partial<ReaderSettings> = {};
+  if (base.listDensity === 'compact' || base.listDensity === 'standard' || base.listDensity === 'loose')
+    patch.listDensity = base.listDensity;
+  if (base.theme === 'light' || base.theme === 'dark') patch.theme = base.theme;
+  if (typeof base.fontScale === 'number' && Number.isFinite(base.fontScale))
+    patch.fontScale = normalizeFontScale(base.fontScale);
+  if (typeof base.nodeSeekRecoveryThreshold === 'number' && Number.isFinite(base.nodeSeekRecoveryThreshold))
+    patch.nodeSeekRecoveryThreshold = Math.max(1, Math.min(5, Math.round(base.nodeSeekRecoveryThreshold)));
+  if (base.lineHeight === 'compact' || base.lineHeight === 'standard' || base.lineHeight === 'loose')
+    patch.lineHeight = base.lineHeight;
+  if (base.contentWidth === 'narrow' || base.contentWidth === 'standard' || base.contentWidth === 'wide')
+    patch.contentWidth = base.contentWidth;
+  if (base.fontFamily === 'sans' || base.fontFamily === 'serif') patch.fontFamily = base.fontFamily;
+  if (Array.isArray(base.contentSources)) patch.contentSources = normalizeContentSourcePreferences(base.contentSources);
+  return patch;
+}
+
+function decodeReaderData(value: unknown, mode: ReaderDecodeMode): ReaderBackupContent {
+  const parsed = readerDataSchema.safeParse(value);
+  if (!parsed.success) {
+    if (mode === 'sanitize') return createEmptyReaderData();
+    throw new Error('本机资料版本或格式不受支持，未修改原资料。');
+  }
+  const data = parsed.data;
+  const deleted = recordMap(data.deletedRecords, mode);
   return {
-    listDensity:
-      base.listDensity === 'compact' || base.listDensity === 'standard' || base.listDensity === 'loose'
-        ? base.listDensity
-        : local.listDensity,
-    theme: base.theme === 'light' || base.theme === 'dark' ? base.theme : local.theme,
-    fontScale: normalizeFontScale(base.fontScale, local.fontScale),
-    nodeSeekRecoveryThreshold:
-      typeof base.nodeSeekRecoveryThreshold === 'number' && Number.isFinite(base.nodeSeekRecoveryThreshold)
-        ? Math.max(1, Math.min(5, Math.round(base.nodeSeekRecoveryThreshold)))
-        : local.nodeSeekRecoveryThreshold,
-    lineHeight:
-      base.lineHeight === 'compact' || base.lineHeight === 'standard' || base.lineHeight === 'loose'
-        ? base.lineHeight
-        : local.lineHeight,
-    contentWidth:
-      base.contentWidth === 'narrow' || base.contentWidth === 'standard' || base.contentWidth === 'wide'
-        ? base.contentWidth
-        : local.contentWidth,
-    fontFamily: base.fontFamily === 'sans' || base.fontFamily === 'serif' ? base.fontFamily : local.fontFamily,
-    contentSources: Array.isArray(base.contentSources)
-      ? normalizeContentSourcePreferences(base.contentSources)
-      : local.contentSources
+    version: readerDataVersion,
+    favorites: normalizeRecordMap(data.favorites, mode),
+    history: normalizeRecordMap(data.history, mode),
+    followedUsers: normalizeFollowedUsers(data.followedUsers, mode),
+    deletedRecords: {
+      favorites: normalizeDeletedRecordMap(deleted.favorites, mode),
+      history: normalizeDeletedRecordMap(deleted.history, mode),
+      followedUsers: normalizeDeletedRecordMap(deleted.followedUsers, mode)
+    },
+    settings: readerSettingsPatch(data.settings)
   };
 }
 
+export function readReaderBackupContent(value: unknown): ReaderBackupContent {
+  return decodeReaderData(value, 'backup');
+}
+
 export function sanitizeReaderData(value: unknown): ReaderData {
-  return normalizeReaderData(value);
+  const data = decodeReaderData(value, 'sanitize');
+  return { ...data, settings: { ...createDefaultReaderSettings(), ...data.settings } };
 }
 
 // Migration validates the persisted representation without rewriting summaries, keys or retention.
 export function validateStoredReaderData(value: unknown): ReaderData {
-  const parsed = readerDataSchema.safeParse(value);
-  if (!parsed.success) throw new Error('本机资料版本或格式不受支持，未修改原资料。');
-  const data = parsed.data;
-  const map = (input: unknown): Record<string, unknown> => {
-    if (input === undefined) return {};
-    if (!input || typeof input !== 'object' || Array.isArray(input))
-      throw new Error('本机资料记录格式不完整，未修改原资料。');
-    return input as Record<string, unknown>;
-  };
-  const favorites = map(data.favorites);
-  const history = map(data.history);
-  const followedUsers = map(data.followedUsers);
-  for (const records of [favorites, history]) {
-    for (const [key, value] of Object.entries(records)) {
-      const record = topicRecordSchema.safeParse(value);
-      if (
-        !record.success ||
-        key !== topicKey(record.data.topic) ||
-        (record.data.visitCount !== undefined &&
-          (typeof record.data.visitCount !== 'number' ||
-            !Number.isSafeInteger(record.data.visitCount) ||
-            record.data.visitCount < 0))
-      ) {
-        throw new Error('本机主题记录无法完整迁移，未修改原资料。');
-      }
-    }
-  }
-  for (const [key, value] of Object.entries(followedUsers)) {
-    const record = followedUserRecordSchema.safeParse(value);
-    if (!record.success || !isUserProfile(record.data.user) || key !== userKey(record.data.user)) {
-      throw new Error('本机关注记录无法完整迁移，未修改原资料。');
-    }
-  }
-  const deleted = map(data.deletedRecords);
-  const deletedRecords = createEmptyDeletedRecords();
-  for (const section of ['favorites', 'history', 'followedUsers'] as const) {
-    const records = map(deleted[section]);
-    for (const [key, time] of Object.entries(records)) {
-      if (!key || typeof time !== 'string' || dateValue(time) <= 0) {
-        throw new Error('本机删除标记无法完整迁移，未修改原资料。');
-      }
-    }
-    deletedRecords[section] = records as Record<string, string>;
-  }
-  return {
-    version: readerDataVersion,
-    favorites: favorites as ReaderData['favorites'],
-    history: history as ReaderData['history'],
-    followedUsers: followedUsers as ReaderData['followedUsers'],
-    deletedRecords,
-    settings: sanitizeReaderSettings(data.settings)
-  };
+  const data = decodeReaderData(value, 'migration');
+  return { ...data, settings: { ...createDefaultReaderSettings(), ...data.settings } };
 }
 
-function normalizeReaderData(value: unknown): ReaderData {
-  const parsed = readerDataSchema.safeParse(value);
-  if (!parsed.success) {
-    return createEmptyReaderData();
-  }
-  const data = parsed.data as Partial<ReaderData>;
-  return {
-    version: readerDataVersion,
-    favorites: normalizeRecordMap(data.favorites),
-    history: normalizeRecordMap(data.history),
-    followedUsers: normalizeFollowedUsers(data.followedUsers),
-    deletedRecords: normalizeDeletedRecords(data.deletedRecords),
-    settings: sanitizeReaderSettings(data.settings)
-  };
+export function validateStoredReaderRecords(
+  collection: 'favorites' | 'history' | 'followedUsers',
+  records: Record<string, unknown>
+): (TopicRecord | FollowedUserRecord)[] {
+  return collection === 'followedUsers'
+    ? Object.values(normalizeFollowedUsers(records, 'migration'))
+    : Object.values(normalizeRecordMap(records, 'migration'));
 }
 
 function dateValue(value: string | undefined) {
@@ -619,19 +553,6 @@ function mergeTimedMap<T>(
     }
   }
   return merged;
-}
-
-function hasOwnObjectField(value: unknown, key: string) {
-  return Boolean(
-    value && typeof value === 'object' && !Array.isArray(value) && Object.prototype.hasOwnProperty.call(value, key)
-  );
-}
-
-function ownObjectField(value: unknown, key: string) {
-  if (!hasOwnObjectField(value, key)) {
-    return undefined;
-  }
-  return (value as Record<string, unknown>)[key];
 }
 
 function mergeDeletedMap(local: Record<string, string>, remote: Record<string, string>) {
@@ -663,10 +584,8 @@ function mergeTimedMapWithDeleted<T>(
   return { records, deleted };
 }
 
-export function mergeReaderData(localValue: unknown, remoteValue: unknown): ReaderData {
+export function mergeReaderData(localValue: unknown, remote: ReaderBackupContent): ReaderData {
   const local = sanitizeReaderData(localValue);
-  const remote = sanitizeReaderData(remoteValue);
-  const remoteSettings = ownObjectField(remoteValue, 'settings');
   const favorites = mergeTimedMapWithDeleted(
     local.favorites,
     remote.favorites,
@@ -689,12 +608,12 @@ export function mergeReaderData(localValue: unknown, remoteValue: unknown): Read
     (record) => record.followedAt
   );
 
-  return sanitizeReaderData({
+  return {
     version: readerDataVersion,
     favorites: favorites.records,
     history: limitRecordMap(
       history.records,
-      Math.max(MAX_HISTORY_RECORDS, Object.keys(local.history).length),
+      Math.max(MAX_HISTORY_RECORDS, Object.keys(local.history).length, Object.keys(remote.history).length),
       (record) => record.savedAt
     ),
     followedUsers: followedUsers.records,
@@ -703,8 +622,8 @@ export function mergeReaderData(localValue: unknown, remoteValue: unknown): Read
       history: limitDeletedRecordMap(history.deleted),
       followedUsers: limitDeletedRecordMap(followedUsers.deleted)
     },
-    settings: mergeReaderSettings(local.settings, remoteSettings)
-  });
+    settings: { ...local.settings, ...remote.settings }
+  };
 }
 
 export function isUserFollowed(

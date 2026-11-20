@@ -15,6 +15,8 @@ import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import com.facebook.react.bridge.BridgeReactContext
+import expo.modules.documentpicker.DocumentPickerCopyLimits
+import expo.modules.documentpicker.DocumentPickerFileSizeOverride
 import expo.modules.documentpicker.DocumentPickerModule
 import expo.modules.documentpicker.DocumentPickerOptions
 import expo.modules.documentpicker.DocumentPickerResult
@@ -204,6 +206,59 @@ class DocumentPickerThreadingTest {
     }
 
     @Test
+    fun aLaterProviderFailureRemovesOnlyTheCopiesMadeByThatSelection() {
+        val baseline = pickerCacheFiles()
+        val existing = pick()
+        result(Intent().setData(uri("existing")))
+        awaitSettlement(existing)
+        val before = pickerCacheFiles()
+        val existingCopy = (before - baseline).single()
+
+        provider.failOpen = "second"
+        val failed = pick(multiple = true)
+        result(multipleSelection("first", "second"))
+        awaitSettlement(failed)
+        assertNotNull(failed.error)
+        assertEquals(before, pickerCacheFiles())
+        assertArrayEquals(provider.bytes, existingCopy.readBytes())
+    }
+
+    @Test
+    fun selectionCountIsCheckedBeforeAnyProviderReadOrCopy() {
+        val before = pickerCacheFiles()
+        val promise = pick(multiple = true, limits = DocumentPickerCopyLimits(maxBytes = 5, maxFiles = 1))
+        result(multipleSelection("first", "second"))
+        awaitSettlement(promise)
+        assertEquals("ERR_PICKER_FILE_COUNT", promise.error)
+        assertEquals(0, provider.reads)
+        assertEquals(before, pickerCacheFiles())
+    }
+
+    @Test
+    fun knownAndUnknownOversizedFilesDoNotDiscardAnAcceptedImage() {
+        provider.unknownSize = "unknown"
+        val before = pickerCacheFiles()
+        val promise = pick(
+            multiple = true,
+            limits = DocumentPickerCopyLimits(
+                maxBytes = 4,
+                alternate = DocumentPickerFileSizeOverride(5, emptyList(), listOf("jpeg"))
+            )
+        )
+        result(multipleSelection("known", "unknown", "accepted"))
+        awaitSettlement(promise)
+        assertNull(promise.error)
+        val assets = requireNotNull(promise.value?.assets)
+        assertEquals(listOf(uri("known"), uri("unknown")), assets.take(2).map { it.uri })
+        assertEquals(listOf(5L, 5L, 5L), assets.map { it.size })
+        assertEquals(listOf("unknown", "accepted"), provider.opened)
+        val copied = pickerCacheFiles() - before
+        assertEquals(1, copied.size)
+        assertEquals(Uri.fromFile(copied.single()), assets.last().uri)
+        assertArrayEquals(provider.bytes, copied.single().readBytes())
+    }
+
+    @Test
     fun cancellationDoesNoProviderWorkAndImmediatelyAllowsAnotherPicker() {
         val first = pick()
         result(null, Activity.RESULT_CANCELED)
@@ -281,9 +336,18 @@ class DocumentPickerThreadingTest {
         multiple: Boolean = false,
         promise: RecordingPromise = RecordingPromise(),
         types: List<String> = listOf("image/*"),
+        limits: DocumentPickerCopyLimits? = null,
     ): RecordingPromise {
-        holder.call("getDocumentAsync", arrayOf(DocumentPickerOptions(copy, types, multiple)), promise)
+        holder.call("getDocumentAsync", arrayOf(DocumentPickerOptions(copy, types, multiple, limits)), promise)
         return promise
+    }
+
+    private fun pickerCacheFiles() = File(reactContext.cacheDir, "DocumentPicker").listFiles()?.toSet().orEmpty()
+
+    private fun multipleSelection(first: String, vararg remaining: String) = Intent().apply {
+        clipData = ClipData.newUri(reactContext.contentResolver, "files", uri(first)).apply {
+            remaining.forEach { addItem(ClipData.Item(uri(it))) }
+        }
     }
 
     private fun result(intent: Intent?, code: Int = Activity.RESULT_OK) {
@@ -325,6 +389,9 @@ class DocumentPickerThreadingTest {
         enum class BlockAt { QUERY, OPEN }
         var blockAt: BlockAt? = null
         var failRead = false
+        var failOpen: String? = null
+        var unknownSize: String? = null
+        val opened = mutableListOf<String>()
         var reads = 0
         val bytes = byteArrayOf(1, 2, 3, 4, 5)
         val entered = CountDownLatch(1)
@@ -347,13 +414,18 @@ class DocumentPickerThreadingTest {
             reads++
             blockAt(BlockAt.QUERY)
             if (failRead) throw IOException("Provider failed to read metadata")
+            val name = uri.lastPathSegment
+            val extension = if (name == "accepted") "jpeg" else "png"
             return MatrixCursor(arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE, DocumentsContract.Document.COLUMN_LAST_MODIFIED)).apply {
-                addRow(arrayOf<Any>("${uri.lastPathSegment}.png", bytes.size.toLong(), 123L))
+                addRow(arrayOf<Any?>("$name.$extension", bytes.size.toLong().takeUnless { name == unknownSize }, 123L))
             }
         }
         override fun getType(uri: Uri) = "image/png"
         override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {
             blockAt(BlockAt.OPEN)
+            val name = requireNotNull(uri.lastPathSegment)
+            opened.add(name)
+            if (name == failOpen) throw IOException("Provider could not open this document")
             val file = File(requireNotNull(context).cacheDir, "picker-provider-${uri.lastPathSegment}.png")
             file.writeBytes(bytes)
             return ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)

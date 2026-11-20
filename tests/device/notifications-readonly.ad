@@ -24,7 +24,7 @@ press role=switch label="只看未读"
 wait "id=\"notification-outcome-data-linuxdo\" || id=\"notification-outcome-empty-linuxdo\" || id=\"notification-outcome-partial-linuxdo\" || id=\"notification-outcome-error-linuxdo\" || id=\"notification-outcome-auth-linuxdo\"" 60000
 
 press label="消息通知设置"
-wait "text=\"后台检查已启用\" || text=\"已保留意图，后台当前暂停\" || text=\"已关闭\"" 10000
+wait id="notification-global-switch" 10000
 wait text="NodeSeek" 10000
 wait text="linux.do" 10000
 wait text="妖火" 10000

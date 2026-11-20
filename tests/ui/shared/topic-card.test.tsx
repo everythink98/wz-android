@@ -178,6 +178,65 @@ describe('Topic card visible behavior', () => {
     expect(onOpenTopic).toHaveBeenCalledWith(topic);
   });
 
+  it('omits the redundant site badge in single-source contexts and restores it when switching to aggregated views', async () => {
+    const commonProps = {
+      onOpenTopic: jest.fn(),
+      readerState: { favorite: false, listDensity: 'standard' as const, read: false },
+      topic
+    };
+    const view = await render(<MemoizedTopicCard {...commonProps} showSource={false} />);
+
+    expect(view.queryByText('linux.do')).toBeNull();
+    expect(view.getByText('开发调优')).toBeTruthy();
+    expect(view.getByLabelText('回复 23')).toBeTruthy();
+    expect(view.getByLabelText('浏览 456')).toBeTruthy();
+
+    await view.rerender(<MemoizedTopicCard {...commonProps} showSource />);
+    expect(view.getByText('linux.do')).toBeTruthy();
+  });
+
+  it('uses only a title and byline when a single-site topic has no badges or tags', async () => {
+    const view = await render(
+      <TopicCard
+        showSource={false}
+        readerState={{ favorite: false, listDensity: 'standard', read: false }}
+        topic={{ ...topic, category: undefined, tags: [], duplicateSources: [], accessRequirement: undefined }}
+        testID="plain-topic-card"
+        onOpenTopic={jest.fn()}
+      />
+    );
+
+    expect(view.getByTestId('plain-topic-card').children).toHaveLength(2);
+    expect(view.getByText(topic.title)).toBeTruthy();
+    expect(view.getByText('今天 08:00')).toBeTruthy();
+    expect(view.getByText('alice · LV 2')).toBeTruthy();
+    expect(view.getByLabelText('回复 23')).toBeTruthy();
+  });
+
+  it('spends the tag limit on distinct tags beyond the displayed category', async () => {
+    const view = await render(
+      <TopicCard
+        showSource={false}
+        readerState={{ favorite: false, listDensity: 'standard', read: false }}
+        topic={{
+          ...topic,
+          tags: ['开发调优', 'Android', ' android ', '测试', '回归', '第四个标签'],
+          isAiGenerated: true
+        }}
+        onOpenTopic={jest.fn()}
+      />
+    );
+
+    expect(view.getAllByText('开发调优')).toHaveLength(1);
+    expect(view.getByText('Android')).toBeTruthy();
+    expect(view.queryByText('android')).toBeNull();
+    expect(view.getByText('测试')).toBeTruthy();
+    expect(view.getByText('回归')).toBeTruthy();
+    expect(view.getByText('+1')).toBeTruthy();
+    expect(view.getByText('需 Lv2')).toBeTruthy();
+    expect(view.getByText('✦ AI')).toBeTruthy();
+  });
+
   it('gives colliding tag labels distinct foregrounds and backgrounds in the topic list', async () => {
     const tags = ['A', 'I', 'Q'];
     const view = await render(
@@ -359,6 +418,11 @@ describe('App theme propagation to real topic cards', () => {
     expect(onCommit.mock.calls.map(([scale]) => scale)).toEqual([1.1]);
     expect(mockIconCommits.mock.calls.map(([name]) => name).sort()).toEqual(['Eye', 'MessageCircle']);
     expect(StyleSheet.flatten(view.getByText(topic.title).parent?.props.style)).toMatchObject({ fontSize: 18 });
+
+    await view.rerender(<AppThemeHarness settings={{ ...settings, fontScale: 1.4 }}>{children}</AppThemeHarness>);
+    expect(StyleSheet.flatten(view.getByText(topic.title).parent?.props.style)).toMatchObject({ fontSize: 22 });
+    expect(view.getByText('alice · LV 2')).toHaveStyle({ fontSize: 18 });
+    expect(view.getByText('今天 08:00')).toHaveStyle({ fontSize: 17 });
   });
 
   it.each(['network', 'content-sources', 'equivalent-object'] as const)(

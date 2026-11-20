@@ -2314,6 +2314,14 @@ export function ComposerEditorRuntime() {
       scheduleSignalsRef.current();
     }
   });
+  const richHistory = useEditorState({
+    editor,
+    selector: ({ editor: currentEditor }) => {
+      if (builder !== 'more' || mode !== 'rich') return null;
+      const commands = currentEditor?.can();
+      return { canUndo: commands?.undo() ?? false, canRedo: commands?.redo() ?? false };
+    }
+  });
   const editorRef = useCommittedRef(editor);
   const getRichMarkdown = useCallback(() => {
     const current = editorRef.current;
@@ -3669,6 +3677,7 @@ export function ComposerEditorRuntime() {
               预览
             </EditorButton>
             <EditorButton
+              disabled={mode === 'rich' && !richHistory?.canUndo}
               onClick={() => {
                 handleHostMessage({ type: 'COMMAND', payload: { name: 'undo' } });
               }}
@@ -3677,6 +3686,7 @@ export function ComposerEditorRuntime() {
               撤销
             </EditorButton>
             <EditorButton
+              disabled={mode === 'rich' && !richHistory?.canRedo}
               onClick={() => {
                 handleHostMessage({ type: 'COMMAND', payload: { name: 'redo' } });
               }}
@@ -4081,7 +4091,14 @@ export function ComposerEditorRuntime() {
       {builder === 'templates' ? (
         <BuilderPanel title="动态模板" onClose={() => closeBuilder()}>
           {templateBusy ? <p>正在读取模板…</p> : null}
-          {builderError ? <p className="error">{builderError}</p> : null}
+          {!templateBusy && builderError ? (
+            <div className="inline-retry" role="alert">
+              <span className="error">{builderError}</span>
+              <EditorButton type="button" onClick={() => void loadTemplates()}>
+                重试
+              </EditorButton>
+            </div>
+          ) : null}
           {!templateBusy && !templates.length && !builderError ? <p>没有可用模板</p> : null}
           <div className="template-list">
             {templates.map((template) => (

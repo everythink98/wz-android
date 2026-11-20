@@ -18,6 +18,7 @@ import {
   profileStats,
   safeYaohuoProfileName,
   yaohuoDisplayTimeText,
+  yaohuoTrailingTimeText,
   yaohuoProfileLevelLabel
 } from './normalization';
 
@@ -44,9 +45,9 @@ export function parseYaohuoUserProfileDocument(
       return [];
     }
     seen.add(topicId);
-    const text = elementText(row);
+    const text = elementText(row).replace(title, ' ');
     const timeText = yaohuoDisplayTimeText(text);
-    const createdAt = parseYaohuoDate(timeText || text) || new Date().toISOString();
+    const createdAt = parseYaohuoDate(timeText || text);
     return [
       {
         source: 'yaohuo' as const,
@@ -59,7 +60,7 @@ export function parseYaohuoUserProfileDocument(
         category: classId ? categoryNames.get(classId) : undefined,
         url: topicUrl || `${BASE_URL}/bbs-${topicId}.html`,
         createdAt,
-        lastReplyAt: createdAt,
+        lastReplyAt: createdAt || undefined,
         ...(timeText ? { displayTimeText: timeText } : {}),
         replyCount: 0,
         ...(levelLabel ? { authorLevelLabel: levelLabel } : {})
@@ -109,13 +110,14 @@ export function parseYaohuoUserRepliesDocument(
       if (!topicId) {
         return null;
       }
-      const text = elementText(row);
-      const dateText = yaohuoDisplayTimeText(text);
+      const rowText = elementText(row);
+      const linkText = elementText(viewLink);
+      const text = linkText && rowText.endsWith(linkText) ? rowText.slice(0, -linkText.length).trimEnd() : rowText;
+      const dateText = yaohuoTrailingTimeText(text);
       const floor = parsePositiveInteger(text.match(/(?:^|[^&])#\s*(\d+)/)?.[1]);
-      const createdAt = parseYaohuoDate(dateText || text);
+      const createdAt = parseYaohuoDate(dateText);
       const topicTitle = /^查看$/.test(elementText(viewLink)) ? '查看原帖' : elementText(viewLink) || '查看原帖';
-      const contentText = text
-        .replace(dateText, ' ')
+      const contentText = (dateText ? text.slice(0, -dateText.length) : text)
         .replace(new RegExp(`^\\s*${author.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*`, 'i'), ' ')
         .replace(new RegExp(`\\(${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`, 'g'), ' ')
         .replace(/#\s*\d+/g, (marker, offset, value) => (value[offset - 1] === '&' ? marker : ' '))

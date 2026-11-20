@@ -32,7 +32,6 @@ export type MoreRouteRuntimeValue = {
     status: import('@/domain/reader/readerRecordState').ReaderStatus;
     commit: (command: ReaderCommand) => void;
     data: ReaderState;
-    dataRef: { current: ReaderState };
     importBackup: (json: string) => Promise<void>;
     exportBackup: () => Promise<string>;
   };

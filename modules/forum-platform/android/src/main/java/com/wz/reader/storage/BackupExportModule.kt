@@ -15,7 +15,11 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
 import java.io.OutputStream
+import java.nio.ByteBuffer
+import java.nio.charset.CharacterCodingException
 import java.util.concurrent.atomic.AtomicInteger
 
 internal sealed interface BackupDocumentResult {
@@ -67,6 +71,25 @@ internal fun writeBackupDocument(bytes: ByteArray, stream: OutputStream, checkAc
     output.flush()
   }
   return bytes.size
+}
+
+internal fun readBackupDocument(input: InputStream, maxBytes: Int): String = input.use { stream ->
+  require(maxBytes in 1 until Int.MAX_VALUE) { "备份读取大小限制无效。" }
+  val bytes = ByteArrayOutputStream()
+  val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+  while (true) {
+    val remaining = maxBytes - bytes.size()
+    val count = stream.read(buffer, 0, minOf(buffer.size, remaining + 1))
+    if (count == -1) break
+    check(count > 0) { "备份文件读取失败，请重新选择。" }
+    require(count <= remaining) { "备份文件过大，请减少历史记录后重新导入。" }
+    bytes.write(buffer, 0, count)
+  }
+  try {
+    Charsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(bytes.toByteArray())).toString()
+  } catch (error: CharacterCodingException) {
+    throw IllegalArgumentException("备份文件编码不正确，请选择 UTF-8 JSON。", error)
+  }
 }
 
 internal class BackupExportOwner {
@@ -124,6 +147,13 @@ class BackupExportModule : Module() {
 
   override fun definition() = ModuleDefinition {
     Name("BackupExport")
+    AsyncFunction("readBackupDocument") Coroutine { uriString: String, maxBytes: Int ->
+      withContext(Dispatchers.IO) {
+        val resolver = requireNotNull(appContext.reactContext).contentResolver
+        val input = requireNotNull(resolver.openInputStream(Uri.parse(uriString))) { "无法读取所选备份文件。" }
+        readBackupDocument(input, maxBytes)
+      }
+    }
     // The SDK's Activity-bound registry unregisters its suspended callback on recreation.
     // Follow ExpoDocumentPicker's AppContext-owned event path instead.
     OnActivityResult { _, (requestCode, resultCode, intent) ->

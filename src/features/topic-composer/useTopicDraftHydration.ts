@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  applyTopicEditReceipt,
   draftFromTopicEdit,
   emptyTopicDraft,
   type TopicCreationSource,
@@ -103,24 +104,17 @@ export function useTopicDraftHydration(input: {
           ? draftFromTopicEdit(editing)
           : emptyTopicDraft(source, identityKey);
       if (!owns()) return;
-      if (restored.edit && attempt?.draftId === restored.id && attempt.confirmed) {
-        const original = { ...restored.edit.original, ...attempt.confirmed };
-        if (JSON.stringify(original) !== JSON.stringify(restored.edit.original))
-          restored = {
-            ...restored,
-            ...(attempt.revision === restored.revision ? attempt.confirmed : {}),
-            edit: { ...restored.edit, original },
-            revision: restored.revision + 1,
-            updatedAt: Date.now()
-          } as TopicDraft;
-      }
+      if (attempt) restored = applyTopicEditReceipt(restored, attempt);
       if (stored && JSON.stringify(restored.attachments) !== JSON.stringify(stored.attachments))
         restored = { ...restored, revision: stored.revision + 1, updatedAt: Date.now() };
       if (!owns()) return;
       inputRef.current.restored({
         stored,
         draft: restored,
-        attempt: attempt?.status === 'saved' && attempt.draftId !== restored.id ? null : attempt,
+        attempt:
+          attempt?.status === 'saved' && (attempt.draftId !== restored.id || attempt.revision !== restored.revision)
+            ? null
+            : attempt,
         editing
       });
       if (!owns()) return;

@@ -7,9 +7,9 @@
   --primary: #1677ff;
   --primary-soft: #e8f2ff;
   --danger: #ba1a1a;
-  --tt-radius-md: 14px;
-  --tt-radius-lg: 20px;
-  --reader-radius-content: 12px;
+  --tt-radius-md: 10px;
+  --tt-radius-lg: 14px;
+  --reader-radius-content: 10px;
   --tt-shadow-elevated-md: 0 8px 24px rgb(0 0 0 / 16%);
   --font-scale: 1;
   background: var(--surface);
@@ -201,7 +201,7 @@ select:focus-visible {
   gap: 7px;
   padding: 0 10px;
   border: 1px solid transparent;
-  border-radius: var(--tt-radius-lg);
+  border-radius: var(--tt-radius-md);
   background: transparent;
   color: var(--ink);
   font-size: 13px;

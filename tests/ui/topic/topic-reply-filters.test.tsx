@@ -85,14 +85,14 @@ const mockGetDiscourseSourceEmojiUrls = jest.fn(async () => ({}));
 const mockReplyComposerSheet = jest.fn<(_props: React.ComponentProps<typeof ReplyComposerSheet>) => null>(() => null);
 const mockScrollToIndex = jest.fn();
 const mockScrollToOffset = jest.fn();
-const mockGetLayout = jest.fn<(index: number) => { x: number; y: number; width: number; height: number } | undefined>();
+const mockGetLayout = jest.fn<FlashListRef<TopicListItem>['getLayout']>();
 const mockGetFirstItemOffset = jest.fn<() => number>();
 const mockMeasureTopicViewport = jest.fn<View['measureInWindow']>();
 const mockNativeTopicViewport = { measureInWindow: mockMeasureTopicViewport };
 const mockTopicScrollView = { getNativeScrollRef: () => mockNativeTopicViewport };
 const mockCompileForumContent = jest.fn();
 const mockAvatarLifecycle = jest.fn<(event: 'mount' | 'unmount', uri: string | undefined) => void>();
-const mockAvatarComponentLifecycle = jest.fn<(event: 'mount' | 'unmount') => void>();
+const mockAvatarComponentLifecycle = jest.fn<(event: 'mount' | 'unmount', initialUri: string | undefined) => void>();
 const mockViewportCellRender = jest.fn<(floor: number | undefined) => void>();
 const mockViewportBodyRender = jest.fn<(uri: string | undefined) => void>();
 const mockViewportBodyCommit = jest.fn<(uri: string | undefined) => void>();
@@ -227,23 +227,33 @@ jest.mock('@shopify/flash-list', () => {
             });
           return result;
         },
-        getLayout: (index: number) => mockGetLayout(index) || { x: 0, y: index * 900, width: 320, height: 900 },
+        getLayout: (index: number) =>
+          mockGetLayout(index) || { x: 0, y: index * 900, width: 320, height: 900, isHeightMeasured: true },
         getFirstItemOffset: () => mockGetFirstItemOffset(),
         getNativeScrollRef: () => mockTopicScrollView
       }));
       lastFlashListItemTypes = data.map((item) => String((item as { type?: unknown }).type || 'unknown'));
       lastFlashListItemKeys = data.map((item, index) => keyExtractor?.(item, index) ?? String(index));
-      lastFlashListProps = { ...props, data, ListHeaderComponent };
       const didLoad = ReactModule.useRef(false);
+      const layoutReady = mockFlashListLayoutReady;
+      lastFlashListProps = {
+        ...props,
+        data,
+        ListHeaderComponent,
+        onLoad: (event: unknown) => {
+          didLoad.current = true;
+          if (typeof props.onLoad === 'function') props.onLoad(event);
+        }
+      };
       ReactModule.useEffect(() => {
-        if (!didLoad.current && data.length > 0 && mockFlashListLayoutReady) {
+        if (!didLoad.current && data.length > 0 && layoutReady) {
           didLoad.current = true;
           if (typeof props.onLayout === 'function')
             props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 320, height: 800 } } });
           if (typeof props.onLoad === 'function') props.onLoad({ elapsedTimeInMs: 0 });
         }
-      }, [data.length, props.onLoad]);
-      const cells = data.map((item, index) => ({ item, index }));
+      }, [data.length, props.onLoad, layoutReady]);
+      const cells = layoutReady || didLoad.current ? data.map((item, index) => ({ item, index })) : [];
       const renderedCells = mockRealViewportCells
         ? cells.filter(({ item }) => item.type === 'reply')
         : mockRecycledReplySlot
@@ -433,7 +443,7 @@ jest.mock('@/ui/avatar/Avatar', () => {
     Avatar: ({ contentSource, uri }: { contentSource?: string; uri?: string }) => {
       if (mockRealViewportCells) mockViewportBodyRender(uri);
       const selectionActive = useTopicSelectionRowActive();
-      const instance = ReactModule.useRef({});
+      const instance = ReactModule.useRef({ initialUri: uri });
       ReactModule.useLayoutEffect(() => {
         if (mockRealViewportCells) {
           mockViewportBodyCommit(uri);
@@ -441,8 +451,9 @@ jest.mock('@/ui/avatar/Avatar', () => {
         }
       });
       ReactModule.useEffect(() => {
-        mockAvatarComponentLifecycle('mount');
-        return () => mockAvatarComponentLifecycle('unmount');
+        const { initialUri } = instance.current;
+        mockAvatarComponentLifecycle('mount', initialUri);
+        return () => mockAvatarComponentLifecycle('unmount', initialUri);
       }, []);
       ReactModule.useEffect(() => {
         mockAvatarLifecycle('mount', uri);
@@ -818,6 +829,7 @@ function TopicFilterHarness({
   expandedQuotes = {},
   getDiscourseEmojiUrls = mockGetDiscourseSourceEmojiUrls,
   loadedQuotedReplies = {},
+  authorOnlyQuotedReferences,
   loadingMoreReplies = false,
   loadingPreviousReplies = false,
   loadingQuotedFloors = {},
@@ -832,6 +844,7 @@ function TopicFilterHarness({
   onInteract = jest.fn(),
   onImagePreviewDescriptors = jest.fn(),
   onRefreshWholeTopic = jest.fn(),
+  onRefreshReplies = jest.fn(),
   onRetryReplies = jest.fn(),
   onReplyComposerOpenChange = jest.fn(),
   onToggleFavorite = jest.fn(),
@@ -852,7 +865,6 @@ function TopicFilterHarness({
   replyPreviousCursor,
   replyEndError = null,
   replyStartError = null,
-  replyCollectionComplete = true,
   replyRowsPartial = false,
   repliesError = null,
   repliesLoading = false,
@@ -876,6 +888,7 @@ function TopicFilterHarness({
   expandedQuotes?: Record<string, boolean>;
   getDiscourseEmojiUrls?: (options: { signal?: AbortSignal; source: DiscourseSource }) => Promise<DiscourseEmojiUrlMap>;
   loadedQuotedReplies?: Record<string, Reply>;
+  authorOnlyQuotedReferences?: ReadonlySet<string>;
   loadingMoreReplies?: boolean;
   loadingPreviousReplies?: boolean;
   loadingQuotedFloors?: Record<string, boolean>;
@@ -890,6 +903,7 @@ function TopicFilterHarness({
   onOpenTopic?: (topic: Topic, location?: TopicLocationTarget) => void;
   location?: TopicLocationTarget;
   onRefreshWholeTopic?: () => void;
+  onRefreshReplies?: () => void;
   onRetryReplies?: (edge?: 'start' | 'end') => void;
   onReplyComposerOpenChange?: (open: boolean) => void;
   onToggleFavorite?: () => void;
@@ -910,7 +924,6 @@ function TopicFilterHarness({
   replyPreviousCursor?: ReturnType<typeof useTopicController>['replyPreviousCursor'];
   replyEndError?: SourceErrorInfo | null;
   replyStartError?: SourceErrorInfo | null;
-  replyCollectionComplete?: boolean;
   replyRowsPartial?: boolean;
   repliesError?: SourceErrorInfo | null;
   repliesLoading?: boolean;
@@ -1007,6 +1020,7 @@ function TopicFilterHarness({
       return true;
     },
     loadedQuotedReplies: preparedLoadedQuotedReplies,
+    authorOnlyQuotedReferences,
     loadingMoreReplies,
     loadingPreviousReplies,
     loadingQuotedFloors,
@@ -1015,7 +1029,6 @@ function TopicFilterHarness({
     replyPreviousCursor,
     replyEndError,
     replyStartError,
-    replyCollectionComplete,
     replyRowsPartial,
     repliesError,
     repliesLoading,
@@ -1075,12 +1088,11 @@ function TopicFilterHarness({
             back: jest.fn(),
             favorite: topicFavorite,
             getDiscourseEmojiUrls,
-            onScroll: jest.fn(),
             openOriginal: jest.fn(),
             openReadingSettings: jest.fn(),
             openTopic: onOpenTopic,
             openUser: jest.fn(),
-            refreshReplies: jest.fn(),
+            refreshReplies: onRefreshReplies,
             refreshTopic: onRefreshWholeTopic,
             share: jest.fn(),
             toggleFavorite: onToggleFavorite,
@@ -1138,6 +1150,40 @@ describe('NodeSeek reply count availability', () => {
 });
 
 describe('Topic reply filters', () => {
+  it.each([false, true])(
+    'scrolls to the sorted replies only while that gesture is current (dragged: %s)',
+    async (dragged) => {
+      const loaded = {
+        ...topic,
+        source: 'nodeseek' as const,
+        id: '200',
+        url: 'https://www.nodeseek.com/post-200-1',
+        replyCount: 12,
+        replies: sourceReplies
+      };
+      const page = (loading: boolean) => (
+        <TopicFilterHarness
+          selectedTopic={loaded}
+          topicDetail={loaded}
+          topicReplies={loading ? [] : sourceReplies}
+          repliesLoading={loading}
+        />
+      );
+      const view = await render(page(true));
+      await act(() => lastFlashListProps.onLoad());
+      await fireEvent.press(view.getByLabelText('回复排序，当前正序'));
+      await fireEvent.press(view.getByLabelText('倒序'));
+      mockScrollToIndex.mockClear();
+      if (dragged)
+        await act(() => {
+          lastFlashListProps.onScrollBeginDrag(replyListScrollEvent(3000));
+          lastFlashListProps.onScroll(replyListScrollEvent(200));
+        });
+      await view.rerender(page(false));
+      expect(mockScrollToIndex).toHaveBeenCalledTimes(dragged ? 0 : 1);
+    }
+  );
+
   it('skips stable memoized reply bodies during an unrelated viewport change', async () => {
     const names = ['X', 'A', 'B', 'C', 'D', 'Y'];
     const replies = names.map((name, index): Reply => ({
@@ -1298,7 +1344,7 @@ describe('Topic reply filters', () => {
       expect(lastFlashListItemTypes.filter((type) => type === 'reply')).toHaveLength(1);
       expect(view.getByText('recycled-author-a')).toBeTruthy();
       expect(view.getByText('recycled body A')).toBeTruthy();
-      expect(mockAvatarComponentLifecycle.mock.calls).toEqual([['mount']]);
+      expect(mockAvatarComponentLifecycle.mock.calls.filter(([, uri]) => uri === avatar)).toEqual([['mount', avatar]]);
       await fireEvent.press(view.getByText('#2'));
       expect(onLocateReply).toHaveBeenLastCalledWith({ floor: 2 });
       mockAvatarComponentLifecycle.mockClear();
@@ -1530,7 +1576,9 @@ describe('Topic reply filters', () => {
     async (source) => {
       jest.useFakeTimers();
       const detail = { ...topic, source };
-      const replies = sourceReplies.map((reply) => prepareReplyContent({ ...reply }, source));
+      const replies = sourceReplies.map((reply) =>
+        prepareReplyContent(source === 'linuxdo' ? { ...reply, authorId: reply.author } : { ...reply }, source)
+      );
       const searchedHtml = new Set(replies.map((reply) => reply.contentHtml));
       const normalize = jest.spyOn(forumText, 'stripHtml');
       const bodyCalls = () => normalize.mock.calls.filter(([html]) => searchedHtml.has(html || '')).length;
@@ -2166,14 +2214,19 @@ describe('Topic reply filters', () => {
   it.each(['cold', 'cached', 'positioning'] as const)(
     'keeps the normal topic header visible during %s reading entry',
     async (stage) => {
-      const targetTopic: TopicDetail = { ...topic, source: 'linuxdo', title: '续读时也显示完整标题' };
+      const targetTopic: TopicDetail = {
+        ...topic,
+        source: 'linuxdo',
+        title: '续读时也显示完整标题',
+        category: '开发调优'
+      };
       const entry = {
         ready: stage === 'positioning',
         positionReady: false,
         windowReady: false,
         windowLoaded: jest.fn(),
         anchor: undefined,
-        location: undefined,
+        location: stage === 'cached' ? undefined : ({ kind: 'reply', target: { floor: 2 } } as const),
         baseline: undefined,
         highest: undefined,
         positioned: jest.fn(),
@@ -2188,7 +2241,16 @@ describe('Topic reply filters', () => {
       );
       const titleStyle = view.getByText(targetTopic.title).props.style;
       expect(view.getByTestId('topic-author')).toBeVisible();
-      expect(view.getByText('正在读取主题...')).toBeVisible();
+      const progress = stage === 'positioning' ? '正在定位阅读位置' : '正在加载正文';
+      if (stage === 'cached') {
+        expect(view.queryByLabelText('正在定位阅读位置')).toBeNull();
+        expect(view.queryByLabelText('正在加载正文')).toBeNull();
+      } else {
+        expect(await view.findByLabelText(progress)).toBeVisible();
+        expect(view.getAllByLabelText(progress, { includeHiddenElements: true })).toHaveLength(1);
+      }
+      expect(view.getByText('linux.do · 开发调优')).toBeVisible();
+      expect(view.queryByText('开发调优')).toBeNull();
       expect(view.queryByTestId('topic-detail-loaded')).toBeNull();
       await view.rerender(
         <TopicFilterHarness
@@ -2199,7 +2261,7 @@ describe('Topic reply filters', () => {
       );
       expect(view.getByText(targetTopic.title)).toHaveStyle(titleStyle);
       expect(view.getByTestId('topic-author')).toBeVisible();
-      expect(view.queryByText('正在读取主题...')).toBeNull();
+      expect(view.queryByLabelText(progress)).toBeNull();
       expect(view.getByTestId('topic-detail-loaded')).toBeVisible();
     }
   );
@@ -2222,7 +2284,7 @@ describe('Topic reply filters', () => {
         send: async () => undefined
       });
       const snapshot = { topicId: detail.id, lastReadPostNumber: 15, highestPostNumber: 40 };
-      const observeReading = () => reading.observe(snapshot, reading.startRequest());
+      const observeReading = () => reading.observe([snapshot], reading.startRequest());
       let releaseWindow!: () => void;
       const window = new Promise<void>((resolve) => {
         releaseWindow = resolve;
@@ -2530,7 +2592,7 @@ describe('Topic reply filters', () => {
         let y = 0;
         return lastFlashListItemKeys.map((_, index) => {
           const height = index === targetIndex ? 1800 : 240;
-          const layout = { x: 0, y, width: 320, height };
+          const layout = { x: 0, y, width: 320, height, isHeightMeasured: true };
           y += height;
           return layout;
         });
@@ -2804,7 +2866,7 @@ describe('Topic reply filters', () => {
             : change === 'bottom clamp' && index >= lastReplyListIndex(2)
               ? 100
               : 900 + (index === 0 ? precedingHeightChange : 0);
-        const layout = { x: 0, y, width: 320, height };
+        const layout = { x: 0, y, width: 320, height, isHeightMeasured: height > 0 };
         y += height;
         return layout;
       });
@@ -2967,11 +3029,100 @@ describe('Topic reply filters', () => {
     }
   });
 
+  it.each([0, 1400])(
+    'confirms a visible reply after its first real measurement with %i dp of opening growth',
+    async (growth) => {
+      mockFlashListLayoutReady = false;
+      mockScrollToIndex.mockImplementation(() => undefined);
+      const positioned = jest.fn();
+      const location: TopicLocationTarget = { kind: 'reply', target: { floor: 2, readingResume: true } };
+      const entry = {
+        ready: true,
+        positionReady: false,
+        windowReady: true,
+        windowLoaded: jest.fn(),
+        anchor: undefined,
+        location,
+        baseline: undefined,
+        highest: undefined,
+        positioned,
+        failed: jest.fn()
+      };
+      const detail: TopicDetail = { ...topic, source: 'linuxdo', contentHtml: '<p>Opening before the target</p>' };
+      try {
+        const view = await render(
+          <TopicFilterHarness
+            selectedTopic={detail}
+            topicDetail={detail}
+            topicReplies={[sourceReplies[1]]}
+            location={location}
+            readingEntry={entry}
+          />
+        );
+        const items = lastFlashListProps.data as TopicListItem[];
+        const index = lastReplyListIndex(2);
+        const initial = {
+          data: items.slice(0, 1),
+          keyExtractor: topicListItemKey,
+          getItemType: topicListItemType,
+          renderItem: () => null
+        };
+        const manager = new RecyclerViewManager(initial);
+        manager.updateLayoutParams({ width: 320, height: 800 }, 0);
+        manager.modifyChildrenLayout([], 1);
+        manager.modifyChildrenLayout([{ index: 0, dimensions: { width: 320, height: 192 } }], 1);
+        expect(manager.getIsFirstLayoutComplete()).toBe(true);
+        manager.isFirstPaintOnUiComplete = true;
+        manager.updateProps({ ...initial, data: items });
+        manager.processDataUpdate();
+        mockGetLayout.mockImplementation((row) => manager.tryGetLayout(row));
+        const estimate = manager.getLayout(index);
+        expect(estimate.height).toBeGreaterThan(0);
+        expect(estimate.isHeightMeasured).toBeFalsy();
+        const viewportHeight = Math.ceil(estimate.y) + 100;
+        await act(() => {
+          lastFlashListProps.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 320, height: viewportHeight } } });
+          lastFlashListProps.onLoad({ elapsedTimeInMs: 0 });
+        });
+        expect(mockScrollToIndex).toHaveBeenCalledWith(expect.objectContaining({ index }));
+        expect(positioned).not.toHaveBeenCalled();
+
+        const measured = items.map((item, row) => ({
+          index: row,
+          dimensions: {
+            width: 320,
+            height: manager.getLayout(row).height + (item.type === 'topicContent' ? growth : 0)
+          }
+        }));
+        manager.modifyChildrenLayout(measured, items.length);
+        expect(manager.getLayout(index).isHeightMeasured).toBe(true);
+        await act(() => lastFlashListProps.onCommitLayoutEffect());
+        if (growth) {
+          expect(manager.getLayout(index).y).toBeGreaterThan(viewportHeight);
+          expect(positioned).not.toHaveBeenCalled();
+          await act(() => lastFlashListProps.onScroll(replyListScrollEvent(manager.getLayout(index).y)));
+        }
+        expect(positioned).toHaveBeenCalledTimes(1);
+        await view.unmount();
+      } finally {
+        mockScrollToIndex.mockReset();
+        mockGetLayout.mockReset();
+        mockFlashListLayoutReady = true;
+      }
+    }
+  );
+
   it('finishes a resume at the native pixel boundary of a reply', async () => {
     mockFlashListLayoutReady = false;
     mockScrollToIndex.mockImplementation(() => undefined);
     mockGetFirstItemOffset.mockReturnValue(17.904762268066406);
-    mockGetLayout.mockReturnValue({ x: 0, y: 1787.047619047619, width: 320, height: 240.38095238095238 });
+    mockGetLayout.mockReturnValue({
+      x: 0,
+      y: 1787.047619047619,
+      width: 320,
+      height: 240.38095238095238,
+      isHeightMeasured: true
+    });
     const round = jest
       .spyOn(PixelRatio, 'roundToNearestPixel')
       .mockImplementation((value) => Math.round(value * 2.625) / 2.625);
@@ -4593,10 +4744,68 @@ describe('Topic reply filters', () => {
     expect(view.getByText('preview')).toBeTruthy();
   });
 
+  it('reads an unresolved visible quote author once while the quote stays collapsed', async () => {
+    const reference = { source: 'linuxdo' as const, topicId: '2686247', postNumber: 1 };
+    const quoted = { ...sourceReplies[1], quotedPosts: [{ reference, author: { label: 'alice' } }] };
+    const known = {
+      ...quoted,
+      floor: 3,
+      quotedPosts: [{ reference: { ...reference, postNumber: 5 }, author: { label: '山月', username: 'bob' } }]
+    };
+    const rows = [quoted, known];
+    const discussion = { ...topic, source: 'linuxdo' as const, id: '2885866', replies: rows };
+    const prefetch = jest.fn();
+    const view = await render(
+      <TopicFilterHarness
+        selectedTopic={discussion}
+        topicDetail={discussion}
+        topicReplies={rows}
+        onToggleTopicBodyQuote={prefetch}
+      />
+    );
+    const items = lastFlashListProps.data as TopicListItem[];
+    const headers = items.filter((item) => item.type === 'replyQuoteSummary');
+    expect(headers).toHaveLength(2);
+    expect(prefetch).not.toHaveBeenCalled();
+    for (let pass = 0; pass < 2; pass++) {
+      await act(() =>
+        lastFlashListProps.onViewableItemsChanged({
+          viewableItems: headers.map((item) => ({ item, index: items.indexOf(item), isViewable: true }))
+        })
+      );
+    }
+    expect(prefetch).toHaveBeenCalledTimes(1);
+    expect(prefetch).toHaveBeenCalledWith(expect.objectContaining({ prefetch: 'author', reference }));
+    expect(lastFlashListItemTypes).not.toContain('replyQuoteContent');
+    const catalog = jest.fn<(descriptors: readonly ForumImagePreviewDescriptor[]) => void>();
+    const key = 'linuxdo:2686247:1';
+    const remoteImage = 'https://img.example/foreign.png';
+    const prepared = {
+      selectedTopic: discussion,
+      topicDetail: discussion,
+      topicReplies: rows,
+      onImagePreviewDescriptors: catalog,
+      loadedQuotedReplies: {
+        [key]: { ...quoted, author: '原作者昵称', authorId: 'alice', contentHtml: '<img src="' + remoteImage + '">' }
+      }
+    };
+    await view.rerender(<TopicFilterHarness {...prepared} authorOnlyQuotedReferences={new Set([key])} />);
+    expect(
+      (lastFlashListProps.data as TopicListItem[]).some(
+        (item) => item.type === 'replyQuoteSummary' && item.quotedReply?.author === '原作者昵称' && !item.expanded
+      )
+    ).toBe(true);
+    expect(catalog.mock.lastCall?.[0].map((image) => image.source)).not.toContain(remoteImage);
+    await view.rerender(<TopicFilterHarness {...prepared} />);
+    expect(catalog.mock.lastCall?.[0].map((image) => image.source)).toContain(remoteImage);
+    await view.unmount();
+  });
+
   it('expands a same-topic opening quote from the current reply instead of stale quote cache', async () => {
     const topicId = 'same-topic-quote-owner';
     const currentReply: Reply = {
-      author: 'current-author',
+      author: '当前昵称',
+      authorId: 'current-author',
       contentHtml: '<p>current same-topic body</p>',
       createdAt: '2026-08-15T00:00:00.000Z',
       floor: 2
@@ -4628,6 +4837,7 @@ describe('Topic reply filters', () => {
 
     expect(rendered).toContain('current same-topic body');
     expect(rendered).not.toContain('stale cached body');
+    expect(within(view.getByTestId(`topic-quote-${topicId}-2`)).getByText('当前昵称')).toBeTruthy();
   });
 
   it.each([
@@ -5025,11 +5235,19 @@ describe('Topic reply filters', () => {
       ...sourceReplies[1],
       acceptedAnswer: true,
       author: 'CyrilXu',
+      quotedPosts: [
+        {
+          reference: { source, topicId: `${source}-solved-topic`, postNumber: 1 },
+          author: { label: 'alice', username: 'alice' }
+        }
+      ],
       contentHtml: '<p>采纳答案正文</p>'
     };
-    const topicReplies = [sourceReplies[0], acceptedReply, sourceReplies[2]];
+    const topicReplies = [acceptedReply, sourceReplies[2]];
     const solvedTopic: TopicDetail = {
       ...topic,
+      author: '楼主昵称',
+      authorId: 'alice',
       acceptedAnswerFloor: 2,
       contentHtml: '<p>提问正文</p>',
       id: `${source}-solved-topic`,
@@ -5043,17 +5261,18 @@ describe('Topic reply filters', () => {
       <TopicFilterHarness selectedTopic={solvedTopic} topicDetail={solvedTopic} topicReplies={topicReplies} />
     );
 
-    expect(view.getByTestId('topic-accepted-answer')).toBeTruthy();
+    const answerCard = within(view.getByTestId('topic-accepted-answer'));
+    expect(answerCard.getByText('楼主昵称')).toBeTruthy();
     expect(view.getByText('已采纳答案')).toBeTruthy();
     expect(view.getByText('CyrilXu')).toBeTruthy();
-    expect(view.getByText(/采纳答案正文/)).toBeTruthy();
+    expect(answerCard.getByText(/采纳答案正文/)).toBeTruthy();
     expect(view.getByText('查看完整答案 · #2')).toBeTruthy();
     const rendered = JSON.stringify(view.toJSON(), ['children', 'props', 'testID']);
     expect(rendered.indexOf('提问正文')).toBeLessThan(rendered.indexOf('topic-accepted-answer'));
     expect(rendered.indexOf('topic-accepted-answer')).toBeLessThan(rendered.indexOf('回复列表'));
 
     await fireEvent.press(view.getByLabelText('收起已采纳答案'));
-    expect(view.queryByText(/采纳答案正文/)).toBeNull();
+    expect(answerCard.queryByText(/采纳答案正文/)).toBeNull();
     expect(view.getByLabelText('展开已采纳答案')).toBeTruthy();
 
     await fireEvent.press(view.getByLabelText('展开已采纳答案'));
@@ -5096,7 +5315,7 @@ describe('Topic reply filters', () => {
     await waitFor(() =>
       expect(onToggleTopicBodyQuote).toHaveBeenCalledWith({
         instanceKey,
-        prefetch: true,
+        prefetch: 'accepted-answer',
         reference: {
           source,
           topicId: solvedTopic.id,
@@ -5166,6 +5385,10 @@ describe('Topic reply filters', () => {
 
     expect(view.queryByTestId('topic-accepted-answer')).toBeNull();
     expect(onToggleTopicBodyQuote).not.toHaveBeenCalled();
+    expect(view.queryByLabelText('加载更多回复')).toBeNull();
+    await fireEvent.press(view.getByLabelText('更多操作'));
+    expect(view.queryByLabelText('刷新评论')).toBeNull();
+    expect(view.getByLabelText('刷新全文')).toBeTruthy();
   });
 
   it('restores the reply list before locating an accepted answer hidden by filters', async () => {
@@ -5491,9 +5714,16 @@ describe('Topic reply filters', () => {
 
   it.each([0, 6])('keeps a title-only V2EX topic with %s votes compact above its replies', async (upvoteCount) => {
     const titleOnly: TopicDetail = { ...topic, contentHtml: '', upvoteCount };
-    const view = await render(<TopicFilterHarness selectedTopic={titleOnly} topicDetail={titleOnly} />);
+    const view = await render(<TopicFilterHarness selectedTopic={titleOnly} topicDetail={null} />);
+    const heading = () => view.getByRole('header', { name: topic.title });
+    const titleStyle = StyleSheet.flatten(heading().props.style);
+    const lineWrapping = heading().props.textBreakStrategy;
+    const authorStyle = StyleSheet.flatten(view.getByTestId('topic-author').props.style);
+    await view.rerender(<TopicFilterHarness selectedTopic={titleOnly} topicDetail={titleOnly} />);
 
-    expect(view.getByText(topic.title)).toBeTruthy();
+    expect(StyleSheet.flatten(heading().props.style)).toEqual(titleStyle);
+    expect(heading().props.textBreakStrategy).toBe(lineWrapping);
+    expect(StyleSheet.flatten(view.getByTestId('topic-author').props.style)).toEqual(authorStyle);
     expect(view.getAllByText('V2EX')).toHaveLength(1);
     expect(view.getByTestId('topic-author')).toBeVisible();
     expect(view.getByLabelText('评论内查找')).toBeTruthy();
@@ -5660,11 +5890,92 @@ describe('Topic reply filters', () => {
     );
   });
 
+  it('distinguishes unmatched replies from an empty topic and keeps refresh recovery in one place', async () => {
+    const view = await render(<TopicFilterHarness />);
+    await fireEvent.changeText(view.getByLabelText('评论内查找'), 'no-matching-local-reply');
+    await waitFor(() => expect(view.getByText('已加载的回复中没有匹配项')).toBeVisible());
+    expect(view.queryByText('暂无回复')).toBeNull();
+    await view.rerender(
+      <TopicFilterHarness repliesError={{ kind: 'ordinary', message: '刷新失败', retryable: true }} />
+    );
+    expect(view.getAllByText('重试评论')).toHaveLength(1);
+    await view.rerender(<TopicFilterHarness />);
+    await fireEvent.press(view.getByLabelText('显示全部回复'));
+    expect(view.getByLabelText('评论内查找').props.value).toBe('');
+    await waitFor(() => expect(view.queryByText('已加载的回复中没有匹配项')).toBeNull());
+  });
+
   it('shows a single detail loading state before the selected topic is available', async () => {
     const view = await render(<TopicFilterHarness topicDetail={null} topicBusy />);
 
-    expect(view.getAllByText('正在读取主题...')).toHaveLength(1);
+    expect(await view.findByLabelText('正在加载正文')).toBeVisible();
+    expect(view.getAllByLabelText('正在加载正文')).toHaveLength(1);
     expect(view.queryByText('回复列表')).toBeNull();
+  });
+
+  it('keeps the selected title visible until native cells draw the received topic', async () => {
+    jest.useFakeTimers({ doNotFake: ['performance'] });
+    mockFlashListLayoutReady = false;
+    const detail = { ...topic, contentHtml: '<p>首帧正文</p>' };
+    try {
+      const view = await render(<TopicFilterHarness topicDetail={null} topicBusy />);
+      expect(view.getByRole('header', { name: topic.title })).toBeVisible();
+      expect(view.queryByLabelText('正在加载正文')).toBeNull();
+      await view.rerender(<TopicFilterHarness topicDetail={detail} />);
+      expect(view.getByRole('header', { name: topic.title })).toBeVisible();
+      expect(view.queryByTestId('topic-detail-loaded')).toBeNull();
+      expect(view.queryByLabelText('正在定位阅读位置')).toBeNull();
+      mockFlashListLayoutReady = true;
+      await view.rerender(<TopicFilterHarness topicDetail={detail} />);
+      expect(view.getByRole('header', { name: topic.title })).toBeVisible();
+      expect(view.getByTestId('topic-detail-loaded')).toBeVisible();
+      await act(() => jest.advanceTimersByTime(400));
+      expect(view.queryByLabelText('正在加载正文')).toBeNull();
+    } finally {
+      mockFlashListLayoutReady = true;
+      jest.useRealTimers();
+    }
+  });
+
+  it.each(['刷新全文', '刷新评论'])('shows progress for %s and keeps the current content usable', async (label) => {
+    const result = Promise.withResolvers<void>();
+    const refresh = jest.fn(() => result.promise);
+    const view = await render(<TopicFilterHarness onRefreshWholeTopic={refresh} onRefreshReplies={refresh} />);
+    await fireEvent.press(view.getByLabelText('更多操作'));
+    await fireEvent.press(view.getByLabelText(label));
+    const progress = label === '刷新全文' ? '正在刷新全文' : '正在刷新评论';
+    expect(view.getByLabelText(progress).props.accessibilityState.busy).toBe(true);
+    expect(view.getByText(topic.title)).toBeVisible();
+    await fireEvent.press(view.getByLabelText('更多操作'));
+    expect(view.getByLabelText('原站打开')).toBeVisible();
+    expect(view.getByLabelText(label)).toBeDisabled();
+    await fireEvent.press(view.getByLabelText(label));
+    expect(refresh).toHaveBeenCalledTimes(1);
+    await act(() => result.resolve());
+    await waitFor(() => expect(view.queryByLabelText(progress)).toBeNull());
+  });
+
+  it('keeps the current topic refresh visible when the previous topic finishes', async () => {
+    const first = Promise.withResolvers<void>();
+    const second = Promise.withResolvers<void>();
+    const view = await render(<TopicFilterHarness onRefreshWholeTopic={() => first.promise} />);
+    await fireEvent.press(view.getByLabelText('更多操作'));
+    await fireEvent.press(view.getByLabelText('刷新全文'));
+    const nextTopic = { ...topic, id: 'another-topic', title: '正在读的主题' };
+    await view.rerender(
+      <TopicFilterHarness
+        selectedTopic={nextTopic}
+        topicDetail={nextTopic}
+        onRefreshWholeTopic={() => second.promise}
+      />
+    );
+    expect(view.queryByLabelText('正在刷新全文')).toBeNull();
+    await fireEvent.press(view.getByLabelText('更多操作'));
+    await fireEvent.press(view.getByLabelText('刷新全文'));
+    await act(() => first.resolve());
+    expect(view.getByLabelText('正在刷新全文')).toBeVisible();
+    await act(() => second.resolve());
+    await waitFor(() => expect(view.queryByLabelText('正在刷新全文')).toBeNull());
   });
 
   it('offers verification and retry actions when a NodeSeek topic cannot be read', async () => {
@@ -5692,7 +6003,7 @@ describe('Topic reply filters', () => {
     );
 
     expect(view.getByText('NodeSeek 需要完成验证后继续。')).toBeTruthy();
-    expect(view.queryByText('正在读取主题...')).toBeNull();
+    expect(view.queryByText('加载中')).toBeNull();
     await fireEvent.press(view.getByLabelText('去验证'));
     await fireEvent.press(view.getByLabelText('重试'));
     expect(onVerifyNodeSeek).toHaveBeenCalledTimes(1);
@@ -5707,8 +6018,8 @@ describe('Topic reply filters', () => {
     expect(onLoadMoreReplies).toHaveBeenCalledTimes(1);
 
     await view.rerender(<TopicFilterHarness replyHasMore loadingMoreReplies onLoadMoreReplies={onLoadMoreReplies} />);
-    expect(view.getByLabelText('正在加载...').props.accessibilityState.disabled).toBe(true);
-    await fireEvent.press(view.getByLabelText('正在加载...'));
+    expect(view.getByLabelText('加载中').props.accessibilityState.disabled).toBe(true);
+    await fireEvent.press(view.getByLabelText('加载中'));
     expect(onLoadMoreReplies).toHaveBeenCalledTimes(1);
   });
 
@@ -5741,7 +6052,7 @@ describe('Topic reply filters', () => {
     expect(view.getByText('已到最早回复')).toBeTruthy();
   });
 
-  it('shows a partial V2EX prefix as a settled visible result', async () => {
+  it('shows the partial V2EX prefix and keeps its reply order control available', async () => {
     const partialTopic: TopicDetail = {
       ...topic,
       replyCount: 106,
@@ -5751,12 +6062,7 @@ describe('Topic reply filters', () => {
       replyNextPage: null
     };
     const view = await render(
-      <TopicFilterHarness
-        replyCollectionComplete={false}
-        replyRowsPartial
-        selectedTopic={partialTopic}
-        topicDetail={partialTopic}
-      />
+      <TopicFilterHarness replyRowsPartial selectedTopic={partialTopic} topicDetail={partialTopic} />
     );
 
     expect(view.getByText('部分评论未能读取，已显示 3 条')).toBeTruthy();
@@ -5764,23 +6070,17 @@ describe('Topic reply filters', () => {
     expect(view.queryByText(/评论正在同步/)).toBeNull();
     expect(view.getByLabelText('评论内查找')).toBeTruthy();
     expect(view.getByLabelText('只看楼主')).toBeTruthy();
-    expect(view.queryByLabelText('回复排序，当前正序')).toBeNull();
+    expect(view.getByLabelText('回复排序，当前正序')).toBeTruthy();
     expect(view.queryByLabelText('已到最新回复')).toBeNull();
 
     const unknownCountTopic = { ...partialTopic, replyCount: undefined };
     await view.rerender(
-      <TopicFilterHarness
-        replyCollectionComplete={false}
-        replyRowsPartial
-        selectedTopic={unknownCountTopic}
-        topicDetail={unknownCountTopic}
-      />
+      <TopicFilterHarness replyRowsPartial selectedTopic={unknownCountTopic} topicDetail={unknownCountTopic} />
     );
     expect(view.getByText('部分评论未能读取，已显示 3 条')).toBeTruthy();
 
     await view.rerender(
       <TopicFilterHarness
-        replyCollectionComplete={false}
         replyRowsPartial
         repliesError={{ kind: 'ordinary', message: '回复总数仍未同步', retryable: true }}
         selectedTopic={partialTopic}
@@ -5790,7 +6090,9 @@ describe('Topic reply filters', () => {
     expect(view.getAllByText(/^reply-/)).toHaveLength(3);
     expect(view.getByText('回复总数仍未同步')).toBeTruthy();
     expect(view.getByText('重试评论')).toBeTruthy();
-    expect(view.queryByLabelText('回复排序，当前正序')).toBeNull();
+    await fireEvent.press(view.getByLabelText('回复排序，当前正序'));
+    await fireEvent.press(view.getByLabelText('倒序'));
+    expect(view.getByLabelText('回复排序，当前倒序')).toBeTruthy();
     expect(view.queryByLabelText('已到最新回复')).toBeNull();
   });
 
@@ -5820,7 +6122,7 @@ describe('Topic reply filters', () => {
     expect(view.queryByLabelText('已到最新回复')).toBeNull();
   });
 
-  it('waits to scroll to a V2EX floor outside the prefix until the full collection arrives', async () => {
+  it('waits to scroll to a V2EX floor outside the prefix until the target arrives', async () => {
     const prefix = sourceReplies.slice(0, 1);
     const syncingTopic: TopicDetail = {
       ...topic,
@@ -5831,7 +6133,6 @@ describe('Topic reply filters', () => {
     mockScrollToIndex.mockClear();
     const view = await render(
       <TopicFilterHarness
-        replyCollectionComplete={false}
         replyRowsPartial
         selectedTopic={syncingTopic}
         targetReply={{ floor: 2 }}
@@ -7631,7 +7932,7 @@ describe('Topic reply filters', () => {
 
     await fireEvent.press(view.getByLabelText('回复排序，当前正序'));
     await fireEvent.press(view.getByLabelText('倒序'));
-    expect(view.getByText('正在读取最新回复...')).toBeTruthy();
+    expect(view.getByText('正在读取最新回复')).toBeTruthy();
     expect(view.queryAllByText(/^reply-/)).toHaveLength(0);
 
     await view.rerender(

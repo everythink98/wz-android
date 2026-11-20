@@ -79,6 +79,7 @@ const mockLoadReader = jest.fn<Promise<ReaderState>, []>();
 const mockImportReader = jest.fn<Promise<ReaderState>, []>();
 jest.mock('@/platform/storage/readerDataStore', () => ({
   loadReaderState: () => mockLoadReader(),
+  subscribeReaderStorageFreeze: () => jest.fn(),
   importReaderDataBackup: () => mockImportReader()
 }));
 
@@ -465,6 +466,42 @@ describe('notification runtime', () => {
     }
   });
 
+  it('keeps malformed storage untouched on cold start and retries when it becomes readable', async () => {
+    const corrupted = '{"version":1,"globalEnabled":true,"sources":';
+    let persisted = corrupted;
+    jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
+    jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
+      persisted = value;
+    });
+    const options = runtimeOptions(undefined, nodeSeekSessions('confirmed'), ['nodeseek', 'linuxdo', 'yaohuo']);
+    const hook = await renderHook(() => useNotificationsRuntime(options), { wrapper: QueryTestWrapper });
+    try {
+      await settleStartedRuntimeTasks(false);
+      expect(AsyncStorage.setItem).not.toHaveBeenCalled();
+      expect(persisted).toBe(corrupted);
+      expect(hook.result.current.ready).toBe(false);
+      expect(hook.result.current.initializationError).toContain('存储');
+
+      const repaired = defaultNotificationState();
+      repaired.globalEnabled = true;
+      repaired.hasOptedIn = true;
+      repaired.sources.nodeseek = {
+        intentEnabled: true,
+        identityKey: 'nodeseek:42',
+        baselineReady: true,
+        deliveredIds: ['kept']
+      };
+      persisted = JSON.stringify(repaired);
+      await act(() => hook.result.current.retryInitialization());
+      expect(hook.result.current.ready).toBe(true);
+      expect(hook.result.current.initializationError).toBe('');
+      expect(hook.result.current.state).toEqual(repaired);
+      expect(AsyncStorage.setItem).not.toHaveBeenCalled();
+    } finally {
+      await settleStartedRuntimeTasks();
+    }
+  });
+
   it('retries failed storage restoration once and preserves the persisted watermark and settings', async () => {
     const stored = defaultNotificationState();
     stored.hasOptedIn = true;
@@ -520,6 +557,82 @@ describe('notification runtime', () => {
     expect(hook.result.current.initializationError).toBe('');
     expect(loadNotificationState).toHaveBeenCalledTimes(reads);
     await settleStartedRuntimeTasks();
+  });
+
+  it('checks Android permission once at startup and revalidates revocation when returning to the App', async () => {
+    const stored = defaultNotificationState();
+    stored.globalEnabled = true;
+    stored.hasOptedIn = true;
+    stored.sources.nodeseek = {
+      intentEnabled: true,
+      identityKey: 'nodeseek:42',
+      baselineReady: true,
+      deliveredIds: ['old']
+    };
+    jest.mocked(AsyncStorage.getItem).mockResolvedValue(JSON.stringify(stored));
+    jest
+      .mocked(notificationPermissionGranted)
+      .mockResolvedValueOnce(true)
+      .mockRejectedValue(new Error('transient permission read error'));
+    let options = {
+      ...runtimeOptions(undefined, nodeSeekSessions('confirmed'), ['nodeseek', 'linuxdo', 'yaohuo']),
+      appActive: true,
+      remoteReady: false
+    };
+    const hook = await renderHook(() => useNotificationsRuntime(options), { wrapper: QueryTestWrapper });
+    try {
+      await settleStartedRuntimeTasks(false);
+      expect(hook.result.current.permission).toBe('granted');
+      expect(hook.result.current.backgroundEnabled).toBe(true);
+      expect(notificationPermissionGranted).toHaveBeenCalledTimes(1);
+
+      jest.mocked(notificationPermissionGranted).mockResolvedValueOnce(false);
+      options = { ...options, appActive: false };
+      await hook.rerender(undefined);
+      options = { ...options, appActive: true };
+      await hook.rerender(undefined);
+      await waitFor(() => expect(hook.result.current.permission).toBe('denied'));
+      expect(hook.result.current.backgroundEnabled).toBe(false);
+      expect(hook.result.current.initializationError).toBe('');
+      expect(notificationPermissionGranted).toHaveBeenCalledTimes(2);
+
+      options = { ...options, appActive: false };
+      await hook.rerender(undefined);
+      options = { ...options, appActive: true };
+      await hook.rerender(undefined);
+      await waitFor(() => expect(hook.result.current.permission).toBe('unavailable'));
+      expect(hook.result.current.activeSources).toContain('nodeseek');
+      expect(notificationPermissionGranted).toHaveBeenCalledTimes(3);
+
+      jest.mocked(notificationPermissionGranted).mockResolvedValueOnce(true);
+      await act(() => hook.result.current.retryInitialization());
+      expect(hook.result.current.permission).toBe('granted');
+      expect(hook.result.current.initializationError).toBe('');
+      expect(hook.result.current.backgroundEnabled).toBe(true);
+      expect(notificationPermissionGranted).toHaveBeenCalledTimes(4);
+    } finally {
+      await settleStartedRuntimeTasks();
+    }
+  });
+
+  it('clears an earlier permission error after the user successfully requests permission', async () => {
+    jest.mocked(notificationPermissionGranted).mockRejectedValue(new Error('permission read failed'));
+    jest.mocked(requestNotificationPermission).mockResolvedValue(true);
+    const hook = await renderHook(() => useNotificationsRuntime({ ...runtimeOptions(), appActive: true }), {
+      wrapper: QueryTestWrapper
+    });
+    try {
+      await waitFor(() => expect(hook.result.current.initializationError).toContain('权限'));
+      await act(async () => {
+        await expect(hook.result.current.setGlobalEnabled(true)).resolves.toBe(true);
+      });
+      expect(hook.result.current.permission).toBe('granted');
+      expect(hook.result.current.initializationError).toBe('');
+      expect(notificationPermissionGranted).toHaveBeenCalledTimes(1);
+      expect(requestNotificationPermission).toHaveBeenCalledTimes(1);
+    } finally {
+      await settleStartedRuntimeTasks();
+    }
   });
 
   it('does not publish a late initialization after unmount', async () => {
@@ -634,6 +747,49 @@ describe('notification runtime', () => {
     await act(async () => hook.rerender({}));
     expect(hook.result.current.activeSources).toEqual(['nodeseek', 'linuxdo']);
     expect(hook.result.current.getReadBlock('linuxdo')?.kind).toBe('verification-required');
+    await settleStartedRuntimeTasks();
+  });
+
+  it('pauses Android registration during verification while keeping the affected route recoverable', async () => {
+    const stored = defaultNotificationState();
+    stored.globalEnabled = true;
+    stored.hasOptedIn = true;
+    stored.sources.linuxdo.identityKey = 'linuxdo:84';
+    stored.sources.linuxdo.intentEnabled = true;
+    let persisted = JSON.stringify(stored);
+    jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
+    jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
+      persisted = value;
+    });
+    jest.mocked(notificationPermissionGranted).mockResolvedValue(true);
+    const options = runtimeOptions(undefined, nodeSeekAndLinuxDoSessions(), ['linuxdo']);
+    let barrierOpen = false;
+    const hook = await renderHook(
+      () =>
+        useNotificationsRuntime({
+          ...options,
+          privateAccessAllowed: (source, identity) => !barrierOpen && options.privateAccessAllowed(source, identity)
+        }),
+      { wrapper: QueryTestWrapper }
+    );
+
+    await waitFor(() => expect(hook.result.current.backgroundEnabled).toBe(true));
+    await act(async () => {
+      hook.result.current.reportReadError('linuxdo', { kind: 'verification-required', message: '请验证' }, 0);
+      barrierOpen = true;
+      await hook.rerender({});
+    });
+    expect(hook.result.current.activeSources).toEqual(['linuxdo']);
+    expect(hook.result.current.backgroundEnabled).toBe(false);
+    expect(syncNotificationBackgroundRegistration).toHaveBeenLastCalledWith(expect.anything(), true, []);
+
+    barrierOpen = false;
+    await act(async () => {
+      hook.result.current.clearReadBlock('linuxdo', 0);
+      await hook.rerender({});
+    });
+    await waitFor(() => expect(hook.result.current.backgroundEnabled).toBe(true));
+    expect(syncNotificationBackgroundRegistration).toHaveBeenLastCalledWith(expect.anything(), true, ['linuxdo']);
     await settleStartedRuntimeTasks();
   });
 
@@ -1109,6 +1265,68 @@ describe('notification runtime', () => {
     await settleStartedRuntimeTasks();
   });
 
+  it('drops a late unread result after the same account starts a new session', async () => {
+    const stored = defaultNotificationState();
+    stored.sources.nodeseek.identityKey = 'nodeseek:42';
+    let persisted = JSON.stringify(stored);
+    jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
+    jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
+      persisted = value;
+    });
+    let sessionEpochs = initialForumSessionEpochs;
+    let sessions = nodeSeekSessions('confirmed');
+    const oldResponse = Promise.withResolvers<Response>();
+    const newResponse = Promise.withResolvers<Response>();
+    const response = (atMe: number) => Response.json({ atMe, reply: 0, message: 0 });
+    const fetcher = jest
+      .fn<Promise<Response>, []>()
+      .mockImplementationOnce(() => oldResponse.promise)
+      .mockImplementation(() => newResponse.promise);
+    const hook = await renderHook(
+      () =>
+        useNotificationsRuntime({
+          ...runtimeOptions(undefined, sessions, ['nodeseek']),
+          appActive: true,
+          fetcher,
+          sessionEpochs
+        }),
+      { wrapper: QueryTestWrapper }
+    );
+    const persistedUnread = () => JSON.parse(persisted).sources.nodeseek.unreadCount;
+    try {
+      await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+      sessionEpochs = { ...sessionEpochs, nodeseek: initialForumSessionEpochs.nodeseek + 1 };
+      sessions = nodeSeekSessions('confirmed');
+      await act(async () => hook.rerender({}));
+      await act(async () => oldResponse.resolve(response(97)));
+      await settleStartedRuntimeTasks(false);
+      expect({ badge: hook.result.current.unreadTotal, stored: persistedUnread() }).toEqual({
+        badge: 0,
+        stored: undefined
+      });
+      await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+      await act(async () => newResponse.resolve(response(2)));
+      await waitFor(() => expect(persistedUnread()).toBe(2));
+      expect(hook.result.current.unreadTotal).toBe(2);
+      expect(recordNotificationSnapshot).toHaveBeenCalledTimes(1);
+
+      const nextResponse = Promise.withResolvers<Response>();
+      fetcher.mockImplementationOnce(() => nextResponse.promise);
+      sessionEpochs = { ...sessionEpochs, nodeseek: sessionEpochs.nodeseek + 1 };
+      await act(async () => hook.rerender({}));
+      try {
+        await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3));
+        expect(hook.result.current.unreadTotal).toBe(2);
+      } finally {
+        await act(async () => nextResponse.resolve(response(2)));
+      }
+    } finally {
+      oldResponse.resolve(response(97));
+      newResponse.resolve(response(2));
+      await settleStartedRuntimeTasks();
+    }
+  });
+
   it.each(['identity', 'session-epoch', 'background', 'source-disabled', 'source-reenabled', 'unmount'] as const)(
     'does not resume a snapshot refresh after %s changes during cancellation',
     async (change) => {
@@ -1137,7 +1355,11 @@ describe('notification runtime', () => {
       await waitFor(() => expect(recordNotificationSnapshot).toHaveBeenCalledTimes(1));
       await settleStartedRuntimeTasks(false);
       await waitFor(() => expect(hook.result.current.state.sources.nodeseek.identityKey).toBe('nodeseek:42'));
-      const snapshotKey = forumQueryKeys.notificationSnapshot({ source: 'nodeseek', identityKey: 'nodeseek:42' });
+      const snapshotKey = forumQueryKeys.notificationSnapshot({
+        source: 'nodeseek',
+        identityKey: 'nodeseek:42',
+        sessionEpoch: initialForumSessionEpochs.nodeseek
+      });
       const previousSnapshot = appQueryClient.getQueryState(snapshotKey);
       const otherRead = Promise.withResolvers<string>();
       const otherSignals: AbortSignal[] = [];
@@ -1146,7 +1368,8 @@ describe('notification runtime', () => {
         forumQueryKeys.notificationDetail({
           source: 'nodeseek',
           identityKey: 'nodeseek:42',
-          notificationId: 'conversation:9'
+          notificationId: 'conversation:9',
+          sessionEpoch: 0
         })
       ].map((queryKey) =>
         appQueryClient
@@ -1420,7 +1643,11 @@ describe('notification runtime', () => {
 
   it('keeps a failed disable cleanup fail-closed and retries it after another explicit source change', async () => {
     const stored = defaultNotificationState();
+    stored.globalEnabled = true;
+    stored.hasOptedIn = true;
+    stored.sources.nodeseek.intentEnabled = true;
     stored.sources.nodeseek.identityKey = 'nodeseek:42';
+    stored.sources.nodeseek.notificationIdentifier = 'old-android-id';
     let persisted = JSON.stringify(stored);
     jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
     jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
@@ -1456,6 +1683,7 @@ describe('notification runtime', () => {
       'dismiss failed'
     );
     expect(hook.result.current.activeSources).not.toContain('nodeseek');
+    expect(hook.result.current.state.sources.nodeseek.notificationIdentifier).toBe('old-android-id');
 
     enabledNotificationSources = ['nodeseek'];
     await act(async () => hook.rerender({}));
@@ -1467,6 +1695,8 @@ describe('notification runtime', () => {
       ).toHaveLength(2)
     );
     await waitFor(() => expect(hook.result.current.activeSources).toContain('nodeseek'));
+    expect(dismissSourceNotification).toHaveBeenLastCalledWith('nodeseek', 'old-android-id', 'nodeseek:42');
+    expect(hook.result.current.state.sources.nodeseek.notificationIdentifier).toBeUndefined();
     await settleStartedRuntimeTasks();
   });
 
@@ -1565,7 +1795,11 @@ describe('notification runtime', () => {
       await waitFor(() =>
         expect(
           appQueryClient.getQueryState(
-            forumQueryKeys.notificationSnapshot({ source: 'nodeseek', identityKey: 'nodeseek:42' })
+            forumQueryKeys.notificationSnapshot({
+              source: 'nodeseek',
+              identityKey: 'nodeseek:42',
+              sessionEpoch: initialForumSessionEpochs.nodeseek
+            })
           )
         ).toMatchObject({ status: 'error', fetchStatus: 'idle' })
       );
@@ -1862,6 +2096,128 @@ describe('notification runtime', () => {
     await settleStartedRuntimeTasks();
   });
 
+  it.each(['global', 'source'] as const)(
+    'retries a failed Android digest dismissal on resume after disabling %s notifications',
+    async (scope) => {
+      const stored = defaultNotificationState();
+      stored.globalEnabled = true;
+      stored.hasOptedIn = true;
+      stored.sources.nodeseek = {
+        ...stored.sources.nodeseek,
+        intentEnabled: true,
+        identityKey: 'nodeseek:42',
+        notificationIdentifier: 'old-android-id'
+      };
+      let persisted = JSON.stringify(stored);
+      jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
+      jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
+        persisted = value;
+      });
+      jest.mocked(notificationPermissionGranted).mockResolvedValue(true);
+      let options = {
+        ...runtimeOptions(undefined, nodeSeekSessions('confirmed'), ['nodeseek', 'linuxdo', 'yaohuo']),
+        appActive: true,
+        remoteReady: false
+      };
+      const hook = await renderHook(() => useNotificationsRuntime(options), { wrapper: QueryTestWrapper });
+      await waitFor(() => expect(hook.result.current.backgroundEnabled).toBe(true));
+      const failure = new Error('dismiss failed');
+      jest.mocked(dismissSourceNotification).mockImplementationOnce(async () => {
+        expect(syncNotificationBackgroundRegistration).toHaveBeenLastCalledWith(
+          expect.objectContaining({ globalEnabled: scope === 'source' }),
+          true,
+          scope === 'source' ? [] : ['nodeseek']
+        );
+        throw failure;
+      });
+
+      await act(async () => {
+        const disable =
+          scope === 'global'
+            ? hook.result.current.setGlobalEnabled(false)
+            : hook.result.current.setSourceEnabled('nodeseek', false);
+        await expect(disable).rejects.toBe(failure);
+      });
+      expect(dismissSourceNotification).toHaveBeenCalledWith('nodeseek', 'old-android-id', 'nodeseek:42');
+      expect(hook.result.current.backgroundEnabled).toBe(false);
+      expect((await loadNotificationState()).sources.nodeseek.notificationIdentifier).toBe('old-android-id');
+
+      options = { ...options, appActive: false };
+      await hook.rerender(undefined);
+      options = { ...options, appActive: true };
+      await hook.rerender(undefined);
+      await waitFor(async () =>
+        expect((await loadNotificationState()).sources.nodeseek.notificationIdentifier).toBeUndefined()
+      );
+      expect(dismissSourceNotificationExact).toHaveBeenCalledTimes(1);
+      expect(dismissSourceNotificationExact).toHaveBeenCalledWith('old-android-id');
+
+      options = { ...options, appActive: false };
+      await hook.rerender(undefined);
+      options = { ...options, appActive: true };
+      await hook.rerender(undefined);
+      await settleStartedRuntimeTasks(false);
+      expect(dismissSourceNotificationExact).toHaveBeenCalledTimes(1);
+      await settleStartedRuntimeTasks();
+    }
+  );
+
+  it('settles a cold disabled digest without clearing a replacement after the user re-enables delivery', async () => {
+    const stored = defaultNotificationState();
+    stored.globalEnabled = true;
+    stored.hasOptedIn = true;
+    stored.sources.nodeseek = {
+      intentEnabled: false,
+      identityKey: 'nodeseek:42',
+      baselineReady: false,
+      deliveredIds: [],
+      notificationIdentifier: 'old-android-id'
+    };
+    let persisted = JSON.stringify(stored);
+    jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
+    jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
+      persisted = value;
+    });
+    jest.mocked(notificationPermissionGranted).mockResolvedValue(true);
+    const dismissal = Promise.withResolvers<void>();
+    jest.mocked(dismissSourceNotificationExact).mockReturnValueOnce(dismissal.promise);
+    const options = {
+      ...runtimeOptions(undefined, nodeSeekSessions('confirmed'), ['nodeseek', 'linuxdo', 'yaohuo']),
+      remoteReady: false
+    };
+    const hook = await renderHook(() => useNotificationsRuntime(options), { wrapper: QueryTestWrapper });
+    try {
+      await waitFor(() => expect(dismissSourceNotificationExact).toHaveBeenCalledWith('old-android-id'));
+      await act(async () => {
+        await hook.result.current.setSourceEnabled('nodeseek', true);
+        await recordNotificationDelivery('nodeseek', 'nodeseek:42', ['baseline'], {
+          lastSuccessAt: '2026-11-20T00:00:00Z'
+        });
+        const replacement = await recordNotificationDelivery(
+          'nodeseek',
+          'nodeseek:42',
+          ['new'],
+          { lastSuccessAt: '2026-11-20T00:01:00Z' },
+          { expectedNewIds: ['new'], previousIdentifier: 'old-android-id', notificationIdentifier: 'new-android-id' }
+        );
+        expect(replacement.committed).toBe(true);
+        dismissal.resolve();
+      });
+      await waitFor(() =>
+        expect(hook.result.current.state.sources.nodeseek.notificationIdentifier).toBe('new-android-id')
+      );
+      expect((await loadNotificationState()).sources.nodeseek).toMatchObject({
+        notificationIdentifier: 'new-android-id',
+        deliveredIds: ['new', 'baseline'],
+        intentEnabled: true
+      });
+      expect(dismissSourceNotificationExact).toHaveBeenCalledTimes(1);
+    } finally {
+      dismissal.resolve();
+      await settleStartedRuntimeTasks();
+    }
+  });
+
   it('retains the trusted identity, cache, and delivery watermark while identity is unknown', async () => {
     const stored = defaultNotificationState();
     stored.sources.nodeseek = {
@@ -2055,6 +2411,9 @@ describe('notification runtime', () => {
       const pending = Promise.withResolvers<Awaited<ReturnType<typeof runNotificationBackgroundWorker>>>();
       const pendingRerun = Promise.withResolvers<Awaited<ReturnType<typeof runNotificationBackgroundWorker>>>();
       const pendingCleanup = Promise.withResolvers<void>();
+      const nextSessionSnapshot = Promise.withResolvers<Response>();
+      let waitingForNextSession = false;
+      const unread = () => Response.json({ atMe: 0, reply: 1, message: 0 });
       jest.mocked(runNotificationBackgroundWorker).mockImplementationOnce((dependencies) => {
         if (change === 'cleanup') {
           dependencies.captureDeliverySettlement?.(pendingCleanup.promise);
@@ -2072,13 +2431,7 @@ describe('notification runtime', () => {
           ['nodeseek']
         ),
         appActive: true,
-        fetcher: jest.fn(
-          async () =>
-            new Response(JSON.stringify({ atMe: 0, reply: 1, message: 0 }), {
-              status: 200,
-              headers: { 'content-type': 'application/json' }
-            })
-        )
+        fetcher: jest.fn(async () => (waitingForNextSession ? nextSessionSnapshot.promise : unread()))
       };
       const hook = await renderHook(() => useNotificationsRuntime(options), { wrapper: QueryTestWrapper });
       try {
@@ -2091,6 +2444,7 @@ describe('notification runtime', () => {
         }
         expect(runNotificationBackgroundWorker).toHaveBeenCalledTimes(1);
         if (change === 'epoch') {
+          waitingForNextSession = true;
           options = { ...options, sessionEpochs: { ...options.sessionEpochs, nodeseek: 1 } };
           await act(async () => hook.rerender(undefined));
         } else if (change === 'identity') {
@@ -2124,6 +2478,12 @@ describe('notification runtime', () => {
           await settleStartedRuntimeTasks(false);
           expect(runNotificationBackgroundWorker).toHaveBeenCalledTimes(1);
         }
+        if (change === 'epoch') {
+          await act(async () => nextSessionSnapshot.resolve(unread()));
+          await waitFor(() => expect(runNotificationBackgroundWorker).toHaveBeenCalledTimes(2));
+          const current = jest.mocked(runNotificationBackgroundWorker).mock.calls[1]![0];
+          await expect(current.privateAccessAllowed?.('nodeseek', 'nodeseek:42')).resolves.toBe(true);
+        }
         if (change === 'rerun') {
           for (let index = 0; index < 8; index += 1) {
             await act(async () => {
@@ -2141,6 +2501,7 @@ describe('notification runtime', () => {
         pending.resolve({ status: 'success', delivered: 0, failedSources: 0, timedOut: false });
         pendingRerun.resolve({ status: 'success', delivered: 0, failedSources: 0, timedOut: false });
         pendingCleanup.resolve();
+        nextSessionSnapshot.resolve(unread());
         await settleStartedRuntimeTasks();
       }
     }
@@ -2405,7 +2766,124 @@ describe('notification runtime', () => {
     await settleStartedRuntimeTasks();
   });
 
-  it('lets only the latest account reconciliation persist its identity', async () => {
+  it('retains the old dismissal owner on account change and retries it on resume', async () => {
+    const stored = defaultNotificationState();
+    stored.globalEnabled = true;
+    stored.hasOptedIn = true;
+    stored.sources.nodeseek = {
+      intentEnabled: true,
+      identityKey: 'nodeseek:42',
+      baselineReady: true,
+      deliveredIds: ['reply:known'],
+      notificationIdentifier: 'old-android-id'
+    };
+    let persisted = JSON.stringify(stored);
+    jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
+    jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
+      persisted = value;
+    });
+    jest.mocked(notificationPermissionGranted).mockResolvedValue(true);
+    let sessions = nodeSeekSessions('confirmed', '42');
+    let appActive = false;
+    const hook = await renderHook(
+      () =>
+        useNotificationsRuntime({
+          ...runtimeOptions(undefined, sessions, ['nodeseek']),
+          appActive,
+          remoteReady: false
+        }),
+      { wrapper: QueryTestWrapper }
+    );
+    await waitFor(() => expect(hook.result.current.backgroundEnabled).toBe(true));
+
+    jest.mocked(dismissSourceNotification).mockRejectedValueOnce(new Error('dismiss failed'));
+    sessions = nodeSeekSessions('confirmed', '84');
+    await act(async () => hook.rerender({}));
+    await settleStartedRuntimeTasks(false);
+    expect(hook.result.current.identityKeys.nodeseek).toBe('nodeseek:84');
+    expect(hook.result.current.backgroundEnabled).toBe(false);
+    expect(hook.result.current.state.sources.nodeseek).toEqual(stored.sources.nodeseek);
+
+    appActive = true;
+    await act(async () => hook.rerender({}));
+    await waitFor(() => expect(hook.result.current.backgroundEnabled).toBe(true));
+    expect(dismissSourceNotification).toHaveBeenLastCalledWith('nodeseek', 'old-android-id', 'nodeseek:42');
+    expect(hook.result.current.state.sources.nodeseek).toMatchObject({
+      identityKey: 'nodeseek:84',
+      baselineReady: false,
+      deliveredIds: []
+    });
+    await settleStartedRuntimeTasks();
+  });
+
+  it('reconciles the persisted notification owner when an account switches back during a write', async () => {
+    const stored = defaultNotificationState();
+    stored.globalEnabled = true;
+    stored.hasOptedIn = true;
+    stored.sources.nodeseek = {
+      intentEnabled: true,
+      identityKey: 'nodeseek:42',
+      baselineReady: true,
+      deliveredIds: ['reply:known']
+    };
+    let persisted = JSON.stringify(stored);
+    const blocked = Promise.withResolvers<void>();
+    const started = Promise.withResolvers<void>();
+    jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
+    jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
+      if (JSON.parse(value).sources.nodeseek.identityKey === 'nodeseek:84') {
+        started.resolve();
+        await blocked.promise;
+      }
+      persisted = value;
+    });
+    jest.mocked(notificationPermissionGranted).mockResolvedValue(true);
+    let sessions = nodeSeekSessions('confirmed', '42');
+    let appActive = false;
+    const hook = await renderHook(
+      () =>
+        useNotificationsRuntime({
+          ...runtimeOptions(undefined, sessions, ['nodeseek', 'linuxdo', 'yaohuo']),
+          appActive,
+          remoteReady: false
+        }),
+      { wrapper: QueryTestWrapper }
+    );
+    try {
+      await waitFor(() => expect(hook.result.current.backgroundEnabled).toBe(true));
+      sessions = nodeSeekSessions('confirmed', '84');
+      await act(async () => hook.rerender({}));
+      await started.promise;
+      sessions = nodeSeekSessions('confirmed', '42');
+      await act(async () => hook.rerender({}));
+      blocked.resolve();
+      await settleStartedRuntimeTasks(false);
+      const beforeResume = (await loadNotificationState()).sources.nodeseek.identityKey;
+      appActive = true;
+      await act(async () => hook.rerender({}));
+      await settleStartedRuntimeTasks(false);
+
+      const receipt = await recordNotificationDelivery('nodeseek', 'nodeseek:42', ['reply:known'], {
+        lastSuccessAt: '2026-11-20T00:00:00.000Z'
+      });
+      expect({
+        beforeResume,
+        visible: hook.result.current.state.sources.nodeseek.identityKey,
+        persisted: receipt.state.sources.nodeseek.identityKey,
+        canCommitDelivery: receipt.committed
+      }).toEqual({
+        beforeResume: 'nodeseek:42',
+        visible: 'nodeseek:42',
+        persisted: 'nodeseek:42',
+        canCommitDelivery: true
+      });
+    } finally {
+      blocked.resolve();
+      await settleStartedRuntimeTasks();
+    }
+  });
+
+  it('reconciles other sources and the latest account while an old account dismissal is blocked', async () => {
     const stored = defaultNotificationState();
     stored.sources.nodeseek = {
       intentEnabled: true,
@@ -2438,25 +2916,86 @@ describe('notification runtime', () => {
           runtimeOptions(
             jest.fn(() => true),
             sessions,
-            ['nodeseek']
+            ['nodeseek', 'linuxdo', 'yaohuo']
           )
         ),
       { wrapper: QueryTestWrapper }
     );
-    await waitFor(() => expect(hook.result.current.ready).toBe(true));
+    try {
+      await waitFor(() => expect(hook.result.current.ready).toBe(true));
 
+      const { linuxdo } = nodeSeekAndLinuxDoSessions();
+      sessions = { ...nodeSeekSessions('confirmed', '84'), linuxdo };
+      await act(async () => hook.rerender({}));
+      await dismissalDidStart;
+      await waitFor(() => expect(hook.result.current.state.sources.linuxdo.identityKey).toBe('linuxdo:84'));
+      sessions = { ...nodeSeekSessions('confirmed', '126'), linuxdo };
+      await act(async () => hook.rerender({}));
+      await waitFor(() => expect(hook.result.current.state.sources.nodeseek.identityKey).toBe('nodeseek:126'));
+
+      releaseDismissal();
+      await settleStartedRuntimeTasks(false);
+
+      const loaded = await loadNotificationState();
+      expect(loaded.sources.nodeseek.identityKey).toBe('nodeseek:126');
+      expect(loaded.sources.linuxdo.identityKey).toBe('linuxdo:84');
+    } finally {
+      releaseDismissal();
+      await settleStartedRuntimeTasks();
+    }
+  });
+
+  it('keeps the new aggregate notification request when the previous identity finishes cleanup', async () => {
+    const stored = defaultNotificationState();
+    stored.sources.nodeseek.identityKey = 'nodeseek:42';
+    jest.mocked(AsyncStorage.getItem).mockResolvedValue(JSON.stringify(stored));
+    let sessions = nodeSeekSessions('confirmed', '42');
+    const enabled = ['nodeseek'] as const;
+    const hook = await renderHook(() => useNotificationsRuntime(runtimeOptions(undefined, sessions, enabled)), {
+      wrapper: QueryTestWrapper
+    });
+    await waitFor(() => expect(hook.result.current.ready).toBe(true));
+    const listKey = () =>
+      forumQueryKeys.notificationList({
+        source: 'all',
+        identityKey: hook.result.current.identitySignature,
+        unreadOnly: false
+      });
+    const oldKey = listKey();
+    appQueryClient.setQueryData(oldKey, ['old notification']);
+
+    let finishDismissal!: () => void;
+    const dismissal = new Promise<void>((resolve) => (finishDismissal = resolve));
+    jest.mocked(dismissSourceNotification).mockReturnValueOnce(dismissal);
     sessions = nodeSeekSessions('confirmed', '84');
     await act(async () => hook.rerender({}));
-    await dismissalDidStart;
-    sessions = nodeSeekSessions('confirmed', '126');
-    await act(async () => hook.rerender({}));
-    await waitFor(() => expect(hook.result.current.state.sources.nodeseek.identityKey).toBe('nodeseek:126'));
+    await waitFor(() => expect(dismissSourceNotification).toHaveBeenCalled());
+    const newKey = listKey();
+    expect(newKey).not.toEqual(oldKey);
+    const cancel = jest.fn();
+    let finishList!: (items: string[]) => void;
+    const request = appQueryClient.fetchQuery({
+      queryKey: newKey,
+      queryFn: ({ signal }) => {
+        signal.addEventListener('abort', cancel, { once: true });
+        return new Promise<string[]>((resolve) => (finishList = resolve));
+      }
+    });
+    const outcome = request.catch((error: unknown) => error);
 
-    releaseDismissal();
-    await act(async () => dismissalBlocked);
-    await settleStartedRuntimeTasks();
-
-    expect(JSON.parse(persisted).sources.nodeseek.identityKey).toBe('nodeseek:126');
+    try {
+      await act(async () => finishDismissal());
+      await waitFor(() => expect(hook.result.current.state.sources.nodeseek.identityKey).toBe('nodeseek:84'));
+      expect(appQueryClient.getQueryData(oldKey)).toBeUndefined();
+      expect(cancel).not.toHaveBeenCalled();
+      finishList(['new notification']);
+      await expect(outcome).resolves.toEqual(['new notification']);
+      expect(appQueryClient.getQueryData(newKey)).toEqual(['new notification']);
+    } finally {
+      finishList(['new notification']);
+      await outcome;
+      await settleStartedRuntimeTasks();
+    }
   });
 
   it('clears the previous account watermark after an explicit logout', async () => {

@@ -539,6 +539,8 @@ describe('LinuxDo reading transport', () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
     fetcher.mockResolvedValueOnce(json({ topic_list: { topics: [{ id: 999 }] } }));
     await expect(getLinuxDoReadingBatch(['1'], { fetcher })).rejects.toThrow('未按话题 ID');
+    fetcher.mockResolvedValueOnce(json({ topic_list: { topics: [{ id: 51, last_read_post_number: 3 }] } }));
+    await expect(getLinuxDoReadingBatch(ids, { fetcher })).rejects.toThrow('未按话题 ID');
   });
 });
 

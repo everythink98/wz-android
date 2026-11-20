@@ -1,4 +1,4 @@
-import type { Source } from '@/domain/forum/models';
+import type { QuotedPostReference, Reply, Source } from '@/domain/forum/models';
 import type { CompiledForumContentRow } from '@/domain/forum/topicContentSplit';
 import type { TopicContentItem } from './topicOpeningPresentation';
 import type { TopicReplyListItem } from './replyListModel';
@@ -19,6 +19,31 @@ export type TopicListItem =
 
 export function topicListItemKey(item: TopicListItem) {
   return item.key;
+}
+
+export function unresolvedLinuxDoAuthorReferences(
+  item: TopicListItem,
+  topicId: string,
+  expandedAnswer?: Reply
+): QuotedPostReference[] {
+  if ('reply' in item && (item.reply.hidden || item.reply.systemAction)) return [];
+  if (item.type === 'reply' || item.type === 'replyStart') {
+    const target = item.reply.replyTarget;
+    return target?.floor && (!target.author?.name || target.author.name === target.author.username)
+      ? [{ source: 'linuxdo', topicId, postNumber: target.floor }]
+      : [];
+  }
+  const quotes =
+    item.type === 'replyQuoteSummary'
+      ? [item.quote]
+      : item.type === 'topicQuoteSummary'
+        ? [item.content.quote]
+        : item.type === 'topicAcceptedAnswer'
+          ? expandedAnswer?.quotedPosts?.slice(0, 3)
+          : undefined;
+  return (quotes ?? []).flatMap(({ reference, author }) =>
+    reference.source === 'linuxdo' && (!author?.username || author.label === author.username) ? [reference] : []
+  );
 }
 
 export function topicListReadingFloor(item: TopicListItem, acceptedFloor?: number): number | undefined {

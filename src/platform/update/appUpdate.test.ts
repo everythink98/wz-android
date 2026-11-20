@@ -86,6 +86,17 @@ describe('app update release parsing', () => {
     });
   });
 
+  it('uses the Android versionCode range for new releases and saved download targets', () => {
+    const valid = { ...manifest(), versionCode: 2_147_483_647 };
+    const target = getAppUpdateFromRelease('1.3.6', release(newerTag), valid)!;
+    expect(parseSavedAppUpdate(target).versionCode).toBe(2_147_483_647);
+    const overflow = 2_147_483_648;
+    expect(() => getAppUpdateFromRelease('1.3.6', release(newerTag), { ...valid, versionCode: overflow })).toThrow(
+      'Release manifest 内容不可信。'
+    );
+    expect(() => parseSavedAppUpdate({ ...target, versionCode: overflow })).toThrow('Release manifest 内容不可信。');
+  });
+
   it('does not offer current or older releases', () => {
     expect(getReleaseManifestUrlFromRelease('1.3.6', release('v1.3.6'))).toBeNull();
     expect(getAppUpdateFromRelease('1.3.6', release('v1.3.6'), manifest('1.3.6'))).toBeNull();
@@ -185,6 +196,13 @@ describe('app update release parsing', () => {
       'GitHub Release 版本格式不正确。'
     );
   });
+
+  it.each(['v01.3.7', 'v9007199254740993.0.0'])(
+    'rejects a non-canonical release tag before requesting its manifest: %s',
+    (tag) => {
+      expect(() => getReleaseManifestUrlFromRelease('1.3.6', release(tag))).toThrow('GitHub Release 版本格式不正确。');
+    }
+  );
 
   it('compares multi-digit versions numerically', () => {
     expect(compareAppVersions('1.10.0', '1.9.9')).toBeGreaterThan(0);

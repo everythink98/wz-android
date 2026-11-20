@@ -22,7 +22,7 @@ import {
   nextYaohuoPage,
   yaohuoUserUrl as userUrl
 } from './protocol';
-import { categoryNames, currentYaohuoClock, parseYaohuoDate } from './normalization';
+import { categoryNames, currentYaohuoClock, parseYaohuoDate, yaohuoDisplayTimeText } from './normalization';
 import { ensureYaohuoHtmlLoggedIn } from './sessionParser';
 
 function extractClassIdFromRow(element: ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number]) {
@@ -35,7 +35,6 @@ function extractClassIdFromRow(element: ReturnType<ReturnType<typeof parseHtml>[
 function parseListItem(
   element: ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number],
   fallbackClassId?: string,
-  fallbackCreatedAt = new Date().toISOString(),
   now = currentYaohuoClock()
 ) {
   const link = element.querySelectorAll('a[href]').find((item) => {
@@ -67,16 +66,11 @@ function parseListItem(
   );
   const rightText = element.querySelectorAll('.right').map(elementText).find(Boolean) || '';
   const postTime = element.querySelector('.post-time');
-  const timeText =
-    elementText(postTime) ||
-    rightText ||
-    text.match(/\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0] ||
-    text.match(/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0] ||
-    '';
+  const metadata = text.replace(elementText(link), ' ');
+  const timeText = elementText(postTime) || rightText || yaohuoDisplayTimeText(metadata);
   const displayTimeText = timeText;
-  const parsedCreatedAt =
-    toIsoString(postTime?.getAttribute('title'), '+08:00') || parseYaohuoDate(timeText || text, now);
-  const createdAt = parsedCreatedAt || fallbackCreatedAt;
+  const createdAt =
+    toIsoString(postTime?.getAttribute('title'), '+08:00') || parseYaohuoDate(timeText || metadata, now);
   const author =
     elementText(element.querySelector('.post-author')) ||
     text
@@ -102,7 +96,7 @@ function parseListItem(
     category: resolvedClassId ? categoryNames.get(resolvedClassId) : undefined,
     url: url || `${BASE_URL}/bbs-${id}.html`,
     createdAt,
-    lastReplyAt: createdAt,
+    lastReplyAt: createdAt || undefined,
     ...(displayTimeText ? { displayTimeText } : {}),
     replyCount,
     viewCount: viewCount || undefined,
@@ -122,7 +116,6 @@ function parseListDataChunks(html: string) {
 function parseCompactListItems(root: ReturnType<typeof parseHtml>, fallbackClassId?: string, limit = 30) {
   const items: Topic[] = [];
   const seen = new Set<string>();
-  const fallbackCreatedAt = new Date().toISOString();
   for (const list of root.querySelectorAll('div.list, .list')) {
     for (const link of list.querySelectorAll('a[href]')) {
       const title = elementText(link);
@@ -144,8 +137,7 @@ function parseCompactListItems(root: ReturnType<typeof parseHtml>, fallbackClass
         categoryId: resolvedClassId,
         category: resolvedClassId ? categoryNames.get(resolvedClassId) : undefined,
         url: url || `${BASE_URL}/bbs-${id}.html`,
-        createdAt: fallbackCreatedAt,
-        lastReplyAt: fallbackCreatedAt,
+        createdAt: '',
         replyCount: 0,
         excerpt: title,
         ...(accessRequirement ? { accessRequirement } : {})
@@ -182,10 +174,9 @@ export function parseYaohuoListDocument(
   }
   const seen = new Set<string>();
   const items: Topic[] = [];
-  const fallbackCreatedAt = new Date().toISOString();
   const now = currentYaohuoClock();
   for (const row of rows) {
-    const item = parseListItem(row, classId, fallbackCreatedAt, now) as Topic | null;
+    const item = parseListItem(row, classId, now) as Topic | null;
     if (item && !seen.has(item.id)) {
       seen.add(item.id);
       items.push(item);
@@ -200,7 +191,7 @@ export function parseYaohuoListDocument(
       if (items.length >= limit) {
         break;
       }
-      const item = parseListItem(parseHtml(chunk), classId, fallbackCreatedAt, now) as Topic | null;
+      const item = parseListItem(parseHtml(chunk), classId, now) as Topic | null;
       if (item && !seen.has(item.id)) {
         seen.add(item.id);
         items.push(item);

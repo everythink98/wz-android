@@ -10,6 +10,7 @@ import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { fetchWithTimeout, RequestCanceledError, withRequestBeforeSend } from '@/platform/network/request';
 import { createAppQueryClient } from '@/platform/query/serverState';
 import * as SecureStore from 'expo-secure-store';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { getLinuxDoCurrentUserIdentity } from '@/sources/linuxdo/account';
 import { createLinuxDoReadingSender } from '@/sources/linuxdo/reading';
 import { withLinuxDoPresence } from '@/sources/linuxdo/presence';
@@ -27,12 +28,28 @@ const mockLoadNetworkProxyState = jest.fn<() => Promise<NetworkProxyState>>();
 const mockSaveNetworkProxyState = jest.fn<(state: NetworkProxyState) => Promise<NetworkProxyState>>();
 const mockApplyNetworkProxy = jest.fn<(profile: NetworkProxyProfile | null) => Promise<unknown>>();
 
+jest.mock('expo-task-manager', () => ({ isTaskDefined: () => false, defineTask: jest.fn() }));
+jest.mock('expo-background-task', () => ({ BackgroundTaskResult: { Failed: 'failed', Success: 'success' } }));
+jest.mock('@/platform/storage/readerDataStore', () => ({ withReaderSettings: jest.fn() }));
 jest.mock('@/platform/network/networkProxy', () => ({
   ...jest.requireActual<typeof import('@/platform/network/networkProxy')>('@/platform/network/networkProxy'),
   applyNetworkProxy: (profile: NetworkProxyProfile | null) => mockApplyNetworkProxy(profile),
   loadNetworkProxyState: () => mockLoadNetworkProxyState(),
   saveNetworkProxyState: (state: NetworkProxyState) => mockSaveNetworkProxyState(state)
 }));
+
+function restoreProxyFromNotificationTask() {
+  const { runNotificationBackgroundTask } = jest.requireActual<typeof import('@/app/notificationBackgroundTask')>(
+    '@/app/notificationBackgroundTask'
+  );
+  return runNotificationBackgroundTask(
+    (task) => task(async () => createEmptyReaderData().settings),
+    async ({ network }) => {
+      await network.restoreProxy();
+      return { status: 'success', delivered: 0, failedSources: 0, timedOut: false };
+    }
+  );
+}
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -241,26 +258,157 @@ describe('network proxy controller', () => {
     }
   });
 
-  it('can reset an unreadable saved proxy to a confirmed direct connection', async () => {
-    mockLoadNetworkProxyState.mockRejectedValueOnce(new Error('corrupted proxy state'));
-    const notify = jest.fn();
-    const hook = await renderHook(() => useNetworkProxyRuntime({ notify }));
+  it.each(['reset', 'add'] as const)(
+    'preserves saved profiles when storage is readable again and the user chooses %s',
+    async (action) => {
+      let persisted: NetworkProxyState = { enabled: true, activeId: profileA.id, profiles: [profileA] };
+      mockLoadNetworkProxyState
+        .mockRejectedValueOnce(new Error('temporarily unavailable'))
+        .mockImplementation(async () => persisted);
+      mockSaveNetworkProxyState.mockImplementation(async (state) => {
+        persisted = state;
+        return state;
+      });
+      const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn() }));
+      await waitFor(() => expect(hook.result.current.applyStatus).toBe('failed'));
+      await expect(hook.result.current.ensureNetworkProxyReady()).rejects.toThrow('代理配置读取失败');
+
+      await act(async () => {
+        if (action === 'reset') await hook.result.current.setProxyEnabled(false);
+        else await hook.result.current.upsertProxyProfile(profileB);
+      });
+
+      expect(persisted).toEqual({
+        enabled: action === 'add',
+        activeId: profileA.id,
+        profiles: action === 'add' ? [profileA, profileB] : [profileA]
+      });
+      expect(mockLoadNetworkProxyState).toHaveBeenCalledTimes(2);
+      expect(mockApplyNetworkProxy.mock.calls).toEqual([[action === 'add' ? profileA : null]]);
+      await expect(hook.result.current.ensureNetworkProxyReady()).resolves.toBeUndefined();
+    }
+  );
+
+  it('uses the active App proxy when the background notification task runs in the same bridge', async () => {
+    mockLoadNetworkProxyState.mockResolvedValueOnce({ enabled: true, activeId: profileA.id, profiles: [profileA] });
+    const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn() }));
+    await waitFor(() => expect(hook.result.current.applyStatus).toBe('applied'));
+
+    await expect(restoreProxyFromNotificationTask()).resolves.toBe('success');
+
+    expect(mockLoadNetworkProxyState).toHaveBeenCalledTimes(1);
+    expect(mockApplyNetworkProxy.mock.calls).toEqual([[profileA]]);
+  });
+
+  it('restores the saved proxy for a cold notification task without an App owner', async () => {
+    mockLoadNetworkProxyState.mockResolvedValueOnce({ enabled: true, activeId: profileA.id, profiles: [profileA] });
+
+    await expect(restoreProxyFromNotificationTask()).resolves.toBe('success');
+
+    expect(mockLoadNetworkProxyState).toHaveBeenCalledTimes(1);
+    expect(mockApplyNetworkProxy.mock.calls).toEqual([[profileA]]);
+  });
+
+  it.each(['mounted', 'retired'] as const)(
+    'does not apply a stale headless snapshot when a %s App has already applied a new profile',
+    async (owner) => {
+      const previous = { enabled: false, activeId: profileA.id, profiles: [profileA] };
+      const started = Promise.withResolvers<void>();
+      const saved = Promise.withResolvers<NetworkProxyState>();
+      mockLoadNetworkProxyState
+        .mockImplementationOnce(() => {
+          started.resolve();
+          return saved.promise;
+        })
+        .mockResolvedValue(previous);
+      const run = restoreProxyFromNotificationTask();
+      await started.promise;
+      const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn() }));
+      try {
+        await waitFor(() => expect(hook.result.current.applyStatus).toBe('disabled'));
+        await act(() => hook.result.current.setProxyEnabled(true));
+        expect(mockSaveNetworkProxyState).toHaveBeenCalledWith({ ...previous, enabled: true });
+        expect(hook.result.current.applyStatus).toBe('applied');
+        if (owner === 'retired') await hook.unmount();
+
+        const settled =
+          owner === 'retired' ? expect(run).rejects.toThrow('代理运行时已变化') : expect(run).resolves.toBe('success');
+        saved.resolve(previous);
+        await settled;
+        expect(mockApplyNetworkProxy.mock.calls).toEqual([[null], [profileA]]);
+      } finally {
+        saved.resolve(previous);
+        await run.catch(() => undefined);
+      }
+    }
+  );
+
+  it.each(['headless', 'mounted'] as const)(
+    'keeps a %s notification task blocked after a proxy storage failure',
+    async (owner) => {
+      mockLoadNetworkProxyState.mockRejectedValueOnce(new Error('temporarily unavailable'));
+      if (owner === 'mounted') {
+        const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn() }));
+        await waitFor(() => expect(hook.result.current.applyStatus).toBe('failed'));
+      }
+
+      await expect(restoreProxyFromNotificationTask()).rejects.toThrow(
+        owner === 'headless' ? 'temporarily unavailable' : '代理配置读取失败'
+      );
+      expect(mockLoadNetworkProxyState).toHaveBeenCalledTimes(1);
+      expect(mockApplyNetworkProxy).not.toHaveBeenCalled();
+    }
+  );
+
+  it('keeps storage untouched and networking blocked while a saved configuration is still unavailable', async () => {
+    mockLoadNetworkProxyState.mockRejectedValue(new Error('temporarily unavailable'));
+    const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn() }));
     await waitFor(() => expect(hook.result.current.applyStatus).toBe('failed'));
-    await expect(hook.result.current.ensureNetworkProxyReady()).rejects.toThrow('代理配置读取失败');
-    expect(notify).toHaveBeenCalledWith(expect.stringContaining('代理配置读取失败'));
 
     await act(async () => {
-      await hook.result.current.setProxyEnabled(false);
+      await expect(hook.result.current.upsertProxyProfile(profileA)).rejects.toThrow('temporarily unavailable');
+      await expect(hook.result.current.setProxyEnabled(false)).rejects.toThrow('temporarily unavailable');
     });
 
-    expect(mockSaveNetworkProxyState).toHaveBeenCalledWith({
-      enabled: false,
-      activeId: null,
-      profiles: []
-    });
-    expect(mockApplyNetworkProxy).toHaveBeenCalledWith(null);
-    expect(hook.result.current.applyStatus).toBe('disabled');
-    await expect(hook.result.current.ensureNetworkProxyReady()).resolves.toBeUndefined();
+    expect(mockSaveNetworkProxyState).not.toHaveBeenCalled();
+    expect(mockApplyNetworkProxy).not.toHaveBeenCalled();
+    await expect(hook.result.current.ensureNetworkProxyReady()).rejects.toThrow('代理配置读取失败');
+  });
+
+  it('requires an explicit reset before replacing a confirmed damaged proxy configuration', async () => {
+    const actual = jest.requireActual<typeof import('@/platform/network/networkProxy')>(
+      '@/platform/network/networkProxy'
+    );
+    const read = jest.spyOn(SecureStore, 'getItemAsync').mockResolvedValue('{broken');
+    mockLoadNetworkProxyState.mockImplementation(actual.loadNetworkProxyState);
+    const notify = jest.fn();
+    try {
+      const hook = await renderHook(() => useNetworkProxyRuntime({ notify }));
+      await waitFor(() => expect(hook.result.current.applyStatus).toBe('failed'));
+      await expect(hook.result.current.ensureNetworkProxyReady()).rejects.toThrow('代理配置读取失败');
+      expect(notify).toHaveBeenCalledWith(expect.stringContaining('代理配置读取失败'));
+
+      await act(async () => {
+        await expect(hook.result.current.upsertProxyProfile(profileA)).rejects.toThrow('代理配置已损坏');
+      });
+      expect(mockSaveNetworkProxyState).not.toHaveBeenCalled();
+      expect(mockApplyNetworkProxy).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await hook.result.current.setProxyEnabled(false);
+      });
+
+      expect(mockSaveNetworkProxyState).toHaveBeenCalledWith({
+        enabled: false,
+        activeId: null,
+        profiles: []
+      });
+      expect(mockApplyNetworkProxy).toHaveBeenCalledWith(null);
+      expect(hook.result.current.applyStatus).toBe('disabled');
+      await expect(hook.result.current.ensureNetworkProxyReady()).resolves.toBeUndefined();
+    } finally {
+      read.mockRestore();
+    }
   });
 
   it('blocks transport and native direct apply when the persisted active proxy is missing', async () => {

@@ -1,6 +1,7 @@
 import type { TopicStyles } from '../styles';
 import type { ReactNode } from 'react';
 import { Pressable, Text, View } from 'react-native';
+import { ActivityIndicator } from 'react-native-paper';
 import { type ReaderTheme } from '@/ui/theme/tokens';
 import { DisclosureChevron } from '@/ui/controls/ExpandableControls';
 
@@ -39,16 +40,20 @@ export function TopicBodyQuoteCard({
         <View style={styles.quoteAuthorSummary}>{header}</View>
         {onToggle ? (
           <Pressable
-            accessibilityLabel={loading ? '读取' : expanded ? '收起' : '展开'}
+            accessibilityLabel={loading ? '读取中' : expanded ? '收起' : '展开'}
             accessibilityRole="button"
-            accessibilityState={{ disabled: loading, expanded }}
+            accessibilityState={{ busy: loading, disabled: loading, expanded }}
             disabled={loading}
             style={styles.quotePanelState}
             onPress={onToggle}
           >
-            <Text style={styles.quotePanelStateText}>{loading ? '读取' : expanded ? '收起' : '展开'}</Text>
+            <Text style={styles.quotePanelStateText}>{loading ? '读取中' : expanded ? '收起' : '展开'}</Text>
             <View style={styles.quotePanelStateIcon}>
-              <DisclosureChevron expanded={expanded} color={theme.ink} size={16} />
+              {loading ? (
+                <ActivityIndicator accessible={false} size={14} color={theme.primary} />
+              ) : (
+                <DisclosureChevron expanded={expanded} color={theme.ink} size={16} />
+              )}
             </View>
           </Pressable>
         ) : null}

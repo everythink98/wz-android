@@ -1,4 +1,3 @@
-import type { HTMLElement } from 'node-html-parser';
 import { accessRequirementFromNoticeText } from '@/domain/forum/accessRequirements';
 import { sanitizeContentHtmlWithRoot } from '@/domain/forum/contentSanitizer';
 import {
@@ -9,11 +8,10 @@ import {
   isInlineForumImage,
   knownForumStickerSourceDimensions,
   normalizeForumContentMediaNodes,
-  ORIGINAL_IMAGE_SOURCE_ATTR
+  selectImageOriginalSource
 } from '@/domain/forum/forumContentMedia';
 import { absoluteUrl, escapeHtmlAttribute, escapeHtmlText, textContentFromHtml } from '@/domain/forum/html';
 import type { TopicDetail, TopicPoll } from '@/domain/forum/models';
-import { selectImageOriginalSource } from '@/platform/media/imagePreviewCatalog';
 
 const MAX_CONTENT_LENGTH = 150_000;
 const IMAGE_TAGS = new Set(['img', INLINE_FORUM_IMAGE_TAG, FORUM_STICKER_TAG]);
@@ -62,7 +60,7 @@ export function prepareTopicShareContent(topic: TopicDetail): { html: string; im
   }
   if (!topic.contentHtml.trim()) throw new Error('正文尚未加载，无法生成分享图片。');
 
-  const { root } = sanitizeContentHtmlWithRoot(topic.contentHtml, topic.url, (content) => {
+  const { root, svgCandidates } = sanitizeContentHtmlWithRoot(topic.contentHtml, topic.url, (content) => {
     // Keep safe embeds as visible references before the reading sanitizer removes unsupported players.
     for (const frame of content.querySelectorAll('iframe')) {
       frame.replaceWith(
@@ -83,19 +81,14 @@ export function prepareTopicShareContent(topic: TopicDetail): { html: string; im
       font.setAttribute('style', `color: ${font.getAttribute('color')}; ${font.getAttribute('style') || ''}`);
     }
   });
-  const canonicalImageSources = new Map<HTMLElement, string>();
-  for (const image of root.querySelectorAll('img, forum-inline-image, forum-sticker')) {
-    const source = selectImageOriginalSource({
-      [ORIGINAL_IMAGE_SOURCE_ATTR]: image.getAttribute(ORIGINAL_IMAGE_SOURCE_ATTR)
-    });
-    if (source) canonicalImageSources.set(image, source);
-  }
   normalizeForumContentMediaNodes(root);
   const includedPolls = new Set<TopicPoll>();
   for (const node of root.querySelectorAll('*').reverse()) {
     const tag = node.rawTagName.toLowerCase();
     const attribute = (name: string) => node.getAttribute(name) || '';
-    if (tag === 'forum-link-card') {
+    if (tag === 'source' && node.parentNode?.rawTagName?.toLowerCase() === 'picture') {
+      node.remove();
+    } else if (tag === 'forum-link-card') {
       node.replaceWith(
         `<section><p><strong>${escapeHtmlText(attribute('title') || attribute('site'))}</strong></p>` +
           `<p>${escapeHtmlText(attribute('description'))}</p>` +
@@ -162,8 +155,6 @@ export function prepareTopicShareContent(topic: TopicDetail): { html: string; im
     const isImage = IMAGE_TAGS.has(tag);
     const dimensions = isImage ? smallImageDimensions(node.attributes) : undefined;
     if (isImage) {
-      const canonicalSource = canonicalImageSources.get(node);
-      if (canonicalSource) node.setAttribute(ORIGINAL_IMAGE_SOURCE_ATTR, canonicalSource);
       const source = selectImageOriginalSource(node.attributes);
       if (source) node.setAttribute('src', source);
       if (!node.getAttribute('alt') && node.textContent) node.setAttribute('alt', node.textContent);
@@ -191,8 +182,10 @@ export function prepareTopicShareContent(topic: TopicDetail): { html: string; im
       if (!allowedAttributes.includes(name.toLowerCase())) node.removeAttribute(name);
     }
     if (isImage) {
-      if (node.getAttribute('src')) {
+      const src = node.getAttribute('src');
+      if (src) {
         node.setAttribute('data-share-image-index', String(imageCount++));
+        if (svgCandidates?.get(node)?.some(({ url }) => url === src)) node.setAttribute('data-share-svg', 'true');
         if (dimensions?.width) node.setAttribute('data-share-width', String(dimensions.width));
         if (dimensions?.height) node.setAttribute('data-share-height', String(dimensions.height));
       } else node.replaceWith(`<span>${escapeHtmlText(node.getAttribute('alt') || '图片地址无效')}</span>`);

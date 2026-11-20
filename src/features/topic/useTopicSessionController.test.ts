@@ -21,6 +21,34 @@ const topic: TopicDetail = {
 afterEach(() => vi.restoreAllMocks());
 
 describe('route-local reply search reuse', () => {
+  it('matches the linux.do original poster by account when different people share a display name', () => {
+    const owner = { author: '新昵称', authorId: 'alice', contentHtml: '', createdAt: '' };
+    const other = { ...owner, author: '旧昵称', authorId: 'bob' };
+    expect(
+      filterTopicSessionReplies({
+        topicDetail: { ...topic, author: '旧昵称', authorId: 'alice' },
+        topicReplies: [other, owner],
+        source: 'linuxdo',
+        replyFilter: 'author',
+        commentQuery: ''
+      })
+    ).toEqual([owner]);
+  });
+  it('uses trusted profile usernames for older replies and never attributes a nickname alone to the original poster', () => {
+    const sameName = { author: '同名', contentHtml: '', createdAt: '' };
+    const owner = { ...sameName, author: '新昵称', authorUrl: 'https://linux.do/u/Alice' };
+    const replies = [owner, { ...sameName, authorUrl: 'https://linux.do/u/bob' }, sameName];
+    const byAuthor = (detail: TopicDetail) =>
+      filterTopicSessionReplies({
+        topicDetail: detail,
+        topicReplies: replies,
+        source: 'linuxdo',
+        replyFilter: 'author',
+        commentQuery: ''
+      });
+    expect(byAuthor({ ...topic, author: '同名', authorUrl: 'https://linux.do/u/alice' })).toEqual([owner]);
+    expect(byAuthor({ ...topic, author: '同名' })).toEqual([]);
+  });
   const reply = (contentHtml: string, floor = 1): Reply => ({ author: 'alice', contentHtml, createdAt: '', floor });
 
   it('normalizes each unchanged body once across cold and warm query sequences', () => {
@@ -115,7 +143,13 @@ describe('route-local reply search reuse', () => {
 describe('topic local session helpers', () => {
   it('does not convert reply bodies excluded by the author filter', () => {
     let excludedReads = 0;
-    const included: Reply = { author: 'alice', contentHtml: '<p>Needle VPS</p>', createdAt: '', floor: 1 };
+    const included: Reply = {
+      author: 'alice',
+      authorId: 'alice',
+      contentHtml: '<p>Needle VPS</p>',
+      createdAt: '',
+      floor: 1
+    };
     const excluded: Reply = {
       author: 'bob',
       get contentHtml() {
@@ -130,7 +164,7 @@ describe('topic local session helpers', () => {
         commentQuery: 'NEEDLE vps',
         replyFilter: 'author',
         source: 'linuxdo',
-        topicDetail: topic,
+        topicDetail: { ...topic, authorId: 'alice' },
         topicReplies: [included, excluded]
       })
     ).toEqual([included]);
@@ -142,13 +176,13 @@ describe('topic local session helpers', () => {
       { author: 'alice', contentHtml: '<p>first</p>', createdAt: '', floor: 1 },
       { author: 'bob', contentHtml: '<p>needle</p><img src="https://img/2.png">', createdAt: '', floor: 2 },
       { author: 'alice', contentHtml: '<p>third needle</p>', createdAt: '', floor: 3 }
-    ].map((reply) => prepareReplyContent(reply, 'linuxdo'));
+    ].map((reply) => prepareReplyContent({ ...reply, authorId: reply.author }, 'linuxdo'));
     const filter = (replyFilter: 'all' | 'author' | 'images', commentQuery = '') =>
       filterTopicSessionReplies({
         commentQuery,
         replyFilter,
         source: 'linuxdo',
-        topicDetail: { ...topic, replies },
+        topicDetail: { ...topic, authorId: 'alice', replies },
         topicReplies: replies
       }).map(({ floor }) => floor);
 

@@ -854,6 +854,37 @@ describe('NodeSeek notifications', () => {
     expect(fetcher.mock.calls.map(([input]) => new URL(input).pathname)).toContain('/post-703863-3');
   });
 
+  it.each([
+    [{}, false],
+    [{ success: true }, true]
+  ] as const)(
+    'requires a positive NodeSeek receipt before confirming a single notification: %j',
+    async (receipt, confirmed) => {
+      const item = {
+        source: 'nodeseek',
+        id: 'at-me:11',
+        kind: 'mention',
+        actor: { name: 'Alice' },
+        title: 'Topic',
+        createdAt: null,
+        unread: true,
+        target: { type: 'information' },
+        remoteGroup: 'at-me',
+        remoteReadId: '11'
+      } as const;
+      const result = await nodeSeekNotificationAdapter.markRead(
+        item,
+        { notification: item, title: item.title },
+        {
+          fetcher: async () => jsonResponse(receipt),
+          identityKey: 'nodeseek:7',
+          userId: '7'
+        }
+      );
+      expect(result.confirmed).toBe(confirmed);
+    }
+  );
+
   it('marks mention and reply rows with the exact endpoint field names', async () => {
     const calls: { url: string; init?: RequestInit }[] = [];
     const fetcher = vi.fn(async (url: string, init?: RequestInit) => {

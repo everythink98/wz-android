@@ -334,6 +334,20 @@ describe('source account read', () => {
     ).rejects.toThrow('无法读取当前 NodeSeek 用户身份');
   });
 
+  it('recognizes visible form links on a redirected NodeSeek sign-in page', async () => {
+    const fetcher = vi.fn(async () => {
+      const response = new Response(
+        '<main><form><a href="./signIn.html">登录</a><a href="//www.nodeseek.com/register.html">注册</a></form></main>'
+      );
+      Object.defineProperty(response, 'url', { value: 'https://www.nodeseek.com/signIn.html' });
+      return response;
+    });
+    await expect(
+      getCurrentUserIdentity({ source: 'nodeseek', fetcher, nodeSeekAuthenticated: true })
+    ).rejects.toMatchObject({ reason: 'expired' });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps ordinary content with exact NodeSeek login links unknown', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.nodeseek.com/') {
@@ -354,6 +368,31 @@ describe('source account read', () => {
         nodeSeekAuthenticated: true
       })
     ).rejects.toThrow('无法读取当前 NodeSeek 用户身份');
+  });
+
+  it.each([
+    '<article><header>CONTROLS</header></article>',
+    '<div class="post-list-item">CONTROLS</div>',
+    '<header hidden>CONTROLS</header>',
+    '<nav aria-hidden="true">CONTROLS</nav>',
+    '<header style="display: none !important">CONTROLS</header>',
+    '<style>.desktop-only { display: none }</style><header class="desktop-only">CONTROLS</header>'
+  ])('checks settings when the homepage has only unrelated or hidden guest links: %s', async (homepage) => {
+    const controls = '<a class="btn" href="/signIn.html">登录</a><a class="btn" href="/register.html">注册</a>';
+    const fetcher = vi.fn(
+      async (url: string) =>
+        new Response(
+          new URL(url).pathname === '/'
+            ? homepage.replace('CONTROLS', controls)
+            : '<a class="Username" href="/space/7">测试账号</a>'
+        )
+    );
+    await expect(
+      getCurrentUserIdentity({ source: 'nodeseek', fetcher, nodeSeekAuthenticated: true })
+    ).resolves.toMatchObject({
+      id: '7'
+    });
+    expect(fetcher.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(['/', '/setting']);
   });
 
   it.each([403, 404])(

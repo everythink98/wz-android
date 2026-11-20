@@ -1,12 +1,11 @@
 import type { SearchSort } from '@/domain/forum/feed';
 import type { SearchFilterState } from '@/domain/forum/searchFilters';
-import type { FeedSource, Source } from '@/domain/forum/models';
+import type { FeedSource } from '@/domain/forum/models';
 
 export type SearchRunOptions = {
   filters: SearchFilterState;
   query: string;
   source: FeedSource;
-  sourceOverride?: Source;
 };
 
 export function snapshotSearchFilters(filters: SearchFilterState): SearchFilterState {

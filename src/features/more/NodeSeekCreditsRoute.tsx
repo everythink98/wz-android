@@ -4,7 +4,7 @@ import { useIsFocused } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { ContentSourceDisabledState, RecoverableEmptyState } from '@/ui/controls/FeedbackStates';
-import { manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
+import { goBackFromFocusedRoute } from '@/ui/navigation/appRouteActions';
 import { IconButton } from '@/ui/controls/ButtonControls';
 import { useMoreRouteRuntime } from './MoreRouteRuntime';
 import { useNodeSeekCredits } from './useNodeSeekCredits';
@@ -47,20 +47,13 @@ export function NodeSeekCreditsRoute({
           : undefined
     });
   }, [navigation, currency, enabled, sameIdentity, busy, refreshing, refresh]);
-  if (!enabled)
-    return (
-      <ContentSourceDisabledState
-        source="nodeseek"
-        onBack={navigation.goBack}
-        onManage={() => navigation.dispatch(manageContentSourcesAction())}
-      />
-    );
+  if (!enabled) return <ContentSourceDisabledState source="nodeseek" navigation={navigation} />;
   if (!sameIdentity)
     return (
       <RecoverableEmptyState
         message="账号已变化或暂不可用，请返回账号中心"
         actionLabel="返回账号中心"
-        onAction={navigation.goBack}
+        onAction={() => goBackFromFocusedRoute(navigation)}
       />
     );
   return (

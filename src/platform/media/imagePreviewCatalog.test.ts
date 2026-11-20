@@ -1,32 +1,44 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import type { ForumImagePreviewDescriptor } from '@/domain/forum/forumContentMedia';
+import {
+  normalizeForumContentMediaNodes,
+  selectImageOriginalSource,
+  type ForumImagePreviewDescriptor
+} from '@/domain/forum/forumContentMedia';
+import { parseHtml } from '@/domain/forum/html';
 import { diagnosticRef } from '@/platform/diagnostics/diagnosticPolicy';
+import * as imageRequestSource from './imageRequestSource';
 import {
   imagePreviewItemAt,
   imagePreviewListFromCatalog,
   isPreviewableImageUrl,
   prepareImagePreviewCatalog,
   projectImagePreviewCatalog,
-  selectImageDisplaySource,
-  selectImageOriginalSource
+  selectImageDisplaySource
 } from './imagePreviewCatalog';
 
 function catalog(
   descriptors: readonly ForumImagePreviewDescriptor[],
   contentWidth = 300,
   pixelRatio = 2,
-  mediaContext?: Parameters<typeof projectImagePreviewCatalog>[1],
-  isInlineSizedImage?: Parameters<typeof projectImagePreviewCatalog>[2]
+  mediaContext?: Parameters<typeof projectImagePreviewCatalog>[1]
 ) {
-  return projectImagePreviewCatalog(
-    prepareImagePreviewCatalog(descriptors, contentWidth, pixelRatio),
-    mediaContext,
-    isInlineSizedImage
-  );
+  return projectImagePreviewCatalog(prepareImagePreviewCatalog(descriptors, contentWidth, pixelRatio), mediaContext);
 }
 
 describe('image preview catalog', () => {
+  it('keeps the archived original when a thumbnail also has a lower resolution lazy source', () => {
+    const full = 'https://images.invalid/full.webp';
+    const lazy = 'https://images.invalid/medium.webp';
+    const thumb = 'https://images.invalid/thumb.webp';
+    const root = parseHtml(
+      `<img alt="原帖封面" src="${thumb}" data-original="${lazy}" data-forum-original-src="${full}">`
+    );
+    const preview = catalog(normalizeForumContentMediaNodes(root).previewImages);
+    expect(preview.items).toEqual([{ displayUri: thumb, originalUri: full, alt: '原帖封面' }]);
+    for (const url of [thumb, lazy, full]) expect(preview.indexForUrl(url)).toBe(0);
+  });
+
   it('reuses only retained descriptors at the same display size and density', () => {
     const first = { source: 'https://images.invalid/first.webp' };
     const second = { source: 'https://images.invalid/second.webp' };
@@ -61,17 +73,28 @@ describe('image preview catalog', () => {
     expect(projectImagePreviewCatalog(reduced).items[0].readingOrigin).toEqual(first.readingOrigin);
   });
 
-  it('reprojects inline exclusions from a prepared preview catalog', () => {
-    const first = 'https://cdn.example.com/first-640.jpg';
-    const second = 'https://cdn.example.com/first-1280.jpg';
-    const prepared = prepareImagePreviewCatalog(
-      [{ source: first, sourceSet: `${first} 640w, ${second} 1280w` }],
-      360,
-      2
-    );
-
-    expect(projectImagePreviewCatalog(prepared).items).toEqual([{ displayUri: second, originalUri: second }]);
-    expect(projectImagePreviewCatalog(prepared, undefined, (url) => url === first).items).toEqual([]);
+  it('reuses prepared image aliases when registering a long topic for a new document', () => {
+    const descriptors = Array.from({ length: 2_000 }, (_, index) => ({
+      source: `https://cdn.example.com/${index}.jpg`,
+      sourceSet: `https://cdn.example.com/${index}-640.jpg 640w, https://cdn.example.com/${index}-1280.jpg 1280w`
+    }));
+    const prepared = prepareImagePreviewCatalog(descriptors, 300, 2);
+    const normalize = vi.spyOn(imageRequestSource, 'normalizeImagePreviewUrl');
+    try {
+      const catalog = projectImagePreviewCatalog(prepared, {
+        contentSource: 'linuxdo',
+        referrer: { documentUrl: 'https://linux.do/t/42' },
+        sessionIdentity: 'linuxdo:1'
+      });
+      expect(normalize).toHaveBeenCalledTimes(0);
+      for (const suffix of ['', '-640', '-1280']) {
+        const preview = imagePreviewListFromCatalog(catalog, `https://cdn.example.com/1999${suffix}.jpg`, 'linuxdo');
+        expect(preview.index).toBe(1_999);
+        expect(preview.items[preview.index].originalUri).toBe('https://cdn.example.com/1999-1280.jpg');
+      }
+    } finally {
+      normalize.mockRestore();
+    }
   });
 
   it('keeps prepared placeholder-only descriptors out of the preview catalog', () => {
@@ -155,7 +178,7 @@ describe('image preview catalog', () => {
     ]);
 
     expect(result.items).toHaveLength(2);
-    expect(result.itemIndexBySourceUrl).not.toHaveProperty(placeholder);
+    expect(result.indexForUrl(placeholder)).toBeUndefined();
     expect(diagnosticRef('media', firstOriginal)).not.toBe(diagnosticRef('media', secondOriginal));
   });
 

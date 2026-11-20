@@ -7,6 +7,7 @@ import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
 import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
 import {
   Bold,
+  ChevronDown,
   Code,
   ImagePlus,
   Italic,
@@ -16,6 +17,7 @@ import {
   Quote,
   Smile,
   Type,
+  X,
   type LucideIcon
 } from 'lucide-react-native';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
@@ -123,13 +125,19 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       borderBottomWidth: StyleSheet.hairlineWidth,
       backgroundColor: theme.surface
     },
-    title: { color: theme.ink, fontFamily, fontSize: scaled(15), fontWeight: '600' },
+    titleRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      minHeight: 40
+    },
+    title: { flex: 1, color: theme.ink, fontFamily, fontSize: scaled(15), fontWeight: '600' },
     toolbar: {
-      backgroundColor: neutralSurface,
-      borderColor: neutralBorder,
+      backgroundColor: theme.surface2,
+      borderColor: 'transparent',
       borderRadius: readerRadii.control,
-      borderWidth: StyleSheet.hairlineWidth,
-      minHeight: 48,
+      borderWidth: 0,
+      minHeight: 44,
       width: '100%'
     },
     toolbarContent: { alignItems: 'center', flexDirection: 'row', gap: 6, padding: 6 },
@@ -430,6 +438,7 @@ export function YaohuoReplyComposer({
         {presentation !== 'embedded' ? (
           <IconButton
             icon={Smile}
+            active={panel === 'face'}
             iconOnly
             iconSize={20}
             label="表情"
@@ -495,7 +504,22 @@ export function YaohuoReplyComposer({
 
   return (
     <View style={[styles.composer, presentation === 'embedded' && styles.embedded]}>
-      {presentation !== 'embedded' ? <Text style={styles.title}>{title}</Text> : null}
+      {presentation !== 'embedded' ? (
+        <View style={styles.titleRow}>
+          <Text style={styles.title}>{title}</Text>
+          <IconButton
+            ghost
+            iconOnly
+            icon={ChevronDown}
+            label={closeLabel}
+            disabled={actionBusy}
+            onPress={() => {
+              closePanels();
+              onOpenChange?.(false);
+            }}
+          />
+        </View>
+      ) : null}
       {face && selectedFaceLabel ? (
         <View style={styles.selectedFace}>
           <ExpoImage
@@ -507,6 +531,15 @@ export function YaohuoReplyComposer({
             testID="yaohuo-selected-face-preview"
           />
           <Text style={styles.selectedFaceText}>表情：{selectedFaceLabel}</Text>
+          <IconButton
+            ghost
+            iconOnly
+            tiny
+            icon={X}
+            label="清除表情"
+            disabled={inputBusy}
+            onPress={() => onFaceChange('')}
+          />
         </View>
       ) : null}
       {disabledReason ? <Text style={styles.disabledReason}>{disabledReason}</Text> : null}
@@ -520,7 +553,6 @@ export function YaohuoReplyComposer({
           {status}
         </Text>
       ) : null}
-      {presentation === 'embedded' ? <Text style={styles.bodyLabel}>正文</Text> : null}
       <TextInput
         ref={(node) => {
           inputRef.current = node ? (node as InputHandle) : null;
@@ -559,6 +591,7 @@ export function YaohuoReplyComposer({
           ) : null}
           <IconButton
             icon={Smile}
+            active={panel === 'face'}
             iconOnly
             iconSize={22}
             label="表情"
@@ -567,6 +600,7 @@ export function YaohuoReplyComposer({
           />
           <IconButton
             icon={Type}
+            active={panel === 'format'}
             iconOnly
             iconSize={22}
             label="文字格式"
@@ -591,17 +625,10 @@ export function YaohuoReplyComposer({
       {presentation !== 'embedded' ? (
         <View style={styles.actions}>
           <AppButton
-            label={closeLabel}
-            variant="ghost"
-            disabled={actionBusy}
-            onPress={() => {
-              closePanels();
-              onOpenChange?.(false);
-            }}
-          />
-          <AppButton
-            label={actionBusy ? (uploadingImage ? '上传中…' : '发送中…') : submitLabel}
-            variant={content.trim() ? 'primary' : 'default'}
+            minWidth={84}
+            label={actionBusy ? (uploadingImage ? '上传中' : '发送中') : submitLabel}
+            loading={actionBusy}
+            variant={content.trim() ? 'solid' : 'default'}
             disabled={inputBusy || Boolean(disabledReason) || !content.trim()}
             onPress={() => onSubmit?.()}
           />

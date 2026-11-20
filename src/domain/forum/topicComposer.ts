@@ -103,6 +103,10 @@ export type TopicSubmissionReceipt =
 type TopicSubmissionFields = {
   target?: string;
   confirmed?: Partial<TopicEditableFields>;
+  normalizedFrom?: Partial<TopicEditableFields>;
+  additionalReward?: string;
+  /** The submitting editor can still deliver a newer snapshot after this revision was removed. */
+  canResumeRemovedDraft?: true;
   id: string;
   source: TopicCreationSource;
   identityKey: string;
@@ -185,13 +189,22 @@ function giftError(total: string, perPerson: string) {
   return Number(perPerson) > Number(total) ? '每人妖晶不能超过派币总额' : '';
 }
 
+export const yaohuoFileBytePolicy = {
+  maxBytes: 1024 * 1024,
+  alternate: {
+    maxBytes: 10 * 1024 * 1024,
+    mimeTypes: ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/heic', 'image/heif'],
+    extensions: ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif']
+  }
+} as const;
+
 export function yaohuoFileSizeLimit(file: Pick<TopicDraftAttachment, 'name' | 'mimeType'>) {
   const extension = file.name.split('.').pop()?.toLowerCase() || '';
+  const { maxBytes, alternate } = yaohuoFileBytePolicy;
   const staticImage =
-    ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/heic', 'image/heif'].includes(
-      file.mimeType.toLowerCase()
-    ) || ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif'].includes(extension);
-  return (staticImage ? 10 : 1) * 1024 * 1024;
+    alternate.mimeTypes.some((mime) => mime === file.mimeType.toLowerCase()) ||
+    alternate.extensions.some((known) => known === extension);
+  return staticImage ? alternate.maxBytes : maxBytes;
 }
 
 export function validateTopicDraft(draft: TopicDraft, context: TopicCreationContext): Record<string, string> {
@@ -341,6 +354,7 @@ type TopicEditBaseline = {
   topicId: string;
   postId?: number;
   original: TopicEditableFields;
+  confirmedAttemptId?: string;
 };
 export type TopicEditContext = TopicEditBaseline & {
   source: TopicCreationSource;
@@ -388,6 +402,57 @@ export function topicEditChanges(draft: TopicDraft): Partial<TopicEditableFields
       ([key, value]) => !sameTopicField(value, draft.edit!.original[key as keyof TopicEditableFields])
     )
   );
+}
+
+/** Only normalized fields need their submitted value to merge a later revision. */
+export function normalizedTopicEditInput(
+  draft: TopicDraft,
+  confirmed?: Partial<TopicEditableFields>
+): Partial<TopicEditableFields> | undefined {
+  if (!confirmed) return undefined;
+  const submitted = Object.entries(editableTopicFields(draft)).filter(
+    ([key, value]) =>
+      Object.hasOwn(confirmed, key) && !sameEditValue(value, confirmed[key as keyof TopicEditableFields])
+  );
+  return submitted.length ? Object.fromEntries(submitted) : undefined;
+}
+
+function sameEditValue(left: unknown, right: unknown) {
+  return (
+    left === right || (Array.isArray(left) && Array.isArray(right) && JSON.stringify(left) === JSON.stringify(right))
+  );
+}
+
+export function applyTopicEditReceipt(draft: TopicDraft, attempt: TopicSubmissionAttempt): TopicDraft {
+  if (!draft.edit || attempt.draftId !== draft.id || draft.edit.confirmedAttemptId === attempt.id) return draft;
+  const saved = attempt.status === 'saved';
+  const original = { ...draft.edit.original, ...attempt.confirmed };
+  const current = editableTopicFields(draft);
+  const confirmed = Object.entries(attempt.confirmed || {}).filter(([key, value]) => {
+    const field = key as keyof TopicEditableFields;
+    return (
+      !sameEditValue(current[field], value) &&
+      (draft.revision === attempt.revision ||
+        (attempt.normalizedFrom &&
+          Object.hasOwn(attempt.normalizedFrom, field) &&
+          sameEditValue(current[field], attempt.normalizedFrom[field])))
+    );
+  });
+  if (!saved && !confirmed.length && JSON.stringify(original) === JSON.stringify(draft.edit.original)) return draft;
+  return {
+    ...draft,
+    ...Object.fromEntries(confirmed),
+    ...(saved && attempt.additionalReward && draft.additionalReward === attempt.additionalReward
+      ? { additionalReward: '' }
+      : {}),
+    edit: {
+      ...draft.edit,
+      original,
+      ...(saved || attempt.status === 'partial' ? { confirmedAttemptId: attempt.id } : {})
+    },
+    revision: draft.revision + 1,
+    updatedAt: Date.now()
+  } as TopicDraft;
 }
 
 export function hasTopicEditChanges(draft: TopicDraft) {

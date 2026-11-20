@@ -3,14 +3,12 @@ import { BackHandler } from 'react-native';
 import type { Screen } from '@/ui/navigation/types';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import type { DiagnosticFields } from '@/platform/diagnostics/diagnosticPolicy';
-import { isNativeStackScreen } from './appNavigation';
+import { currentAppRoute, isNativeStackScreen, navigateMainTab } from './appNavigation';
 
 export function useAppBackHandler({
-  changeScreen,
   closeTopmostAccountSurface,
   getCurrentScreen
 }: {
-  changeScreen: (screen: Screen) => void;
   closeTopmostAccountSurface: () => DiagnosticFields['state'] | null;
   getCurrentScreen: () => Screen;
 }) {
@@ -29,7 +27,7 @@ export function useAppBackHandler({
         return false;
       }
       if (currentScreen !== 'feed') {
-        changeScreen('feed');
+        if (currentAppRoute().screen !== 'feed') navigateMainTab('feed');
         markDiagnosticStage(trace, 'guard', { state: 'feed-return' });
         finishDiagnosticTrace(trace, 'success', { state: 'feed-return' });
         return true;
@@ -38,5 +36,5 @@ export function useAppBackHandler({
       return false;
     });
     return () => subscription.remove();
-  }, [changeScreen, closeTopmostAccountSurface, getCurrentScreen]);
+  }, [closeTopmostAccountSurface, getCurrentScreen]);
 }

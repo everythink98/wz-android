@@ -33,9 +33,13 @@
 
 新建发帖隔离环境时，由操作者先记录进程/设备基线，创建并启动 `WZ_TopicCreation_Test_API35`，确认没有用户数据后首次安装已匹配源码的开发签名 proof APK，再运行 runner；runner 不承担首次安装，也不放宽已有安装、签名、`firstInstallTime` 与源码/APK 哈希门禁。首次安装仅适用于这个新建隔离环境，不能用于修复旧设备。
 
-既有 AVD 若存在安装元数据但 `pm path` 为空，或安装身份/签名异常，立即冻结该设备，不卸载、不清数据、不重建；保留现场并另建授权的隔离环境。设备名严格匹配上述两个值，端口或相似名称不能作为放行依据。
+既有 AVD 若存在安装元数据但 `pm path` 为空，或安装身份、签名异常，立即冻结设备并保留现场。新建隔离环境使用本节指定的专用名称，runner 按允许名单精确匹配。
 
 专项只接受当前源码与 APK 哈希、buildId 匹配且 `isDev=false/isHermes=true` 的包；先比对已装 APK 签名，再覆盖安装并复核 `firstInstallTime`。完整场景矩阵定义在 `scripts/run-composer-device-proof.mjs`，含两站 16 种编辑模式/面板/键盘组合、各独立写入口、失败保稿/重开、深浅全屏及竞态/选图取消。`stress-ime-fast/slow` 在隔离设备分别使用 0/5 倍 window animation scale，记录并最终恢复原值；这些压力条件不代替原生 IME 帧顺序单测。所有发送使用合成账号与 HTTP/adapter 响应，未匹配请求立即失败；不得将这些结果标为 `LIVE_PASS`。
+
+`--cases topic-edit-nodeseek-newer-draft` 专门重放编辑回执迟到的情形。发送后保存一版新正文，等前一次成功回执返回，再重开相同主题核对 SQLite 草稿内容。
+
+旧 Composer AVD 安装记录异常或数据目录缺失时，可在独立 AVD 目录新建 `WZ_Review_Composer_API35`。使用 API 35 Google APIs x86_64、1080×2400 屏幕和系统键盘，核实这台新设备没有 App 安装记录后首次安装匹配的验收包。runner 随后仍核对签名、首次安装时间和源码哈希。
 
 较大挖孔须在同一隔离 AVD 单独切换系统 cutout overlay、记录实际 Insets，并添加 `--require-cutout` 重跑深浅全屏，最后恢复原 overlay；overlay 已启用不等于生效，cutout Insets 仍为 0 时必须失败，工具栏按状态栏与 cutout 的较大值验收。可参考 [Android 官方挖孔测试说明](https://developer.android.com/develop/ui/compose/system/test-cutouts)。真实物理设备没有对应证据时仍为 `NOT_VERIFIED`。结束后，runner 释放自己的 agent-device 会话，并恢复 IME 和动画设置；操作者只关闭本次启动的隔离模拟器。
 
@@ -195,6 +199,8 @@ proof 的 JS/renderer 分支要求异常记录、旧进程归属和系统退出�
 
 ### 图片运行时 Native 验证
 
+图片下载用例随 `--platform-exports` 运行。它向生产下载模块提供有效 PNG 和 HTML 错误页，分别使用缺失、通用及 `image/png` 三种 MIME，核对保存内容和失败后的临时目录。
+
 排查图片失败时导出「更多 → 问题诊断」的现有日志。按 `appSessionId + traceId` 关联 JS `image-load` 与 Native request，以 `mediaRef` 找同图的后续重试；多个原生请求再以 `callId` 区分。`imageConsumer=svg-probe` 表示显示失败后的兼容探测，其 200 不能证明 Fresco/Glide 成功。JS `finish/success` 表示显示，`imageFailure` 为闭集错误分类，`unknown` 表示现有原生回调没有足够信息；Native `response-headers`、`response-body-end`、`image-call-failed` 和 `image-lease-released` 分别表示响应头、读取、失败与资源释放。缓存命中可能只有 JS 显示终态，没有网络 Call；不凭缺少 Call 单独断言缓存命中。Native 事件已进入跨进程 journal，512 条 ring 仅为旧桥接兼容窗口；先按上节 coverage 判断可用时间范围。
 
 fresh prebuild 后，用 `android/gradlew.bat -p android :forum-platform:testDebugUnitTest --tests '*NetworkProxyRuntimeTest' --no-daemon` 执行模块内网络 canonical owner；RN 注入 wiring 使用 `:react-native:packages:react-native:ReactAndroid:testDebugUnitTest --tests '*ReactOkHttpNetworkFetcherTest'`。两份 XML 报告都必须包含非零用例。
@@ -269,7 +275,7 @@ node scripts/run-review-remediation-device-proof.mjs --serial <隔离serial> --b
 
 runner 精确拒绝其他 AVD，包括主登录设备；仅覆盖安装开发签名的 Release Hermes proof APK，保留安装身份。临时 Gradle overlay 选择 `dev/review-remediation-proof/index.tsx`，不修改生产入口或持久原生配置。HTTP 使用已有四站样本和明确故障注入；WebView 使用禁远端资源的内联页面，禁止测试入口未经隔离的 fetch。通知测试临时撤销再授予该测试 App 的系统权限，finally 恢复原权限；只清理本轮合成摘要，恢复原通知存储键。
 
-receipt 核对 token、Release/Hermes、62 项结果和 APK hash，保留原 60 项检查。覆盖真实 WebView 脚本、User Query 竞态、Feed 原生宿主、Account 恢复核心、发送前校验、通知存储与系统投递事务；通知质量包含失败、恢复后静默基线和重复分页的真实 Store/Android sink。深层正文保留原 256 层 details/blockquote/list/callout 断言，另经真实 linux.do reader 验证主楼、回复、作者删除主楼的嵌套代码与媒体，并验证 NodeSeek 深层终端转换。
+业务回执须匹配本次 token、Release/Hermes、APK hash 和 `REVIEW_CHECK_NAMES` 中的每项检查。覆盖真实 WebView、用户页请求竞态、Feed 原生宿主、账号恢复、发送前校验、通知存储与 Android 投递。来源专项通过离线响应核对已读、搜索、分页、缓冲行和未知时间。账号专项重放旧身份读取超时后的重试，编辑专项核对另一页收到回执后保留的正文及已确认金额。深层正文覆盖 256 层 details/blockquote/list/callout、linux.do 主楼与回复的嵌套代码及媒体，以及 NodeSeek 深层终端转换。
 
 原投票专项为五种容器布局 × 2,048/16,384 层的十个样本，保留文字、投票、代码、媒体及 tag 预算；计时只包两次归一化，不含解析、完整 sanitizer 或原生渲染。正文 metadata 十个样本和 rendered form/空壳十二个样本使用相同深度，按 tag、childNodes、getAttribute 合计执行 `256*elementCount+10000` 预算。metadata 计时含 parse、计数设置与完整 sanitizer；表单从已解析 document 开始，包含公开 parser 和正文准备；空壳只包含公开 root normalizer。
 
@@ -302,15 +308,24 @@ node scripts/run-notification-background-device-proof.mjs --serial <隔离serial
 
 第一条仍显式触发 job，覆盖正常完成和原 50 秒 deadline；可用 `--mode success` 或 `--mode deadline` 定向重放。第二条默认只观察一次自然 success，最长 45 分钟；追加 `--cycles 2 --timeout-minutes 50` 可观察同一次注册的两个自然周期。每轮独立核对递增业务回执、headless 完成、JobScheduler START/STOP 和下一周期，不通过重新注册或重复使用旧回执凑轮数。runner 先在 checkpoint 内注销命名的旧 proof task，再确认新注册的最小延迟尚未到；force-stopped 时没有可见 job 不代表 WorkManager 持久队列为空。无进程阶段之后必须取得不同 PID 和 JS process session。超出观察窗口只说明未取得通过证据，不能修改约束或用强制结果替代。
 
-同一 runner 的 `--acceptance boundaries|recovery|notification` 用于 Pro 修复的专项验收，可复用上一步 APK，输出必须为新的 ignored 路径：
+`--mode deadline` 还会在同一任务中延迟首次来源设置读取。业务回执的 `settingsDeadline` 须显示约 50 秒返回、一次读取、零次 worker 启动和一次实际数据库关闭。
+
+同一 runner 的专项验收可复用上一步 APK，每次输出到新的 ignored 路径。
 
 ```powershell
 node scripts/run-review-remediation-device-proof.mjs --serial <隔离serial> --apk <proof-apk> --acceptance boundaries --output .codex-tmp/<任务目录>/boundaries.json
 node scripts/run-review-remediation-device-proof.mjs --serial <隔离serial> --apk <proof-apk> --acceptance recovery --output .codex-tmp/<任务目录>/recovery.json
+node scripts/run-review-remediation-device-proof.mjs --serial <隔离serial> --apk <proof-apk> --acceptance cold-recovery --output .codex-tmp/<任务目录>/cold-recovery.json
 node scripts/run-review-remediation-device-proof.mjs --serial <隔离serial> --apk <proof-apk> --acceptance notification --output .codex-tmp/<任务目录>/notification.json
 ```
 
-`boundaries` 经生产 storage 导入并用独立 Android SQLite 连接核对三类集合 × 999/1000/1001 删除标记 × 三种时间关系的 27 个组合，最后还原原 fixture。`recovery` 挂载完整 App，在读取边界注入一次失败，使用真实系统文件选择器分别导入无效与仅启用 V2EX 的有效备份；核对恢复前业务请求为零、原资料/通知意图不变、恢复后来源准确、收藏可见，结束由 runner 停止 App 后还原 ReaderData、AsyncStorage、Composer journal 及各自 WAL/SHM 的九个白名单文件并独立重读。`notification` 使用真实 NotificationDetailRoute、gateway 和 native stack，隔离 adapter 响应；核对失焦取消、同一实例返回、失败/未确认重试、刷新不循环、防并发和确认后不重复。后两者执行 `dev/review-remediation-proof/recovery.ad`、`dev/review-remediation-proof/notification.ad`，零重试，最终还要核对包含当次 token 和构建身份的设备 receipt；UI 回放退出 0 不替代业务断言。picker 关闭后等待一次平台过渡动画，再操作 App；等待不作为导入成功 oracle。runner 只删除自己以当次 token 命名的 Download 文件。验收不连接原站，不证明真实写入或系统自然故障。
+`recovery` 和 `cold-recovery` 都先启用一组非默认通知设置，在首次读取失败后和系统文件选择器导入无效备份后分别核对原值。`cold-recovery` 从新进程启动，第一次读取迁移前的 `reader-data` 时注入故障。有效导入前 SQLite 仍无已提交迁移。有效导入后逐条核对 5,002 条历史，并核对同一主题保留较新的 7 次访问记录、新收藏、旧键清理和启用来源。业务回执及数据库检查点还原都须通过。
+
+Android 10 使用 API 29 的专用 `WZ_ReaderRecovery_API29_20261119`，Android 15 使用 API 35 的 `WZ_ReaderStorage_API35_20260910`。API 30 对应 Android 11。需要保留既有 AVD 时，先在设备离线时复制当前磁盘内容，在独立 AVD 目录启动副本；有 QCOW2 差分盘时用 `qemu-img convert` 合并当前数据并用 `qemu-img compare` 核对。仅在副本上执行同签名、无降级的覆盖安装，复核 UID 与首次安装时间。全新空白的专用 AVD 可首次安装 storage proof，运行普通 seed 和迁移以建立带归属标记的基线。验收通过检查点保存并还原十二个数据库及附属文件。
+
+已有归属标记的副本如果最后安装的是普通包，runner 会在创建检查点前收到 `run-as: package not debuggable`。先比对已安装 APK 和验收包的签名与 versionCode，在副本上覆盖安装可调试的 Release 验收包，复核 UID 和 `firstInstallTime` 后运行回放。
+
+`boundaries` 经生产 storage 导入并用独立 Android SQLite 连接核对三类集合 × 999/1000/1001 删除标记 × 三种时间关系的 27 个组合，最后还原原 fixture。`recovery` 挂载完整 App，在读取边界注入一次失败，使用真实系统文件选择器分别导入无效与仅启用 V2EX 的有效备份；核对恢复前业务请求为零、原资料/通知意图不变、恢复后来源准确、收藏可见，结束由 runner 停止 App 后还原 ReaderData、AsyncStorage、Composer journal、主题草稿库及各自的 WAL/SHM，共十二个白名单文件，并独立重读。`notification` 使用真实 NotificationDetailRoute、gateway 和 native stack，隔离 adapter 响应；核对失焦取消、同一实例返回、失败/未确认重试、刷新不循环、防并发和确认后不重复。后两者执行 `dev/review-remediation-proof/recovery.ad`、`dev/review-remediation-proof/notification.ad`，零重试，最终还要核对包含当次 token 和构建身份的设备 receipt；UI 回放退出 0 不替代业务断言。picker 关闭后等待一次平台过渡动画，再操作 App；等待不作为导入成功 oracle。runner 只删除自己以当次 token 命名的 Download 文件。验收不连接原站，不证明真实写入或系统自然故障。
 
 ### Forum selection Native 验证
 
@@ -438,17 +453,24 @@ LDC 接入验收使用普通开发构建和已有登录设备：先核对「我�
 
 本机 `WZ_Pixel_API_35` 已于 2026-09-14 经用户授权保留数据扩容到 16 GiB，完成文件系统离线校验和冷启动后 `/data` 约 16G、剩余约 10G，随后开发包覆盖安装及 `APK_SANITY` 通过，首次安装时间和登录态不变。该 AVD 的旧 QCOW2 带历史快照，单改 `disk.dataPartition.size` 不扩大已有磁盘；本次保留完整备份，以 `qemu-img convert/compare` 核对当前内容一致后扩副本，最后扩展 Android 加密映射中的 ext4。在线 resize 的保留块错误不可用反复重试或强制忽略绕过；离线扩容后须通过 e2fsck 并核对原数据。临时只读系统组件内存副本和 root ADB 已随重启退出；原磁盘及完整备份保留在本机，不提交到仓库。
 
-安装前后都记录 `firstInstallTime`，并要求值不变：
+在保留数据的设备上，先核对 Android 用户 0 已安装目标包、可见且未暂停。仓库验收使用 `scripts/device-apk-install.mjs` 检查已装包和候选包的包名、签名与 `versionCode`，拒绝降级。覆盖成功后，UID 与 `firstInstallTime` 均须保持原值，设备上的 APK 哈希须与候选包一致。安装命令报错时重新读取身份和哈希，与安装前的记录核对。 构建前已记录的身份和哈希须在安装前复核。获准新装的隔离设备也须复核目标包仍未安装。
+
+人工核对时，在覆盖前后各读一次设备身份和已装 APK 的 SHA-256。
 
 ```powershell
 adb devices
-adb -s <serial> shell dumpsys package com.wz.reader | Select-String 'firstInstallTime|lastUpdateTime'
-agent-device install com.wz.reader <apk> --platform android --device <device>
-adb -s <serial> install -r <apk>
-adb -s <serial> shell dumpsys package com.wz.reader | Select-String 'firstInstallTime|lastUpdateTime'
+$serial = '<serial>'
+$pkg = 'com.wz.reader'
+adb -s $serial shell dumpsys package $pkg | Select-String '^\s*(appId|userId|firstInstallTime)=|^\s*User 0:'
+$apkPaths = @(adb -s $serial shell pm path $pkg)
+if ($apkPaths.Count -ne 1 -or $apkPaths[0].Trim() -notmatch '^package:/data/app/\S+/base\.apk$') {
+  throw '无法确认唯一的已装 base.apk 路径'
+}
+$installedApk = $apkPaths[0].Trim().Substring('package:'.Length)
+adb -s $serial shell sha256sum $installedApk
 ```
 
-仓库 Smoke 也使用覆盖安装：
+需要安装并验证启动时，选择相应设备运行仓库 Smoke。手工覆盖可在完成相同预检后执行一次 `adb -s $serial install -r <apk>`。
 
 ```powershell
 $env:WZ_ANDROID_SMOKE_DEVICE = '<device>'
@@ -457,7 +479,7 @@ npm run smoke:android
 node scripts/smoke-android.mjs <apkPath>
 ```
 
-禁止在保留数据的设备上执行 `agent-device reinstall`、`agent-device uninstall`、`adb uninstall`、`adb shell pm clear` 或 Gradle `connectedDebugAndroidTest`。已验证的 `agent-device 0.20.6` 中，`reinstall` 会先执行不带 `-k` 的卸载，CLI 的「Replace installed app」文案不代表保留数据。覆盖安装失败就停止；不得自动改走卸载、清数据或重置模拟器。账号、本机数据或 `firstInstallTime` 异常时立即冻结设备变更，只读取证并报告。
+禁止在保留数据的设备上执行 `agent-device reinstall`、`agent-device uninstall`、`adb uninstall`、`adb shell pm clear` 或 Gradle `connectedDebugAndroidTest`。已验证的 `agent-device 0.20.6` 中，`reinstall` 会先执行不带 `-k` 的卸载，CLI 的「Replace installed app」文案不代表保留数据。覆盖安装失败就停止；不得自动改走卸载、清数据或重置模拟器。账号、本机数据、UID、`firstInstallTime` 或 APK 哈希异常时立即冻结设备变更，只读取证并报告。
 
 ### Replay
 
@@ -823,6 +845,8 @@ fresh prebuild 后核对生成的 `android/gradle.properties` 与 `android/app/b
 
 ### 执行发布
 
+新正式版本须高于本地所有分支已有的正式 tag，Android versionCode 须高于所有已发布值且在 1 至 2147483647 之间。已有 tag 可用原提交和原版本信息重建。普通开发检查允许版本号保持不变。
+
 发布前准备 `package.json` 支持的 Node 版本（推荐 24 LTS）、完整 Git history/tags、clean working tree、本机 `agent-device >= 0.19.0`，以及不进入 Git 的 `.env.release.local`。至少配置：
 
 Windows 的 Hermes 宿主构建还需要 Visual C++ 开发环境。先在 Visual Studio 的 x64 Native Tools 环境中确认 `nmake`、`cl` 和 `rc` 可解析，再执行发布；普通终端找不到 `nmake` 时，CMake 配置会在原生测试前失败。仅有 Android SDK/NDK 不足以完成此步骤。
@@ -844,7 +868,7 @@ npm run release:android
 
 脚本会执行 preflight、`npm run verify`、clean Expo prebuild、Release native 测试与编译、正式 arm64 签名构建、签名/版本校验、同代码开发签名 x86_64 Smoke 构建及 manifest 生成。原生测试复用 `scripts/native-test-plan.mjs` 的 App task spec 与 init overlay；签名构建前检查本次生成的 XML，全部指定 class 必须有实际执行的成功结果。缺失、过期、失败或全部跳过报告均阻止打包，Gradle 退出 0 或 `NO-SOURCE` 不能单独放行。签名变量只注入正式 `assembleRelease` 子进程；正式 APK 禁止 debug 签名。
 
-用户当次明确授权特殊发布、并且受影响能力及共享 seam 的定向回归已完成时，可执行 `npm run release:android -- --skip-verify --replay-directory <专项目录>`。`--skip-verify` 跳过脚本内的全量 `npm run verify`；`--replay-directory` 将 Smoke 后的默认设备 Replay 批次替换为指定目录中的 `.ad` 文件，仍先执行覆盖安装、首次安装时间与 APK_SANITY 检查。版本、clean-tree、prebuild、原生测试/编译和签名校验仍执行；manifest 的 `verificationScope` 记为 `targeted`，默认发布记为 `full`。未指定 Replay 目录时仍使用 `tests/device`，不能假定 `--skip-verify` 同时跳过默认 Replay。专项目录只放本次实际需要的回放文件，并遵守各脚本的设备与偏好前置条件；例如 Feed 手势发布可单独选择 `tests/device/feed-gesture-priority.ad`，不能把含其他专项的整个目录当成最小回归。内部交付记录必须列出实际通过的范围与未验证范围，不能沿用历史全量通过结论。GitHub push 仍按现有 CI 独立运行，不因本机特殊发布关闭 CI。
+用户当次明确授权特殊发布、并且受影响能力及共享 seam 的定向回归已完成时，可执行 `npm run release:android -- --skip-verify --replay-directory <专项目录>`。`--skip-verify` 跳过脚本内的全量 `npm run verify`；`--replay-directory` 将 Smoke 后的默认设备 Replay 批次替换为指定目录中的 `.ad` 文件，仍先执行覆盖安装、首次安装时间与 APK_SANITY 检查。版本、clean-tree、prebuild、原生测试/编译和签名校验仍执行。只要跳过全量 `verify`，或把设备 Replay 换成专项目录，manifest 的 `verificationScope` 就记为 `targeted`。执行全量 `verify` 且使用默认 `tests/device` 目录时才记为 `full`。单独传 `--skip-verify` 仍执行默认 Replay。专项目录只放本次实际需要的回放文件，并遵守各脚本的设备与偏好前置条件；例如 Feed 手势发布可单独选择 `tests/device/feed-gesture-priority.ad`，不能把含其他专项的整个目录当成最小回归。内部交付记录必须列出实际通过的范围与未验证范围，不能沿用历史全量通过结论。GitHub push 仍按现有 CI 独立运行，不因本机特殊发布关闭 CI。
 
 预期产物：
 
@@ -893,4 +917,4 @@ node scripts/run-review-remediation-device-proof.mjs --serial <隔离serial> --a
 
 基准持久保存在 ignored `.codex-tmp/visual-baselines/<环境目录>/`；每轮画面、差异图、步骤、失败材料及环境清单在 `.codex-tmp/visual-runs/`。不提交截图、APK 或数据库。只有 `DEVICE_REPLAY_PASS` 代表已有批准基准的比较与数据还原共同通过；`NEEDS_REVIEW` 只是三次稳定候选，须逐帧审阅关键操作区、遮挡和长文本再批准。后续更新仍须显式捕获与批准，并审阅相对旧基准的差异，不能在回归中自动修脚本或自动放宽阈值。该入口独立于普通 `verify`。
 
-checkpoint 在 `.codex-tmp/review-remediation-checkpoints/<AVD>/`。恢复失败保留业务与恢复错误，阻止下一轮；旧 `running` 即使 runner 被杀也不能自动还原或覆盖，应先保留数据并人工检查。`restoring` 续接先核对安装身份及每个文件的哈希与权限配对，缺少原权限记录或发现后来变化便拒绝。数据库还原不等同权限/通知业务成功，须同时查看两部分结果；安装身份变化时冻结设备变更。
+checkpoint 在 `.codex-tmp/review-remediation-checkpoints/<AVD>/`。runner 在覆盖安装前保存十二个文件的基线并确认测试资料归属，安装后先核对 UID 和首次安装时间，再停止进程。恢复失败保留业务与恢复错误，阻止下一轮。已有 `running` 时应先保留数据并人工检查。`restoring` 续接先核对安装身份及每个文件的哈希与权限配对，发现缺项或后来变化便拒绝。旧版 v2 检查点仅还原当时记录的九个文件。数据库还原、权限和通知业务分别核对。安装身份变化时冻结设备变更。

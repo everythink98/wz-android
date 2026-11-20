@@ -14,7 +14,7 @@ import {
 import { parseYaohuoListDocument, parseYaohuoListHtml, parseYaohuoSearchHtml } from './feedParser';
 import { parseYaohuoCurrentUserHtml } from './sessionParser';
 import { parseYaohuoFavoriteRecordId, parseYaohuoRepliesDocument, parseYaohuoTopicHtml } from './topicParser';
-import { yaohuoReplyListNextPageUrlFromRoot, yaohuoTopicListNextPageUrlFromRoot } from './protocol';
+import { yaohuoUserReplyNextPageUrlFromRoot, yaohuoUserTopicNextPageUrlFromRoot } from './protocol';
 import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { parseHtml } from '@/domain/forum/html';
 import { FORUM_BOUNDED_INLINE_IMAGE_ATTRIBUTE } from '@/domain/forum/forumContentMedia';
@@ -1499,19 +1499,20 @@ describe('Android direct yaohuo API', () => {
     const misleadingUser = '<a href="/bbs/userinfo.aspx?touserid=39170">下一页</a>';
 
     expect(
-      yaohuoTopicListNextPageUrlFromRoot(
+      yaohuoUserTopicNextPageUrlFromRoot(
         parseHtml(
           `${misleadingUser}<a href="/bbs/book_list_search.aspx?action=search&type=pub&key=7&page=11">下一页</a>`
         ),
         'https://www.yaohuo.me/bbs/book_list_search.aspx?action=search&type=pub&key=7&page=10',
-        10,
+        '7',
         1
       )
     ).toBe('https://www.yaohuo.me/bbs/book_list_search.aspx?action=search&type=pub&key=7&page=11');
     expect(
-      yaohuoReplyListNextPageUrlFromRoot(
+      yaohuoUserReplyNextPageUrlFromRoot(
         parseHtml(`${misleadingUser}<a href="/bbs/book_re_my.aspx?touserid=7&page=11">下一页</a>`),
         'https://www.yaohuo.me/bbs/book_re_my.aspx?touserid=7&page=10',
+        '7',
         1
       )
     ).toBe('https://www.yaohuo.me/bbs/book_re_my.aspx?touserid=7&page=11');

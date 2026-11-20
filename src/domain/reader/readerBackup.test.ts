@@ -1,6 +1,11 @@
-import { describe, expect, it } from 'vitest';
-import { createEmptyReaderData, topicKey, userSummary } from './readerData';
-import { MAX_BACKUP_JSON_BYTES, exportReaderBackupJson, parseReaderBackupJson } from './readerBackup';
+import { describe, expect, it, vi } from 'vitest';
+import { createEmptyReaderData, mergeReaderData, topicKey, userSummary } from './readerData';
+import {
+  MAX_BACKUP_JSON_BYTES,
+  assertBackupJsonSize,
+  exportReaderBackupJson,
+  parseReaderBackupJson
+} from './readerBackup';
 import type { Topic } from '@/domain/forum/models';
 
 describe('reader JSON backup', () => {
@@ -102,8 +107,60 @@ describe('reader JSON backup', () => {
     expect(() => parseReaderBackupJson(JSON.stringify(oldBackup))).toThrow('备份格式不兼容');
   });
 
-  it('rejects backup JSON that is too large to import safely', () => {
-    expect(() => parseReaderBackupJson(' '.repeat(MAX_BACKUP_JSON_BYTES + 1))).toThrow('备份文件过大');
+  it.each([
+    {},
+    { history: { 'v2ex:7': {} } },
+    { history: 'invalid' },
+    { favorites: 42 },
+    { followedUsers: [] },
+    { deletedRecords: { history: null } },
+    { settings: false }
+  ])('rejects malformed backup sections before merging them (%j)', (fields) => {
+    expect(() => parseReaderBackupJson(JSON.stringify({ version: 2, ...fields }))).toThrow('备份格式不兼容');
+  });
+
+  it('preserves literal entity text across saving, exporting and importing a topic', () => {
+    const data = createEmptyReaderData();
+    const title = 'How to print &amp;lt; and &#128512; literally';
+    const topic: Topic = {
+      source: 'v2ex',
+      id: '7',
+      title,
+      author: 'alice',
+      createdAt: '',
+      url: 'https://www.v2ex.com/t/7'
+    };
+    data.history[topicKey(topic)] = { topic, savedAt: '2026-05-20T00:00:00.000Z' };
+    const json = exportReaderBackupJson(data);
+    expect(JSON.parse(json).history['v2ex:7'].topic.title).toBe(title);
+    expect(exportReaderBackupJson(parseReaderBackupJson(json))).toBe(json);
+  });
+
+  it('keeps usable legacy records when another topic has no portable URL', () => {
+    const savedAt = '2026-05-20T00:00:00.000Z';
+    const valid: Topic = { source: 'v2ex', id: '7', title: '保留', author: 'alice', createdAt: '', url: '/t/7' };
+    const blankId = { ...valid, id: ' ' };
+    const remote = createEmptyReaderData();
+    remote.history[topicKey(valid)] = { topic: valid, savedAt };
+    remote.history[topicKey(blankId)] = { topic: blankId, savedAt };
+    remote.followedUsers['v2ex:alice'] = {
+      user: { source: 'v2ex', id: 'alice', username: 'alice', url: '/member/alice', topics: [blankId, valid] },
+      followedAt: savedAt
+    };
+    const restored = mergeReaderData(createEmptyReaderData(), parseReaderBackupJson(JSON.stringify(remote)));
+    expect(Object.keys(restored.history)).toEqual(['v2ex:7']);
+    expect(restored.followedUsers['v2ex:alice'].user.topics.map((topic) => topic.id)).toEqual(['7']);
+  });
+
+  it('checks unambiguous UTF-8 size limits without allocating an encoded copy', () => {
+    const encode = vi.spyOn(TextEncoder.prototype, 'encode');
+    try {
+      assertBackupJsonSize('界'.repeat(Math.floor(MAX_BACKUP_JSON_BYTES / 3)));
+      expect(() => parseReaderBackupJson(' '.repeat(MAX_BACKUP_JSON_BYTES + 1))).toThrow('备份文件过大');
+      expect(encode.mock.calls.length).toBe(0);
+    } finally {
+      encode.mockRestore();
+    }
   });
 
   it('uses UTF-8 bytes instead of string length for import size checks', () => {

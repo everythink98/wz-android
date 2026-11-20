@@ -101,7 +101,7 @@ export function sensitiveReplayErrorCode(error) {
 export function runSensitiveReplay({
   replayFile,
   replaySession,
-  deviceName,
+  deviceSerial,
   appPackage,
   artifactsDir,
   junitPath,
@@ -124,8 +124,8 @@ export function runSensitiveReplay({
   const flags = [
     '--session',
     replaySession,
-    '--device',
-    deviceName,
+    '--serial',
+    deviceSerial,
     '--platform',
     'android',
     '--no-record',

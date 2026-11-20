@@ -1,12 +1,13 @@
 import type { TopicStyles } from '../styles';
 import type { ReactNode } from 'react';
 import { Pressable, Text, View } from 'react-native';
-import { CheckCircle, ChevronDown, ChevronRight, ChevronUp } from 'lucide-react-native';
-import type { Reply, Source } from '@/domain/forum/models';
+import { CheckCircle, ChevronRight } from 'lucide-react-native';
+import type { QuotedPostMetadata, Reply, Source } from '@/domain/forum/models';
 import { formatDateTime } from '@/domain/forum/presentation';
 import { quotedPostReferenceKey } from '@/domain/forum/quotedPosts';
 import { type ReaderTheme } from '@/ui/theme/tokens';
 import { Avatar } from '@/ui/avatar/Avatar';
+import { DisclosureChevron } from '@/ui/controls/ExpandableControls';
 
 export function AcceptedAnswerPreview({
   children,
@@ -19,6 +20,7 @@ export function AcceptedAnswerPreview({
   onLoad,
   onReadMore,
   onRevealFull,
+  quoteAuthorName,
   reply,
   styles,
   theme
@@ -33,12 +35,12 @@ export function AcceptedAnswerPreview({
   onLoad?: () => void;
   onReadMore?: () => void;
   onRevealFull?: () => void;
+  quoteAuthorName: (quote: QuotedPostMetadata) => string;
   reply?: Reply;
   styles: TopicStyles;
   theme: ReaderTheme;
 }) {
   const quotedPosts = reply?.quotedPosts || [];
-  const ToggleIcon = expanded ? ChevronUp : ChevronDown;
 
   return (
     <View style={styles.topicAcceptedAnswer} testID="topic-accepted-answer">
@@ -57,7 +59,7 @@ export function AcceptedAnswerPreview({
         </View>
         <View style={styles.topicAcceptedAnswerToggle}>
           <Text style={styles.topicAcceptedAnswerToggleText}>{expanded ? '收起' : '展开'}</Text>
-          <ToggleIcon color={theme.primary} size={16} strokeWidth={2.2} />
+          <DisclosureChevron expanded={expanded} color={theme.primary} size={16} />
         </View>
       </Pressable>
       {expanded ? (
@@ -88,7 +90,7 @@ export function AcceptedAnswerPreview({
                           <View style={styles.quoteAuthorSummary}>
                             <View style={styles.quoteAuthorTextBlock}>
                               <Text style={styles.quoteAuthorText} numberOfLines={1}>
-                                {quote.author?.label || '引用内容'}
+                                {quoteAuthorName(quote) || '引用内容'}
                               </Text>
                               <Text style={styles.replyMeta}>引用 #{quote.reference.postNumber}</Text>
                             </View>

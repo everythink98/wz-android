@@ -75,7 +75,13 @@ import {
   type PreparedReply,
   type PreparedTopicDetail
 } from '@/domain/forum/topicContentSplit';
-import { resolveForumReadPlan, type ForumReadOperation, type ForumReadPlan } from '@/domain/forum/readPlan';
+import {
+  forumReadSites,
+  resolveForumReadPlan,
+  type AggregateForumReadPlan,
+  type ForumReadOperation,
+  type ForumReadPlan
+} from '@/domain/forum/readPlan';
 import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
 import { isSessionSource, sourceValues, type DiscourseSource, type SessionSource } from '@/domain/forum/sourceCatalog';
 
@@ -217,9 +223,7 @@ type ManagedLinuxDoLevelProfileOptions = Omit<
   source: 'linuxdo';
 };
 type ReadGatewayReadContext = {
-  includedSources?: readonly Source[];
-  readPlanScope?: string;
-  readPlanScopes?: readonly (readonly [Source, string])[];
+  plan?: ForumReadPlan | AggregateForumReadPlan;
   trace?: DiagnosticTrace;
 };
 
@@ -403,13 +407,14 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       markDiagnosticStage(trace, 'guard', { source, ...intentFields });
     }
     const enabledSnapshot = currentEnabledSources();
-    const includedSources =
-      source === 'all' ? normalizeEnabledSources(context?.includedSources || enabledSnapshot) : [];
+    const expected = context?.plan;
+    const aggregate = expected?.source === 'all' ? expected : undefined;
+    const includedSources = aggregate
+      ? normalizeEnabledSources(aggregate.sites.map((plan) => plan.source))
+      : enabledSnapshot;
     if (
-      source === 'all' &&
-      dependencies.getEnabledSources &&
-      context?.includedSources &&
-      !sameEnabledSources(enabledSnapshot, includedSources)
+      (expected && (expected.source !== source || expected.operation !== readOperation)) ||
+      (aggregate && dependencies.getEnabledSources && !sameEnabledSources(enabledSnapshot, includedSources))
     ) {
       if (ownsTrace) {
         finishDiagnosticTrace(trace, 'stale', { reason: 'superseded', source });
@@ -438,15 +443,12 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         )
       ])
     );
-    const expectedPlanScopes = new Map(context?.readPlanScopes || []);
     const directPlan = source === 'all' ? undefined : planSnapshot.get(source);
     if (
-      (source !== 'all' && context?.readPlanScope && directPlan?.cacheScope !== context.readPlanScope) ||
-      (source === 'all' &&
-        expectedPlanScopes.size > 0 &&
-        planSources.some(
-          (planSource) => expectedPlanScopes.get(planSource) !== planSnapshot.get(planSource)?.cacheScope
-        ))
+      expected &&
+      forumReadSites(expected).some(
+        (site) => site.operation !== readOperation || planSnapshot.get(site.source)?.cacheScope !== site.cacheScope
+      )
     ) {
       if (ownsTrace) finishDiagnosticTrace(trace, 'stale', { reason: 'superseded', source });
       throw new Error(REQUEST_CANCELED_MESSAGE);
@@ -793,6 +795,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
               ...(Array.isArray(record.topics) ? record.topics : [])
             ];
         const missing: string[] = [];
+        const snapshots: DiscourseTopicReading[] = [];
         for (const candidate of candidates) {
           if (!candidate || typeof candidate !== 'object') continue;
           const value = candidate as {
@@ -803,9 +806,8 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
             isPrivateMessage?: boolean;
           };
           if (value.isPrivateMessage) continue;
-          if (value.reading) dependencies.reading.observe(value.reading, readingRequest);
-          else if (value.topicId && /^\d+$/.test(value.topicId))
-            dependencies.reading.observe(value as DiscourseTopicReading, readingRequest);
+          if (value.reading) snapshots.push(value.reading);
+          else if (value.topicId && /^\d+$/.test(value.topicId)) snapshots.push(value as DiscourseTopicReading);
           if (
             value.source === 'linuxdo' &&
             value.id &&
@@ -814,6 +816,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
           )
             missing.push(value.id);
         }
+        dependencies.reading.observe(snapshots, readingRequest);
         if (missing.length && ['feed', 'search', 'semantic-search', 'user-profile'].includes(readOperation)) {
           void getReadingBatch(missing, signal).catch(() => undefined);
         }
@@ -960,7 +963,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
             if (dependencies.reading?.scope() !== scope) throw new RequestCanceledError();
             return getLinuxDoReadingBatch(fresh, { signal: ownedSignal, fetcher, linuxDoAccess: discourseAuth });
           },
-          { readPlanScope: plan.cacheScope },
+          { plan },
           controller.signal
         );
         const job: ReadingBatchJob = {
@@ -975,27 +978,29 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
           () => settleReadingBatch(job)
         );
       }
-      const entries = unique.map((id) => {
+      for (const id of unique) {
         const job = readingFetches.get(`${scope}:${id}`);
         if (!job || job.state.phase !== 'running') throw new RequestCanceledError();
         jobs.add(job);
         job.state.consumers.add(consumer);
-        return { id, job };
-      });
+      }
       signal?.addEventListener('abort', release, { once: true });
       if (signal?.aborted) {
         release();
         throw new RequestCanceledError();
       }
-      const snapshots = await withAbortableTimeout(
-        () =>
-          Promise.all(
-            entries.map(({ id, job }) => job.result.then((items) => items.find((item) => item.topicId === id)))
-          ),
-        { signal, timeoutMs: 0 }
-      );
+      const batches = await withAbortableTimeout(() => Promise.all(Array.from(jobs, (job) => job.result)), {
+        signal,
+        timeoutMs: 0
+      });
       if (dependencies.reading?.scope() !== scope) throw new RequestCanceledError();
-      return snapshots.filter((snapshot): snapshot is DiscourseTopicReading => Boolean(snapshot));
+      const byId = new Map<string, DiscourseTopicReading>();
+      for (const snapshots of batches) {
+        for (const snapshot of snapshots) {
+          if (!byId.has(snapshot.topicId)) byId.set(snapshot.topicId, snapshot);
+        }
+      }
+      return unique.flatMap((id) => byId.get(id) ?? []);
     } finally {
       signal?.removeEventListener('abort', release);
       release();

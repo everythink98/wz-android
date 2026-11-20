@@ -1,5 +1,6 @@
 import { StyleSheet } from 'react-native';
 import {
+  alphaColor,
   createReaderFontSizer,
   readerRadii,
   type ReaderStyleSettings,
@@ -51,14 +52,14 @@ export function createUserStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     errorText: {
       color: theme.danger,
       fontFamily: appFontFamily,
-      fontSize: 13,
-      lineHeight: 19
+      fontSize: fontSize(13),
+      lineHeight: fontSize(19)
     },
     excerpt: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: 12,
-      lineHeight: 18
+      fontSize: fontSize(12),
+      lineHeight: fontSize(18)
     },
     meta: {
       color: theme.muted,
@@ -67,12 +68,9 @@ export function createUserStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       lineHeight: fontSize(18)
     },
     bioSection: {
-      flexDirection: 'row',
-      alignItems: 'flex-start',
-      gap: 8
+      gap: 4
     },
     bioTextContainer: {
-      flex: 1,
       minWidth: 0,
       position: 'relative'
     },
@@ -90,11 +88,13 @@ export function createUserStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       opacity: 0
     },
     bioToggle: {
-      alignSelf: 'flex-end',
+      alignSelf: 'flex-start',
       alignItems: 'center',
+      flexDirection: 'row',
+      gap: 3,
       justifyContent: 'center',
-      minHeight: 48,
-      minWidth: 48
+      minHeight: 36,
+      paddingVertical: 4
     },
     bioToggleText: {
       color: theme.dark ? theme.primary : theme.primaryStrong,
@@ -116,32 +116,38 @@ export function createUserStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       justifyContent: 'space-between',
       gap: 12
     },
+    followTouchSlot: {
+      minHeight: 48,
+      minWidth: 48,
+      justifyContent: 'center'
+    },
     followButton: {
       alignItems: 'center',
       justifyContent: 'center',
-      minHeight: 48,
+      minHeight: 34,
       minWidth: 48,
-      paddingHorizontal: 0,
-      paddingVertical: 0,
+      paddingHorizontal: 15,
+      paddingVertical: 6,
       borderRadius: readerRadii.control,
-      borderWidth: 1,
-      borderColor: theme.dark ? theme.primary : theme.primaryStrong,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: 'transparent',
       backgroundColor: theme.dark ? theme.primary : theme.primaryStrong
     },
     followButtonSelected: {
-      borderColor: theme.line,
-      backgroundColor: theme.surface
+      borderColor: alphaColor(theme.ink, theme.dark ? 0.1 : 0.07),
+      backgroundColor: theme.surface2
     },
-    followButtonContent: { minHeight: 46, paddingHorizontal: 12 },
     followButtonText: {
       color: theme.onPrimary,
       fontFamily: appFontFamily,
-      fontSize: fontSize(14),
+      fontSize: fontSize(13),
       fontWeight: '600',
-      lineHeight: fontSize(20)
+      includeFontPadding: false,
+      lineHeight: fontSize(18)
     },
     followButtonTextSelected: {
-      color: theme.ink
+      color: theme.ink,
+      fontWeight: '500'
     },
     profileIdentityRow: {
       minHeight: 48,
@@ -194,17 +200,19 @@ export function createUserStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       fontWeight: '700'
     },
     emptyActivity: {
+      alignItems: 'center',
       paddingHorizontal: 16
     },
     screen: {
       flex: 1,
       backgroundColor: theme.surface
     },
-    timeText: {
-      flexShrink: 0,
+    replyMeta: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: 12
+      fontSize: fontSize(12),
+      lineHeight: fontSize(17),
+      fontVariant: ['tabular-nums']
     },
     topicAuthorMeta: {
       flex: 1,
@@ -220,47 +228,19 @@ export function createUserStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       flexDirection: 'row',
       gap: 12
     },
-    topicBadgeRow: {
-      flex: 1,
-      minWidth: 0,
-      alignItems: 'center',
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 6
-    },
-    topicCardHead: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      gap: 10
-    },
     topicCardPressable: {
-      gap: 10,
+      gap: 5,
       paddingHorizontal: 16,
       paddingTop: densityPadding + 2,
       paddingBottom: 14
-    },
-    topicCategoryBadge: {
-      overflow: 'hidden',
-      color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 11,
-      fontWeight: '400',
-      includeFontPadding: false,
-      lineHeight: 16,
-      backgroundColor: 'transparent',
-      borderColor: theme.line,
-      borderRadius: readerRadii.badge,
-      borderWidth: 0,
-      paddingHorizontal: 0,
-      paddingVertical: 3,
-      textAlignVertical: 'center'
     },
     topicRowShell: {
       position: 'relative',
       overflow: 'hidden',
       width: '100%',
-      backgroundColor: topicRowBackground
+      backgroundColor: topicRowBackground,
+      borderBottomColor: theme.line,
+      borderBottomWidth: StyleSheet.hairlineWidth
     },
     topicSourceBadge: {
       overflow: 'hidden',
@@ -321,7 +301,8 @@ export function createUserStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       fontSize: fontSize(16),
       fontWeight: '700',
       includeFontPadding: false,
-      lineHeight: fontSize(22)
+      lineHeight: fontSize(22),
+      fontVariant: ['tabular-nums']
     }
   });
 }

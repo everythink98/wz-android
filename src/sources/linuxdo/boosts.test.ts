@@ -13,9 +13,12 @@ describe('LinuxDo boost data', () => {
     expect(linuxDoBoostFromData(boost)).toMatchObject({
       id: 51,
       canDelete: true,
-      user: { id: '7', username: 'alice', source: 'linuxdo' },
+      user: { id: '7', username: 'alice', displayName: 'alice', source: 'linuxdo' },
       content: [{ text: '前排 & 合影 ' }, { emoji: ':bili_057:', imageUrl: 'https://cdn.ldstatic.com/emoji.png' }]
     });
+    expect(
+      linuxDoBoostFromData({ ...boost, user: { ...boost.user, name: ' ', display_username: '山月' } })?.user
+    ).toMatchObject({ username: 'alice', displayName: '山月' });
     expect(
       linuxDoBoostFromData({
         ...boost,

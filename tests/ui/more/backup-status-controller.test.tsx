@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { act, renderHook, waitFor } from '@testing-library/react-native';
-import { useLayoutEffect } from 'react';
+import { act, render, renderHook, waitFor } from '@testing-library/react-native';
+import { lazy, Suspense, useLayoutEffect } from 'react';
+import { Text } from 'react-native';
 import { createRoot } from 'test-renderer';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { exportReaderBackupJson } from '@/domain/reader/readerBackup';
+import { exportReaderBackupJson, MAX_BACKUP_JSON_BYTES, parseReaderBackupJson } from '@/domain/reader/readerBackup';
 import { useBackupStatusController } from '@/features/more/useBackupStatusController';
+import { useDiagnosticLogController } from '@/features/more/useDiagnosticLogController';
+import * as diagnosticFiles from '@/platform/diagnostics/diagnosticFileStore';
 
 const mockGetDocumentAsync = jest.fn<
   (...args: unknown[]) => Promise<{
@@ -13,14 +16,7 @@ const mockGetDocumentAsync = jest.fn<
   }>
 >();
 const mockDeleteAsync = jest.fn<(...args: unknown[]) => Promise<void>>();
-const mockGetInfoAsync = jest.fn<
-  (...args: unknown[]) => Promise<{
-    exists: boolean;
-    isDirectory: boolean;
-    size: number;
-  }>
->();
-const mockReadAsStringAsync = jest.fn<(...args: unknown[]) => Promise<string>>();
+const mockReadBackupDocument = jest.fn<(...args: unknown[]) => Promise<string>>();
 const mockWriteAsStringAsync = jest.fn<(...args: unknown[]) => Promise<void>>();
 const mockIsSharingAvailableAsync = jest.fn<() => Promise<boolean>>();
 const mockShareAsync = jest.fn<(...args: unknown[]) => Promise<void>>();
@@ -39,13 +35,22 @@ jest.mock('expo-document-picker', () => ({
   getDocumentAsync: (...args: unknown[]) => mockGetDocumentAsync(...args)
 }));
 
+jest.mock('expo', () => {
+  const actual = jest.requireActual<typeof import('expo')>('expo');
+  return {
+    ...actual,
+    requireOptionalNativeModule: (name: string) =>
+      name === 'BackupExport'
+        ? { readBackupDocument: (...args: unknown[]) => mockReadBackupDocument(...args) }
+        : actual.requireOptionalNativeModule(name)
+  };
+});
+
 jest.mock('expo-file-system/legacy', () => ({
   cacheDirectory: 'file:///cache/',
   documentDirectory: 'file:///documents/',
   EncodingType: { UTF8: 'utf8' },
   deleteAsync: (...args: unknown[]) => mockDeleteAsync(...args),
-  getInfoAsync: (...args: unknown[]) => mockGetInfoAsync(...args),
-  readAsStringAsync: (...args: unknown[]) => mockReadAsStringAsync(...args),
   writeAsStringAsync: (...args: unknown[]) => mockWriteAsStringAsync(...args)
 }));
 
@@ -64,11 +69,107 @@ describe('Backup status controller', () => {
     mockWriteAsStringAsync.mockResolvedValue(undefined);
     mockGetDocumentAsync.mockResolvedValue({
       canceled: false,
-      assets: [{ uri: 'file:///cache/backup.json', size: 8 }]
+      assets: [{ uri: 'content://documents/backup', size: 8 }]
     });
-    mockGetInfoAsync.mockResolvedValue({ exists: true, isDirectory: false, size: 8 });
-    mockReadAsStringAsync.mockResolvedValue('{broken');
+    mockReadBackupDocument.mockResolvedValue('{broken');
   });
+  it('keeps a running backup independent from a simultaneous diagnostic export', async () => {
+    const snapshot = Promise.withResolvers<string>();
+    const share = Promise.withResolvers<void>();
+    const exportLog = jest.spyOn(diagnosticFiles, 'exportDiagnosticLog').mockReturnValue(share.promise);
+    const notify = jest.fn();
+    const hook = await renderHook(() => ({
+      backup: useBackupStatusController({ notify, exportBackup: () => snapshot.promise, importBackup: async () => {} }),
+      diagnostics: useDiagnosticLogController({
+        notify,
+        metadata: { appVersion: 'fixture', versionCode: 1 },
+        getCurrentScreen: () => 'more'
+      })
+    }));
+    let save: Promise<void> | undefined;
+    let log: Promise<void> | undefined;
+    try {
+      await act(async () => {
+        save = hook.result.current.backup.exportBackupFile();
+        log = hook.result.current.diagnostics.exportDiagnosticLogFile();
+      });
+      expect(hook.result.current.backup.backupOperation).toBe('export');
+      expect(hook.result.current.diagnostics.diagnosticBusy).toBe(true);
+      expect(exportLog).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        share.resolve();
+        await log;
+      });
+      expect(hook.result.current.diagnostics.diagnosticBusy).toBe(false);
+      expect(hook.result.current.backup.backupOperation).toBe('export');
+    } finally {
+      await act(async () => {
+        share.resolve();
+        snapshot.resolve('{}');
+        await Promise.all([save, log]);
+      });
+      await hook.unmount();
+      exportLog.mockRestore();
+    }
+  });
+
+  it.each(['export', 'import'] as const)('settles the %s result when a frozen backup page returns', async (kind) => {
+    const save = Promise.withResolvers<Awaited<ReturnType<typeof mockSaveBackupDocument>>>();
+    const read = Promise.withResolvers<string>();
+    const content = Promise.withResolvers<{ default: () => null }>();
+    const DeferredContent = lazy(() => content.promise);
+    const notify = jest.fn();
+    const importBackup = async (json: string) => {
+      parseReaderBackupJson(json);
+    };
+    if (kind === 'export') mockSaveBackupDocument.mockReturnValueOnce(save.promise);
+    else mockReadBackupDocument.mockReturnValueOnce(read.promise);
+    let controller!: ReturnType<typeof useBackupStatusController>;
+    let operation: Promise<void> | undefined;
+    function Controls({ frozen }: { frozen: boolean }) {
+      controller = useBackupStatusController({ notify, importBackup, exportBackup: async () => '{}' });
+      return frozen ? <DeferredContent /> : <Text>{controller.backupOperation}</Text>;
+    }
+    const screen = (frozen: boolean) => (
+      <Suspense fallback={<Text>page is covered</Text>}>
+        <Controls frozen={frozen} />
+      </Suspense>
+    );
+    const view = await render(screen(false));
+    try {
+      await act(() => {
+        operation = kind === 'export' ? controller.exportBackupFile() : controller.importBackupFile();
+      });
+      const nativeOperation = kind === 'export' ? mockSaveBackupDocument : mockReadBackupDocument;
+      await waitFor(() => expect(nativeOperation).toHaveBeenCalledTimes(1));
+      expect(view.getByText(kind)).toBeTruthy();
+      await view.rerender(screen(true));
+      expect(view.getByText('page is covered')).toBeTruthy();
+      await act(async () => {
+        save.resolve({ status: 'saved', byteCount: 2 });
+        read.resolve('[]');
+        await operation;
+      });
+      expect(notify).not.toHaveBeenCalled();
+      await view.rerender(screen(false));
+      expect(view.getByText('idle')).toBeTruthy();
+      expect(notify).toHaveBeenCalledWith(
+        kind === 'export' ? '备份已保存到所选位置' : '备份格式不兼容，请使用当前 Android 版本导出的 JSON。'
+      );
+      await view.rerender(screen(true));
+      await view.rerender(screen(false));
+      expect(notify).toHaveBeenCalledTimes(1);
+    } finally {
+      await act(async () => {
+        save.resolve({ status: 'canceled' });
+        read.resolve('[]');
+        content.resolve({ default: () => null });
+        await operation;
+      });
+      await view.unmount();
+    }
+  });
+
   it.each(['success', 'failure'] as const)(
     'keeps one real backup job through StrictMode and settles its current %s observation',
     async (outcome) => {
@@ -93,7 +194,7 @@ describe('Backup status controller', () => {
       try {
         await act(async () => root.render(<Harness notice={notify} />));
         expect(setups).toBe(2);
-        expect(controller.backupBusy).toBe(true);
+        expect(controller.backupOperation).toBe('export');
         expect(mockSaveBackupDocument).toHaveBeenCalledTimes(1);
         await act(async () => {
           await controller.importBackupFile();
@@ -111,7 +212,7 @@ describe('Backup status controller', () => {
           outcome === 'success' ? '备份已保存到所选位置' : 'current backup failure'
         );
         expect(notify).not.toHaveBeenCalled();
-        expect(controller.backupBusy).toBe(false);
+        expect(controller.backupOperation).toBe('idle');
       } finally {
         pending.resolve({ status: 'canceled' });
         await act(async () => root.unmount());
@@ -119,7 +220,7 @@ describe('Backup status controller', () => {
     }
   );
   it.each(['success', 'failure'] as const)(
-    'settles a dispatched import and its cache cleanup without a retired %s notice',
+    'settles a dispatched import without a retired %s notice or deleting the selected document',
     async (outcome) => {
       const pending = Promise.withResolvers<void>();
       const notify = jest.fn();
@@ -139,7 +240,7 @@ describe('Backup status controller', () => {
           else pending.reject(new Error('retired import failure'));
           await result;
         });
-        expect(mockDeleteAsync).toHaveBeenCalledWith('file:///cache/backup.json', { idempotent: true });
+        expect(mockDeleteAsync).not.toHaveBeenCalled();
         expect(notify).not.toHaveBeenCalled();
       } finally {
         pending.resolve();
@@ -174,7 +275,25 @@ describe('Backup status controller', () => {
       }
     }
   );
-  it('reports a rejected import and removes only the picker cache copy', async () => {
+  it('rejects an oversized document without asking the picker to copy it', async () => {
+    mockGetDocumentAsync.mockResolvedValue({
+      canceled: false,
+      assets: [{ uri: 'content://documents/large-backup', size: MAX_BACKUP_JSON_BYTES + 1 }]
+    });
+    const notify = jest.fn();
+    const importBackup = jest.fn(async () => undefined);
+    const hook = await renderHook(() =>
+      useBackupStatusController({ notify, importBackup, exportBackup: async () => '{}' })
+    );
+    await act(async () => {
+      await hook.result.current.importBackupFile();
+    });
+    expect(mockGetDocumentAsync).toHaveBeenCalledWith(expect.objectContaining({ copyToCacheDirectory: false }));
+    expect(importBackup).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('备份文件过大'));
+  });
+
+  it('reports a rejected import and leaves the selected document untouched', async () => {
     const notify = jest.fn();
     const importBackup = jest.fn(async () => {
       throw new Error('备份格式不兼容');
@@ -187,8 +306,8 @@ describe('Backup status controller', () => {
     });
     expect(importBackup).toHaveBeenCalledWith('{broken');
     expect(notify).toHaveBeenCalledWith('备份格式不兼容');
-    expect(mockDeleteAsync).toHaveBeenCalledWith('file:///cache/backup.json', { idempotent: true });
-    expect(hook.result.current.backupBusy).toBe(false);
+    expect(mockDeleteAsync).not.toHaveBeenCalled();
+    expect(hook.result.current.backupOperation).toBe('idle');
   });
   it('canceled picker does not call storage, notify, or delete other files', async () => {
     mockGetDocumentAsync.mockResolvedValue({ canceled: true, assets: [] });
@@ -206,7 +325,7 @@ describe('Backup status controller', () => {
   });
   it('hands the complete file to the storage owner for merge against latest committed data', async () => {
     const json = exportReaderBackupJson(createEmptyReaderData());
-    mockReadAsStringAsync.mockResolvedValue(json);
+    mockReadBackupDocument.mockResolvedValue(json);
     const notify = jest.fn(),
       importBackup = jest.fn(async () => undefined);
     const hook = await renderHook(() =>
@@ -253,7 +372,7 @@ describe('Backup status controller', () => {
     });
     expect(notify).not.toHaveBeenCalled();
     expect(mockShareAsync).not.toHaveBeenCalled();
-    expect(hook.result.current.backupBusy).toBe(false);
+    expect(hook.result.current.backupOperation).toBe('idle');
   });
   it('reports document-write failures without a silent sharing fallback', async () => {
     mockSaveBackupDocument.mockRejectedValue(new Error('备份写入失败'));
@@ -266,6 +385,6 @@ describe('Backup status controller', () => {
     });
     expect(notify).toHaveBeenCalledWith('备份写入失败');
     expect(mockShareAsync).not.toHaveBeenCalled();
-    expect(hook.result.current.backupBusy).toBe(false);
+    expect(hook.result.current.backupOperation).toBe('idle');
   });
 });

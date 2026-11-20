@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useRecyclingState } from '@shopify/flash-list';
 import { StyleSheet, Text, View } from 'react-native';
+import { RefreshCw } from 'lucide-react-native';
 import { normalizeNodeSeekStardustRefId, type NodeSeekStardustReceive } from '@/domain/forum/structuredComposer';
 import type { NodeSeekStardustStatus } from '@/sources/nodeseek/stardust';
 import { AppButton } from '@/ui/controls/ButtonControls';
@@ -38,13 +39,16 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       flex: 1,
       fontFamily: fontFamilyValue(settings.fontFamily),
       fontSize: fontSize(16),
-      fontWeight: '700'
+      fontWeight: '700',
+      lineHeight: fontSize(22)
     },
     amount: {
       color: theme.warning,
       fontFamily: fontFamilyValue(settings.fontFamily),
       fontSize: fontSize(16),
-      fontWeight: '700'
+      fontWeight: '700',
+      lineHeight: fontSize(22),
+      fontVariant: ['tabular-nums']
     },
     text: {
       color: theme.ink,
@@ -56,7 +60,8 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       color: theme.muted,
       fontFamily: fontFamilyValue(settings.fontFamily),
       fontSize: fontSize(12),
-      lineHeight: fontSize(17)
+      lineHeight: fontSize(17),
+      fontVariant: ['tabular-nums']
     },
     error: { color: theme.danger },
     actions: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'flex-end' }
@@ -143,19 +148,29 @@ export function NodeSeekStardustCard({
     settle: settlePayment,
     release: releasePayment
   } = useStardustPaymentState(stableReceive);
-  const requestRef = useRef(0);
+  const statusRequest = useRef<object | null>(null);
   const [status, setStatus] = useRecyclingState<NodeSeekStardustStatus | null>(null, [stableReceive]);
+  const [refreshingStatus, setRefreshingStatus] = useRecyclingState(false, [stableReceive]);
 
-  const loadStatus = useCallback(async () => {
-    const request = ++requestRef.current;
-    const nextStatus = await loadNodeSeekStardustStatus(stableReceive).catch(() => null);
-    if (currentReceive.current === stableReceive && request === requestRef.current && nextStatus) setStatus(nextStatus);
-  }, [currentReceive, loadNodeSeekStardustStatus, setStatus, stableReceive]);
+  const loadStatus = useCallback(
+    async (reason: 'refresh' | 'after-payment' = 'refresh') => {
+      if (statusRequest.current && reason !== 'after-payment') return;
+      const request = {};
+      statusRequest.current = request;
+      setRefreshingStatus(true);
+      const nextStatus = await loadNodeSeekStardustStatus(stableReceive).catch(() => null);
+      if (currentReceive.current !== stableReceive || statusRequest.current !== request) return;
+      statusRequest.current = null;
+      setRefreshingStatus(false);
+      if (nextStatus) setStatus(nextStatus);
+    },
+    [currentReceive, loadNodeSeekStardustStatus, setRefreshingStatus, setStatus, stableReceive]
+  );
 
   useEffect(() => {
     void loadStatus();
     return () => {
-      requestRef.current += 1;
+      statusRequest.current = null;
     };
   }, [loadStatus]);
 
@@ -182,7 +197,7 @@ export function NodeSeekStardustCard({
           closed: true
         }));
       }
-      if (outcome !== 'canceled') void loadStatus();
+      if (outcome !== 'canceled') void loadStatus('after-payment');
     } finally {
       if (currentReceive.current === stableReceive) releasePayment(request);
     }
@@ -204,7 +219,9 @@ export function NodeSeekStardustCard({
 
   const statusText = status
     ? status.closed
-      ? '该收款已关闭'
+      ? oneTimeClosed && !paymentUnknown
+        ? ''
+        : '该收款已关闭'
       : status.paid
         ? '当前账号已付款'
         : `${status.participantCount} 人已付 · 累计 ${status.totalAmount} Stardust`
@@ -216,7 +233,7 @@ export function NodeSeekStardustCard({
       : oneTimeClosed
         ? '已关闭'
         : paying
-          ? '正在确认…'
+          ? '确认中'
           : `支付 ${receive.amount} Stardust`;
 
   return (
@@ -255,10 +272,20 @@ export function NodeSeekStardustCard({
         <Text style={styles.meta}>{topicActionDecisionMessage(decision)}</Text>
       ) : null}
       <View style={styles.actions}>
+        {paymentUnknown ? (
+          <AppButton
+            compact
+            icon={RefreshCw}
+            label="刷新状态"
+            loading={refreshingStatus}
+            onPress={() => void loadStatus()}
+          />
+        ) : null}
         <AppButton
           compact
           variant="primary"
           label={buttonLabel}
+          loading={paying}
           disabled={!validRef || paymentUnknown || oneTimeClosed || !decision.allowed || paying || actionBusy}
           onPress={() => void pay()}
         />

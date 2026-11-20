@@ -8,7 +8,7 @@ import { userKey } from '@/domain/reader/readerData';
 import { openHttpUrl } from '@/ui/navigation/openHttpUrl';
 
 import { ContentSourceDisabledState } from '@/ui/controls/FeedbackStates';
-import { manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
+import { goBackFromFocusedRoute } from '@/ui/navigation/appRouteActions';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { UserScreen } from './UserScreen';
 import { useUserController } from './useUserController';
@@ -23,13 +23,7 @@ export function UserRoute({ navigation, route }: UserRouteProps) {
   const user = route.params.user;
   const sourceEnabled = runtime.enabledSources.includes(user.source);
   if (!sourceEnabled) {
-    return (
-      <ContentSourceDisabledState
-        source={user.source}
-        onBack={navigation.goBack}
-        onManage={() => navigation.dispatch(manageContentSourcesAction())}
-      />
-    );
+    return <ContentSourceDisabledState source={user.source} navigation={navigation} />;
   }
   return <EnabledUserRoute navigation={navigation} route={route} runtime={runtime} />;
 }
@@ -49,12 +43,18 @@ function EnabledUserRoute({ navigation, route, runtime }: UserRouteProps & { run
     readGateway: runtime.account.readGateway,
     user: route.params.user
   });
-  const openExternalUrl = useCallback((url: string) => openHttpUrl(url, runtime.notify), [runtime]);
+  const openExternalUrl = useCallback(
+    (url: string) => {
+      if (navigation.isFocused()) openHttpUrl(url, runtime.notify);
+    },
+    [navigation, runtime.notify]
+  );
   const refreshUser = useCallback(() => {
     void controller.refreshUser();
   }, [controller]);
   const toggleUserFollow = useCallback(
     (user: import('./userScreenItems').UserProfileView) => {
+      if (!navigation.isFocused()) return;
       runtime.reader.commit({
         type: 'follow',
         user,
@@ -62,7 +62,7 @@ function EnabledUserRoute({ navigation, route, runtime }: UserRouteProps & { run
         at: new Date().toISOString()
       });
     },
-    [runtime.reader]
+    [navigation, runtime.reader]
   );
   const openTopic = useCallback(
     (topic: Topic) => {
@@ -120,7 +120,7 @@ function EnabledUserRoute({ navigation, route, runtime }: UserRouteProps & { run
       topicStateIndex={runtime.topicStateIndex}
       loadingMoreReplies={controller.userLoadingMoreReplies}
       loadingMoreTopics={controller.userLoadingMoreTopics}
-      onBack={navigation.goBack}
+      onBack={() => goBackFromFocusedRoute(navigation)}
       onLoadMoreReplies={controller.loadMoreUserReplies}
       onLoadMoreTopics={controller.loadMoreUserTopics}
       onOpenOriginal={openExternalUrl}

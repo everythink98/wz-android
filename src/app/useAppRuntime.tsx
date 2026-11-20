@@ -36,7 +36,6 @@ export function useAppRuntime() {
   const lifecycle = useAppLifecycleRuntime();
   const {
     appActive,
-    changeScreen,
     getCurrentScreen,
     height,
     feedContentReady,
@@ -201,11 +200,10 @@ export function useAppRuntime() {
     readGateway,
     sessionEpochs: forumSessionEpochs
   });
-  const { appUpdateBusy, appUpdateDownloading, appUpdateInfo } = updateRuntime;
+  const { appUpdateBusy, appUpdateInfo } = updateRuntime;
   const { metadata: diagnosticMetadata } = useAppDiagnosticsRuntime({
     accountSessionViewModels,
     appUpdateBusy,
-    appUpdateDownloading,
     dimensions: { height, width },
     fontScale,
     proxyEnabled: networkProxyState.enabled,
@@ -214,7 +212,7 @@ export function useAppRuntime() {
     themeDark: theme.dark
   });
 
-  useAppBackHandler({ changeScreen, closeTopmostAccountSurface, getCurrentScreen });
+  useAppBackHandler({ closeTopmostAccountSurface, getCurrentScreen });
 
   const topicRouteRuntime = useMemo<TopicRouteRuntimeValue>(
     () => ({
@@ -296,6 +294,7 @@ export function useAppRuntime() {
       ensureNodeImageApiKey,
       getUserAgent: (source) => (source === 'nodeseek' ? getNodeSeekUserAgent() : getLinuxDoUserAgent()),
       getEmojiUrls: readGateway.getEmojiUrls,
+      getReadPlan: readGateway.getReadPlan,
       getLinuxDoTopicCreationContext: readGateway.getLinuxDoTopicCreationContext,
       getTopicEditContext: readGateway.getTopicEditContext,
       getTopic: readGateway.getTopic,
@@ -321,6 +320,7 @@ export function useAppRuntime() {
       getNodeSeekUserAgent,
       getLinuxDoUserAgent,
       readGateway.getEmojiUrls,
+      readGateway.getReadPlan,
       readGateway.getLinuxDoTopicCreationContext,
       readGateway.getTopicEditContext,
       readGateway.getTopic,
@@ -390,7 +390,6 @@ export function useAppRuntime() {
         showLinuxDoVerification,
         showYaohuoLogin
       },
-      appActive,
       catalogCategories,
       notify,
       reader: {
@@ -403,7 +402,6 @@ export function useAppRuntime() {
     [
       enabledSources,
       enabledSourcesKey,
-      appActive,
       catalogCategories,
       forumSessionEpochs,
       onFeedInitialContentReady,
@@ -434,7 +432,6 @@ export function useAppRuntime() {
       },
       catalogCategories,
       notify,
-      readerData: readerView,
       topicStateIndex
     }),
     [
@@ -444,7 +441,6 @@ export function useAppRuntime() {
       forumSessionEpochs,
       notify,
       readGateway,
-      readerView,
       reconcileAccountStatus,
       requestNodeSeekVerification,
       showLinuxDoPanel,
@@ -526,13 +522,7 @@ export function useAppRuntime() {
           profile: accountRuntime.center.account.linuxDoLevelProfile,
           refresh: refreshMoreLinuxDoLevel
         },
-        nodeImageKey: {
-          authorize: accountRuntime.center.nodeImage.key.authorize,
-          busy: accountRuntime.center.nodeImage.key.busy,
-          clear: accountRuntime.center.nodeImage.key.clear,
-          save: accountRuntime.center.nodeImage.key.save,
-          saved: accountRuntime.center.nodeImage.key.saved
-        },
+        nodeImageKey: accountRuntime.center.nodeImage.key,
         nodeSeek: {
           busy: accountRuntime.center.nodeSeek.busy,
           state: accountRuntime.center.nodeSeek.state,
@@ -564,11 +554,7 @@ export function useAppRuntime() {
       accountRuntime.center.account.linuxDoLevelError,
       accountRuntime.center.account.linuxDoLevelProfile,
       refreshMoreLinuxDoLevel,
-      accountRuntime.center.nodeImage.key.authorize,
-      accountRuntime.center.nodeImage.key.busy,
-      accountRuntime.center.nodeImage.key.clear,
-      accountRuntime.center.nodeImage.key.save,
-      accountRuntime.center.nodeImage.key.saved,
+      accountRuntime.center.nodeImage.key,
       accountRuntime.center.nodeSeek.busy,
       accountRuntime.center.nodeSeek.state,
       accountRuntime.center.nodeSeek.checkIn,
@@ -629,7 +615,6 @@ export function useAppRuntime() {
       reader: {
         commit: commitReaderData,
         data: readerData,
-        dataRef: readerDataRef,
         status: readerStatus,
         importBackup,
         exportBackup
@@ -645,7 +630,6 @@ export function useAppRuntime() {
       getCurrentScreen,
       notify,
       readerData,
-      readerDataRef,
       importBackup,
       readerStatus,
       updateRuntime,

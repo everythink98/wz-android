@@ -106,8 +106,7 @@ async function topicsFromLinuxDoSearchData(
     const authorData =
       (isRecord(topic) ? discourseOriginalPoster(topic, users) : undefined) ||
       (Number(post?.post_number) === 1 ? post : undefined);
-    const author = String(authorData?.username || '').trim();
-    const normalized = normalizeTopic(topic, categoryMap, author || null, authorData);
+    const normalized = normalizeTopic(topic, categoryMap, authorData);
     return normalized
       ? {
           ...normalized,

@@ -1112,7 +1112,7 @@ export async function getNodeSeekCurrentUserIdentity(options: NodeSeekOptions = 
       acceptForumReadResponse(response);
       return embeddedUser;
     }
-    if (isNodeSeekLoggedOutRoot(pageDocument.root)) {
+    if (isNodeSeekLoggedOutRoot(pageDocument.root, response.url || `${BASE_URL}${path}`)) {
       acceptForumReadResponse(response);
       throw nodeSeekLoginExpiredError();
     }

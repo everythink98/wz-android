@@ -249,7 +249,60 @@ describe('V2EX feed continuation', () => {
   const row = (id: number) =>
     `<div class="cell item"><a class="topic-link" href="/t/${id}#reply0">Topic ${id}</a><a class="node" href="/go/create">create</a><a href="/member/neo">neo</a><span title="2026-05-20 00:00:00 +08:00"></span></div>`;
 
-  it('retains the last 200 distinct seen identities in the existing cursor format', async () => {
+  const recentFeed = (recentPages: number[]) => async (input: string) => {
+    const url = new URL(input);
+    const page = Number(url.searchParams.get('p') || 1);
+    const rows = Array.from({ length: 20 }, (_, index) => row((page - 1) * 20 + index + 1)).join('');
+    if (url.searchParams.get('tab') === 'all') return new Response(rows + '<a href="/recent">more</a>');
+    recentPages.push(page);
+    return new Response(rows + (page < 20 ? `<a href="/recent?p=${page + 1}">next</a>` : ''));
+  };
+  it('keeps overflow on a latest feed page when the site supplies more rows than the app requests', async () => {
+    const { getV2exFeed } = await import('./reader');
+    const fetcher = vi.fn(async (input: string) => {
+      const page = new URL(input).searchParams.get('p');
+      if (page === '1') return new Response(row(1) + row(2) + row(3) + '<a href="/recent?p=2">next</a>');
+      if (page === '2') return new Response(row(4) + row(5));
+      throw new Error('Unexpected fixture page');
+    });
+    const options = { fetcher, feedFilter: 'latest' as const, limit: 2 };
+    let page = await getV2exFeed(options);
+    const ids = page.items.map((item) => item.id);
+    for (let index = 0; index < 4 && page.hasMore; index++) {
+      page = await getV2exFeed({ ...options, page: page.nextPage!, cursor: page.nextCursor });
+      ids.push(...page.items.map((item) => item.id));
+    }
+    expect(ids).toEqual(['1', '2', '3', '4', '5']);
+    expect(page.hasMore).toBe(false);
+  });
+
+  it('continues beyond the seen window to the last topic without rescanning earlier pages', async () => {
+    const { getV2exFeed } = await import('./reader');
+    const recentPages: number[] = [];
+    const fetcher = recentFeed(recentPages);
+    const ids: string[] = [];
+    let result = await getV2exFeed({ fetcher });
+    ids.push(...result.items.map((item) => item.id));
+    for (let page = 2; page <= 15 && result.hasMore; page++) {
+      result = await getV2exFeed({ fetcher, page, cursor: result.nextCursor });
+      ids.push(...result.items.map((item) => item.id));
+    }
+    expect(result.hasMore).toBe(false);
+    expect(ids).toEqual(Array.from({ length: 400 }, (_, index) => String(index + 1)));
+    expect(recentPages).toEqual([...recentPages].sort((a, b) => a - b));
+  });
+
+  it('resumes an older full cursor after its last returned topic', async () => {
+    const { getV2exFeed } = await import('./reader');
+    const result = await getV2exFeed({
+      page: 9,
+      cursor: encodeURIComponent(JSON.stringify({ seenIds: Array.from({ length: 200 }, (_, i) => String(i + 31)) })),
+      fetcher: recentFeed([])
+    });
+    expect(result.items.map((item) => item.id)).toEqual(Array.from({ length: 30 }, (_, index) => String(index + 231)));
+  });
+
+  it('accepts a legacy cursor and retains at most 200 distinct seen identities', async () => {
     const { getV2exFeed } = await import('./reader');
     const fetcher = vi.fn(
       async () =>
@@ -261,7 +314,7 @@ describe('V2EX feed continuation', () => {
       fetcher
     });
     expect(result.nextCursor).toBeTruthy();
-    expect(JSON.parse(decodeURIComponent(result.nextCursor!))).toEqual({
+    expect(JSON.parse(decodeURIComponent(result.nextCursor!))).toMatchObject({
       seenIds: Array.from({ length: 200 }, (_, index) => String(index + 6))
     });
     expect(fetcher).toHaveBeenCalledTimes(1);
@@ -286,19 +339,76 @@ describe('V2EX feed continuation', () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
+  it('rejects repeated recent pages without exhausting the cursor, then retries it', async () => {
+    const { getV2exFeed } = await import('./reader');
+    let repeated = true;
+    const recentPages: number[] = [];
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.searchParams.get('tab') === 'all') return new Response(row(1) + row(2) + '<a href="/recent">more</a>');
+      const page = Number(url.searchParams.get('p'));
+      recentPages.push(page);
+      if (page > 3) throw new Error('Unexpected fixture page');
+      const items = repeated || page === 1 ? row(1) + row(2) : row(2) + row(3) + row(4);
+      return new Response(items + `<a href="/recent?p=${page + 1}">next</a>`);
+    });
+    const first = await getV2exFeed({ fetcher, limit: 2 });
+    expect(first.items.map((item) => item.id)).toEqual(['1', '2']);
+    const next = { fetcher, limit: 2, page: first.nextPage!, cursor: first.nextCursor };
+    await expect(getV2exFeed(next)).rejects.toThrow('V2EX 返回重复的列表');
+    expect(recentPages).toEqual([1, 2]);
+
+    repeated = false;
+    recentPages.length = 0;
+    const retried = await getV2exFeed(next);
+    expect(recentPages).toEqual([1, 2]);
+    expect(retried.items.map((item) => item.id)).toEqual(['3', '4']);
+    expect(retried.nextCursor).toBeTruthy();
+  });
+
+  it('shares one deadline across recent pages even when each request completes within it', async () => {
+    const { getV2exFeed } = await import('./reader');
+    vi.useFakeTimers();
+    try {
+      const fetcher = vi.fn(async (input: string) => {
+        const page = Number(new URL(input).searchParams.get('p'));
+        if (page > 2) throw new Error('Unexpected fixture page');
+        const response = new Response();
+        vi.spyOn(response, 'text').mockImplementation(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 30));
+          return row(page) + `<a href="/recent?p=${page + 1}">next</a>`;
+        });
+        return response;
+      });
+      const result = getV2exFeed({
+        page: 2,
+        limit: 2,
+        cursor: encodeURIComponent(JSON.stringify({ seenIds: ['1', '2'] })),
+        timeoutMs: 50,
+        fetcher
+      });
+      const settlement = result.catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(60);
+      expect(await settlement).toMatchObject({ name: 'RequestTimeoutError' });
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('lets the caller cancel non-progressing seen pages without dispatching another page', async () => {
     const { getV2exFeed } = await import('./reader');
     const controller = new AbortController();
     const fetcher = vi.fn(async (input: string) => {
       const page = Number(new URL(input).searchParams.get('p'));
       if (page === 4) controller.abort();
-      return new Response(row(1) + `<a href="/recent?p=${page + 1}">next</a>`);
+      return new Response(row(page) + `<a href="/recent?p=${page + 1}">next</a>`);
     });
     await expect(
       getV2exFeed({
         page: 2,
         limit: 2,
-        cursor: encodeURIComponent(JSON.stringify({ seenIds: ['1'] })),
+        cursor: encodeURIComponent(JSON.stringify({ seenIds: ['1', '2', '3', '4'] })),
         signal: controller.signal,
         fetcher
       })

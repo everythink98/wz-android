@@ -12,7 +12,10 @@ import { uploadYaohuoReplyImage } from '@/sources/yaohuo/imageUpload';
 import { normalizeReplyImageAsset, replyImageMarkupForSource } from '@/sources/imageUpload';
 import { LINUXDO_BASE_URL } from '@/sources/linuxdo/protocol';
 
-export function validateTopicAttachment(file: TopicDraftAttachment, context: TopicCreationContext) {
+export function validateTopicAttachment(
+  file: Pick<TopicDraftAttachment, 'kind' | 'uri' | 'name' | 'mimeType' | 'size'>,
+  context: TopicCreationContext
+) {
   if (!Number.isFinite(file.size) || file.size <= 0) throw new Error('文件为空或无法读取');
   const extension = file.name.split('.').pop()?.toLowerCase() || '';
   if (file.kind === 'yaohuo-file') {

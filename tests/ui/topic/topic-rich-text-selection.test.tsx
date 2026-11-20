@@ -445,13 +445,14 @@ it('records the current floor when filtering replaces content at the same visibl
     ...selectionTopic,
     id: '44',
     author: 'op',
+    authorId: 'op',
     source: 'linuxdo',
     contentHtml: '<p>opening</p>',
     replyCount: 2,
     replies: [
       { author: 'reader', floor: 2, commentId: 2, contentHtml: '<p>other reply</p>', createdAt: '' },
       { author: 'op', floor: 100, commentId: 100, contentHtml: '<p>author reply</p>', createdAt: '' }
-    ].map((reply) => prepareReplyContent(reply, 'linuxdo'))
+    ].map((reply) => prepareReplyContent({ ...reply, authorId: reply.author }, 'linuxdo'))
   });
   let visibleIndices: number[] = [];
   const ViewabilityHelper = require('@shopify/flash-list/src/recyclerview/viewability/ViewabilityHelper').default;
@@ -528,6 +529,7 @@ function ProductionContentList({
   settings = selectionReaderData.settings,
   topic,
   quotedReplies,
+  onOpenExternalUrl = () => undefined,
   onOpenImagePreview = () => undefined,
   renderers,
   readingRuntime,
@@ -540,6 +542,7 @@ function ProductionContentList({
   settings?: typeof selectionReaderData.settings;
   topic: ReturnType<typeof prepareTopicContent>;
   quotedReplies: Record<string, Reply>;
+  onOpenExternalUrl?: Parameters<typeof useHtmlRenderingController>[0]['onOpenExternalUrl'];
   onOpenImagePreview?: Parameters<typeof useHtmlRenderingController>[0]['onOpenImagePreview'];
   renderers?: React.ComponentProps<typeof RenderHTMLConfigProvider>['renderers'];
   readingRuntime?: DiscourseReadingRuntime;
@@ -550,7 +553,7 @@ function ProductionContentList({
   const topicScrollRef = React.useRef(null);
   const controller = useHtmlRenderingController({
     mediaSessionIdentity: 'selection-test',
-    onOpenExternalUrl: () => undefined,
+    onOpenExternalUrl,
     onOpenImagePreview,
     onOpenTopic: () => undefined,
     onOpenUser: () => undefined,
@@ -598,7 +601,7 @@ function ProductionContentList({
       article={{ busy: false, error: null, topic }}
       currentNodeSeekUser={undefined}
       discourseEmojiUrls={{}}
-      headerState={null}
+      headerError={null}
       html={{
         ...controller,
         ...(renderers ? { htmlRenderers: { ...controller.htmlRenderers, ...renderers } } : {}),
@@ -609,7 +612,6 @@ function ProductionContentList({
       onImagePreviewDescriptors={() => undefined}
       onOpenTopic={unexpected}
       onOpenUser={unexpected}
-      onScroll={() => undefined}
       session={session}
       topicScrollRef={scrollRef || topicScrollRef}
       read={{
@@ -628,7 +630,6 @@ function ProductionContentList({
           failed: () => undefined
         },
         hasNewReplies: false,
-        cancelTopicQueries: unexpected,
         currentTopic: topic,
         currentTopicKey: `${topic.source}:${topic.id}`,
         loadPreviousReplies: unexpected,
@@ -637,6 +638,7 @@ function ProductionContentList({
         locateReply: unexpected,
         cancelReplyLocation: jest.fn(),
         loadedQuotedReplies: quotedReplies,
+        authorOnlyQuotedReferences: undefined,
         loadingMoreReplies: false,
         loadingPreviousReplies: false,
         loadingQuotedFloors: {},
@@ -646,10 +648,10 @@ function ProductionContentList({
         repliesError: null,
         replyStartError: null,
         replyEndError: null,
+        replyWindowOwner: 'fixture-window',
         repliesLoading: false,
         retryReplies: unexpected,
         replyRowsPartial: false,
-        replyCollectionComplete: true,
         replyHasPrevious: false,
         replyHasMore: false,
         replyNextOffset: null,
@@ -728,6 +730,53 @@ describe('topic rich-text selection', () => {
     }
   });
 
+  it.each(['page', 'image'] as const)('opens the %s target of a linked cover at its authored size', async (kind) => {
+    const cover = 'https://images.example/cover.svg';
+    const href = kind === 'page' ? 'https://packet.example/open' : cover;
+    const onOpenExternalUrl = jest.fn();
+    const onOpenImagePreview = jest.fn();
+    const topic = prepareTopicContent({
+      ...selectionTopic,
+      source: 'linuxdo',
+      url: 'https://linux.do/t/42',
+      contentHtml: sanitizeContentHtml(
+        `<a href="${href}"><picture><source type="image/svg+xml" srcset="${cover} 1x"><img width="300" height="400" alt="红包封面"></picture></a>`,
+        'https://linux.do/'
+      )
+    });
+    const view = await render(
+      <QueryTestWrapper>
+        <ProductionContentList
+          topic={topic}
+          quotedReplies={{}}
+          contentWidth={360}
+          onOpenExternalUrl={onOpenExternalUrl}
+          onOpenImagePreview={onOpenImagePreview}
+        />
+      </QueryTestWrapper>
+    );
+    await act(async () => {
+      mockReadingList.onViewableItemsChanged({
+        viewableItems: mockReadingList.data.map((item, index) => ({ item, index, isViewable: true }))
+      });
+      mockReadingList.onLoad();
+    });
+    const image = mockReadingImages.get(cover);
+    expect(image).toBeDefined();
+    await act(async () => {
+      image!.onLoad?.({ source: { width: 420, height: 560 } });
+      image!.onDisplay?.();
+    });
+    expect(view.getByTestId('topic-image-frame')).toHaveStyle({ width: 300, height: 400 });
+    expect(view.getByTestId('a')).toHaveProp('accessibilityLabel', '红包封面');
+    await fireEvent.press(view.getByRole('link', { name: '红包封面' }));
+    const [opened, other] =
+      kind === 'page' ? [onOpenExternalUrl, onOpenImagePreview] : [onOpenImagePreview, onOpenExternalUrl];
+    expect(opened).toHaveBeenCalledWith(href);
+    expect(opened).toHaveBeenCalledTimes(1);
+    expect(other).not.toHaveBeenCalled();
+  });
+
   it.each(['block', 'phrasing'] as const)(
     'rejects a two-finger drag owned by a %s image link and preserves the next single-finger image tap',
     async (kind) => {
@@ -792,7 +841,7 @@ describe('topic rich-text selection', () => {
         await fireEvent(image, 'responderRelease', touch(80, 0));
         await fireEvent(image, 'touchEnd', touch(80, 0));
         expect(onOpenImagePreview).toHaveBeenCalledTimes(2);
-        expect(onOpenImagePreview).toHaveBeenLastCalledWith(imageUrl, undefined, undefined);
+        expect(onOpenImagePreview).toHaveBeenLastCalledWith(imageUrl, undefined, undefined, undefined, undefined);
 
         await fireEvent(anchor, 'responderGrant', touch(80, 1));
         await act(async () => anchor.props.onTouchStart?.(touch(80, 1)));
@@ -883,6 +932,8 @@ describe('topic rich-text selection', () => {
         expect(onOpenImagePreview).toHaveBeenLastCalledWith(
           `https://images.invalid/${secondName}-0.png`,
           undefined,
+          undefined,
+          undefined,
           undefined
         );
         await fireEvent.press(view.getByLabelText('下一张图片'));
@@ -895,6 +946,8 @@ describe('topic rich-text selection', () => {
         expect(onOpenImagePreview).toHaveBeenLastCalledWith(
           `https://images.invalid/${firstName}-4.png`,
           undefined,
+          undefined,
+          undefined,
           undefined
         );
         await view.rerender(tree(secondTopic, 280.4));
@@ -903,6 +956,8 @@ describe('topic rich-text selection', () => {
         await fireEvent.press(view.getByLabelText(`${secondName} slide 1`));
         expect(onOpenImagePreview).toHaveBeenLastCalledWith(
           `https://images.invalid/${secondName}-1.png`,
+          undefined,
+          undefined,
           undefined,
           undefined
         );
@@ -964,7 +1019,13 @@ describe('topic rich-text selection', () => {
         await fireEvent(image, 'responderRelease', touch(160, 0));
         await fireEvent(image, 'touchEnd', touch(160, 0));
         expect(onOpenImagePreview).toHaveBeenCalledTimes(1);
-        expect(onOpenImagePreview).toHaveBeenCalledWith('https://images.invalid/touch-1.png', undefined, undefined);
+        expect(onOpenImagePreview).toHaveBeenCalledWith(
+          'https://images.invalid/touch-1.png',
+          undefined,
+          undefined,
+          undefined,
+          undefined
+        );
       } finally {
         await view.unmount();
       }
@@ -1119,7 +1180,13 @@ describe('topic rich-text selection', () => {
       expect(restoredGallery.getAllByTestId('topic-image-frame', { includeHiddenElements: true })).toHaveLength(3);
       expect(restoredGallery.queryByLabelText('gallery slide 0', { includeHiddenElements: true })).toBeNull();
       await fireEvent.press(restoredGallery.getByLabelText('gallery slide 4'));
-      expect(onOpenImagePreview).toHaveBeenCalledWith('https://images.invalid/slide-4.png', undefined, undefined);
+      expect(onOpenImagePreview).toHaveBeenCalledWith(
+        'https://images.invalid/slide-4.png',
+        undefined,
+        undefined,
+        undefined,
+        role === 'opening' ? 'https://images.invalid/full-4.png' : undefined
+      );
       await view.unmount();
     }
   );
@@ -1160,7 +1227,7 @@ describe('topic rich-text selection', () => {
       expect(rendered.indexOf(markers[index - 1]!)).toBeLessThan(rendered.indexOf(markers[index]!));
     }
     await fireEvent.press(screen.getByLabelText('terminal proof'));
-    expect(onOpenImagePreview).toHaveBeenCalledWith(imageUrl, undefined, undefined);
+    expect(onOpenImagePreview).toHaveBeenCalledWith(imageUrl, undefined, undefined, undefined, undefined);
   });
 
   it('keeps Stardust status and payment guards while using the latest actions', async () => {

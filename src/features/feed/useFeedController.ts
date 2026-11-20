@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
+import { hashKey, useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
 import type { ReadGateway } from '@/sources/readGateway';
 import { useDiscourseVisited } from '@/platform/query/useDiscourseVisited';
@@ -12,11 +12,17 @@ import {
 } from '@/domain/forum/feedOptions';
 import { applyFeedFilter, mergeCategories, mergeTopics, type ReadingFilter } from '@/domain/forum/feed';
 import type { ReaderView } from '@/domain/reader/readerRecordState';
-import { forumReadPlanScopesKey } from '@/domain/forum/readPlan';
+import {
+  aggregateForumReadPlan,
+  forumReadSites,
+  type AggregateForumReadPlan,
+  type ForumReadPlan
+} from '@/domain/forum/readPlan';
+import { nextPagePosition, type PagePosition } from '@/domain/forum/pagination';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
 import { sourceLabel } from '@/domain/forum/presentation';
-import { isFeedFilterSource, sourceValues, type Source } from '@/domain/forum/sourceCatalog';
+import { isFeedFilterSource, type Source } from '@/domain/forum/sourceCatalog';
 import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import {
   formatSourceErrorMessages,
@@ -40,17 +46,18 @@ import type {
 } from '@/domain/forum/models';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { forumQueryKeys } from '@/platform/query/serverState';
-import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { createFeedRefreshIntent } from './feedRefreshIntent';
 
-type FeedPageParam = { cursor?: string; page: number };
+type FeedPageParam = PagePosition;
 type FeedPage = FeedResponse & FeedPageParam;
-type FeedSnapshot = { queryKey: readonly unknown[]; data: InfiniteData<FeedPage> };
+type FeedRead = { queryKey: ReturnType<typeof forumQueryKeys.feed>; plan: ForumReadPlan | AggregateForumReadPlan };
+type FeedSnapshot = { read: FeedRead; data: InfiniteData<FeedPage> };
 
 type FeedSourceState = {
   hasMore: boolean;
   items: Topic[];
   loadMoreFailureSignal: number;
+  loadMoreErrorMessage?: string;
   loadingMore: boolean;
   nextCursor?: string;
   page: number;
@@ -84,13 +91,7 @@ export function shouldWaitForReaderDataBeforeFeed(source: FeedSource, readingFil
 }
 
 function nextFeedPage(lastPage: FeedPage): FeedPageParam | undefined {
-  if (!lastPage.hasMore || !lastPage.nextPage) {
-    return undefined;
-  }
-  if (lastPage.nextPage === lastPage.page && (lastPage.nextCursor || '') === (lastPage.cursor || '')) {
-    return undefined;
-  }
-  return { page: lastPage.nextPage, ...(lastPage.nextCursor ? { cursor: lastPage.nextCursor } : {}) };
+  return nextPagePosition(lastPage, lastPage);
 }
 
 function validateFeedPage(source: FeedSource, pageParam: FeedPageParam, response: FeedResponse): FeedPage {
@@ -127,58 +128,30 @@ function mergeFeedPages(pages: FeedPage[]) {
   };
 }
 
-function queryReadPlanScopes(queryKey: readonly unknown[]) {
-  const source = queryKey[1];
-  const state = queryKey[3] as { readPlanScope?: unknown } | undefined;
-  if (typeof source !== 'string' || typeof state?.readPlanScope !== 'string') return null;
-  if (source !== 'all') return new Map<Source, string>([[source as Source, state.readPlanScope]]);
-  const scopes = new Map<Source, string>();
-  for (const entry of state.readPlanScope.split(',')) {
-    const matchedSource = sourceValues.find((candidate) => entry.startsWith(`${candidate}:`));
-    if (matchedSource) scopes.set(matchedSource, entry.slice(matchedSource.length + 1));
-  }
-  return scopes;
-}
-
-function changedReadPlanSources(previousQueryKey: readonly unknown[], currentQueryKey: readonly unknown[]) {
-  if (
-    previousQueryKey[0] !== currentQueryKey[0] ||
-    previousQueryKey[1] !== currentQueryKey[1] ||
-    previousQueryKey[2] !== currentQueryKey[2]
-  ) {
-    return null;
-  }
-  const previousState = previousQueryKey[3] as Record<string, unknown> | undefined;
-  const currentState = currentQueryKey[3] as Record<string, unknown> | undefined;
-  for (const field of ['category', 'enabledSources', 'feedFilter'] as const) {
-    if (previousState?.[field] !== currentState?.[field]) return null;
-  }
-  const previousScopes = queryReadPlanScopes(previousQueryKey);
-  const currentScopes = queryReadPlanScopes(currentQueryKey);
-  if (!previousScopes || !currentScopes) return null;
-  return new Set(sourceValues.filter((source) => previousScopes.get(source) !== currentScopes.get(source)));
-}
-
-function safeFeedSnapshot(
-  previousData: InfiniteData<FeedPage> | undefined,
-  previousQueryKey: readonly unknown[] | undefined,
-  currentQueryKey: readonly unknown[]
-) {
-  if (!previousData || !previousQueryKey) return undefined;
-  const changedSources = changedReadPlanSources(previousQueryKey, currentQueryKey);
-  if (!changedSources) return undefined;
-  if (!changedSources.size) return previousData;
-  const pages = previousData.pages.map((page) => ({
+function safeFeedSnapshot(previous: FeedSnapshot | undefined, current: FeedRead) {
+  if (!previous || previous.read.plan.source !== current.plan.source) return undefined;
+  const previousFilter = previous.read.queryKey[3];
+  const currentFilter = current.queryKey[3];
+  if (previousFilter.category !== currentFilter.category || previousFilter.feedFilter !== currentFilter.feedFilter)
+    return undefined;
+  if (previous.read.plan.cacheScope === current.plan.cacheScope) return previous.data;
+  const currentScopes = new Map(forumReadSites(current.plan).map((site) => [site.source, site.cacheScope]));
+  const retainedSources = new Set(
+    forumReadSites(previous.read.plan)
+      .filter((site) => currentScopes.get(site.source) === site.cacheScope)
+      .map((site) => site.source)
+  );
+  const pages = previous.data.pages.map((page) => ({
     ...page,
     errors: Object.fromEntries(
-      Object.entries(page.errors || {}).filter(([source]) => !changedSources.has(source as Source))
+      Object.entries(page.errors || {}).filter(([source]) => retainedSources.has(source as Source))
     ),
     hasMore: false,
-    items: page.items.filter((topic) => !changedSources.has(topic.source)),
+    items: page.items.filter((topic) => retainedSources.has(topic.source)),
     nextCursor: null,
     nextPage: null
   }));
-  return pages.some((page) => page.items.length) ? { ...previousData, pages } : undefined;
+  return pages.some((page) => page.items.length) ? { ...previous.data, pages } : undefined;
 }
 
 function sourceErrorsFromFeedError(source: FeedSource, error: unknown): SourceErrors {
@@ -213,6 +186,7 @@ export function useFeedController({
   active,
   enabledSources: enabledFeedSources,
   enabledSourcesKey,
+  feedLayoutKey = '',
   catalogCategories,
   sessionEpochs = initialForumSessionEpochs,
   linuxDoVerificationActive,
@@ -227,6 +201,7 @@ export function useFeedController({
   active: boolean;
   enabledSources: Source[];
   enabledSourcesKey: string;
+  feedLayoutKey?: string;
   catalogCategories: Category[];
   sessionEpochs?: ForumSessionEpochs;
   linuxDoVerificationActive: boolean;
@@ -244,10 +219,19 @@ export function useFeedController({
   const queryClient = useQueryClient();
   const serverReading = useDiscourseVisited(readGateway.reading?.scope());
   const feedActive = active;
+  const [previousLayoutKey, setPreviousLayoutKey] = useState(feedLayoutKey);
   const [feedSource, setFeedSource] = useState<FeedSource>('all');
   const [readingFilter, setReadingFilter] = useState<ReadingFilter>('all');
   const [categoryFilter, setCategoryFilterState] = useState('');
   const [feedFilters, setFeedFilters] = useState<FeedFilterState>(defaultFeedFilters);
+  if (previousLayoutKey !== feedLayoutKey) {
+    // Start the new Pager with the default controls while preserving the read snapshot.
+    setPreviousLayoutKey(feedLayoutKey);
+    setFeedSource('all');
+    setReadingFilter('all');
+    setCategoryFilterState('');
+    setFeedFilters(defaultFeedFilters);
+  }
   const feedSourceIncluded = feedSource === 'all' || enabledFeedSources.includes(feedSource);
   const feedSourceRequestEnabled =
     feedSource === 'all' ? enabledFeedSources.length > 0 : enabledFeedSources.includes(feedSource);
@@ -260,26 +244,30 @@ export function useFeedController({
   const handledFeedErrorRef = useRef<unknown>(undefined);
   const handledPartialErrorsRef = useRef<unknown>(undefined);
   const yaohuoLoginPromptedRef = useRef(false);
-  const feedReadPlanScopes = (feedSource === 'all' ? enabledFeedSources : [feedSource]).map(
-    (source) => [source, readGateway.getReadPlan(source, 'feed').cacheScope] as const
-  );
-  const feedReadPlanScope =
+  const feedReadPlan =
     feedSource === 'all'
-      ? forumReadPlanScopesKey(feedReadPlanScopes)
-      : feedReadPlanScopes[0]?.[1] || 'blocked:source-disabled';
+      ? aggregateForumReadPlan(
+          'feed',
+          enabledFeedSources.map((source) => readGateway.getReadPlan(source, 'feed'))
+        )
+      : readGateway.getReadPlan(feedSource, 'feed');
+  const feedReadPlanScope = feedReadPlan.cacheScope;
   const feedFilter = feedFilterForRequest(feedSource, categoryFilter, feedFilters);
-  const feedQueryKey = useMemo(
-    () =>
-      forumQueryKeys.feed({
+  const feedRead = useMemo<FeedRead>(
+    () => ({
+      plan: feedReadPlan,
+      queryKey: forumQueryKeys.feed({
         category: categoryFilter || undefined,
         enabledSourcesKey,
         feedFilter,
         readPlanScope: feedReadPlanScope,
         scope: sessionEpochs,
-        source: feedSource
-      }),
+        source: feedReadPlan.source
+      })
+    }),
     [categoryFilter, enabledSourcesKey, feedFilter, feedReadPlanScope, sessionEpochs, feedSource]
   );
+  const feedQueryKey = feedRead.queryKey;
   const feedEnabled =
     feedSourceRequestEnabled &&
     (feedSource !== 'all' || enabledFeedSources.length > 0) &&
@@ -301,8 +289,8 @@ export function useFeedController({
       const trace = beginDiagnosticTrace('feed', 'categories', { source: feedSource });
       try {
         const data = await readGateway.getCategories(
-          { source: feedSource, signal },
-          { readPlanScope: sourceCategoriesReadPlan.cacheScope, trace }
+          { source: sourceCategoriesSource, signal },
+          { plan: sourceCategoriesReadPlan, trace }
         );
         const error = firstSourceError(data.errors || {});
         if (error) {
@@ -340,7 +328,19 @@ export function useFeedController({
   );
 
   const [feedSnapshot, setFeedSnapshot] = useState<FeedSnapshot>();
-  const feedReadOwnerRef = useCommittedRef({ active: feedActive, queryKey: feedQueryKey });
+  const feedQueryHash = hashKey(feedQueryKey);
+  const activeFeedRead = useRef<{ hash: string; layout: string } | null>(null);
+  useLayoutEffect(() => {
+    activeFeedRead.current =
+      feedActive && feedSourceRequestEnabled ? { hash: feedQueryHash, layout: feedLayoutKey } : null;
+    return () => {
+      activeFeedRead.current = null;
+    };
+  }, [feedActive, feedLayoutKey, feedQueryHash, feedSourceRequestEnabled]);
+  const currentFeedRead = useCallback(() => {
+    const current = activeFeedRead.current;
+    return current?.hash === feedQueryHash && current.layout === feedLayoutKey ? current : null;
+  }, [feedLayoutKey, feedQueryHash]);
   const feedQuery = useInfiniteQuery({
     queryKey: feedQueryKey,
     enabled: feedActive && feedEnabled,
@@ -368,9 +368,7 @@ export function useFeedController({
             signal
           },
           {
-            ...(feedSource === 'all'
-              ? { includedSources: enabledFeedSources, readPlanScopes: feedReadPlanScopes }
-              : { readPlanScope: feedReadPlanScope }),
+            plan: feedRead.plan,
             trace,
             ...(pageParam.page === 1 && !queryClient.getQueryData(feedQueryKey)
               ? {
@@ -378,14 +376,13 @@ export function useFeedController({
                     if (
                       pageParam.page !== 1 ||
                       signal.aborted ||
-                      !feedReadOwnerRef.current.active ||
-                      feedReadOwnerRef.current.queryKey !== feedQueryKey ||
+                      !currentFeedRead() ||
                       queryClient.getQueryData(feedQueryKey) ||
                       !response.items.length
                     )
                       return;
                     setFeedSnapshot({
-                      queryKey: feedQueryKey,
+                      read: feedRead,
                       data: { pages: [validateFeedPage(feedSource, pageParam, response)], pageParams: [pageParam] }
                     });
                   }
@@ -396,8 +393,7 @@ export function useFeedController({
                 feedSource !== 'all' ||
                 pageParam.page !== 1 ||
                 signal.aborted ||
-                !feedReadOwnerRef.current.active ||
-                feedReadOwnerRef.current.queryKey !== feedQueryKey ||
+                !currentFeedRead() ||
                 response.items.length === 0 ||
                 !Object.keys(response.errors || {}).length
               )
@@ -409,7 +405,7 @@ export function useFeedController({
                 // The normal Query path below still reports the invalid page.
                 return;
               }
-              setFeedSnapshot({ queryKey: feedQueryKey, data: { pages: [page], pageParams: [pageParam] } });
+              setFeedSnapshot({ read: feedRead, data: { pages: [page], pageParams: [pageParam] } });
             }
           }
         );
@@ -445,22 +441,18 @@ export function useFeedController({
     },
     getNextPageParam: nextFeedPage
   });
-  const retainedFeed = useMemo(
-    () => safeFeedSnapshot(feedSnapshot?.data, feedSnapshot?.queryKey, feedQueryKey),
-    [feedSnapshot, feedQueryKey]
-  );
+  const retainedFeed = useMemo(() => safeFeedSnapshot(feedSnapshot, feedRead), [feedSnapshot, feedRead]);
   const feedData = feedQuery.data ?? retainedFeed;
   useLayoutEffect(() => {
     setFeedSnapshot((current) =>
-      current?.queryKey === feedQueryKey && current?.data === feedData
+      current?.read === feedRead && current?.data === feedData
         ? current
         : feedData
-          ? { queryKey: feedQueryKey, data: feedData }
+          ? { read: feedRead, data: feedData }
           : undefined
     );
-  }, [feedData, feedQueryKey]);
+  }, [feedData, feedRead]);
   const pages = feedData?.pages || [];
-  const refreshFeedScope = JSON.stringify([feedActive, feedQueryKey]);
   const [refreshIntent] = useState(createFeedRefreshIntent);
   const [manualRefreshing, setManualRefreshing] = useState(refreshIntent.refreshing);
   const publishRefresh = useCallback(() => setManualRefreshing(refreshIntent.refreshing), [refreshIntent]);
@@ -468,7 +460,7 @@ export function useFeedController({
     refreshIntent.invalidate();
     publishRefresh();
     return () => refreshIntent.invalidate();
-  }, [publishRefresh, refreshFeedScope, refreshIntent]);
+  }, [feedActive, feedLayoutKey, feedQueryHash, feedSourceRequestEnabled, publishRefresh, refreshIntent]);
   const mergedFeed = useMemo(() => mergeFeedPages(pages), [pages]);
   const lastPage = pages.at(-1);
   const nextPage = feedSourceRequestEnabled && feedQuery.data && lastPage ? nextFeedPage(lastPage) : undefined;
@@ -483,12 +475,14 @@ export function useFeedController({
       hasMore: Boolean(nextPage),
       items: feedSourceRequestEnabled ? mergedFeed.items : [],
       loadMoreFailureSignal: loadMoreError ? feedQuery.errorUpdatedAt : 0,
+      loadMoreErrorMessage: loadMoreError ? feedQuery.error?.message : undefined,
       loadingMore: feedQuery.isFetchingNextPage,
       nextCursor: nextPage?.cursor,
       page: lastPage?.page || 1,
       refreshing: manualRefreshing || (feedQuery.isRefetching && !feedQuery.isFetchingNextPage)
     }),
     [
+      feedQuery.error,
       feedQuery.errorUpdatedAt,
       feedQuery.isFetchingNextPage,
       feedQuery.isRefetching,
@@ -520,21 +514,14 @@ export function useFeedController({
           mergedFeed.items.length,
           feedQuery.isError ? sourceErrorsFromFeedError(feedSource, feedQuery.error) : mergedFeed.errors
         );
-  const feedRecoveryQueryIdentity = JSON.stringify(feedQueryKey);
-  const feedRecoveryOwnerRef = useCommittedRef({
-    active: feedActive,
-    queryIdentity: feedRecoveryQueryIdentity,
-    sourceRequestEnabled: feedSourceRequestEnabled
-  });
   const resumeLinuxDoFeed = useCallback(
     async (loadMore: boolean): Promise<LinuxDoReadResumeOutcome> => {
-      const owner = feedRecoveryOwnerRef.current;
-      if (!owner.active || owner.queryIdentity !== feedRecoveryQueryIdentity || !owner.sourceRequestEnabled) {
-        return 'stale';
-      }
+      const owner = currentFeedRead();
+      if (!owner) return 'stale';
       const result = loadMore
         ? await feedQuery.fetchNextPage({ cancelRefetch: false })
         : await feedQuery.refetch({ cancelRefetch: false });
+      if (activeFeedRead.current !== owner) return 'stale';
       handledFeedErrorRef.current = result.error;
       const errors = result.data?.pages.at(-1)?.errors || {};
       handledPartialErrorsRef.current = errors;
@@ -544,7 +531,7 @@ export function useFeedController({
         result.error instanceof FeedQueryError ? result.error.sourceErrors.linuxdo || result.error : result.error;
       return sourceReadRecoveryOutcome('linuxdo', error);
     },
-    [feedQuery.fetchNextPage, feedQuery.refetch, feedRecoveryOwnerRef, feedRecoveryQueryIdentity]
+    [currentFeedRead, feedQuery.fetchNextPage, feedQuery.refetch]
   );
 
   useEffect(() => {
@@ -616,7 +603,7 @@ export function useFeedController({
       showYaohuoLogin(sourceError.kind === 'login-expired' ? '妖火登录已失效，请重新登录。' : message);
       return;
     }
-    notify(message);
+    if (!loadMoreError) notify(message);
   }, [
     feedQuery.errorUpdatedAt,
     feedQuery.isFetching,
@@ -671,45 +658,33 @@ export function useFeedController({
   ]);
 
   const loadFeed = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
-    if (!feedActive || !feedSourceRequestEnabled || !nextPage) {
-      return 'stale';
-    }
+    const owner = currentFeedRead();
+    if (!owner || !nextPage) return 'stale';
     const current = queryClient.getQueryState<InfiniteData<FeedPage, FeedPageParam>>(feedQueryKey);
     if (!current || current.fetchStatus !== 'idle') return 'stale';
     const last = current.data?.pages.at(-1);
     const currentNextPage = last ? nextFeedPage(last) : undefined;
     if (currentNextPage?.page !== nextPage.page || currentNextPage.cursor !== nextPage.cursor) return 'stale';
     const result = await feedQuery.fetchNextPage({ cancelRefetch: false });
+    if (activeFeedRead.current !== owner) return 'stale';
     return result.isError ? 'failed' : 'completed';
-  }, [feedActive, feedSourceRequestEnabled, feedQuery.fetchNextPage, feedQueryKey, nextPage, queryClient]);
+  }, [currentFeedRead, feedQuery.fetchNextPage, feedQueryKey, nextPage, queryClient]);
 
   const refreshFeed = useCallback(async () => {
-    if (!feedActive || !feedSourceRequestEnabled) return;
+    const owner = currentFeedRead();
+    if (!owner) return;
     if (feedSource === 'yaohuo') yaohuoLoginPromptedRef.current = false;
     const refresh = refreshIntent.begin();
     publishRefresh();
-    notify('正在更新列表');
     try {
       await queryClient.cancelQueries({ queryKey: feedQueryKey, exact: true });
-      if (!refreshIntent.owns(refresh)) return;
-      const result = await feedQuery.refetch({ cancelRefetch: true });
-      if (!refreshIntent.owns(refresh)) return;
-      if (!result.isError) notify('列表已更新');
+      if (activeFeedRead.current !== owner || !refreshIntent.owns(refresh)) return;
+      await feedQuery.refetch({ cancelRefetch: true });
     } finally {
       refreshIntent.finished(refresh);
       publishRefresh();
     }
-  }, [
-    feedActive,
-    feedQuery.refetch,
-    feedQueryKey,
-    feedSource,
-    feedSourceRequestEnabled,
-    notify,
-    queryClient,
-    refreshIntent,
-    publishRefresh
-  ]);
+  }, [currentFeedRead, feedQuery.refetch, feedQueryKey, feedSource, queryClient, refreshIntent, publishRefresh]);
 
   const changeFeedSource = useCallback(
     (source: FeedSource) => {
@@ -761,7 +736,6 @@ export function useFeedController({
   useEffect(() => abortFeedRequests, [abortFeedRequests]);
 
   return {
-    abortFeedRequests,
     activeFeedState,
     categories,
     categoryFilter,

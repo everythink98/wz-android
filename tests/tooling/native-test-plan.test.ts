@@ -1,9 +1,33 @@
 // @vitest-environment node
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, utimesSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { nativeTestTasks, relatedNativeTasks, verifyNativeTestReports } from '../../scripts/native-test-plan.mjs';
+
+const sdkBuildTools = [{ name: '35.0.0', isDirectory: () => true }];
+
+function instrumentationInstallTransport(permissionGranted = false) {
+  const installed = new Set(['android']);
+  const digest = createHash('sha256').update('fixture-apk').digest('hex');
+  return (command: string, args: readonly string[]) => {
+    const testPackage = args.at(-1)?.endsWith('androidTest.apk');
+    const pkg = testPackage ? 'com.wz.reader.test' : 'com.wz.reader';
+    if (/aapt2(?:\.exe)?$/.test(command)) return `package: name='${pkg}' versionCode='${testPackage ? '' : '42'}'`;
+    if (command === 'java') return `Signer #1 certificate SHA-256 digest: ${'a'.repeat(64)}`;
+    if (args.includes('packages')) return [...installed].map((name) => `package:${name}`).join('\n');
+    if (args.includes('install')) {
+      installed.add(pkg);
+      return 'Success';
+    }
+    if (args.includes('path')) return `package:/data/app/${args.at(-1)}/base.apk`;
+    if (args.includes('sha256sum')) return digest;
+    if (args.includes('dumpsys'))
+      return `userId=10042\nfirstInstallTime=2026-09-10 12:34:56\nUser 0: installed=true\nandroid.permission.READ_MEDIA_IMAGES: granted=${permissionGranted}`;
+    return undefined;
+  };
+}
 
 describe('Native behavior test selection', () => {
   it('does not schedule Native tests for unrelated content and includes all owners after dependency changes', () => {
@@ -25,7 +49,8 @@ describe('Native behavior test selection', () => {
         'com.wz.reader.ComposerKeyboardHostTest',
         'com.wz.reader.ComposerWebViewInsetsTest',
         'com.wz.reader.ComposerWebViewPrewarmTest',
-        'com.wz.reader.DocumentPickerThreadingTest'
+        'com.wz.reader.DocumentPickerThreadingTest',
+        'com.wz.reader.SharingModuleTest'
       ])
     );
   });
@@ -52,6 +77,7 @@ describe('Native behavior test selection', () => {
     ['scripts/run-forum-selection-native-tests.mjs', ':forum-content-selection:testDebugUnitTest'],
     ['patches/react-native+0.86.3.patch', ':app:testReleaseUnitTest'],
     ['patches/expo-document-picker+57.0.1.patch', ':app:testReleaseUnitTest'],
+    ['patches/expo-sharing+57.0.17.patch', ':app:testReleaseUnitTest'],
     ['src/platform/network/request.ts', ':app:testReleaseUnitTest'],
     [
       'modules/forum-platform/android/src/main/java/com/wz/reader/network/NetworkProxyRuntime.kt',
@@ -192,10 +218,12 @@ describe('image instrumentation runner mode isolation', () => {
     async (mode, owners, timeout, failure?: string) => {
       const originalArgv = process.argv;
       const registry = mode === '--registry-settlement';
-      const exec = vi.fn((_command: string, args: readonly string[], _options?: { timeout?: number }) => {
+      const installTransport = instrumentationInstallTransport();
+      const exec = vi.fn((command: string, args: readonly string[], _options?: { timeout?: number }) => {
+        const installation = installTransport(command, args);
+        if (installation !== undefined) return installation;
         if (args[0] === 'devices') return 'List of devices attached\nemulator-5556\tdevice\n';
         if (args.includes('emu')) return 'WZ_ImageRuntime_Test_API35\nOK\n';
-        if (args.includes('dumpsys')) return '';
         if (
           args.includes('instrument') &&
           (registry || mode === '--platform-file-faults' || mode === '--topic-share')
@@ -249,7 +277,7 @@ describe('image instrumentation runner mode isolation', () => {
         existsSync: () => true,
         mkdirSync: vi.fn(),
         mkdtempSync: (prefix: string) => `${prefix}fixture`,
-        readdirSync: () => ['35.0.0'],
+        readdirSync: () => sdkBuildTools,
         readFileSync: (file: string) =>
           file.endsWith('BuildConfig.java') ? 'fixturebuildid' : Buffer.from('fixture-apk'),
         rmSync: vi.fn(),
@@ -331,11 +359,12 @@ describe('image instrumentation permission lease cleanup', () => {
     } = {}
   ) {
     const originalArgv = process.argv;
-    const exec = vi.fn((_command: string, args: readonly string[]) => {
+    const installTransport = instrumentationInstallTransport(failures.permissionGranted);
+    const exec = vi.fn((command: string, args: readonly string[]) => {
+      const installation = installTransport(command, args);
+      if (installation !== undefined) return installation;
       if (args[0] === 'devices') return 'List of devices attached\nemulator-5556\tdevice\n';
       if (args.includes('emu')) return 'WZ_ImageRuntime_Test_API35\nOK\n';
-      if (args.includes('dumpsys'))
-        return `android.permission.READ_MEDIA_IMAGES: granted=${failures.permissionGranted ?? false}`;
       if (args.includes('grant') && failures.grant) throw failures.grant.error;
       if (args.includes('instrument')) {
         if (failures.instrument) throw failures.instrument.error;
@@ -363,7 +392,7 @@ describe('image instrumentation permission lease cleanup', () => {
       existsSync: () => true,
       mkdirSync: vi.fn(),
       mkdtempSync: (prefix: string) => `${prefix}fixture`,
-      readdirSync: () => ['35.0.0'],
+      readdirSync: () => sdkBuildTools,
       readFileSync: (file: string) =>
         file.endsWith('BuildConfig.java') ? 'fixturebuildid' : Buffer.from('fixture-apk'),
       rmSync: remove,

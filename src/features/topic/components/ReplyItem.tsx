@@ -1,6 +1,7 @@
 import type { TopicStyles } from '../styles';
 import { memo, useCallback, useMemo } from 'react';
 import { Pressable, Text, ToastAndroid, View } from 'react-native';
+import { ActivityIndicator } from 'react-native-paper';
 import { TopicCopySurface } from './TopicCopySurface';
 import { useMappingHelper } from '@shopify/flash-list';
 import { Image as ExpoImage } from 'expo-image';
@@ -31,13 +32,15 @@ import { linuxDoReactionStats } from '@/sources/linuxdo/reactions';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import {
   quotedPostsForSource,
+  referencedPostAuthorName,
   replyForQuotedPost,
+  replyTargetPost,
   topicForQuotedPost,
   replyQuotedPostInstanceKey,
   type ToggleReplyQuoteOptions
 } from '@/domain/forum/quotedPosts';
 import { topicStatusBadgeColorStyle, type ReaderTheme } from '@/ui/theme/tokens';
-import { AppButton } from '@/ui/controls/ButtonControls';
+import { DisclosureChevron } from '@/ui/controls/ExpandableControls';
 import { Avatar } from '@/ui/avatar/Avatar';
 import { normalizeUserReference, userFromReply, userReferenceFromUsername } from '@/domain/forum/userNavigation';
 import { topicActionStateKey, type InteractionType } from '@/domain/forum/topicActionState';
@@ -62,18 +65,18 @@ type ReplyItemSection = Extract<
   }
 >;
 
-function userFromReplyTarget(source: Source | undefined, author: ReplyTargetAuthor | undefined) {
+function userFromReplyTarget(source: Source | undefined, author: ReplyTargetAuthor | undefined, displayName: string) {
   if (!source || !author) return null;
   if (author.id) {
     return normalizeUserReference({
       source,
       id: author.id,
       ...(author.username ? { username: author.username } : {}),
-      displayName: author.name,
+      displayName,
       url: author.url || ''
     });
   }
-  return author.username ? userReferenceFromUsername(source, author.username, author.name) : null;
+  return author.username ? userReferenceFromUsername(source, author.username, displayName) : null;
 }
 
 function visibleNodeSeekStat(label: string, value: number | undefined): NodeSeekStat | null {
@@ -473,10 +476,16 @@ export function ReplyItem({
       : discourseReactionStats(reply, discourseEmojiUrls)
     : [];
   const replyTargetFloor = reply.replyTarget?.floor;
-  const loadedReplyTarget = replyTargetFloor ? repliesByFloor.get(replyTargetFloor) : undefined;
-  const replyTargetName = reply.replyTarget?.author?.name || loadedReplyTarget?.author || '';
+  const loadedReplyTarget = replyTargetPost(replyTargetFloor, source, topicId, repliesByFloor, loadedQuotedReplies);
+  const targetAuthor = reply.replyTarget?.author;
+  const sameAccount =
+    !targetAuthor?.username || targetAuthor.username.toLowerCase() === loadedReplyTarget?.authorId?.toLowerCase();
+  const replyTargetName =
+    source === 'linuxdo' && sameAccount
+      ? referencedPostAuthorName(loadedReplyTarget, targetAuthor?.name)
+      : targetAuthor?.name || loadedReplyTarget?.author || '';
   const replyTargetUser =
-    userFromReplyTarget(source, reply.replyTarget?.author) ||
+    userFromReplyTarget(source, targetAuthor, replyTargetName) ||
     (loadedReplyTarget ? userFromReply(loadedReplyTarget, source) : null);
   if (reply.systemAction) {
     const actionText = systemActionText(reply);
@@ -618,12 +627,15 @@ export function ReplyItem({
                   section?.type === 'replyQuoteSummary'
                     ? section.quotedReply
                     : replyForQuotedPost(reference, source, topicId, repliesByFloor, loadedQuotedReplies);
-                const quotedAuthorName = quotedReply?.author || quote.author?.label || '未知作者';
-                const quotedUser = quotedReply
-                  ? userFromReply(quotedReply, reference.source)
-                  : quote.author?.username
-                    ? userReferenceFromUsername(reference.source, quote.author.username, quote.author.label)
-                    : null;
+                const quotedAuthorName = referencedPostAuthorName(quotedReply, quote.author?.label) || '未知作者';
+                const quotedUser =
+                  (quotedReply && userFromReply(quotedReply, reference.source)) ||
+                  (quote.author?.username
+                    ? userReferenceFromUsername(reference.source, quote.author.username, quotedAuthorName)
+                    : null);
+                const openQuotedAuthor = () => {
+                  if (quotedUser) onOpenUser({ ...quotedUser, displayName: quotedAuthorName });
+                };
                 const sameTopic = reference.source === source && reference.topicId === topicId;
                 const quotedTopic = !sameTopic ? topicForQuotedPost(quote, topicBaseUrl) : null;
                 const expanded =
@@ -643,7 +655,7 @@ export function ReplyItem({
                           accessibilityRole="link"
                           disabled={!quotedUser}
                           hitSlop={12}
-                          onPress={() => quotedUser && onOpenUser(quotedUser)}
+                          onPress={openQuotedAuthor}
                         >
                           <Avatar
                             contentSource={reference.source}
@@ -657,7 +669,7 @@ export function ReplyItem({
                             accessibilityRole="link"
                             disabled={!quotedUser}
                             hitSlop={8}
-                            onPress={() => quotedUser && onOpenUser(quotedUser)}
+                            onPress={openQuotedAuthor}
                           >
                             <Text style={styles.quoteAuthorText} numberOfLines={1}>
                               {quotedAuthorName}
@@ -680,11 +692,12 @@ export function ReplyItem({
                           </Pressable>
                         </View>
                       </View>
-                      <AppButton
-                        compact
-                        label={loading ? '读取' : expanded ? '收起' : '展开'}
-                        variant="ghost"
+                      <Pressable
+                        accessibilityLabel={loading ? '读取中' : expanded ? '收起' : '展开'}
+                        accessibilityRole="button"
+                        accessibilityState={{ busy: loading, disabled: loading, expanded }}
                         disabled={loading}
+                        style={styles.quotePanelState}
                         onPress={() =>
                           onToggleReplyQuote({
                             replyKey: replyInstanceKey,
@@ -692,7 +705,18 @@ export function ReplyItem({
                             quotedReply
                           })
                         }
-                      />
+                      >
+                        <Text style={styles.quotePanelStateText}>
+                          {loading ? '读取中' : expanded ? '收起' : '展开'}
+                        </Text>
+                        <View style={styles.quotePanelStateIcon}>
+                          {loading ? (
+                            <ActivityIndicator accessible={false} size={14} color={theme.primary} />
+                          ) : (
+                            <DisclosureChevron expanded={expanded} color={theme.ink} size={16} />
+                          )}
+                        </View>
+                      </Pressable>
                     </View>
                     {quotedTopic ? (
                       <Pressable
@@ -778,12 +802,6 @@ export function ReplyItem({
                       styles={styles}
                     />
                   ))}
-                </View>
-              ) : null}
-              {reply.acceptedAnswer ? (
-                <View accessible accessibilityLabel="解决方案" style={styles.replyAcceptedSolution}>
-                  <CheckCircle color={theme.primary} size={16} strokeWidth={2.2} />
-                  <Text style={styles.replyAcceptedSolutionText}>解决方案</Text>
                 </View>
               ) : null}
               {source === 'nodeseek' && !canReply && !canLike && nodeSeekReplyReactionStats.length ? (
@@ -1051,7 +1069,17 @@ export const MemoizedReplyItem = memo(ReplyItem, (previous, next) => {
   }
 
   const targetFloor = next.reply.replyTarget?.floor;
-  if (targetFloor && previous.repliesByFloor.get(targetFloor) !== next.repliesByFloor.get(targetFloor)) return false;
+  if (
+    targetFloor &&
+    replyTargetPost(
+      targetFloor,
+      previous.source,
+      previous.topicId,
+      previous.repliesByFloor,
+      previous.loadedQuotedReplies
+    ) !== replyTargetPost(targetFloor, next.source, next.topicId, next.repliesByFloor, next.loadedQuotedReplies)
+  )
+    return false;
 
   for (const { reference } of next.reply.quotedPosts || []) {
     const previousKey = replyQuotedPostInstanceKey(getReplyKey(previous.reply), reference);

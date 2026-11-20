@@ -209,7 +209,7 @@ describe('user query controller', () => {
     );
     expect(getUserProfile).toHaveBeenCalledWith(
       expect.objectContaining({ source: 'linuxdo' }),
-      expect.objectContaining({ readPlanScope: 'public:omit' })
+      expect.objectContaining({ plan: expect.objectContaining({ cacheScope: 'public:omit' }) })
     );
   });
 
@@ -469,17 +469,15 @@ describe('user query controller', () => {
         await Promise.all(reads);
       });
       await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(1));
-      for (const [retry, loadMore, count] of [
-        ['retryUserTopics', 'loadMoreUserTopics', 2],
-        ['retryUserReplies', 'loadMoreUserReplies', 3]
+      for (const [retry, cursor, count] of [
+        ['retryUserTopics', 'topics-2', 2],
+        ['retryUserReplies', 'replies-2', 3]
       ] as const) {
+        const before = getUserProfile.mock.calls.length;
         await act(async () => {
-          expect((await hook.result.current[retry]()).isError).toBe(false);
+          expect((await hook.result.current[retry]())?.isError).toBe(true);
         });
-        expect(showYaohuoLogin).toHaveBeenCalledTimes(count - 1);
-        await act(async () => {
-          await hook.result.current[loadMore]();
-        });
+        expect(getUserProfile.mock.calls.slice(before).map(([request]) => request.cursor)).toEqual([cursor]);
         await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(count));
         await act(async () => hook.rerender(undefined));
         expect(showYaohuoLogin).toHaveBeenCalledTimes(count);
@@ -520,6 +518,101 @@ describe('user query controller', () => {
     await expect(hook.result.current.loadMoreUserTopics()).resolves.toBe('stale');
 
     pending.resolve(user);
+  });
+
+  it.each(['inactive', 'user', 'epoch', 'unmount'] as const)(
+    'ignores a previously queued user retry after %s',
+    async (change) => {
+      let active = true;
+      let selected = user;
+      let epochs = initialForumSessionEpochs;
+      const getUserProfile = jest.fn<UserFixtureRead>(async ({ id }) => ({ ...selected, id }));
+      const hook = await renderUserController({
+        getActive: () => active,
+        getSessionEpochs: () => epochs,
+        getUser: () => selected,
+        getUserProfile
+      });
+      await waitFor(() => expect(hook.result.current.userProfile?.id).toBe(user.id));
+      const queuedRetry = hook.result.current.retryUserProfile;
+
+      if (change === 'unmount') await hook.unmount();
+      else {
+        if (change === 'inactive') active = false;
+        if (change === 'user') selected = { ...user, id: '2', username: 'bob' };
+        if (change === 'epoch') epochs = { ...initialForumSessionEpochs, nodeseek: 1 };
+        await hook.rerender(undefined);
+      }
+      const expectedCalls = change === 'user' || change === 'epoch' ? 2 : 1;
+      await waitFor(() => expect(getUserProfile).toHaveBeenCalledTimes(expectedCalls));
+
+      await act(async () => {
+        await queuedRetry();
+      });
+      expect(getUserProfile).toHaveBeenCalledTimes(expectedCalls);
+    }
+  );
+
+  it.each(['loadMoreUserTopics', 'loadMoreUserReplies'] as const)(
+    'does not paginate when a queued %s reaches an inactive route',
+    async (loadMore) => {
+      let active = true;
+      const getUserProfile = jest.fn<UserFixtureRead>().mockResolvedValue({
+        ...user,
+        replies: [],
+        hasMoreTopics: true,
+        nextTopicsCursor: 'topics-2',
+        hasMoreReplies: true,
+        nextRepliesCursor: 'replies-2'
+      });
+      const hook = await renderUserController({ getActive: () => active, getUserProfile });
+      await waitFor(() => {
+        expect(hook.result.current.userProfile?.nextTopicsCursor).toBe('topics-2');
+        expect(hook.result.current.userProfile?.nextRepliesCursor).toBe('replies-2');
+      });
+      const queuedPage = hook.result.current[loadMore];
+      active = false;
+      await hook.rerender(undefined);
+
+      await act(async () => {
+        await expect(queuedPage()).resolves.toBe('stale');
+      });
+      expect(getUserProfile).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('keeps another visible user page paging when an earlier page delivers a queued refresh', async () => {
+    let active = true;
+    let pageSignal: AbortSignal | undefined;
+    const pendingPage = Promise.withResolvers<UserProfile>();
+    const firstPage = { ...user, hasMoreTopics: true, nextTopicsCursor: 'topics-2' };
+    const getUserProfile = jest.fn<UserFixtureRead>(async ({ cursor, signal }) => {
+      if (!cursor) return firstPage;
+      pageSignal = signal;
+      return pendingPage.promise;
+    });
+    const previous = await renderUserController({ getActive: () => active, getUserProfile });
+    await waitFor(() => expect(previous.result.current.userProfile?.nextTopicsCursor).toBe('topics-2'));
+    const queuedRefresh = previous.result.current.refreshUser;
+    const visible = await renderUserController({ getUserProfile });
+    active = false;
+    await previous.rerender(undefined);
+    let paging!: Promise<unknown>;
+    await act(async () => {
+      paging = visible.result.current.loadMoreUserTopics();
+    });
+    try {
+      await waitFor(() => expect(pageSignal).toBeDefined());
+      await act(async () => {
+        await expect(queuedRefresh()).resolves.toBe('stale');
+      });
+      expect(pageSignal?.aborted).toBe(false);
+    } finally {
+      await act(async () => {
+        pendingPage.resolve({ ...firstPage, hasMoreTopics: false });
+        await paging;
+      });
+    }
   });
 
   it.each([
@@ -567,6 +660,39 @@ describe('user query controller', () => {
         pending.resolve(user);
         unsubscribe?.();
         if (cleanup !== 'unmount') await hook.unmount();
+      }
+    }
+  );
+
+  it.each(['inactive', 'unmount'] as const)(
+    'preserves a shared username resolution when the first page becomes %s',
+    async (cleanup) => {
+      let active = true;
+      const pending = Promise.withResolvers<UserReference>();
+      const reference: UserReference = {
+        source: 'nodeseek',
+        username: 'alice',
+        url: 'https://www.nodeseek.com/member?t=alice'
+      };
+      const resolveNodeSeekUser = jest.fn<ReadGateway['resolveNodeSeekUser']>(() => pending.promise);
+      const options = { getUser: () => reference, getUserProfile: async () => user, resolveNodeSeekUser };
+      const first = await renderUserController({ ...options, getActive: () => active });
+      const second = await renderUserController(options);
+      try {
+        await waitFor(() => expect(resolveNodeSeekUser).toHaveBeenCalledTimes(1));
+        const signal = resolveNodeSeekUser.mock.calls[0][0].signal;
+        if (cleanup === 'unmount') await first.unmount();
+        else {
+          active = false;
+          await first.rerender(undefined);
+        }
+        expect(signal?.aborted).toBe(false);
+        await act(() => pending.resolve(user));
+        await waitFor(() => expect(second.result.current.userProfile?.id).toBe(user.id));
+      } finally {
+        await act(() => pending.resolve(user));
+        await second.unmount();
+        if (cleanup !== 'unmount') await first.unmount();
       }
     }
   );
@@ -1063,7 +1189,7 @@ describe('user query controller', () => {
     });
 
     expect(getUserProfile).toHaveBeenCalledTimes(3);
-    expect(getUserProfile.mock.calls.map(([, context]) => context?.readPlanScope)).toEqual([
+    expect(getUserProfile.mock.calls.map(([, context]) => context?.plan?.cacheScope)).toEqual([
       'authenticated:0',
       'public:omit',
       'public:omit'

@@ -1,12 +1,11 @@
 import { execFileSync } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual, parseArgs } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
 import path from 'node:path';
-import os from 'node:os';
-import { deviceApkSignerSha256, findDeviceApkSigner } from './device-apk-signer.mjs';
+import { installDeviceApk } from './device-apk-install.mjs';
 import { buildDeviceProof } from './device-proof-build.mjs';
 import { proofDeviceForSerial } from './review-proof-checkpoint.mjs';
 
@@ -53,46 +52,12 @@ if (values.build) {
   }).apk;
   console.log(`Proof APK: ${values.apk}`);
 }
-let apkHash;
-if (values.apk) {
-  const apk = path.resolve(values.apk);
-  apkHash = createHash('sha256').update(readFileSync(apk)).digest('hex');
-  const signer = findDeviceApkSigner();
-  const aapt = path.join(path.dirname(path.dirname(signer)), process.platform === 'win32' ? 'aapt2.exe' : 'aapt2');
-  const packageInfo = (file) =>
-    /^package: name='([^']+)' versionCode='(\d+)'/mu.exec(
-      execFileSync(aapt, ['dump', 'badging', file], { encoding: 'utf8', windowsHide: true })
-    );
-  const scratch = mkdtempSync(path.join(os.tmpdir(), 'wz-reader-storage-install-'));
-  try {
-    const installedCopy = path.join(scratch, 'previous.apk');
-    const installedPath = adb('shell', 'pm', 'path', pkg).trim().split(/\r?\n/u)[0]?.replace('package:', '');
-    adb('pull', installedPath, installedCopy);
-    if (createHash('sha256').update(readFileSync(installedCopy)).digest('hex') !== before.apkSha256)
-      throw new Error('Installed APK changed during preflight; device changes frozen');
-    const candidate = packageInfo(apk);
-    const previous = packageInfo(installedCopy);
-    if (
-      candidate?.[1] !== pkg ||
-      previous?.[1] !== pkg ||
-      !Number.isSafeInteger(Number(candidate?.[2])) ||
-      !Number.isSafeInteger(Number(previous?.[2])) ||
-      Number(previous?.[2]) < 1 ||
-      Number(candidate?.[2]) < Number(previous?.[2])
-    )
-      throw new Error('APK package mismatch or downgrade; installation frozen');
-    const certificate = deviceApkSignerSha256(signer, apk);
-    if (!certificate || certificate !== deviceApkSignerSha256(signer, installedCopy))
-      throw new Error('APK signer mismatch; installation frozen');
-    adb('install', '-r', apk);
-  } finally {
-    rmSync(scratch, { recursive: true, force: true });
-  }
-}
+const installation = values.apk && installDeviceApk({ adb, pkg, apk: path.resolve(values.apk), expected: before });
 const installedIdentity = identity();
 if (!isDeepStrictEqual({ ...installedIdentity, apkSha256: before.apkSha256 }, before))
   throw new Error('Installation identity changed; device changes frozen');
-if (apkHash && installedIdentity.apkSha256 !== apkHash) throw new Error('Installed proof APK checksum mismatch');
+if (installation && installedIdentity.apkSha256 !== installation.apkSha256)
+  throw new Error('Installed proof APK checksum mismatch');
 const results = [];
 mkdirSync(path.dirname(path.resolve(output)), { recursive: true });
 const context = {

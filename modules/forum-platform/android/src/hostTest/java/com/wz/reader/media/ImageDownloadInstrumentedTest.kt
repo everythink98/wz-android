@@ -1,6 +1,8 @@
 package com.wz.reader
 
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Bundle
 import android.os.Debug
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -19,6 +21,49 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class ImageDownloadInstrumentedTest {
+  @Test fun managedDownloadsIdentifyUnlabeledImagesWithoutSavingHtml() {
+    val context = InstrumentationRegistry.getInstrumentation().targetContext
+    val directory = File(context.cacheDir, "image-type-proof-${System.nanoTime()}")
+    val image = Bitmap.createBitmap(2, 3, Bitmap.Config.ARGB_8888)
+    val png = java.io.ByteArrayOutputStream().use { output ->
+      try {
+        assertTrue(image.compress(Bitmap.CompressFormat.PNG, 100, output))
+        output.toByteArray()
+      } finally { image.recycle() }
+    }
+    try {
+      okhttp3.mockwebserver.MockWebServer().use { server ->
+        for (type in listOf(null, "application/octet-stream", "image/png")) {
+          for ((isImage, body) in listOf(
+            true to png,
+            false to "<html><svg/></html>".toByteArray(),
+            false to """<meta charset="utf-8"><main>Image unavailable</main>""".toByteArray()
+          )) {
+            val response = okhttp3.mockwebserver.MockResponse().setBody(okio.Buffer().write(body))
+            if (type != null) response.setHeader("Content-Type", type)
+            server.enqueue(response)
+            val call = NetworkProxyRuntime.imageCallFactory.newCall(Request.Builder().url(server.url("/original.jpg"))
+              .tag(ImageRequestPurpose::class.java, ImageRequestPurpose.IMAGE_SAVE).build())
+            if (isImage) {
+              val saved = streamImageDownload(call, directory) {}
+              assertEquals("image/png", saved.contentType)
+              assertEquals("png", saved.file.extension)
+              assertArrayEquals(png, saved.file.readBytes())
+              val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+              BitmapFactory.decodeFile(saved.file.path, bounds)
+              assertEquals(2, bounds.outWidth)
+              assertEquals(3, bounds.outHeight)
+              assertTrue(saved.file.delete())
+            } else {
+              assertThrows(IOException::class.java) { streamImageDownload(call, directory) {} }
+            }
+            assertEquals(0, directory.listFiles()!!.size)
+          }
+        }
+      }
+    } finally { directory.deleteRecursively() }
+  }
+
   @Test fun managedCancellationAndOutputFailureLeaveNoPartialFile() {
     val context = InstrumentationRegistry.getInstrumentation().targetContext
     val directory = File(context.cacheDir, "image-stream-failure-proof-${System.nanoTime()}")

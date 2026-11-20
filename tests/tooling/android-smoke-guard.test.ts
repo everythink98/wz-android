@@ -11,7 +11,11 @@ import {
   runAgentDevice,
   MIN_AGENT_DEVICE_VERSION
 } from '../../scripts/agent-device-runtime.mjs';
-import { parseBootedAndroidDevice, runApkSanity, withSmokeSession } from '../../scripts/smoke-android.mjs';
+import {
+  parseBootedAndroidDevice,
+  runApkSanity as executeApkSanity,
+  withSmokeSession
+} from '../../scripts/smoke-android.mjs';
 import {
   listReplayFiles,
   matchingAndroidDevices,
@@ -23,7 +27,7 @@ import {
   ReplayCleanupError,
   runReplayBatch
 } from '../../scripts/run-device-replay.mjs';
-import { loggedOutDeviceName } from '../../scripts/run-logged-out-device-replay.mjs';
+import { resolveLoggedOutDevice } from '../../scripts/run-logged-out-device-replay.mjs';
 import { runSensitiveReplay, sensitiveReplayErrorCode, sensitiveReplayPlan } from '../../scripts/sensitive-replay.mjs';
 
 const rootDir = path.resolve(__dirname, '../..');
@@ -38,9 +42,40 @@ const bootedAndroidDeviceOutput = JSON.stringify({
     booted: true
   }
 });
+const smokeAndroidDevice = {
+  id: 'emulator-5554',
+  name: 'WZ Pixel API 35',
+  platform: 'android',
+  booted: true
+};
+const smokeAndroidDevicesOutput = JSON.stringify({ data: { devices: [smokeAndroidDevice] } });
 
 function readProjectFile(...parts: string[]) {
   return readFileSync(path.join(rootDir, ...parts), 'utf8');
+}
+
+function runApkSanity(options: {
+  apkPath: string;
+  device: { id: string; name: string };
+  marker?: string;
+  runAdbCommand: (args: string[]) => string;
+  runAgentDeviceCommand: (args: string[]) => string;
+  verifySessionLog: () => void;
+}) {
+  const digest = 'b'.repeat(64);
+  return executeApkSanity({
+    ...options,
+    inspectApk: () => ({ package: 'com.wz.reader', versionCode: 42, certificate: 'a'.repeat(64), apkSha256: digest }),
+    runAdbCommand: (args: string[]) => {
+      if (args.includes('sha256sum')) return digest;
+      if (args.includes('path') && args.includes('pm')) return 'package:/data/app/fixture/base.apk';
+      if (args.includes('pull')) return '';
+      const output = options.runAdbCommand(args);
+      if (!args.includes('dumpsys')) return output;
+      const uid = /(?:appId|userId)=/.test(output) ? '' : 'appId=10123\n';
+      return `${output}\n${uid}User 0: installed=true hidden=false\n`;
+    }
+  });
 }
 
 function smokeTransportFixture() {
@@ -77,6 +112,68 @@ function smokeTransportFixture() {
 }
 
 describe('Android release evidence guards', () => {
+  it('covers only the checked serial when another emulator appears under the same name', () => {
+    const fixture = smokeTransportFixture();
+    const { id: checkedSerial } = fixture.options.device;
+    const otherSerial = 'emulator-5552';
+    const previousHash = 'a'.repeat(64);
+    const candidateHash = 'b'.repeat(64);
+    const installed = new Map([
+      [checkedSerial, previousHash],
+      [otherSerial, previousHash]
+    ]);
+    const install = (serial: string) => {
+      installed.set(serial, candidateHash);
+      return 'Success';
+    };
+    const sanity = () =>
+      executeApkSanity({
+        ...fixture.options,
+        inspectApk: (apk: string) => ({
+          package: 'com.wz.reader',
+          versionCode: apk === fixture.options.apkPath ? 42 : 41,
+          certificate: 'c'.repeat(64),
+          apkSha256: apk === fixture.options.apkPath ? candidateHash : previousHash
+        }),
+        runAdbCommand: (args: string[]) => {
+          const [, serial, command] = args;
+          if (command === 'install') return install(serial);
+          if (command === 'pull') return '';
+          if (args.includes('sha256sum')) return installed.get(serial) ?? '';
+          if (args.includes('pm')) return 'package:/data/app/fixture/base.apk';
+          if (args.includes('dumpsys')) {
+            return 'appId=10123\nfirstInstallTime=2026-07-26 16:51:37\nUser 0: installed=true hidden=false';
+          }
+          return fixture.options.runAdbCommand(args);
+        },
+        runAgentDeviceCommand: (args: string[]) => {
+          // The CLI selects the first matching name among attached emulators.
+          if (args[0] === 'install') return install(otherSerial);
+          return fixture.options.runAgentDeviceCommand(args);
+        }
+      });
+
+    expect(sanity).not.toThrow();
+    expect(installed.get(otherSerial)).toBe(previousHash);
+    expect(installed.get(checkedSerial)).toBe(candidateHash);
+    expect(fixture.agentCalls[0]).toContain('--serial');
+    expect(fixture.agentCalls[0]).toContain(checkedSerial);
+  });
+
+  it('freezes before first launch when replacement changes UID while firstInstallTime stays equal', () => {
+    const fixture = smokeTransportFixture();
+    expect(() =>
+      runApkSanity({
+        ...fixture.options,
+        runAdbCommand: (args: string[]) =>
+          args.includes('dumpsys')
+            ? `firstInstallTime=2026-07-26 16:51:37\nappId=${fixture.adbCalls.some((args) => args[2] === 'install') ? 10124 : 10123}\nversionCode=42`
+            : fixture.options.runAdbCommand(args)
+      })
+    ).toThrow(/UID/);
+    expect(fixture.agentCalls.some(([command]) => command === 'open')).toBe(false);
+  });
+
   it('keeps logged-out testing outside the App and on an explicit isolated device', () => {
     const packageJson = JSON.parse(readProjectFile('package.json'));
     const moreScreen = readProjectFile('src', 'features', 'more', 'MoreScreen.tsx');
@@ -115,20 +212,35 @@ describe('Android release evidence guards', () => {
     expect(nativePlugin).not.toContain('setManagedAnonymousMode');
     expect(packageJson.scripts['test:device:logged-out']).toBe('node scripts/run-logged-out-device-replay.mjs');
     expect(readProjectFile('scripts', 'run-logged-out-device-replay.mjs')).toContain('WZ_ANDROID_LOGGED_OUT_DEVICE');
-    expect(() => loggedOutDeviceName({})).toThrow('必须设置 WZ_ANDROID_LOGGED_OUT_DEVICE');
-    expect(() =>
-      loggedOutDeviceName({
-        WZ_ANDROID_LOGGED_OUT_DEVICE: 'WZ Logged Out API 35',
-        WZ_ANDROID_TEST_DEVICE: 'WZ_Logged_Out_API_35'
-      })
-    ).toThrow('必须与主测试/Smoke 设备不同');
-    expect(
-      loggedOutDeviceName({
-        WZ_ANDROID_LOGGED_OUT_DEVICE: 'WZ_Logged_Out_API_35',
-        WZ_ANDROID_TEST_DEVICE: 'WZ_Pixel_API_35'
-      })
-    ).toBe('WZ_Logged_Out_API_35');
     expect(normalizedAndroidDeviceName(' WZ_Pixel_API_35 ')).toBe('wz pixel api 35');
+  });
+
+  it('compares logged-out replay and protected device selectors against the resolved device', () => {
+    const guest = { id: 'emulator-5556', name: 'WZ Logged Out API 35', platform: 'android', booted: true };
+    const resolve = vi.fn(() => guest);
+    expect(() => resolveLoggedOutDevice({}, resolve)).toThrow('必须设置 WZ_ANDROID_LOGGED_OUT_DEVICE');
+    expect(resolve).not.toHaveBeenCalled();
+
+    for (const env of [
+      { WZ_ANDROID_LOGGED_OUT_DEVICE: guest.id, WZ_ANDROID_TEST_DEVICE: ' WZ_Logged_Out_API_35 ' },
+      { WZ_ANDROID_LOGGED_OUT_DEVICE: guest.name, WZ_ANDROID_SMOKE_DEVICE: guest.id }
+    ]) {
+      expect(() => resolveLoggedOutDevice(env, resolve)).toThrow('必须与主测试/Smoke 设备不同');
+    }
+
+    expect(
+      resolveLoggedOutDevice(
+        { WZ_ANDROID_LOGGED_OUT_DEVICE: ` ${guest.id} `, WZ_ANDROID_TEST_DEVICE: 'WZ_Pixel_API_35' },
+        resolve
+      )
+    ).toBe(guest);
+    expect(resolve.mock.calls).toEqual([[guest.id], [guest.name], [guest.id]]);
+    const unavailable = vi.fn(() => {
+      throw new Error('无法唯一匹配 Android 设备');
+    });
+    expect(() => resolveLoggedOutDevice({ WZ_ANDROID_LOGGED_OUT_DEVICE: guest.name }, unavailable)).toThrow(
+      '无法唯一匹配 Android 设备'
+    );
   });
 
   it('requires the first agent-device version that supports Replay recording and reporters', () => {
@@ -197,7 +309,7 @@ describe('Android release evidence guards', () => {
           selectedDevice: 'WZ Pixel API 35',
           runAgentDeviceCommand: (args: string[]) => {
             events.push(args.join(' '));
-            return args[0] === 'boot' ? bootedAndroidDeviceOutput : '';
+            return args[0] === 'devices' ? smokeAndroidDevicesOutput : bootedAndroidDeviceOutput;
           }
         },
         () => {
@@ -207,10 +319,59 @@ describe('Android release evidence guards', () => {
       )
     ).toThrow(failure);
     expect(events).toEqual([
+      'devices --platform android --json',
       'boot --session wz-apk-sanity --platform android --device WZ Pixel API 35 --json',
       'sanity',
       'close --session wz-apk-sanity --platform android'
     ]);
+  });
+
+  it('rejects a name that matches multiple Android devices before starting Smoke', () => {
+    const otherDevice = { ...smokeAndroidDevice, id: 'emulator-5556', name: 'WZ_Pixel_API_35' };
+    const commands: string[] = [];
+    const action = vi.fn();
+
+    expect(() =>
+      withSmokeSession(
+        {
+          selectedDevice: smokeAndroidDevice.name,
+          runAgentDeviceCommand: ([command]: string[]) => {
+            commands.push(command);
+            return command === 'devices'
+              ? JSON.stringify({ data: { devices: [smokeAndroidDevice, otherDevice] } })
+              : bootedAndroidDeviceOutput;
+          }
+        },
+        action
+      )
+    ).toThrow(/BLOCKED_BY_ENV.*唯一/);
+    expect(action).not.toHaveBeenCalled();
+    expect(commands).toEqual(['devices']);
+  });
+
+  it.each([
+    ['booted', smokeAndroidDevicesOutput, 'emulator-5554', 'emulator-5556', /BLOCKED_BY_ENV.*序列/],
+    [
+      'stopped',
+      JSON.stringify({ data: { devices: [{ ...smokeAndroidDevice, id: 'WZ_Pixel_API_35', booted: false }] } }),
+      'WZ Pixel API 35',
+      'Other AVD',
+      /BLOCKED_BY_ENV.*设备名/
+    ]
+  ])('rejects a mismatched boot receipt for a uniquely matched %s device', (_, inventory, from, to, error) => {
+    const action = vi.fn();
+
+    expect(() =>
+      withSmokeSession(
+        {
+          selectedDevice: smokeAndroidDevice.name,
+          runAgentDeviceCommand: ([command]: string[]) =>
+            command === 'devices' ? inventory : bootedAndroidDeviceOutput.replace(from, to)
+        },
+        action
+      )
+    ).toThrow(error);
+    expect(action).not.toHaveBeenCalled();
   });
 
   it('resolves a booted emulator serial to its AVD name before starting Smoke', () => {
@@ -239,6 +400,29 @@ describe('Android release evidence guards', () => {
     ]);
   });
 
+  it('rejects a boot receipt for another serial before sanity and only closes its own session', () => {
+    const commands: string[][] = [];
+    const action = vi.fn();
+    const bootedDifferentSerial = bootedAndroidDeviceOutput.replace('emulator-5554', 'emulator-5556');
+
+    expect(() =>
+      withSmokeSession(
+        {
+          selectedDevice: 'emulator-5554',
+          runAdbCommand: () => 'WZ_Pixel_API_35\nOK\n',
+          runAgentDeviceCommand: (args: string[]) => {
+            commands.push(args);
+            return args[0] === 'boot' ? bootedDifferentSerial : '';
+          }
+        },
+        action
+      )
+    ).toThrow(/BLOCKED_BY_ENV.*序列/);
+    expect(action).not.toHaveBeenCalled();
+    expect(commands.map(([command]) => command)).toEqual(['boot', 'close']);
+    expect(commands.at(-1)).toEqual(['close', '--session', 'wz-apk-sanity', '--platform', 'android']);
+  });
+
   it.each([undefined, null, false, 0, ''])('retains business %s when Smoke session cleanup fails', (business) => {
     const closeError = new Error('session close failed');
     let failure: unknown;
@@ -248,7 +432,7 @@ describe('Android release evidence guards', () => {
           selectedDevice: 'WZ Pixel API 35',
           runAgentDeviceCommand: (args: string[]) => {
             if (args[0] === 'close') throw closeError;
-            return bootedAndroidDeviceOutput;
+            return args[0] === 'devices' ? smokeAndroidDevicesOutput : bootedAndroidDeviceOutput;
           }
         },
         () => {
@@ -272,7 +456,7 @@ describe('Android release evidence guards', () => {
           selectedDevice: 'WZ Pixel API 35',
           runAgentDeviceCommand: (args: string[]) => {
             commands.push(args[0]);
-            return bootedAndroidDeviceOutput;
+            return args[0] === 'devices' ? smokeAndroidDevicesOutput : bootedAndroidDeviceOutput;
           }
         },
         () => {
@@ -285,7 +469,7 @@ describe('Android release evidence guards', () => {
     }
 
     expect(caught).toBe(true);
-    expect(commands).toEqual(['boot', 'close']);
+    expect(commands).toEqual(['devices', 'boot', 'close']);
   });
 
   it.each([
@@ -338,13 +522,17 @@ describe('Android release evidence guards', () => {
         selectedDevice: 'WZ Pixel API 35',
         runAgentDeviceCommand: (args: string[]) => {
           events.push(args.join(' '));
-          return args[0] === 'boot' ? bootedAndroidDeviceOutput : '';
+          if (args[0] === 'devices') {
+            const stoppedDevice = { ...smokeAndroidDevice, id: 'WZ_Pixel_API_35', booted: false };
+            return JSON.stringify({ data: { devices: [stoppedDevice] } });
+          }
+          return bootedAndroidDeviceOutput;
         }
       },
       () => undefined
     );
 
-    expect(events[0]).not.toContain('--headless');
+    expect(events).toContain('boot --session wz-apk-sanity --platform android --device WZ Pixel API 35 --json');
   });
 
   it('maps the configured AVD name to the booted device display name', () => {
@@ -417,6 +605,9 @@ describe('Android release evidence guards', () => {
   it('keeps Smoke on replacement install and delegates journeys to Replay', () => {
     const smokeScript = readProjectFile('scripts', 'smoke-android.mjs');
 
+    expect(smokeScript).toContain(
+      'selectedDeviceName(process.env.WZ_ANDROID_SMOKE_DEVICE || process.env.WZ_ANDROID_TEST_DEVICE)'
+    );
     expect(smokeScript).toContain("['doctor', '--platform', 'android']");
     const bootIndex = smokeScript.indexOf('withSmokeSession({ selectedDevice }, (smokeDevice) => {');
     const sanityIndex = smokeScript.indexOf('runApkSanity({ apkPath, device: smokeDevice });');
@@ -424,9 +615,6 @@ describe('Android release evidence guards', () => {
     expect(sanityIndex).toBeGreaterThan(bootIndex);
     expect(smokeScript).not.toContain('resolveAndroidDevice');
     expect(smokeScript).toContain('device: smokeDevice');
-    expect(smokeScript).toMatch(
-      /'install',\s*appPackage,\s*apkPath,\s*'--session',\s*smokeSession,\s*'--platform',\s*'android'/
-    );
     expect(smokeScript).toContain("['logs', 'clear', '--restart'");
     expect(smokeScript).toContain(
       "['open', appPackage, '--session', smokeSession, '--platform', 'android', '--relaunch']"
@@ -442,7 +630,6 @@ describe('Android release evidence guards', () => {
 
   it('freezes before first launch when replacement install changes firstInstallTime', () => {
     const events: string[] = [];
-    let packageReads = 0;
     const runAgentDeviceCommand = (args: string[]) => {
       events.push(`agent:${args.join(' ')}`);
       return '';
@@ -450,8 +637,9 @@ describe('Android release evidence guards', () => {
     const runAdbCommand = (args: string[]) => {
       events.push(`adb:${args.join(' ')}`);
       if (args.includes('dumpsys')) {
-        packageReads += 1;
-        return packageReads === 1 ? 'firstInstallTime=2026-07-26 16:51:37\n' : 'firstInstallTime=2026-08-20 12:00:00\n';
+        return events.some((event) => event.startsWith('adb:-s emulator-5554 install '))
+          ? 'firstInstallTime=2026-08-20 12:00:00\n'
+          : 'firstInstallTime=2026-07-26 16:51:37\n';
       }
       return '';
     };
@@ -473,10 +661,11 @@ describe('Android release evidence guards', () => {
     const packageReadIndexes = events.flatMap((event, index) =>
       event.includes('shell dumpsys package com.wz.reader') ? [index] : []
     );
-    const installIndex = events.findIndex((event) => event.startsWith('agent:install '));
-    expect(packageReadIndexes).toHaveLength(2);
+    const installIndex = events.findIndex((event) => event.startsWith('adb:-s emulator-5554 install '));
+    expect(packageReadIndexes).toHaveLength(3);
     expect(packageReadIndexes[0]).toBeLessThan(installIndex);
-    expect(packageReadIndexes[1]).toBeGreaterThan(installIndex);
+    expect(packageReadIndexes[1]).toBeLessThan(installIndex);
+    expect(packageReadIndexes[2]).toBeGreaterThan(installIndex);
     expect(events).not.toEqual(expect.arrayContaining([expect.stringMatching(/agent:(?:open|logs)\b/)]));
     expect(events).not.toEqual(expect.arrayContaining([expect.stringMatching(/shell (?:date|log)\b|logcat\b/)]));
   });
@@ -495,14 +684,14 @@ describe('Android release evidence guards', () => {
         runApkSanity({
           apkPath: 'candidate.apk',
           device: { id: 'emulator-5554', name: 'WZ Pixel API 35' },
-          runAdbCommand: readPackage,
-          runAgentDeviceCommand: () => {
-            installCalls += 1;
-            return '';
+          runAdbCommand: (args: string[]) => {
+            if (args[2] === 'install') installCalls += 1;
+            return readPackage();
           },
+          runAgentDeviceCommand: () => '',
           verifySessionLog: () => undefined
         })
-      ).toThrow(/^BLOCKED_BY_ENV：覆盖安装前无法读取 com\.wz\.reader 的 firstInstallTime，已停止 Smoke。$/);
+      ).toThrow(/^BLOCKED_BY_ENV：覆盖安装前无法读取 com\.wz\.reader 的 firstInstallTime，已停止设备变更。$/);
       expect(installCalls).toBe(0);
     }
   });
@@ -518,9 +707,13 @@ describe('Android release evidence guards', () => {
     let installCalls = 0;
     const runAdbCommand = (args: string[]) => {
       events.push(`adb:${args.join(' ')}`);
+      if (args[2] === 'install') {
+        installCalls += 1;
+        throw new Error('replacement install failed');
+      }
       if (args.includes('dumpsys')) {
         packageReads += 1;
-        if (packageReads === 1) return 'firstInstallTime=2026-07-26 16:51:37\n';
+        if (!installCalls) return 'firstInstallTime=2026-07-26 16:51:37\n';
         if (postInstallOutput instanceof Error) throw postInstallOutput;
         return postInstallOutput;
       }
@@ -535,8 +728,7 @@ describe('Android release evidence guards', () => {
         runAdbCommand,
         runAgentDeviceCommand: (args: string[]) => {
           events.push(`agent:${args.join(' ')}`);
-          installCalls += 1;
-          throw new Error('replacement install failed');
+          return '';
         },
         verifySessionLog: () => undefined
       });
@@ -547,7 +739,7 @@ describe('Android release evidence guards', () => {
     expect(String(failure)).toMatch(/BLOCKED_BY_ENV.*firstInstallTime/);
     expect(String(failure)).not.toContain('replacement install failed');
     expect(String(failure)).not.toContain('raw-dumpsys-payload');
-    expect(packageReads).toBe(2);
+    expect(packageReads).toBe(3);
     expect(installCalls).toBe(1);
     expect(events).not.toEqual(expect.arrayContaining([expect.stringMatching(/agent:(?:open|logs)\b/)]));
     expect(events).not.toEqual(expect.arrayContaining([expect.stringMatching(/shell (?:date|log)\b|logcat\b/)]));
@@ -566,9 +758,10 @@ describe('Android release evidence guards', () => {
     let installCalls = 0;
     const runAdbCommand = (args: string[]) => {
       events.push(`adb:${args.join(' ')}`);
+      if (args[2] === 'install') installCalls += 1;
       if (!args.includes('dumpsys')) return '';
       packageReads += 1;
-      if (packageReads === 1) return 'firstInstallTime=2026-07-26 16:51:37\n';
+      if (!installCalls) return 'firstInstallTime=2026-07-26 16:51:37\n';
       if (output instanceof Error) throw output;
       return output;
     };
@@ -581,7 +774,6 @@ describe('Android release evidence guards', () => {
         runAdbCommand,
         runAgentDeviceCommand: (args: string[]) => {
           events.push(`agent:${args.join(' ')}`);
-          installCalls += 1;
           return '';
         },
         verifySessionLog: () => undefined
@@ -591,10 +783,10 @@ describe('Android release evidence guards', () => {
     }
 
     expect(String(failure)).toBe(
-      'Error: BLOCKED_BY_ENV：覆盖安装后无法读取 com.wz.reader 的 firstInstallTime，已停止 Smoke。'
+      'Error: BLOCKED_BY_ENV：覆盖安装后无法读取 com.wz.reader 的 firstInstallTime，已停止设备变更。'
     );
     expect(String(failure)).not.toContain('raw-post-install-payload');
-    expect(packageReads).toBe(2);
+    expect(packageReads).toBe(3);
     expect(installCalls).toBe(1);
     expect(events).not.toEqual(expect.arrayContaining([expect.stringMatching(/agent:(?:open|logs)\b/)]));
     expect(events).not.toEqual(expect.arrayContaining([expect.stringMatching(/shell (?:date|log)\b|logcat\b/)]));
@@ -610,16 +802,17 @@ describe('Android release evidence guards', () => {
         apkPath: 'candidate.apk',
         device: { id: 'emulator-5554', name: 'WZ Pixel API 35' },
         runAdbCommand: (args: string[]) => {
+          if (args[2] === 'install') {
+            installCalls += 1;
+            throw new Error('replacement install failed');
+          }
           if (args.includes('dumpsys')) {
             packageReads += 1;
             return 'firstInstallTime=2026-07-26 16:51:37\n';
           }
           return '';
         },
-        runAgentDeviceCommand: () => {
-          installCalls += 1;
-          throw new Error('replacement install failed');
-        },
+        runAgentDeviceCommand: () => '',
         verifySessionLog: () => undefined
       });
     } catch (error) {
@@ -628,7 +821,7 @@ describe('Android release evidence guards', () => {
 
     expect(String(failure)).toContain('BLOCKED_BY_ENV：覆盖安装失败');
     expect(String(failure)).toContain('replacement install failed');
-    expect(packageReads).toBe(2);
+    expect(packageReads).toBe(3);
     expect(installCalls).toBe(1);
   });
 
@@ -677,23 +870,26 @@ describe('Android release evidence guards', () => {
     const packageReadIndexes = events.flatMap((event, index) =>
       event.includes('shell dumpsys package com.wz.reader') ? [index] : []
     );
-    const installIndex = events.findIndex((event) => event.startsWith('agent:install '));
+    const installIndex = events.findIndex((event) => event.startsWith('adb:-s emulator-5554 install '));
     const timestampIndex = events.findIndex((event) => event.includes('shell date +%s.%3N'));
     const markerIndex = events.findIndex((event) => event.includes('shell log -p i -t WZ_APK_SANITY'));
     const firstOpenIndex = events.findIndex((event) => event.startsWith('agent:open '));
     const appStateIndex = events.findIndex((event) => event.startsWith('agent:appstate '));
     const dumpIndex = events.findIndex((event) => event.includes('logcat -d -v threadtime -T 1784102400.000'));
-    expect(packageReadIndexes).toHaveLength(2);
+    expect(packageReadIndexes).toHaveLength(3);
     expect(packageReadIndexes[0]).toBeLessThan(installIndex);
-    expect(packageReadIndexes[1]).toBeGreaterThan(installIndex);
-    expect(packageReadIndexes[1]).toBeLessThan(timestampIndex);
+    expect(packageReadIndexes[1]).toBeLessThan(installIndex);
+    expect(packageReadIndexes[2]).toBeGreaterThan(installIndex);
+    expect(packageReadIndexes[2]).toBeLessThan(timestampIndex);
     expect(installIndex).toBeGreaterThanOrEqual(0);
-    expect(events.filter((event) => event.startsWith('agent:install '))).toHaveLength(1);
-    expect(events[installIndex]).toContain('--session wz-apk-sanity');
+    expect(events.filter((event) => event.includes(' install '))).toEqual([
+      'adb:-s emulator-5554 install -r candidate.apk'
+    ]);
     expect(timestampIndex).toBeGreaterThan(installIndex);
     expect(markerIndex).toBeGreaterThan(timestampIndex);
     expect(firstOpenIndex).toBeGreaterThan(markerIndex);
-    expect(events[firstOpenIndex]).toContain('--device WZ Pixel API 35');
+    expect(events[firstOpenIndex]).toContain('--session wz-apk-sanity');
+    expect(events[firstOpenIndex]).toContain('--serial emulator-5554');
     expect(events[appStateIndex]).toContain('--serial emulator-5554');
     expect(dumpIndex).toBeGreaterThan(firstOpenIndex);
   });
@@ -706,9 +902,9 @@ describe('Android release evidence guards', () => {
       try {
         runApkSanity({
           ...fixture.options,
-          runAgentDeviceCommand: (args: string[]) => {
-            const output = fixture.options.runAgentDeviceCommand(args);
-            if (args[0] === 'install') throw installError;
+          runAdbCommand: (args: string[]) => {
+            const output = fixture.options.runAdbCommand(args);
+            if (args[2] === 'install') throw installError;
             return output;
           }
         });
@@ -716,8 +912,9 @@ describe('Android release evidence guards', () => {
         failure = error;
       }
 
-      expect(fixture.adbCalls.filter((args) => args.includes('dumpsys'))).toHaveLength(2);
-      expect(fixture.agentCalls.map((args) => args[0])).toEqual(['install']);
+      expect(fixture.adbCalls.filter((args) => args.includes('dumpsys'))).toHaveLength(3);
+      expect(fixture.adbCalls.filter((args) => args[2] === 'install')).toHaveLength(1);
+      expect(fixture.agentCalls).toEqual([]);
       expect(failure).toBeInstanceOf(Error);
       if (failure instanceof Error) {
         expect(failure.message).toContain('BLOCKED_BY_ENV：覆盖安装失败');
@@ -903,7 +1100,9 @@ describe('Android release evidence guards', () => {
       /内容源[\s\S]*content-source-drag-v2ex[\s\S]*服务器代理[\s\S]*问题诊断[\s\S]*备份 \/ 恢复[\s\S]*外观/
     );
     expect(moreReplay).toContain('press "label=\\"展开内容源\\""');
-    for (const title of ['问题诊断', '备份 / 恢复', '外观']) {
+    expect(moreReplay).toContain('wait id="more-diagnostics" 10000');
+    expect(moreReplay).toContain('wait label="问题诊断" 10000');
+    for (const title of ['备份 / 恢复', '外观']) {
       expect(moreReplay).toContain(`find "label=\\"展开${title}\\"" click`);
     }
     expect(moreReplay).not.toMatch(/^find "(?:内容源|问题诊断|备份 \/ 恢复|外观)" click$/m);
@@ -911,7 +1110,7 @@ describe('Android release evidence guards', () => {
       expect(moreReplay).toContain(`wait "label=\\"${label} 内容源开关\\"" 10000`);
     }
     expect(moreReplay).toMatch(
-      /find "label=\\"展开外观\\"" click\s+scroll down 0\.3\s+wait label="主题" 10000\s+wait label="字号" 10000/
+      /scroll bottom\s+wait stable 500 10000\s+find "label=\\"展开外观\\"" click\s+wait label="收起外观" 10000\s+scroll down 0\.3\s+wait label="主题" 10000\s+wait label="字号" 10000/
     );
     expect(notificationsReplay).toContain('press id="main-tab-notifications"');
     expect(libraryReplay).toContain('press "role=button label=\\"收藏\\""');
@@ -1108,6 +1307,7 @@ describe('Android release evidence guards', () => {
         suite === 'logged-out' ? ['logged-out-readonly'] : ['account-readonly', 'more-readonly', 'nodeseek-session'];
       const failureJourney = suite === 'logged-out' ? 'logged-out-readonly' : 'more-readonly';
       const testCalls: string[] = [];
+      const testSerials: (string | undefined)[] = [];
       const atomicCalls: {
         args: string[];
         capture: unknown;
@@ -1150,6 +1350,8 @@ describe('Android release evidence guards', () => {
           if (args[0] === 'test') {
             const name = path.basename(args[1], '.ad');
             testCalls.push(name);
+            const serialIndex = args.indexOf('--serial');
+            testSerials.push(serialIndex >= 0 ? args[serialIndex + 1] : undefined);
             const artifactDirectory = args[args.indexOf('--artifacts-dir') + 1];
             if (sensitive.includes(name)) files.set(path.join(artifactDirectory, 'recording.mp4'), canary);
             const reporter = args.find((arg) => arg.startsWith('junit:'));
@@ -1206,6 +1408,7 @@ describe('Android release evidence guards', () => {
                   'search-multi-source'
                 ]
         );
+        expect(testSerials).toEqual(testCalls.map(() => 'controlled-device'));
         for (const name of outcome === 'cleanup-failure' ? sensitive.slice(0, 2) : sensitive) {
           const calls = atomicCalls.filter(({ args }) => args[args.indexOf('--session') + 1]?.endsWith(`-${name}`));
           expect(calls.length).toBeGreaterThan(2);
@@ -1216,6 +1419,11 @@ describe('Android release evidence guards', () => {
             true
           );
           expect(calls.every(({ args }) => args.includes('--no-record') && args.includes('--json'))).toBe(true);
+          expect(
+            calls.every(
+              ({ args }) => args.includes('--serial') && args[args.indexOf('--serial') + 1] === 'controlled-device'
+            )
+          ).toBe(true);
           expect(calls.every(({ args }) => files.get(args[args.indexOf('--config') + 1]) === '{}\n')).toBe(true);
           expect(
             calls.every(
@@ -1267,7 +1475,7 @@ describe('Android release evidence guards', () => {
       const result = runSensitiveReplay({
         replayFile,
         replaySession: 'controlled',
-        deviceName: 'Controlled device',
+        deviceSerial: 'controlled-device',
         appPackage: 'com.wz.reader',
         artifactsDir: directory,
         junitPath: path.join(directory, 'result.xml'),
@@ -1339,7 +1547,7 @@ describe('Android release evidence guards', () => {
       const result = runSensitiveReplay({
         replayFile,
         replaySession: 'controlled',
-        deviceName: 'Controlled device',
+        deviceSerial: 'controlled-device',
         appPackage: 'com.wz.reader',
         artifactsDir: directory,
         junitPath: path.join(directory, 'result.xml'),
@@ -1377,7 +1585,7 @@ describe('Android release evidence guards', () => {
       const result = runSensitiveReplay({
         replayFile,
         replaySession: 'controlled',
-        deviceName: 'Controlled device',
+        deviceSerial: 'controlled-device',
         appPackage: 'com.wz.reader',
         artifactsDir: directory,
         junitPath: path.join(directory, 'result.xml'),
@@ -1471,6 +1679,7 @@ describe('Android release evidence guards', () => {
             return '';
           }
           if (args[0] === 'record' && args[1] === 'stop') {
+            expect(args.slice(-2)).toEqual(['--serial', 'controlled-device']);
             stops.push(args[args.indexOf('--session') + 1]);
             if (scenario === 'cleanup') throw thrown;
             if (scenario === 'both') throw cleanupError;
@@ -1619,8 +1828,8 @@ describe('Android release evidence guards', () => {
     expect(moreRoute).toMatch(
       /useDiagnosticLogController\(\{\s*getCurrentScreen: runtime\.diagnostics\.getCurrentScreen,\s*metadata: runtime\.diagnostics\.metadata,\s*notify: runtime\.notify\s*\}\)/
     );
-    expect(moreRoute).toContain('exportLog: exportDiagnosticLogFile');
-    expect(utilityPanels).toContain('title="问题诊断"');
+    expect(utilityPanels).toContain('label="问题诊断"');
+    expect(utilityPanels).toContain('testID="more-diagnostics"');
     expect(utilityPanels).toContain('onPress={runtime.diagnostics.exportLog}');
   });
 });

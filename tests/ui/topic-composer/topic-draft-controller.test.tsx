@@ -29,6 +29,8 @@ let mockMissingFiles = false;
 let mockDraftRead: ((identityKey: string) => Promise<void>) | undefined;
 const mockDeletedFiles: string[] = [];
 const mockCopiedFiles = new Set<string>();
+const mockFileSizes = new Map<string, number>();
+const mockFileSizeResults = new Map<string, 'zero' | 'unavailable'>();
 jest.mock('expo-sqlite', () => ({
   openDatabaseAsync: async () => {
     const { DatabaseSync } = jest.requireActual<typeof import('node:sqlite')>('node:sqlite');
@@ -70,9 +72,14 @@ jest.mock('expo-file-system', () => {
     get exists() {
       return !mockMissingFiles && (!this.uri.includes('/attachment-') || mockCopiedFiles.has(this.uri));
     }
-    size = 20;
+    get size() {
+      const result = mockFileSizeResults.get(this.uri);
+      if (result === 'unavailable') throw new Error('provider does not report size');
+      return result === 'zero' ? 0 : (mockFileSizes.get(this.uri) ?? 20);
+    }
     copy(target: File) {
       mockCopiedFiles.add(target.uri);
+      mockFileSizes.set(target.uri, mockFileSizes.get(this.uri) ?? 20);
     }
     delete() {
       mockDeletedFiles.push(this.uri);
@@ -81,7 +88,7 @@ jest.mock('expo-file-system', () => {
       return { readBytes: () => Array.from('GIF89a1234567', (letter) => letter.charCodeAt(0)), close() {} };
     }
   }
-  return { Directory, File, Paths: { document: 'file:///private' } };
+  return { Directory, File, Paths: { document: 'file:///private', cache: 'file:///cache' } };
 });
 jest.mock('expo-document-picker', () => ({ getDocumentAsync: jest.fn() }));
 jest.mock('@/sources/nodeimage/credentials', () => ({ currentNodeImageApiKeyGeneration: jest.fn() }));
@@ -131,6 +138,14 @@ function runtimeFor(id = '123', fetcher?: Fetcher): TopicComposerRouteRuntimeVal
     isWritableSessionTicketCurrent: () => true,
     ensureNodeImageApiKey: async () => 'fixture-key',
     getUserAgent: () => 'fixture',
+    getReadPlan: (source, operation) => ({
+      source,
+      operation,
+      state: 'ready',
+      lane: 'authenticated',
+      transport: 'managed-session',
+      cacheScope: 'authenticated:0'
+    }),
     getTopic: async () => {
       throw new Error('No cached topic in this fixture');
     },
@@ -185,11 +200,11 @@ function editorHandle(overrides: Partial<StructuredReplyComposerHandle> = {}): S
 async function setup(saved = storedDraft(), runtime = runtimeFor()) {
   await saveTopicDraft(saved);
   const hook = await renderHook(
-    ({ owner }: { owner: TopicComposerRouteRuntimeValue }) =>
+    ({ owner, active = true }: { owner: TopicComposerRouteRuntimeValue; active?: boolean }) =>
       useTopicComposerController({
         runtime: owner,
         intent: { kind: 'create', initialSource: saved.source },
-        active: true,
+        active,
         onPosted: () => {},
         onAccepted: () => {}
       }),
@@ -206,6 +221,8 @@ beforeEach(() => {
   mockDraftRead = undefined;
   mockDeletedFiles.length = 0;
   mockCopiedFiles.clear();
+  mockFileSizes.clear();
+  mockFileSizeResults.clear();
   mockDatabase?.exec(
     'DELETE FROM topic_drafts; DELETE FROM discarded_topic_drafts; DELETE FROM topic_submission_attempts; DELETE FROM topic_creation_preferences;'
   );
@@ -1185,16 +1202,35 @@ describe('topic draft lifecycle', () => {
     expect((await loadTopicDraft('nodeseek', 'nodeseek:123'))?.body).toBe('账号 A 的未保存内容');
   });
 
-  it('does not overwrite another writer or leave after CAS rejects the current version', async () => {
+  it('preserves both writers until the user explicitly leaves the conflicting editor', async () => {
     const saved = storedDraft();
     const hook = await setup(saved);
-    await act(() => hook.result.current.change((draft) => ({ ...draft, title: '此页改动' })));
-    await saveTopicDraft({ ...saved, revision: 50, title: '其他页面改动' });
+    const other = await setup(saved);
+    await act(() => other.result.current.change((draft) => ({ ...draft, title: '其他页面改动' })));
+    await act(async () => expect(await other.result.current.leave()).toBe(true));
+    await act(() => {
+      hook.result.current.change((draft) => ({ ...draft, body: '第一次输入' }));
+      hook.result.current.change((draft) => ({ ...draft, body: '第二次输入' }));
+    });
+    const confirmExit = jest
+      .spyOn(Alert, 'alert')
+      .mockImplementation((_title, _message, buttons) =>
+        buttons?.find((button) => button.style === 'cancel')?.onPress?.()
+      );
     await act(async () => {
       expect(await hook.result.current.leave()).toBe(false);
     });
-    expect(hook.result.current.draft?.title).toBe('此页改动');
-    expect((await loadTopicDraft('nodeseek', 'nodeseek:123'))?.title).toBe('其他页面改动');
+    expect(hook.result.current.draft?.body).toBe('第二次输入');
+    expect(hook.result.current.saveStatus).toContain('其他页面更新');
+    expect(confirmExit).toHaveBeenCalledTimes(1);
+    confirmExit.mockImplementation((_title, _message, buttons) =>
+      buttons?.find((button) => button.text === '放弃本页修改并返回')?.onPress?.()
+    );
+    await act(async () => expect(await hook.result.current.leave()).toBe(true));
+    expect(await loadTopicDraft(saved.source, saved.identityKey)).toMatchObject({
+      title: '其他页面改动',
+      body: saved.body
+    });
   });
 
   it('persists missing-file recovery with a newer revision and preserves the rest of the draft', async () => {
@@ -1225,6 +1261,39 @@ describe('topic draft lifecycle', () => {
     expect(mockDeletedFiles).toEqual([]);
     expect((await loadTopicDraft('nodeseek', saved.identityKey))?.id).toBe(saved.id);
   });
+
+  it.each([false, true])(
+    'keeps the draft after an old discard confirmation following navigation (returned=%s)',
+    async (returned) => {
+      const saved = storedDraft();
+      saved.attachments = [attachment(saved)];
+      const owner = runtimeFor();
+      const hook = await setup(saved, owner);
+      let answer: (() => void) | undefined;
+      jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {
+        answer = buttons?.find((button) => button.text === '丢弃')?.onPress;
+      });
+      let discard!: Promise<void>;
+      await act(() => {
+        discard = hook.result.current.discard();
+      });
+      if (!answer) throw new Error('Expected the real native discard prompt');
+      await hook.rerender({ owner, active: false });
+      if (returned) await hook.rerender({ owner, active: true });
+      const discardAnswer = answer;
+      await act(async () => {
+        discardAnswer();
+        await discard;
+      });
+      expect({
+        storedDraftId: (await loadTopicDraft(saved.source, saved.identityKey))?.id,
+        deletedFiles: mockDeletedFiles
+      }).toEqual({
+        storedDraftId: saved.id,
+        deletedFiles: []
+      });
+    }
+  );
 
   it('starts one transient placeholder per file before HTTP and durably records each link before replacing it', async () => {
     const begin = deferred<string>();
@@ -1442,6 +1511,28 @@ describe('topic draft lifecycle', () => {
     expect(hook.result.current.error).toContain('图片已上传，可在“更多 → 图片上传记录”中再次插入');
   });
 
+  it.each(['known', 'zero', 'unavailable'] as const)(
+    'rejects a 24 MiB topic image with %s source size',
+    async (sourceSize) => {
+      const saved = storedDraft();
+      const hook = await setup(saved);
+      const uri = 'file:///oversize.gif';
+      mockFileSizes.set(uri, 24 * 1024 * 1024);
+      if (sourceSize !== 'known') mockFileSizeResults.set(uri, sourceSize);
+      jest.mocked(DocumentPicker.getDocumentAsync).mockResolvedValueOnce({
+        canceled: false,
+        assets: [{ uri, name: 'oversize.gif', mimeType: 'image/gif', lastModified: 0 }]
+      });
+      await act(async () => {
+        await hook.result.current.pickAttachments('image');
+      });
+      expect(hook.result.current.error).toContain('图片不能超过 20MB');
+      expect((await loadTopicDraft('nodeseek', saved.identityKey))?.attachments).toEqual([]);
+      expect(mockCopiedFiles.size).toBe(sourceSize === 'known' ? 0 : 1);
+      expect(mockDeletedFiles).toEqual([...mockCopiedFiles]);
+    }
+  );
+
   it('retains picked files without uploading when the picker returns in the background', async () => {
     const picker = deferred<DocumentPicker.DocumentPickerResult>();
     jest.mocked(DocumentPicker.getDocumentAsync).mockReturnValueOnce(picker.promise);
@@ -1477,6 +1568,23 @@ describe('topic draft lifecycle', () => {
     expect(hook.result.current.error).toBe('站点或账号已变化，请重新确认后重试');
     await hook.rerender({ owner });
     expect(hook.result.current.draft?.attachments).toHaveLength(1);
+  });
+
+  it('releases the picker copy after the draft stores its own attachment', async () => {
+    const saved = storedDraft();
+    const owner = runtimeFor('123');
+    const hook = await setup(saved, owner);
+    const uri = 'file:///cache/DocumentPicker/12345678-1234-1234-1234-123456789abc.gif';
+    jest.mocked(DocumentPicker.getDocumentAsync).mockResolvedValueOnce({
+      canceled: false,
+      assets: [{ uri, name: 'picker.gif', mimeType: 'image/gif', size: 20, lastModified: 0 }]
+    });
+    await act(async () => {
+      await hook.result.current.pickAttachments('image');
+    });
+    expect(mockCopiedFiles.size).toBe(1);
+    expect(mockDeletedFiles).toContain(uri);
+    expect(mockDeletedFiles).not.toContain([...mockCopiedFiles][0]);
   });
 
   it('rejects picked files when the writable ticket expires even before the foreground commit', async () => {

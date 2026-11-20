@@ -122,9 +122,13 @@ export function LinuxDoCreditScreen({
           <Text style={styles.balance}>
             {visibleAccount ? formatLinuxDoCreditAmount(visibleAccount.availableBalance) : '—'}
           </Text>
-          {visibleAccount ? (
-            <Text style={styles.meta}>待到账 {formatLinuxDoCreditAmount(visibleAccount.pendingBalance)} LDC</Text>
-          ) : null}
+          <Text style={styles.meta}>
+            {visibleAccount
+              ? `待到账 ${formatLinuxDoCreditAmount(visibleAccount.pendingBalance)} LDC`
+              : busy
+                ? '读取余额中'
+                : '待到账 —'}
+          </Text>
           {error ? (
             <Text accessibilityLiveRegion="polite" style={styles.error}>
               {errorMessage(error)}
@@ -185,18 +189,22 @@ export function LinuxDoCreditScreen({
         );
       }}
       ListFooterComponent={
-        <View style={styles.footer}>
-          {hasMore && !needsConnection ? (
-            <AppButton
-              label={busy || refreshing ? '读取中' : error ? '重试加载更多' : '加载更多记录'}
-              variant="ghost"
-              disabled={busy || refreshing || webAction}
-              onPress={onLoadMore}
-            />
-          ) : loaded && visibleEntries.length > 0 ? (
-            <Text style={styles.meta}>没有更多了</Text>
-          ) : null}
-        </View>
+        (hasMore && !needsConnection) || (loaded && visibleEntries.length > 0) ? (
+          <View style={styles.footer}>
+            {hasMore && !needsConnection ? (
+              <AppButton
+                compact
+                loading={busy || refreshing}
+                label={busy || refreshing ? '读取中' : error ? '重试加载更多' : '加载更多记录'}
+                variant="ghost"
+                disabled={busy || refreshing || webAction}
+                onPress={onLoadMore}
+              />
+            ) : (
+              <Text style={styles.meta}>没有更多了</Text>
+            )}
+          </View>
+        ) : null
       }
     />
   );

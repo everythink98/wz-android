@@ -181,8 +181,6 @@ describe('production data stress (host SQLite timings, not Android frame or brid
               const page = await store.queryReaderPage(request);
               const offset = pages * 50;
               expect(page.records).toEqual(expected.slice(offset, offset + 50));
-              expect(page.total).toBe(expected.length);
-              expect(page.visibleTotal).toBe(all.length);
               if (expected.length > offset + 50) {
                 expect(page.next?.time).toBe(Date.parse(date(0)));
                 if (request.after) expect(page.next?.ordinal).toBeGreaterThan(request.after.ordinal);
@@ -230,7 +228,6 @@ describe('production data stress (host SQLite timings, not Android frame or brid
         do {
           const page = await store.queryReaderPage(request);
           expect(page.records.length).toBeLessThanOrEqual(50);
-          expect(page.total).toBe(records.length);
           collected.push(...page.records.map((record) => ('topic' in record ? record.topic.id : record.user.id)));
           request.after = page.next;
         } while (request.after);
@@ -264,8 +261,7 @@ describe('production data stress (host SQLite timings, not Android frame or brid
         const expected = Object.values(data.history).filter(
           (record) => record.topic.source === source && record.topic.category === '分区 1'
         );
-        expect(filtered.total).toBe(expected.length);
-        expect(filtered.visibleTotal).toBe(count);
+        expect(filtered.records).toHaveLength(Math.min(expected.length, 50));
         expect(
           filtered.records.every(
             (record) => 'topic' in record && record.topic.source === source && record.topic.category === '分区 1'

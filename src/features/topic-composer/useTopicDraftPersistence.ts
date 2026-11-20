@@ -12,10 +12,17 @@ type Feedback =
   | { kind: 'saving' | 'saved' | 'restored' | 'fresh' | 'discarded' }
   | { kind: 'failed'; message: string };
 
+export class TopicDraftConflictError extends Error {
+  constructor() {
+    super('草稿已在其他页面更新。请先复制需要保留的本页修改，再返回。');
+  }
+}
+
 export function useTopicDraftPersistence(input: {
   getDraft(): TopicDraft | null;
   isMounted(): boolean;
   onSaved(source: TopicCreationSource): void;
+  completedSubmissionId(draft: TopicDraft): string | undefined;
 }) {
   const inputRef = useCommittedRef(input);
   const durability = useRef<Durability>({ kind: 'unknown' });
@@ -43,7 +50,11 @@ export function useTopicDraftPersistence(input: {
         .catch(() => undefined)
         .then(async () => {
           if (alreadyDurable(value)) return;
-          if (!(await saveTopicDraft(value))) throw new Error('草稿已在其他页面更新，请重新进入后继续编辑');
+          const baseline = durability.current;
+          const expectedRevision =
+            baseline.kind === 'saved' && baseline.draftId === value.id ? baseline.revision : null;
+          if (!(await saveTopicDraft(value, expectedRevision, inputRef.current.completedSubmissionId(value))))
+            throw new TopicDraftConflictError();
           const current = inputRef.current.getDraft();
           if (current?.id === value.id)
             durability.current = { kind: 'saved', draftId: value.id, revision: value.revision };

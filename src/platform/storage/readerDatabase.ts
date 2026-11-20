@@ -1,4 +1,5 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
+import { isRecord } from '@/domain/forum/html';
 import type { Category } from '@/domain/forum/models';
 import { sourceValues } from '@/domain/forum/sourceCatalog';
 import {
@@ -10,6 +11,7 @@ import {
   userKey,
   userSummary,
   sanitizeReaderSettings,
+  validateStoredReaderRecords,
   type ReaderData,
   type ReaderSettings,
   type TopicRecord,
@@ -17,6 +19,7 @@ import {
 } from '@/domain/reader/readerData';
 import { MAX_BACKUP_JSON_BYTES, utf8ByteLength } from '@/domain/reader/readerBackup';
 import {
+  applyReaderSettings,
   createEmptyReaderState,
   readerCollections,
   type ReaderChange,
@@ -66,11 +69,17 @@ export async function readReaderMeta(sql: ReaderSql) {
   return sql.getFirstAsync<ReaderMeta>('SELECT status, settings, bytes, nextOrdinal FROM reader_meta WHERE id = 1');
 }
 
+export function parseStoredReaderSettings(json: string) {
+  const settings: unknown = JSON.parse(json);
+  if (!isRecord(settings)) throw new Error('本机资料设置格式无效，未重置。');
+  return sanitizeReaderSettings(settings);
+}
+
 export async function readReaderSnapshot(sql: ReaderSql): Promise<ReaderData> {
   const meta = await readReaderMeta(sql);
   if (!meta) throw new Error('本机资料尚未完成迁移。');
   const data = createEmptyReaderData();
-  data.settings = JSON.parse(meta.settings);
+  data.settings = parseStoredReaderSettings(meta.settings);
   for (const row of await sql.getAllAsync<RecordRow>('SELECT kind, key, value FROM reader_records ORDER BY ordinal')) {
     (data[row.kind] as Record<string, StoredReaderRecord>)[row.key] = JSON.parse(row.value);
   }
@@ -84,7 +93,7 @@ export async function readReaderBootstrap(sql: ReaderSql): Promise<ReaderState> 
   const meta = await readReaderMeta(sql);
   if (!meta || !['ready', 'cleanup_pending'].includes(meta.status)) throw new Error('本机资料状态不完整，未重置。');
   const state = createEmptyReaderState();
-  state.settings = JSON.parse(meta.settings);
+  state.settings = parseStoredReaderSettings(meta.settings);
   const counts = await sql.getAllAsync<CountRow>('SELECT kind, records FROM reader_counts');
   if (
     counts.length !== readerCollections.length ||
@@ -111,8 +120,6 @@ export async function readReaderBootstrap(sql: ReaderSql): Promise<ReaderState> 
 
 export interface ReaderPage {
   records: StoredReaderRecord[];
-  total: number;
-  visibleTotal: number;
   next?: { time: number; ordinal: number };
 }
 
@@ -138,7 +145,7 @@ export async function readReaderCategories(
 }
 
 export async function readReaderPage(sql: ReaderSql, request: ReaderPageRequest): Promise<ReaderPage> {
-  if (!request.sources.length) return { records: [], total: 0, visibleTotal: 0 };
+  if (!request.sources.length) return { records: [] };
   const allSources = sourceValues.every((source) => request.sources.includes(source));
   const where = ['kind = ?'];
   const params: (string | number)[] = [request.collection];
@@ -146,19 +153,6 @@ export async function readReaderPage(sql: ReaderSql, request: ReaderPageRequest)
     where.push(`source IN (${request.sources.map(() => '?').join(',')})`);
     params.push(...request.sources);
   }
-  const visibleTotal = allSources
-    ? (
-        await sql.getFirstAsync<{ records: number }>(
-          'SELECT records FROM reader_counts WHERE kind = ?',
-          request.collection
-        )
-      )?.records || 0
-    : (
-        await sql.getFirstAsync<{ count: number }>(
-          `SELECT COUNT(*) AS count FROM reader_records WHERE ${where.join(' AND ')}`,
-          params
-        )
-      )?.count || 0;
   if (request.source !== 'all') {
     where.push('source = ?');
     params.push(request.source);
@@ -167,28 +161,20 @@ export async function readReaderPage(sql: ReaderSql, request: ReaderPageRequest)
     where.push('(categoryKey = ? OR categoryLabel = ?)');
     params.push(request.category, request.category);
   }
-  const total =
-    request.source === 'all' && (request.category === 'all' || request.collection === 'followedUsers')
-      ? visibleTotal
-      : (
-          await sql.getFirstAsync<{ count: number }>(
-            `SELECT COUNT(*) AS count FROM reader_records WHERE ${where.join(' AND ')}`,
-            params
-          )
-        )?.count || 0;
-  const select = `SELECT value, time, ordinal FROM reader_records WHERE ${where.join(' AND ')}`;
+  const select = `SELECT value, time, ordinal, key FROM reader_records WHERE ${where.join(' AND ')}`;
   // Disjoint ranges let SQLite seek both branches in the existing order index.
   const query = request.after ? `${select} AND time = ? AND ordinal > ? UNION ALL ${select} AND time < ?` : select;
-  const rows = await sql.getAllAsync<RecordRow>(
+  const rows = await sql.getAllAsync<Pick<RecordRow, 'value' | 'time' | 'ordinal' | 'key'>>(
     `${query} ORDER BY time DESC, ordinal ASC LIMIT 51`,
     request.after ? [...params, request.after.time, request.after.ordinal, ...params, request.after.time] : params
   );
   const page = rows.slice(0, 50);
   const last = page[page.length - 1];
   return {
-    records: page.map((row) => JSON.parse(row.value)),
-    total,
-    visibleTotal,
+    records: validateStoredReaderRecords(
+      request.collection,
+      Object.fromEntries(page.map((row) => [row.key, JSON.parse(row.value)]))
+    ),
     ...(rows.length > 50 && last ? { next: { time: last.time, ordinal: last.ordinal } } : {})
   };
 }
@@ -386,7 +372,7 @@ export class ReaderTransaction {
       return;
     }
     if (command.type === 'settings') {
-      this.setSettings(sanitizeReaderSettings({ ...JSON.parse(this.meta.settings), ...command.patch }));
+      this.setSettings(applyReaderSettings(parseStoredReaderSettings(this.meta.settings), command.patch));
       return;
     }
     if (command.type === 'visit') {
@@ -509,8 +495,8 @@ export class ReaderTransaction {
     await this.seed(snapshot);
   }
 
-  async finish(migration = false) {
-    if (!migration && this.meta.bytes > Math.max(MAX_BACKUP_JSON_BYTES, this.original.bytes)) {
+  async finish(previousBytes = this.original.bytes) {
+    if (this.meta.bytes > Math.max(MAX_BACKUP_JSON_BYTES, previousBytes)) {
       throw new Error('本机资料超过备份容量，请减少历史记录后重试。');
     }
     if (JSON.stringify(this.meta) !== JSON.stringify(this.original)) {

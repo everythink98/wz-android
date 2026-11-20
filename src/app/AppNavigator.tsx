@@ -10,6 +10,7 @@ import {
 } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack';
 import { TabBarIcon, tabNavItems } from '@/ui/navigation/NavBar';
+import { goBackFromFocusedRoute } from '@/ui/navigation/appRouteActions';
 import { NavigationBackdropProvider, NavigationBackdropTarget, NavigationGlass } from '@/ui/navigation/NavigationGlass';
 import type { ReaderTheme } from '@/ui/theme/tokens';
 import type { Screen } from '@/ui/navigation/types';
@@ -127,7 +128,9 @@ function MainTabsHost({
                 accessibilityRole="button"
                 accessibilityLabel="消息通知设置"
                 style={headerButtonStyle}
-                onPress={() => navigation.getParent()?.navigate('NotificationSettings')}
+                onPress={() => {
+                  if (navigation.isFocused()) navigation.getParent()?.navigate('NotificationSettings');
+                }}
               >
                 <Settings color={theme.ink} size={20} strokeWidth={1.8} />
               </Pressable>
@@ -216,7 +219,7 @@ export const AppNavigator = memo(function AppNavigator({
                   accessibilityRole="button"
                   accessibilityLabel="返回"
                   style={headerButtonStyle}
-                  onPress={() => navigation.goBack()}
+                  onPress={() => goBackFromFocusedRoute(navigation)}
                 >
                   <ChevronLeft color={tintColor || theme.ink} size={24} strokeWidth={1.8} />
                 </Pressable>

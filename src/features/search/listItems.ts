@@ -1,4 +1,4 @@
-import { hasNextPageCursor } from '@/domain/forum/pagination';
+import { nextPagePosition } from '@/domain/forum/pagination';
 import type { Source, SourceErrorKind, Topic } from '@/domain/forum/models';
 import type { AuthNotice } from '@/domain/session/siteSessionPrompts';
 
@@ -12,6 +12,7 @@ export type SearchGroup = {
   authNotice?: AuthNotice;
   loading?: boolean;
   loadingMore?: boolean;
+  retainedResults?: { retryPage: number | null };
   settled?: boolean;
   hasMore?: boolean;
   nextPage?: number | null;
@@ -52,15 +53,20 @@ function errorLooksLikeLogin(group: SearchGroup) {
   return group.errorKind === 'login-required' || group.errorKind === 'login-expired';
 }
 
+export function searchGroupRetryPage(group: SearchGroup) {
+  return group.retainedResults ? group.retainedResults.retryPage : (group.nextPage ?? null);
+}
+
 export function searchGroupMeta(group: SearchGroup) {
+  const hasCachedResults = group.items.length > 0 && (!group.error || group.retainedResults);
   if (group.loading) {
-    return '搜索中';
+    return hasCachedResults ? `${group.items.length} 条 · 刷新中` : '搜索中';
   }
   if (group.settled === false) {
     return '等待账号状态';
   }
   if (group.error) {
-    if (group.nextPage) {
+    if (searchGroupRetryPage(group)) {
       return `${group.items.length} 条 · 加载失败`;
     }
     if (errorLooksLikeVerification(group)) {
@@ -69,10 +75,7 @@ export function searchGroupMeta(group: SearchGroup) {
     if (group.authNotice?.message === group.error && errorLooksLikeLogin(group)) {
       return group.errorKind === 'login-expired' ? '登录失效' : '需登录';
     }
-    return '请求失败';
-  }
-  if (group.externalSearchUrl) {
-    return 'Google 搜索';
+    return hasCachedResults ? `${group.items.length} 条 · 刷新失败` : '请求失败';
   }
   return `已载入 ${group.items.length} 条`;
 }
@@ -85,7 +88,9 @@ export function groupFromRemoteSearchResult(result: RemoteSearchSourceResult) {
   return result.group;
 }
 
-export const hasNextSearchPage = hasNextPageCursor<number>;
+export function nextSearchPage(response: Pick<SearchGroup, 'hasMore' | 'nextPage'>, page: number) {
+  return nextPagePosition(response, { page })?.page;
+}
 
 export function buildSearchListItems({
   groups,
@@ -96,29 +101,26 @@ export function buildSearchListItems({
 }): SearchListItem[] {
   const items: SearchListItem[] = [];
   for (const group of groups) {
-    const paginationError = Boolean(group.error && group.nextPage);
-    if (mode === 'overview') {
+    const paginationError = Boolean(group.error && searchGroupRetryPage(group));
+    const hasTopics = group.items.length > 0 && (!group.error || paginationError || group.retainedResults);
+    const showAuthNotice = shouldRenderAuthNotice(group);
+    const showError = paginationError || !showAuthNotice || group.authNotice?.message !== group.error;
+    const canOpenExternal = group.externalSearchUrl && !group.error && !group.loading && group.settled !== false;
+    if (mode === 'overview' && !canOpenExternal) {
       items.push({
         type: 'groupHeader',
         group,
         meta: searchGroupMeta(group)
       });
     }
-    if (group.error && !paginationError) {
-      if (group.authNotice?.message === group.error && shouldRenderAuthNotice(group)) {
-        items.push({ type: 'groupAuthNotice', group });
-      } else {
-        if (shouldRenderAuthNotice(group)) {
-          items.push({ type: 'groupAuthNotice', group });
-        }
-        items.push({ type: 'groupError', group });
-      }
-      continue;
-    }
-    if (shouldRenderAuthNotice(group)) {
+    if (showAuthNotice) {
       items.push({ type: 'groupAuthNotice', group });
     }
-    if (group.loading) {
+    if (group.error && !paginationError && !hasTopics) {
+      if (showError) items.push({ type: 'groupError', group });
+      continue;
+    }
+    if (group.loading && !hasTopics) {
       items.push({ type: 'groupLoading', group });
       continue;
     }
@@ -133,14 +135,18 @@ export function buildSearchListItems({
     for (const topic of visibleTopics) {
       items.push({ type: 'topic', topic, groupSource: group.source });
     }
-    if (!group.items.length) {
+    if (group.loading) {
+      if (mode === 'source') items.push({ type: 'groupLoading', group });
+      continue;
+    }
+    if (!hasTopics) {
       items.push({ type: 'groupEmpty', group });
     }
     if (group.error) {
-      items.push({ type: 'groupError', group });
+      if (showError) items.push({ type: 'groupError', group });
       continue;
     }
-    if (mode === 'source' && group.items.length > 0 && group.hasMore && group.nextPage) {
+    if (mode === 'source' && hasTopics && group.hasMore && group.nextPage) {
       items.push({ type: 'groupLoadMore', group, page: group.nextPage });
     }
   }

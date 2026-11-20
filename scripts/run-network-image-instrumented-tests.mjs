@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { deviceApkSignerSha256, findDeviceApkSigner } from './device-apk-signer.mjs';
+import { installDeviceApk, readIsolatedDeviceApk } from './device-apk-install.mjs';
 
 const usage =
   'Usage: node scripts/run-network-image-instrumented-tests.mjs [--platform-exports | --platform-export-ui | --platform-file-faults | --topic-share | --svg-only | --hardware-pressure | --registry-settlement]';
@@ -52,6 +52,14 @@ const matches = connected.filter((serial) =>
 );
 if (matches.length !== 1) throw new Error(`Expected exactly one connected ${expectedAvd}; found ${matches.length}.`);
 const [serial] = matches;
+const adb = (...args) => execFileSync('adb', ['-s', serial, ...args], { encoding: 'utf8' });
+const packages = [
+  { pkg: 'com.wz.reader', apk: path.join(android, 'app/build/outputs/apk/release/app-release.apk') },
+  {
+    pkg: 'com.wz.reader.test',
+    apk: path.join(android, 'app/build/outputs/apk/androidTest/release/app-release-androidTest.apk')
+  }
+].map((artifact) => ({ ...artifact, expected: readIsolatedDeviceApk(adb, artifact.pkg) }));
 const scratchRoot = path.join(root, '.codex-tmp');
 mkdirSync(scratchRoot, { recursive: true });
 const fixture = mkdtempSync(path.join(scratchRoot, 'network-image-test-'));
@@ -157,7 +165,7 @@ ${
     '-Pandroid.enableMinifyInReleaseBuilds=false',
     '-Pandroid.enableShrinkResourcesInReleaseBuilds=false'
   ]);
-  const builtApk = path.join(android, 'app/build/outputs/apk/release/app-release.apk');
+  const builtApk = packages[0].apk;
   if (
     !readFileSync(
       path.join(android, 'app/build/generated/source/buildConfig/release/com/wz/reader/BuildConfig.java'),
@@ -168,33 +176,9 @@ ${
   console.log(
     `IMAGE_PROOF_APK buildId=${proofBuildId} sha256=${createHash('sha256').update(readFileSync(builtApk)).digest('hex')} mode=${registrySettlement ? 'registry-settlement' : topicShare ? 'topic-share' : hardwarePressure ? 'hardware-pressure' : platformFileFaults ? 'platform-file-faults' : platformExports ? 'platform-exports' : svgOnly ? 'svg' : 'network-svg'} avd=${expectedAvd}`
   );
-  const pkg = 'com.wz.reader';
-  const installedAt = () =>
-    /firstInstallTime=([^\r\n]+)/
-      .exec(execFileSync('adb', ['-s', serial, 'shell', 'dumpsys', 'package', pkg], { encoding: 'utf8' }))?.[1]
-      ?.trim();
-  const before = installedAt();
-  const signer = findDeviceApkSigner();
-  if (before) {
-    const installed = execFileSync('adb', ['-s', serial, 'shell', 'pm', 'path', pkg], { encoding: 'utf8' })
-      .trim()
-      .split(/\r?\n/)[0]
-      .replace(/^package:/, '');
-    const previous = path.join(fixture, 'previous.apk');
-    execFileSync('adb', ['-s', serial, 'pull', installed, previous], { stdio: 'ignore' });
-    const next = path.join(android, 'app/build/outputs/apk/release/app-release.apk');
-    if (
-      !deviceApkSignerSha256(signer, next) ||
-      deviceApkSignerSha256(signer, next) !== deviceApkSignerSha256(signer, previous)
-    )
-      throw new Error('APK signer mismatch; installation frozen');
+  for (const artifact of packages) {
+    installDeviceApk({ adb, ...artifact, allowNew: true });
   }
-  for (const apk of ['release/app-release.apk', 'androidTest/release/app-release-androidTest.apk']) {
-    execFileSync('adb', ['-s', serial, 'install', '-r', path.join(android, 'app', 'build', 'outputs', 'apk', apk)], {
-      stdio: 'inherit'
-    });
-  }
-  if (before && installedAt() !== before) throw new Error('Installation identity changed; device changes frozen');
   if (platformExports) {
     const packageState = execFileSync('adb', ['-s', serial, 'shell', 'dumpsys', 'package', 'com.wz.reader'], {
       encoding: 'utf8'

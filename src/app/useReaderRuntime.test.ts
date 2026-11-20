@@ -17,12 +17,9 @@ describe('reader runtime state projection', () => {
     const current = projectReaderCommand(createEmptyReaderState(), { type: 'visit', topic, at: topic.createdAt });
     const next = applyReaderChange(current, {
       membership: [{ collection: 'history', key: 'nodeseek:1', present: true }],
-      counts: { history: 1 },
-      changed: ['history']
+      counts: { history: 1 }
     });
-    expect(next.history).toBe(current.history);
-    expect(next.favorites).toBe(current.favorites);
-    expect(next.revisions.history).toBe(1);
+    expect(next).toBe(current);
   });
   it('absolute favorite intent is idempotent during optimistic rebase', () => {
     const command = { type: 'favorite' as const, topic, enabled: true, at: topic.createdAt };

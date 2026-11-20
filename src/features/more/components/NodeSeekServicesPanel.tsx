@@ -1,15 +1,17 @@
 import { recordUserInteraction } from '@/platform/network/userPresence';
-import { useEffect, useRef, useState, type ComponentRef } from 'react';
-import { BackHandler, StyleSheet, Text, View } from 'react-native';
-import { CalendarCheck, Check, ChevronDown } from 'lucide-react-native';
-import { Button, Divider, List, Menu, TextInput } from 'react-native-paper';
+import { useEffect, useRef, useState } from 'react';
+import { StyleSheet, Text, type TextInput as RNTextInput, View } from 'react-native';
+import { CalendarCheck, Check, ChevronDown, Dices } from 'lucide-react-native';
+import { Button, Divider, List, Menu } from 'react-native-paper';
 import type { NodeSeekAttendanceBoard, NodeSeekCheckInState } from '@/domain/forum/accountData';
 import { AppButton } from '@/ui/controls/ButtonControls';
+import { AppTextInput } from '@/ui/controls/InputControls';
 import { DisclosureChevron, ExpandableContent } from '@/ui/controls/ExpandableControls';
 import type { ReaderTheme } from '@/ui/theme/tokens';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import type { MoreScreenStyles } from '../styles';
 import { createMoreSiteSettingStyles } from '../accountStyles';
+import { useCloseOnBack } from '../useCloseOnBack';
 
 function createAttendanceStyles(theme: ReaderTheme) {
   return StyleSheet.create({
@@ -26,6 +28,7 @@ type DisclosureState = 'unopened' | 'expanded' | 'collapsed';
 
 export function NodeSeekServicesPanel({
   active = true,
+  apiKeyAuthorized,
   apiKeyBusy,
   apiKeySaved,
   recoveryThreshold,
@@ -36,6 +39,7 @@ export function NodeSeekServicesPanel({
   onSaveApiKey
 }: {
   active?: boolean;
+  apiKeyAuthorized: boolean;
   apiKeyBusy: boolean;
   apiKeySaved: boolean;
   recoveryThreshold: number;
@@ -49,7 +53,7 @@ export function NodeSeekServicesPanel({
   const [manualExpansion, setManualExpansion] = useState<DisclosureState>('unopened');
   const [thresholdMenuOpen, setThresholdMenuOpen] = useState(false);
   const [draft, setDraft] = useState('');
-  const keyInput = useRef<ComponentRef<typeof TextInput>>(null);
+  const keyInput = useRef<RNTextInput>(null);
   const { styles: settingStyles } = useReaderThemeStyles(createMoreSiteSettingStyles);
   const expanded = expansion === 'expanded';
   const manualEntry = manualExpansion === 'expanded';
@@ -75,15 +79,8 @@ export function NodeSeekServicesPanel({
     </Button>
   );
 
-  useEffect(() => {
-    if (!thresholdMenuOpen) return;
-    // Paper's dismiss listener does not consume Android Back.
-    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      setThresholdMenuOpen(false);
-      return true;
-    });
-    return () => subscription.remove();
-  }, [thresholdMenuOpen]);
+  // Paper's dismiss listener does not consume Android Back.
+  useCloseOnBack(active && thresholdMenuOpen, setThresholdMenuOpen);
 
   useEffect(() => {
     if (!active) {
@@ -101,14 +98,11 @@ export function NodeSeekServicesPanel({
         title="读取通道自愈阈值"
         accessible={false}
         onPress={openThresholdMenu}
-        description="直连失败但网页可正常读取时，累计到阈值后重建通道。"
         titleNumberOfLines={2}
-        descriptionNumberOfLines={3}
         style={settingStyles.row}
         containerStyle={settingStyles.rowContainer}
         contentStyle={settingStyles.rowContent}
         titleStyle={settingStyles.title}
-        descriptionStyle={settingStyles.description}
         right={() =>
           thresholdMenuOpen ? (
             <Menu
@@ -146,9 +140,9 @@ export function NodeSeekServicesPanel({
       <Divider style={settingStyles.divider} />
       <List.Item
         title="NodeImage 授权"
-        description={apiKeySaved ? '已授权' : '用于 NodeSeek 图片上传'}
+        description={apiKeyAuthorized ? '已授权' : undefined}
         accessibilityRole="button"
-        accessibilityLabel={`NodeImage 授权，${apiKeySaved ? '已授权' : '未授权'}`}
+        accessibilityLabel={`NodeImage 授权，${apiKeyAuthorized ? '已授权' : '未授权'}`}
         accessibilityState={{ expanded }}
         style={settingStyles.row}
         containerStyle={settingStyles.rowContainer}
@@ -168,40 +162,28 @@ export function NodeSeekServicesPanel({
       {expansion !== 'unopened' ? (
         <ExpandableContent expanded={expanded} style={settingStyles.section}>
           <View style={settingStyles.actions}>
-            <Button
-              mode="contained"
+            <AppButton
               compact
-              style={settingStyles.button}
-              contentStyle={settingStyles.buttonContent}
-              labelStyle={settingStyles.buttonLabel}
+              variant="primary"
+              label={apiKeyBusy ? '授权处理中' : '获取 / 恢复授权'}
               accessibilityLabel="获取 / 恢复授权"
+              loading={apiKeyBusy}
               disabled={apiKeyBusy}
-              onPress={() => {
-                recordUserInteraction();
-                onAuthorizeApiKey();
-              }}
-            >
-              获取 / 恢复授权
-            </Button>
-            <Button
-              compact
-              textColor={theme.danger}
-              style={settingStyles.button}
-              contentStyle={settingStyles.buttonContent}
-              labelStyle={settingStyles.buttonLabel}
-              accessibilityLabel="清除 Key"
-              disabled={apiKeyBusy || !apiKeySaved}
-              onPress={() => {
-                recordUserInteraction();
-                onClearApiKey();
-              }}
-            >
-              清除 Key
-            </Button>
+              onPress={onAuthorizeApiKey}
+            />
+            {apiKeySaved ? (
+              <AppButton
+                compact
+                variant="danger"
+                label="清除 Key"
+                accessibilityLabel="清除 Key"
+                disabled={apiKeyBusy}
+                onPress={onClearApiKey}
+              />
+            ) : null}
           </View>
           <List.Item
             title="手动粘贴 Key"
-            description="自动授权不可用时使用"
             accessibilityRole="button"
             accessibilityLabel={manualEntry ? '收起手动备用' : '手动粘贴备用'}
             accessibilityState={{ expanded: manualEntry }}
@@ -209,7 +191,6 @@ export function NodeSeekServicesPanel({
             containerStyle={settingStyles.rowContainer}
             contentStyle={settingStyles.rowContent}
             titleStyle={settingStyles.title}
-            descriptionStyle={settingStyles.description}
             right={() => <DisclosureChevron expanded={manualEntry} color={theme.muted} />}
             onPress={() => {
               setManualExpansion((value) => (value === 'expanded' ? 'collapsed' : 'expanded'));
@@ -221,7 +202,7 @@ export function NodeSeekServicesPanel({
           />
           {manualExpansion !== 'unopened' ? (
             <ExpandableContent expanded={manualEntry} style={settingStyles.section}>
-              <TextInput
+              <AppTextInput
                 ref={keyInput}
                 variant="outlined"
                 label="NodeImage API Key"
@@ -238,21 +219,17 @@ export function NodeSeekServicesPanel({
                 onChange={recordUserInteraction}
                 onChangeText={setDraft}
               />
-              <Button
-                mode="contained"
-                compact
-                accessibilityLabel={apiKeyBusy ? '保存中' : '保存 Key'}
-                style={settingStyles.button}
-                contentStyle={settingStyles.buttonContent}
-                labelStyle={settingStyles.buttonLabel}
-                disabled={apiKeyBusy || !draft.trim()}
-                onPress={() => {
-                  recordUserInteraction();
-                  onSaveApiKey(draft);
-                }}
-              >
-                {apiKeyBusy ? '保存中' : '保存 Key'}
-              </Button>
+              <View style={settingStyles.actions}>
+                <AppButton
+                  compact
+                  variant="primary"
+                  label={apiKeyBusy ? '保存中' : '保存 Key'}
+                  accessibilityLabel={apiKeyBusy ? '保存中' : '保存 Key'}
+                  loading={apiKeyBusy}
+                  disabled={apiKeyBusy || !draft.trim()}
+                  onPress={() => onSaveApiKey(draft)}
+                />
+              </View>
             </ExpandableContent>
           ) : null}
         </ExpandableContent>
@@ -281,6 +258,7 @@ export function NodeSeekAttendancePanel({
   onRefresh: () => void;
 }) {
   const { styles: attendanceStyles, theme } = useReaderThemeStyles(createAttendanceStyles);
+  const [pendingMode, setPendingMode] = useState<'normal' | 'random'>('normal');
   const record = board?.record || (state.kind === 'signed' ? state.record : null);
   const pending = state.kind === 'confirmed-pending' || state.kind === 'result-unknown';
   const canCheckIn = Boolean(board && board.record === null && !record && !pending && !busy && !loading && !error);
@@ -303,6 +281,7 @@ export function NodeSeekAttendancePanel({
               : board
                 ? '今日未签到'
                 : '签到状态尚未读取';
+  const showCheckInActions = Boolean(board && board.record === null && !record && !pending && !error);
   return (
     <View style={attendanceStyles.section}>
       <View style={attendanceStyles.statusRow}>
@@ -314,23 +293,44 @@ export function NodeSeekAttendancePanel({
           {status}
         </Text>
       </View>
-      {!record ? (
+      {showCheckInActions ? (
         <View style={attendanceStyles.actions}>
           <View style={attendanceStyles.action}>
             <AppButton
+              icon={CalendarCheck}
               label="普通签到"
-              variant={canCheckIn ? 'primary' : 'default'}
+              variant={canCheckIn ? 'solid' : 'default'}
+              loading={busy && pendingMode === 'normal'}
               disabled={!canCheckIn}
-              onPress={() => onCheckIn(false)}
+              onPress={() => {
+                setPendingMode('normal');
+                onCheckIn(false);
+              }}
             />
           </View>
           <View style={attendanceStyles.action}>
-            <AppButton label="随机签到" disabled={!canCheckIn} onPress={() => onCheckIn(true)} />
+            <AppButton
+              icon={Dices}
+              label="随机签到"
+              loading={busy && pendingMode === 'random'}
+              disabled={!canCheckIn}
+              onPress={() => {
+                setPendingMode('random');
+                onCheckIn(true);
+              }}
+            />
           </View>
         </View>
       ) : null}
       {error ? (
-        <AppButton compact variant="ghost" label="重试签到状态" disabled={busy || loading} onPress={onRefresh} />
+        <AppButton
+          compact
+          variant="ghost"
+          label="重试签到状态"
+          loading={loading}
+          disabled={busy || loading}
+          onPress={onRefresh}
+        />
       ) : null}
     </View>
   );

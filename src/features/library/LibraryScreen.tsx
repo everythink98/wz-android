@@ -24,11 +24,11 @@ import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/
 import { type ReaderTheme } from '@/ui/theme/tokens';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { AppButton } from '@/ui/controls/ButtonControls';
-import { EmptyText, RecoverableEmptyState } from '@/ui/controls/FeedbackStates';
+import { EmptyText, LoadingState, RecoverableEmptyState } from '@/ui/controls/FeedbackStates';
 import { PopupMenu, PopupMenuItem } from '@/ui/controls/PopupMenu';
 import { PillRail } from '@/ui/controls/SelectionControls';
 import { TOUCH_HIT_SLOP } from '@/ui/controls/touchTarget';
-import { avatarInitial } from '@/ui/avatar/Avatar';
+import { Avatar } from '@/ui/avatar/Avatar';
 import { MemoizedTopicCard } from '@/ui/topic/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
@@ -100,6 +100,7 @@ const LibraryViewportList = memo(function LibraryViewportList({
   accessibilityLabel,
   data,
   empty,
+  footer,
   header,
   listRef,
   openedTopicKey,
@@ -112,6 +113,7 @@ const LibraryViewportList = memo(function LibraryViewportList({
   accessibilityLabel?: string;
   data: LibraryDataItem[];
   empty: ReactElement;
+  footer?: ReactElement;
   header: ReactElement;
   listRef: RefObject<FlashListRef<LibraryDataItem> | null>;
   openedTopicKey?: string;
@@ -148,6 +150,7 @@ const LibraryViewportList = memo(function LibraryViewportList({
       maintainVisibleContentPosition={positionOptions}
       ListHeaderComponent={header}
       ListEmptyComponent={empty}
+      ListFooterComponent={footer}
       renderItem={renderItem}
       onEndReached={() => onLoadMore(tab)}
       onEndReachedThreshold={0.5}
@@ -157,13 +160,13 @@ const LibraryViewportList = memo(function LibraryViewportList({
 
 export const LibraryScreen = memo(function LibraryScreen({
   active,
+  getFocusOwner,
   libraryTab,
   sourceFilter,
   categoryFilter,
   onSourceFilter: setSourceFilter,
   onCategoryFilter: setCategoryFilter,
-  total,
-  visibleTotal,
+  historyCountToClear,
   error,
   onRetry,
   onRetryCategories,
@@ -175,6 +178,7 @@ export const LibraryScreen = memo(function LibraryScreen({
   followedUsers,
   historyRecords,
   loaded,
+  loadingMore,
   scrollRef,
   topicStateIndex,
   onClearHistory,
@@ -186,12 +190,12 @@ export const LibraryScreen = memo(function LibraryScreen({
   onTabChange
 }: {
   active: boolean;
+  getFocusOwner?: () => symbol | null;
   sourceFilter: FeedSource;
   categoryFilter: string;
   onSourceFilter: (source: FeedSource) => void;
   onCategoryFilter: (category: string) => void;
-  total: number;
-  visibleTotal: number;
+  historyCountToClear: number;
   error: boolean;
   onRetry: () => void;
   onRetryCategories?: () => void;
@@ -204,6 +208,7 @@ export const LibraryScreen = memo(function LibraryScreen({
   followedUsers: FollowedUserRecord[];
   historyRecords: TopicRecord[];
   loaded: boolean;
+  loadingMore: boolean;
   scrollRef?: RefObject<FlashListRef<FollowedUserRecord | LibraryListItem> | null>;
   topicStateIndex: TopicListItemStateIndex;
   onClearHistory: () => void;
@@ -215,8 +220,8 @@ export const LibraryScreen = memo(function LibraryScreen({
   onTabChange: (tab: LibraryTab) => void;
 }) {
   const { styles, theme } = useReaderThemeStyles(createLibraryStyles);
-  const { height: windowHeight } = useWindowDimensions();
-  const { top: safeTop, bottom: safeBottom } = useSafeAreaInsets();
+  const { height: windowHeight, width: windowWidth } = useWindowDimensions();
+  const { top: safeTop, bottom: safeBottom, left: safeLeft, right: safeRight } = useSafeAreaInsets();
   const [mountedTabs, setMountedTabs] = useState<LibraryTab[]>([libraryTab]);
   useEffect(() => {
     if (!active)
@@ -279,7 +284,18 @@ export const LibraryScreen = memo(function LibraryScreen({
     return () => {
       categoryMenuRequestRef.current += 1;
     };
-  }, [active, categoryItems, closeCategoryMenu, libraryTab, safeBottom, safeTop, windowHeight]);
+  }, [
+    active,
+    categoryItems,
+    closeCategoryMenu,
+    libraryTab,
+    safeBottom,
+    safeLeft,
+    safeRight,
+    safeTop,
+    windowHeight,
+    windowWidth
+  ]);
   const scrollLibraryToTop = useCallback((tab: LibraryTab) => {
     const listRef = tab === 'favorites' ? favoriteListRef : tab === 'history' ? historyListRef : userListRef;
     listRef.current?.scrollToOffset({ offset: 0, animated: false });
@@ -322,25 +338,41 @@ export const LibraryScreen = memo(function LibraryScreen({
       triggerRef.current?.measureInWindow((x, y, _width, height) => {
         if (categoryMenuRequestRef.current !== request) return;
         const margin = 8;
+        const start = safeLeft + margin;
+        const end = Math.max(start, windowWidth - safeRight - margin);
+        const minWidth = Math.min(180, end - start);
+        const left = Math.max(start, Math.min(x, end - minWidth));
         const opensAbove = y + height / 2 > windowHeight / 2;
         setCategoryMenu({
           tab,
           placement: {
             position: 'absolute',
-            left: Math.max(margin, x),
+            left,
+            minWidth,
+            maxWidth: end - left,
             ...(opensAbove ? { bottom: Math.max(margin, windowHeight - y + 4) } : { top: y + height + 4 }),
             maxHeight: Math.max(
               160,
               opensAbove ? y - safeTop - margin : windowHeight - y - height - safeBottom - margin
-            ),
-            minWidth: 180
+            )
           }
         });
       });
     },
-    [active, categoryItems.length, closeCategoryMenu, safeBottom, safeTop, windowHeight]
+    [
+      active,
+      categoryItems.length,
+      closeCategoryMenu,
+      safeBottom,
+      safeLeft,
+      safeRight,
+      safeTop,
+      windowHeight,
+      windowWidth
+    ]
   );
   const selectCategory = useLatestCallback((value: string) => {
+    if (!active || getFocusOwner?.() === null) return;
     closeCategoryMenu();
     if (value === effectiveCategoryFilter) return;
     setHistoryAnchor(undefined);
@@ -363,21 +395,35 @@ export const LibraryScreen = memo(function LibraryScreen({
       setCategoryFilter('all');
     }
   }, [categoriesReady, categoryItems, effectiveCategoryFilter, setCategoryFilter]);
+  const bindConfirmation = useCallback(
+    (action: () => void) => {
+      if (!getFocusOwner) return action;
+      const owner = getFocusOwner();
+      return () => {
+        if (owner && getFocusOwner() === owner) action();
+      };
+    },
+    [getFocusOwner]
+  );
   const confirmRemoveFavorite = useCallback(
     (topic: Topic) => {
       Alert.alert('确定取消收藏吗？', topic.title || '这条收藏将从本机移除。', [
         { text: '取消', style: 'cancel' },
-        { text: '确定', style: 'destructive', onPress: () => onRemove(topic, 'favorites') }
+        { text: '确定', style: 'destructive', onPress: bindConfirmation(() => onRemove(topic, 'favorites')) }
       ]);
     },
-    [onRemove]
+    [bindConfirmation, onRemove]
   );
   const confirmClearHistory = useCallback(() => {
-    Alert.alert('清空历史？', '清空后无法恢复。', [
-      { text: '取消', style: 'cancel' },
-      { text: '清空', style: 'destructive', onPress: onClearHistory }
-    ]);
-  }, [onClearHistory]);
+    Alert.alert(
+      '清空历史？',
+      `将清空所有来源的 ${historyCountToClear} 条本机历史记录，包括已停用来源。清空后无法恢复。`,
+      [
+        { text: '取消', style: 'cancel' },
+        { text: '清空', style: 'destructive', onPress: bindConfirmation(onClearHistory) }
+      ]
+    );
+  }, [bindConfirmation, historyCountToClear, onClearHistory]);
   const renderFavoriteTrailingAction = useCallback(
     (topic: Topic) => (
       <LibraryIconAction
@@ -420,13 +466,21 @@ export const LibraryScreen = memo(function LibraryScreen({
             testID={item.first ? (tab === 'favorites' ? 'library-favorite-first' : 'library-history-first') : undefined}
             readerState={tab === 'favorites' ? { ...readerState, favorite: false, read: false } : readerState}
             renderTrailingAction={tab === 'favorites' ? renderFavoriteTrailingAction : renderHistoryTrailingAction}
+            showSource={effectiveSourceFilter === 'all'}
             topic={record.topic}
             onOpenTopic={openTopic}
           />
         </View>
       );
     },
-    [openTopic, renderFavoriteTrailingAction, renderHistoryTrailingAction, styles, topicStateIndex]
+    [
+      effectiveSourceFilter,
+      openTopic,
+      renderFavoriteTrailingAction,
+      renderHistoryTrailingAction,
+      styles,
+      topicStateIndex
+    ]
   );
   const renderFavoriteItem = useCallback<ListRenderItem<LibraryListItem>>(
     ({ item }) => renderTopicItem(item, 'favorites'),
@@ -445,16 +499,18 @@ export const LibraryScreen = memo(function LibraryScreen({
           style={[styles.menuButton, styles.libraryUserButton]}
           onPress={() => onOpenUser(item.user)}
         >
-          <View style={styles.menuIcon}>
-            <Text style={styles.replyAvatarText}>{avatarInitial(item.user.displayName || item.user.username)}</Text>
-          </View>
+          <Avatar
+            contentSource={item.user.source}
+            name={item.user.displayName || item.user.username}
+            uri={item.user.avatar}
+          />
           <View style={styles.flex}>
             <Text style={styles.menuLabel} numberOfLines={1}>
               {item.user.displayName || item.user.username}
             </Text>
             <Text style={styles.meta} numberOfLines={2}>
               {[
-                sourceLabel(item.user.source),
+                effectiveSourceFilter === 'all' ? sourceLabel(item.user.source) : '',
                 item.user.levelLabel,
                 `关注于 ${formatDateTime(item.followedAt) || item.followedAt}`
               ]
@@ -468,7 +524,7 @@ export const LibraryScreen = memo(function LibraryScreen({
         </View>
       </View>
     ),
-    [onOpenUser, onRemoveUser, styles]
+    [effectiveSourceFilter, onOpenUser, onRemoveUser, styles]
   );
 
   const renderHeader = useCallback(
@@ -484,21 +540,30 @@ export const LibraryScreen = memo(function LibraryScreen({
             : undefined;
       return (
         <View style={styles.stack}>
-          <PillRail
-            variant="tabs"
-            items={LIBRARY_TAB_ITEMS}
-            value={viewportTab}
-            testIDPrefix="library-tab"
-            onChange={changeLibraryTab}
-          />
-          <PillRail
-            variant="subtabs"
-            items={sourceItems}
-            value={effectiveSourceFilter}
-            testIDPrefix="library-source"
-            onChange={changeSourceFilter}
-          />
-          <View style={styles.sectionHeader}>
+          <View style={styles.toolbarRow}>
+            <View style={styles.toolbarRail}>
+              <PillRail
+                variant="tabs"
+                items={LIBRARY_TAB_ITEMS}
+                value={viewportTab}
+                testIDPrefix="library-tab"
+                onChange={changeLibraryTab}
+              />
+            </View>
+            {viewportTab === 'history' && loaded && historyCountToClear > 0 ? (
+              <AppButton compact icon={Trash2} label="清空历史" variant="ghost" onPress={confirmClearHistory} />
+            ) : null}
+          </View>
+          <View testID="library-filters" style={styles.toolbarRow}>
+            <View style={styles.toolbarRail}>
+              <PillRail
+                variant="subtabs"
+                items={sourceItems}
+                value={effectiveSourceFilter}
+                testIDPrefix="library-source"
+                onChange={changeSourceFilter}
+              />
+            </View>
             {!viewportCategoryButtonHidden ? (
               <View style={styles.categoryFilterSlot}>
                 <Pressable
@@ -522,14 +587,10 @@ export const LibraryScreen = memo(function LibraryScreen({
                       !categoryActionAvailable && styles.categoryFilterButtonTextDisabled
                     ]}
                   >
-                    {onRetryCategories ? '分类 · 重试' : `分类：${categoryLabel}`}
+                    {onRetryCategories ? '分类 · 重试' : effectiveCategoryFilter === 'all' ? '分类' : categoryLabel}
                   </Text>
-                  {!onRetryCategories ? (
-                    <ChevronDown
-                      size={14}
-                      color={viewportCategorySelectionAvailable ? theme.primary : theme.muted}
-                      strokeWidth={1.8}
-                    />
+                  {viewportCategorySelectionAvailable && !onRetryCategories ? (
+                    <ChevronDown size={14} color={theme.primary} strokeWidth={1.8} />
                   ) : null}
                 </Pressable>
                 {categoryMenu?.tab === viewportTab ? (
@@ -555,17 +616,6 @@ export const LibraryScreen = memo(function LibraryScreen({
                 ) : null}
               </View>
             ) : null}
-            <View style={styles.actions}>
-              {loaded && !error ? (
-                <Text style={styles.meta}>
-                  {total === visibleTotal ? total : `${total} / ${visibleTotal}`}{' '}
-                  {viewportTab === 'users' ? '人' : '条'}
-                </Text>
-              ) : null}
-              {viewportTab === 'history' && loaded && visibleTotal > 0 ? (
-                <AppButton compact label="清空历史" variant="danger" onPress={confirmClearHistory} />
-              ) : null}
-            </View>
           </View>
         </View>
       );
@@ -580,7 +630,6 @@ export const LibraryScreen = memo(function LibraryScreen({
       confirmClearHistory,
       effectiveCategoryFilter,
       effectiveSourceFilter,
-      error,
       loaded,
       openCategoryMenu,
       onRetryCategories,
@@ -588,8 +637,7 @@ export const LibraryScreen = memo(function LibraryScreen({
       sourceItems,
       styles,
       theme,
-      total,
-      visibleTotal
+      historyCountToClear
     ]
   );
   const favoriteHeader = useMemo(() => renderHeader('favorites'), [renderHeader]);
@@ -605,9 +653,15 @@ export const LibraryScreen = memo(function LibraryScreen({
         {error ? (
           <RecoverableEmptyState message="本机资料加载失败" actionLabel="重试" onAction={onRetry} />
         ) : !loaded ? (
-          <EmptyText text="正在读取本机资料" />
+          <LoadingState text="加载中" />
         ) : enabledSources.length === 0 ? (
           <RecoverableEmptyState message="尚未启用内容源" actionLabel="管理内容源" onAction={onManageContentSources} />
+        ) : effectiveSourceFilter !== 'all' || effectiveCategoryFilter !== 'all' ? (
+          <RecoverableEmptyState
+            message="当前筛选下没有记录"
+            actionLabel="清除筛选"
+            onAction={() => (effectiveSourceFilter === 'all' ? selectCategory('all') : changeSourceFilter('all'))}
+          />
         ) : (
           <EmptyText
             text={viewportTab === 'users' ? '暂无关注用户' : viewportTab === 'favorites' ? '暂无收藏' : '暂无浏览记录'}
@@ -615,7 +669,18 @@ export const LibraryScreen = memo(function LibraryScreen({
         )}
       </View>
     ),
-    [enabledSources.length, loaded, onManageContentSources, error, onRetry, styles.libraryEmpty]
+    [
+      changeSourceFilter,
+      effectiveCategoryFilter,
+      effectiveSourceFilter,
+      enabledSources.length,
+      loaded,
+      onManageContentSources,
+      error,
+      onRetry,
+      selectCategory,
+      styles.libraryEmpty
+    ]
   );
   const favoriteEmpty = useMemo(
     () => renderEmpty('favorites', favoriteListItems.length),
@@ -626,6 +691,11 @@ export const LibraryScreen = memo(function LibraryScreen({
     [historyListItems.length, renderEmpty]
   );
   const userEmpty = useMemo(() => renderEmpty('users', userRecords.length), [renderEmpty, userRecords.length]);
+  const populatedListFooter = loadingMore ? (
+    <LoadingState compact text="加载更多中" />
+  ) : error ? (
+    <RecoverableEmptyState message="本机资料加载失败" actionLabel="重试读取" onAction={onRetry} />
+  ) : undefined;
 
   const renderViewport = (viewportTab: LibraryTab) => {
     if (!mountedTabs.includes(viewportTab)) return null;
@@ -655,14 +725,19 @@ export const LibraryScreen = memo(function LibraryScreen({
         <LibraryViewportList
           readyTestID={loaded ? readyTestID : undefined}
           accessibilityLabel={
-            loaded && viewportTab === 'favorites'
-              ? favoriteRecords.length
-                ? '收藏列表，已加载，有收藏'
-                : '收藏列表，已加载，没有收藏'
-              : '收藏列表'
+            viewportTab === 'favorites'
+              ? loaded
+                ? favoriteRecords.length
+                  ? '收藏列表，已加载，有收藏'
+                  : '收藏列表，已加载，没有收藏'
+                : '收藏列表'
+              : viewportTab === 'users'
+                ? '关注用户列表'
+                : '浏览历史列表'
           }
           data={data}
           empty={empty}
+          footer={current && data.length > 0 ? populatedListFooter : undefined}
           header={header}
           listRef={viewportRef}
           openedTopicKey={

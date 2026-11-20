@@ -255,6 +255,7 @@ function detailFor(source: ActionSource, patch: Partial<TopicDetail> = {}): Topi
 
 async function renderActions({
   active = true,
+  isRouteFocused,
   sessionEpochs = initialForumSessionEpochs,
   showLinuxDoVerification = jest.fn(),
   ensureNodeImageApiKey = jest.fn(async () => null),
@@ -274,6 +275,7 @@ async function renderActions({
   interactionReads = {}
 }: {
   active?: boolean;
+  isRouteFocused?: () => boolean;
   sessionEpochs?: ForumSessionEpochs;
   dispatchSiteSessionEvent?: (event: ScopedSiteSessionEvent) => void;
   showLinuxDoVerification?: (message?: string) => void;
@@ -298,15 +300,18 @@ async function renderActions({
     (props: {
       active?: boolean;
       sessionEpochs: ForumSessionEpochs;
+      siteSessionViewModels?: SiteSessionViewModels;
       topicReplies?: Reply[];
       topicDetail?: TopicDetail;
     }) => {
       const topicSession = useTopicSessionController({ notify, topic: topicDetail });
       const sessionViews =
+        props.siteSessionViewModels ||
         siteSessionViewModels ||
         projectTestAccountSessions(siteSessionStates || loggedInStates(topicDetail.source as ActionSource));
       const actions = useTopicActionsController({
         active: props.active ?? active,
+        isRouteFocused,
         sessionEpochs: props.sessionEpochs,
         linuxDoUserAgent: () => 'safe-agent',
         showLinuxDoVerification,
@@ -328,7 +333,9 @@ async function renderActions({
         readGateway: {
           ...testPostInteractionReads(),
           ...interactionReads,
-          getReadPlan: () => ({
+          getReadPlan: (source, operation) => ({
+            source,
+            operation,
             state: 'ready',
             lane: 'authenticated',
             authenticated: true,
@@ -401,6 +408,29 @@ describe('topic action query mutations', () => {
     };
     const opening = detailFor('linuxdo', { replies: [reply] });
     const { detailKey, repliesKey } = seedTopicCache(opening, [reply]);
+    const sameAccountWindows = [
+      forumQueryKeys.replies(detailKey, 'oldest', '', 'parent'),
+      forumQueryKeys.replies(detailKey, 'newest', '', 'child')
+    ];
+    const differentEpoch = forumQueryKeys.topic({
+      source: 'linuxdo',
+      topicId: opening.id,
+      scope: { ...initialForumSessionEpochs, linuxdo: initialForumSessionEpochs.linuxdo + 1 }
+    });
+    const differentReadPlan = forumQueryKeys.topic({
+      source: 'linuxdo',
+      topicId: opening.id,
+      readPlanScope: 'public-only',
+      scope: initialForumSessionEpochs
+    });
+    const unrelatedWindows = [
+      forumQueryKeys.replies(differentEpoch, 'oldest', '', 'old-account'),
+      forumQueryKeys.replies(differentReadPlan, 'oldest', '', 'other-topic-plan'),
+      forumQueryKeys.replies(detailKey, 'oldest', 'public-only', 'other-reply-plan')
+    ];
+    for (const key of [...sameAccountWindows, ...unrelatedWindows]) {
+      appQueryClient.setQueryData(key, appQueryClient.getQueryData(repliesKey));
+    }
     let selected: string | null = 'bili_057';
     const fetcher = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       prepareRequestToSend(init);
@@ -412,17 +442,22 @@ describe('topic action query mutations', () => {
     await act(async () => {
       expect(await hook.result.current.actions.reactToPost(101, 'bili_057')).toBe(true);
     });
-    const cache = () => appQueryClient.getQueryData<{ pages: { items: Reply[] }[] }>(repliesKey)?.pages[0].items[0];
+    const cache = (key = repliesKey) =>
+      appQueryClient.getQueryData<{ pages: { items: Reply[] }[] }>(key)?.pages[0].items[0];
     expect(cache()).toMatchObject({
       currentUserReaction: { id: 'bili_057', canUndo: true },
       reactionSummary: [{ id: 'bili_057', count: 7 }]
     });
+    for (const key of sameAccountWindows) expect(cache(key)).toEqual(cache());
+    for (const key of unrelatedWindows) expect(cache(key)).toEqual(reply);
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.replies[0].currentUserReaction?.id).toBe('bili_057');
     selected = null;
     await act(async () => {
       await hook.result.current.actions.reactToPost(101);
     });
     expect(cache()?.currentUserReaction).toBeNull();
+    for (const key of sameAccountWindows) expect(cache(key)).toEqual(cache());
+    for (const key of unrelatedWindows) expect(cache(key)).toEqual(reply);
     expect(events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ phase: 'apply', requestType: 'toggle-reaction', mode: 'add', localApplied: true }),
@@ -2594,6 +2629,274 @@ describe('topic action query mutations', () => {
     expect(ensureWritableSession).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    { matchTopic: true, hidden: true },
+    { matchTopic: false, hidden: true },
+    { matchTopic: true, hidden: false },
+    { matchTopic: false, hidden: false }
+  ])(
+    'applies only the matching reply confirmation (match $matchTopic, hidden $hidden)',
+    async ({ matchTopic, hidden }) => {
+      const original = { ...editableReply, likeCount: 7 };
+      const topic = detailFor('linuxdo', { polls: [], replies: [original] });
+      const { repliesKey, detailKey } = seedTopicCache(topic, [original]);
+      const otherScope = forumQueryKeys.replies(detailKey, 'oldest', 'public:omit', 'public-route');
+      const initial = appQueryClient.getQueryData(repliesKey);
+      appQueryClient.setQueryData(otherScope, initial);
+      const quote = {
+        source: 'linuxdo' as const,
+        topicId: topic.id,
+        postNumber: original.floor!,
+        scope: initialForumSessionEpochs
+      };
+      const quoteKey = forumQueryKeys.reply(quote);
+      const publicQuoteKey = forumQueryKeys.reply({ ...quote, readPlanScope: 'public:omit' });
+      const quoteReadAt = 234_567;
+      appQueryClient.setQueryData(quoteKey, { ...original, likeCount: 9 }, { updatedAt: quoteReadAt });
+      appQueryClient.setQueryData(publicQuoteKey, original);
+      const patch = Promise.withResolvers<Record<string, unknown>>();
+      mockRunLinuxDoAction.mockReturnValueOnce(patch.promise);
+      const refreshTopicReplies = jest.fn(async () => 'completed');
+      const hook = await renderActions({ topicDetail: topic, topicReplies: [original], refreshTopicReplies });
+      await act(async () => {
+        await hook.result.current.actions.editReply(original);
+        hook.result.current.topicSession.commands.composer.changeContent('new edited reply');
+      });
+      let sending: Promise<unknown> | undefined;
+      await act(async () => {
+        sending = hook.result.current.actions.submitReply();
+      });
+      await waitFor(() => expect(mockRunLinuxDoAction).toHaveBeenCalledTimes(1));
+      if (hidden) {
+        await act(async () => hook.rerender({ active: false, sessionEpochs: initialForumSessionEpochs }));
+      } else {
+        await act(async () => {
+          hook.result.current.topicSession.commands.composer.toggle(true);
+          hook.result.current.topicSession.commands.composer.changeContent('new reply started during save');
+        });
+      }
+
+      const parent = forumQueryKeys.replies(detailKey, 'oldest', '', 'parent-route');
+      const readAt = 123_456;
+      appQueryClient.setQueryData(parent, initial, { updatedAt: readAt });
+      await appQueryClient.invalidateQueries({ queryKey: parent, exact: true, refetchType: 'none' });
+      const olderRead = Promise.withResolvers<unknown>();
+      const olderReplyRequest = appQueryClient
+        .fetchQuery({ queryKey: parent, queryFn: () => olderRead.promise, staleTime: 0 })
+        .catch(() => undefined);
+      const unrelated = forumQueryKeys.replies(detailKey, 'oldest', '', 'another-window');
+      const unrelatedCache = { pages: [{ items: [{ ...original, commentId: 123 }] }], pageParams: [null] };
+      appQueryClient.setQueryData(unrelated, unrelatedCache, { updatedAt: readAt });
+      const laterPage = Promise.withResolvers<typeof unrelatedCache>();
+      const unrelatedRequest = appQueryClient.fetchQuery({
+        queryKey: unrelated,
+        queryFn: () => laterPage.promise,
+        staleTime: 0
+      });
+      expect(appQueryClient.getQueryState(parent)?.fetchStatus).toBe('fetching');
+      expect(appQueryClient.getQueryState(unrelated)?.fetchStatus).toBe('fetching');
+
+      await act(async () => {
+        patch.resolve({
+          post: {
+            id: original.commentId,
+            topic_id: matchTopic ? Number(topic.id) : 1234,
+            post_number: original.floor,
+            cooked: '<p>new <strong>edited</strong> reply</p>',
+            raw: 'new **edited** reply'
+          }
+        });
+        await sending;
+        olderRead.resolve(initial);
+        await olderReplyRequest;
+      });
+      const unrelatedFetchStatus = appQueryClient.getQueryState(unrelated)?.fetchStatus;
+      laterPage.resolve(unrelatedCache);
+      await unrelatedRequest;
+
+      expect(refreshTopicReplies).toHaveBeenCalledTimes(!matchTopic && !hidden ? 1 : 0);
+      expect(mockRunLinuxDoAction).toHaveBeenCalledTimes(1);
+      if (!hidden) expect(hook.result.current.topicSession.state.replyContent).toBe('new reply started during save');
+      expect(unrelatedFetchStatus).toBe('fetching');
+      const expected = matchTopic
+        ? {
+            ...original,
+            contentHtml: '<p>new <strong>edited</strong> reply</p>',
+            contentMarkdown: 'new **edited** reply'
+          }
+        : original;
+      expect(appQueryClient.getQueryData(parent)).toMatchObject({ pages: [{ items: [expected] }] });
+      if (matchTopic) {
+        expect(appQueryClient.getQueryState(parent)).toMatchObject({ dataUpdatedAt: readAt, isInvalidated: true });
+        expect(appQueryClient.getQueryData(detailKey)).toMatchObject({ replies: [expected] });
+      }
+      expect(appQueryClient.getQueryData(otherScope)).toEqual(initial);
+      expect(appQueryClient.getQueryState(quoteKey)).toMatchObject({
+        data: { ...expected, likeCount: 9 },
+        dataUpdatedAt: quoteReadAt
+      });
+      expect(appQueryClient.getQueryData(publicQuoteKey)).toEqual(original);
+    }
+  );
+
+  it.each(['new draft', 'closed sheet', 'focus round trip', 'account change'] as const)(
+    'ignores delayed editor authorization after a %s',
+    async (change) => {
+      const reply = { ...editableReply, authorId: 'alice-id' };
+      const topic = detailFor('linuxdo', { polls: [], replies: [reply] });
+      seedTopicCache(topic, [reply]);
+      const answer = Promise.withResolvers<WritableSessionTicket>();
+      const ensureWritableSession = jest.fn(() => answer.promise);
+      const hook = await renderActions({ topicDetail: topic, topicReplies: [reply], ensureWritableSession });
+      let opening: Promise<unknown> | undefined;
+      await act(async () => {
+        hook.result.current.topicSession.commands.composer.toggle(false);
+        opening = hook.result.current.actions.editReply(reply);
+      });
+      await waitFor(() => expect(ensureWritableSession).toHaveBeenCalledTimes(1));
+      if (change === 'focus round trip') {
+        await act(async () => hook.rerender({ active: false, sessionEpochs: initialForumSessionEpochs }));
+        await act(async () => hook.rerender({ active: true, sessionEpochs: initialForumSessionEpochs }));
+      } else if (change === 'account change') {
+        await act(async () => hook.rerender({ sessionEpochs: { ...initialForumSessionEpochs, linuxdo: 1 } }));
+      } else {
+        await act(async () => {
+          const composer = hook.result.current.topicSession.commands.composer;
+          composer.toggle(true);
+          composer.changeContent('my newer unsaved reply');
+          if (change === 'closed sheet') composer.toggle(false);
+        });
+      }
+      await act(async () => {
+        answer.resolve({ source: 'linuxdo', identityKey: 'linuxdo:alice-id', sessionEpoch: 0 });
+        await opening;
+      });
+      expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe(
+        change === 'new draft' ? 'new' : 'closed'
+      );
+      expect(hook.result.current.topicSession.state.replyContent).toBe(
+        change === 'new draft' || change === 'closed sheet' ? 'my newer unsaved reply' : ''
+      );
+    }
+  );
+
+  it('opens the last requested reply editor even when the older request resolves first', async () => {
+    const other = { ...editableReply, commentId: 102, floor: 3, contentMarkdown: 'different original' };
+    const replies = [editableReply, other];
+    const topic = detailFor('linuxdo', { polls: [], replies });
+    seedTopicCache(topic, replies);
+    const older = Promise.withResolvers<WritableSessionTicket>();
+    const newer = Promise.withResolvers<WritableSessionTicket>();
+    const ensureWritableSession = jest
+      .fn<() => Promise<WritableSessionTicket>>()
+      .mockReturnValueOnce(older.promise)
+      .mockReturnValueOnce(newer.promise);
+    const hook = await renderActions({ topicDetail: topic, topicReplies: replies, ensureWritableSession });
+    let first: Promise<unknown> | undefined;
+    let last: Promise<unknown> | undefined;
+    await act(async () => {
+      hook.result.current.topicSession.commands.composer.toggle(false);
+      first = hook.result.current.actions.editReply(editableReply);
+      last = hook.result.current.actions.editReply(other);
+    });
+    const ticket = { source: 'linuxdo' as const, identityKey: 'linuxdo:alice-id', sessionEpoch: 0 };
+    await act(async () => {
+      older.resolve(ticket);
+      await first;
+    });
+    expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
+    await act(async () => {
+      newer.resolve(ticket);
+      await last;
+    });
+    expect(hook.result.current.topicSession.state.replyComposerIntent).toMatchObject({
+      kind: 'edit',
+      target: { commentId: other.commentId }
+    });
+    expect(hook.result.current.topicSession.state.replyContent).toBe(other.contentMarkdown);
+  });
+
+  it('admits one write for the same reply and drops its confirmation after an account change', async () => {
+    const reply = { ...editableReply, likeCount: 7 };
+    const topic = detailFor('linuxdo', { polls: [], replies: [reply] });
+    const { repliesKey } = seedTopicCache(topic, [reply]);
+    const response = Promise.withResolvers<Record<string, unknown>>();
+    mockRunLinuxDoAction.mockReturnValueOnce(response.promise);
+    const first = await renderActions({ topicDetail: topic, topicReplies: [reply] });
+    const second = await renderActions({ topicDetail: topic, topicReplies: [reply] });
+    await act(async () => {
+      await first.result.current.actions.editReply(reply);
+      first.result.current.topicSession.commands.composer.changeContent('first edit');
+      await second.result.current.actions.editReply(reply);
+      second.result.current.topicSession.commands.composer.changeContent('second edit');
+    });
+    let firstSave: Promise<unknown> | undefined;
+    await act(async () => {
+      firstSave = first.result.current.actions.submitReply();
+    });
+    await waitFor(() => expect(mockRunLinuxDoAction).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      await first.rerender({ active: false, sessionEpochs: initialForumSessionEpochs });
+      await second.result.current.actions.submitReply();
+    });
+    expect(mockRunLinuxDoAction).toHaveBeenCalledTimes(1);
+    const sessionEpochs = { ...initialForumSessionEpochs, linuxdo: 1 };
+    const current = { ...reply, contentHtml: '<p>new account read</p>', contentMarkdown: 'new account read' };
+    const { repliesKey: currentKey } = seedTopicCache(topic, [current], sessionEpochs);
+    await act(async () => first.rerender({ active: false, sessionEpochs }));
+    await act(async () => {
+      response.resolve({
+        post: {
+          id: reply.commentId,
+          topic_id: Number(topic.id),
+          post_number: reply.floor,
+          cooked: '<p>first edit</p>',
+          raw: 'first edit'
+        }
+      });
+      await firstSave;
+    });
+    expect(appQueryClient.getQueryData(repliesKey)).toMatchObject({ pages: [{ items: [reply] }] });
+    expect(appQueryClient.getQueryData(currentKey)).toMatchObject({ pages: [{ items: [current] }] });
+    expect(second.result.current.topicSession.state.replyContent).toBe('second edit');
+  });
+
+  it('preserves the second editor draft when its original reply has changed', async () => {
+    const reply = { ...editableReply, likeCount: 7 };
+    const topic = detailFor('linuxdo', { polls: [], replies: [reply] });
+    const { repliesKey } = seedTopicCache(topic, [reply]);
+    const first = await renderActions({ topicDetail: topic, topicReplies: [reply] });
+    const second = await renderActions({ topicDetail: topic, topicReplies: [reply] });
+    await act(async () => {
+      await first.result.current.actions.editReply(reply);
+      first.result.current.topicSession.commands.composer.changeContent('first newer version');
+      await second.result.current.actions.editReply(reply);
+      second.result.current.topicSession.commands.composer.changeContent('draft from the older version');
+    });
+    mockRunLinuxDoAction.mockResolvedValueOnce({
+      post: {
+        id: reply.commentId,
+        topic_id: Number(topic.id),
+        post_number: reply.floor,
+        cooked: '<p>first newer version</p>',
+        raw: 'first newer version'
+      }
+    });
+    await act(async () => {
+      await first.result.current.actions.submitReply();
+    });
+    expect(appQueryClient.getQueryData(repliesKey)).toMatchObject({
+      pages: [
+        { items: [{ ...reply, contentHtml: '<p>first newer version</p>', contentMarkdown: 'first newer version' }] }
+      ]
+    });
+    await act(async () => {
+      await second.result.current.actions.submitReply();
+    });
+    expect(mockRunLinuxDoAction).toHaveBeenCalledTimes(1);
+    expect(second.result.current.topicSession.state.replyContent).toBe('draft from the older version');
+  });
+
   it('rechecks the exact cached reply permission before editing', async () => {
     const reply: Reply = {
       author: 'alice',
@@ -3026,6 +3329,27 @@ describe('topic action query mutations', () => {
     );
     alert.mockRestore();
   });
+
+  it.each(['revoked', 'granted', 'outside the window'] as const)(
+    'checks a reply deletion against the refreshed window (%s)',
+    async (permission) => {
+      const reply: Reply = { ...editableReply, canDelete: true };
+      const opening = detailFor('linuxdo', { replies: [reply] });
+      const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+      const hook = await renderActions({ topicDetail: opening, topicReplies: [reply] });
+      await act(() => hook.result.current.actions.deleteReply(reply));
+      const confirm = alert.mock.calls.at(-1)?.[2]?.find((button) => button.text === '删除')?.onPress;
+      expect(confirm).toBeDefined();
+      expect(mockRunLinuxDoAction).not.toHaveBeenCalled();
+
+      const refreshedReplies =
+        permission === 'outside the window' ? [] : [{ ...reply, canDelete: permission === 'granted' }];
+      await hook.rerender({ sessionEpochs: initialForumSessionEpochs, topicReplies: refreshedReplies });
+      await act(async () => confirm?.());
+
+      expect(mockRunLinuxDoAction).toHaveBeenCalledTimes(permission === 'revoked' ? 0 : 1);
+    }
+  );
 
   it.each([
     ['ordinary', new Error('删除请求失败')],
@@ -3851,6 +4175,110 @@ describe('topic action query mutations', () => {
     expect(hook.result.current.actions.actionBusy).toBe(false);
   });
 
+  it.each([
+    { action: 'vote', change: 'account' },
+    { action: 'delete reply', change: 'account' },
+    { action: 'delete boost', change: 'account' },
+    { action: 'delete reply', change: 'stack has moved' },
+    { action: 'lock', change: 'reauthenticated' },
+    { action: 'vote', change: 'left and returned' },
+    { action: 'vote', change: 'unmounted' },
+    { action: 'delete reply', change: 'dismissed' },
+    { action: 'vote', change: 'other source account' }
+  ] as const)('revalidates the $action confirmation after $change', async ({ action, change }) => {
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    const source = action === 'vote' || action === 'lock' ? 'nodeseek' : 'linuxdo';
+    const boostId = 44;
+    const reply: Reply = {
+      ...editableReply,
+      canDelete: true,
+      siteExtension: {
+        boostCount: 1,
+        boosts: [
+          {
+            id: boostId,
+            user: { source: 'linuxdo', username: 'fixture', url: 'https://linux.do/u/fixture' },
+            content: [{ text: 'fixture boost' }],
+            canDelete: true
+          }
+        ]
+      }
+    };
+    const topic = detailFor(source, {
+      polls: action === 'vote' ? [poll] : action === 'lock' ? [ownedNodeSeekPoll] : [],
+      replies: [reply]
+    });
+    const initialViews =
+      action === 'lock' ? nodeSeekLoggedInViewModels() : projectTestAccountSessions(loggedInStates(source));
+    let sessionEpochs = initialForumSessionEpochs;
+    let identityKey = `${source}:${initialViews[source].currentUser!.id}`;
+    let stackFocused = true;
+    const ensureWritableSession = jest.fn(async (requested: ActionSource) => ({
+      source: requested,
+      identityKey,
+      sessionEpoch: sessionEpochs[requested]
+    }));
+    seedTopicCache(topic, [reply]);
+    const hook = await renderActions({
+      ensureWritableSession,
+      isRouteFocused: () => stackFocused,
+      isWritableSessionTicketCurrent: (ticket) =>
+        ticket.sessionEpoch === sessionEpochs[ticket.source] && ticket.identityKey === identityKey,
+      topicDetail: topic,
+      topicReplies: [reply],
+      siteSessionViewModels: initialViews
+    });
+    let unmounted = false;
+    try {
+      await act(async () => {
+        const actions = hook.result.current.actions;
+        if (action === 'vote') await actions.votePoll(poll, ['1']);
+        else if (action === 'lock') await actions.lockNodeSeekPoll(ownedNodeSeekPoll);
+        else if (action === 'delete reply') actions.deleteReply(reply);
+        else actions.deleteBoost(reply.commentId!, boostId);
+      });
+      const confirm = alert.mock.calls[0]?.[2]?.find((button) => button.style === 'destructive')?.onPress;
+      expect(confirm).toBeDefined();
+      expect(ensureWritableSession).not.toHaveBeenCalled();
+
+      if (change === 'unmounted') {
+        await hook.unmount();
+        unmounted = true;
+      } else if (change === 'left and returned') {
+        await hook.rerender({ active: false, sessionEpochs });
+        await hook.rerender({ active: true, sessionEpochs });
+      } else if (change === 'stack has moved') {
+        stackFocused = false;
+      } else if (change === 'dismissed') {
+        await act(() => alert.mock.calls[0]?.[3]?.onDismiss?.());
+      } else {
+        const changedSource = change === 'other source account' ? 'linuxdo' : source;
+        sessionEpochs = { ...sessionEpochs, [changedSource]: 1 };
+        const siteSessionViewModels =
+          change === 'account'
+            ? {
+                ...initialViews,
+                [source]: { ...initialViews[source], currentUser: { ...initialViews[source].currentUser!, id: '456' } }
+              }
+            : initialViews;
+        if (change === 'account') identityKey = `${source}:456`;
+        seedTopicCache(topic, [reply], sessionEpochs);
+        await hook.rerender({ sessionEpochs, siteSessionViewModels, topicDetail: { ...topic } });
+      }
+      await act(async () => confirm?.());
+
+      const allowed = change === 'other source account';
+      expect({
+        ticketRequests: ensureWritableSession.mock.calls.length,
+        nodeSeekWrites: mockRunNodeSeekAction.mock.calls.length,
+        linuxDoWrites: mockRunLinuxDoAction.mock.calls.length
+      }).toEqual({ ticketRequests: allowed ? 1 : 0, nodeSeekWrites: allowed ? 1 : 0, linuxDoWrites: 0 });
+    } finally {
+      if (!unmounted) await hook.unmount();
+      alert.mockRestore();
+    }
+  });
+
   it('sends no NodeSeek request when vote confirmation is canceled', async () => {
     const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
     const ensureWritableSession = jest.fn(async () => {
@@ -3938,6 +4366,38 @@ describe('topic action query mutations', () => {
 
     expect(alert).not.toHaveBeenCalled();
     expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { action: 'vote', closed: true },
+    { action: 'lock', closed: true },
+    { action: 'vote', closed: false },
+    { action: 'lock', closed: false }
+  ] as const)('checks refreshed NodeSeek poll before $action (closed: $closed)', async ({ action, closed }) => {
+    const target = action === 'lock' ? ownedNodeSeekPoll : poll;
+    const opening = detailFor('nodeseek', { polls: [target] });
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    const hook = await renderActions({
+      siteSessionViewModels: nodeSeekLoggedInViewModels(),
+      topicDetail: opening
+    });
+    mockFetchNodeSeekVoteInfo.mockResolvedValueOnce({ ...target, closed: true });
+    await act(async () => {
+      if (action === 'lock') await hook.result.current.actions.lockNodeSeekPoll(target);
+      else await hook.result.current.actions.votePoll(target, ['1']);
+    });
+    const confirm = alert.mock.calls.at(-1)?.[2]?.find((button) => button.style === 'destructive')?.onPress;
+    expect(confirm).toBeDefined();
+    expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
+
+    await hook.rerender({
+      sessionEpochs: initialForumSessionEpochs,
+      topicDetail: { ...opening, polls: [{ ...target, closed }] }
+    });
+    await act(async () => confirm?.());
+
+    expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(closed ? 0 : 1);
+    expect(mockFetchNodeSeekVoteInfo).toHaveBeenCalledTimes(closed ? 0 : 1);
   });
 
   it('locks once, refreshes once, and projects the authoritative poll to topic and replies', async () => {
@@ -4343,6 +4803,35 @@ describe('topic action query mutations', () => {
     ]);
   });
 
+  it('retires a poll replacement confirmation after leaving the Topic', async () => {
+    const snapshot = snapshotWithNodeSeekPoll('poll_retired_route');
+    const previous = normalizePendingNodeSeekPoll({ ...snapshot.pendingNodeSeekPolls[0]!, title: '旧投票' });
+    await saveNodeSeekPollJournalEntry('nodeseek:123', {
+      localId: previous.localId,
+      fingerprint: previous.fingerprint,
+      remoteId: '600'
+    });
+    mockRunNodeSeekAction.mockImplementation(runNodeSeekActionActual);
+    const fetcher = jest.fn(async () => Response.json({ id: 701 }));
+    let focused = true;
+    const hook = await renderActions({ fetcher, isRouteFocused: () => focused });
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    let submitting!: Promise<void>;
+    await act(() => {
+      submitting = hook.result.current.actions.submitReply(snapshot);
+    });
+    await waitFor(() => expect(alert).toHaveBeenCalledTimes(1));
+    const confirm = alert.mock.calls[0]?.[2]?.find((button) => button.text === '创建新投票')?.onPress;
+    expect(confirm).toBeDefined();
+    focused = false;
+    await hook.rerender({ active: false, sessionEpochs: initialForumSessionEpochs });
+    await act(async () => {
+      confirm?.();
+      await submitting;
+    });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it.each(['shared', 'distinct'] as const)(
     'materializes %s poll intents through concurrent retained Topics without losing either result',
     async (kind) => {
@@ -4558,6 +5047,109 @@ describe('topic action query mutations', () => {
     ]);
   });
 
+  it.each([
+    { source: 'nodeseek', first: 'lost-response' },
+    { source: 'linuxdo', first: 'lost-response' },
+    { source: 'yaohuo', first: 'lost-response' },
+    { source: 'linuxdo', first: 'gateway-failure' },
+    { source: 'nodeseek', first: 'rejected' },
+    { source: 'linuxdo', first: 'rejected' },
+    { source: 'yaohuo', first: 'rejected' }
+  ] as const)(
+    'distinguishes an unconfirmed $source reply from a clear rejection ($first)',
+    async ({ source, first }) => {
+      mockRunNodeSeekAction.mockImplementation(runNodeSeekActionActual);
+      mockRunLinuxDoAction.mockImplementation(runLinuxDoActionActual);
+      mockRunYaohuoAction.mockImplementation(
+        jest.requireActual<typeof import('@/sources/yaohuo/actionClient')>('@/sources/yaohuo/actionClient')
+          .runYaohuoAction
+      );
+      const messages: string[] = [];
+      const postPath = { nodeseek: '/api/content/new-comment', linuxdo: '/posts.json', yaohuo: '/bbs/book_re.aspx' }[
+        source
+      ];
+      const fetcher = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = new URL(String(input)).pathname;
+        prepareRequestToSend(init);
+        if (path === '/session/csrf') return Response.json({ csrf: 'fixture-csrf' });
+        if (path === '/bbs-42.html') {
+          return new Response(
+            '<form action="/bbs/book_re.aspx"><input name="id" value="42"><input name="__CSRFToken" value="fixture-csrf"></form>'
+          );
+        }
+        expect(path).toBe(postPath);
+        expect(init?.method).toBe('POST');
+        messages.push(String(init?.body));
+        if (messages.length === 1) {
+          if (first === 'lost-response') throw new Error('response lost after send');
+          if (first === 'gateway-failure') return Response.json({ errors: ['gateway unavailable'] }, { status: 503 });
+          return Response.json({ success: false, errors: ['rate limited'] }, { status: 429 });
+        }
+        return source === 'yaohuo' ? new Response('评论成功') : Response.json({ success: true });
+      });
+      const snapshot = {
+        ...snapshotWithNodeSeekPoll('reply_recovery'),
+        markdown: '保留的回复',
+        pendingNodeSeekPolls: []
+      };
+      const notify = jest.fn();
+      const hook = await renderActions({ topicDetail: detailFor(source), fetcher, notify });
+      let allowResend = false;
+      const alert = jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {
+        buttons?.find((button) => button.text === (allowResend ? '仍要重发' : '取消'))?.onPress?.();
+      });
+      await act(() => hook.result.current.topicSession.commands.composer.changeSnapshot(snapshot));
+      await act(() => hook.result.current.actions.submitReply(snapshot));
+      expect(hook.result.current.topicSession.state.replyContent).toBe(snapshot.markdown);
+      await act(() => hook.result.current.actions.submitReply(snapshot));
+      if (first !== 'rejected') {
+        expect(notify).toHaveBeenCalledWith(expect.stringContaining('回复可能已发送'));
+        expect(messages).toHaveLength(1);
+        expect(alert).toHaveBeenCalledTimes(1);
+        expect(hook.result.current.topicSession.state.replyContent).toBe(snapshot.markdown);
+        allowResend = true;
+        await act(() => hook.result.current.actions.submitReply(snapshot));
+        expect(alert).toHaveBeenCalledTimes(2);
+      } else {
+        expect(alert).not.toHaveBeenCalled();
+      }
+      expect(messages).toHaveLength(2);
+      expect(messages[1]).toBe(messages[0]);
+    }
+  );
+
+  it.each(['reply target', 'account'] as const)(
+    'does not carry an unconfirmed reply across a new %s',
+    async (change) => {
+      mockRunNodeSeekAction.mockImplementation(runNodeSeekActionActual);
+      const fetcher = jest.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+        prepareRequestToSend(init);
+        return Response.json({ success: true });
+      });
+      fetcher.mockImplementationOnce(async (_url, init) => {
+        prepareRequestToSend(init);
+        throw new Error('response lost after send');
+      });
+      const hook = await renderActions({ fetcher, siteSessionViewModels: nodeSeekLoggedInViewModels() });
+      const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+      const snapshot = { ...snapshotWithNodeSeekPoll('reply_scope'), markdown: '相同正文', pendingNodeSeekPolls: [] };
+      await act(() => hook.result.current.actions.submitReply(snapshot));
+      if (change === 'reply target') {
+        await act(() =>
+          hook.result.current.topicSession.commands.composer.replyToFloor({ ...editableReply, floor: 3 })
+        );
+      } else {
+        await hook.rerender({
+          sessionEpochs: { ...initialForumSessionEpochs, nodeseek: 1 },
+          siteSessionViewModels: projectTestAccountSessions(loggedInStates())
+        });
+      }
+      await act(() => hook.result.current.actions.submitReply(snapshot));
+      expect(alert).not.toHaveBeenCalled();
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    }
+  );
+
   it('sends once without status preflight and trusts an explicit success', async () => {
     const fetcher = jest.fn(async () => {
       throw new Error('每天最多进行500次星辰记录查询');
@@ -4592,6 +5184,61 @@ describe('topic action query mutations', () => {
     ]);
     expect(fetcher).not.toHaveBeenCalled();
   });
+
+  it.each(['left', 'left and returned', 'already sent'] as const)(
+    'retires the payment confirmation without discarding an authorized response when %s',
+    async (change) => {
+      mockRunNodeSeekAction.mockImplementation(runNodeSeekActionActual);
+      const sent = Promise.withResolvers<Response>();
+      const fetcher = jest.fn(async (input: RequestInfo | URL) =>
+        String(input).endsWith('/payment-prepare')
+          ? Response.json({ success: true, allowedOrigin: true, receiver_name: '测试收款人' })
+          : sent.promise
+      );
+      let focused = true;
+      const hook = await renderActions({
+        fetcher,
+        siteSessionViewModels: nodeSeekLoggedInViewModels(),
+        isRouteFocused: () => focused
+      });
+      const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+      let pending!: ReturnType<typeof hook.result.current.actions.payNodeSeekStardust>;
+      await act(() => {
+        pending = hook.result.current.actions.payNodeSeekStardust({
+          receiverMemberId: '42',
+          amount: 3,
+          refId: 100,
+          description: 'fixture',
+          oneTime: false
+        });
+      });
+      await waitFor(() => expect(alert).toHaveBeenCalledTimes(1));
+      const confirm = alert.mock.calls[0]?.[2]?.find((button) => button.text === '确认付款')?.onPress;
+      expect(confirm).toBeDefined();
+      if (change === 'already sent') {
+        await act(() => {
+          confirm?.();
+        });
+        await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+      }
+      focused = false;
+      await hook.rerender({ active: false, sessionEpochs: initialForumSessionEpochs });
+      if (change === 'left and returned') {
+        focused = true;
+        await hook.rerender({ active: true, sessionEpochs: initialForumSessionEpochs });
+      }
+      await act(async () => {
+        if (change !== 'already sent') confirm?.();
+        sent.resolve(Response.json({ success: true }));
+        expect(await pending).toBe(change === 'already sent' ? 'submitted' : 'canceled');
+      });
+      expect(fetcher.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(
+        change === 'already sent'
+          ? ['/api/stardust/payment-prepare', '/api/stardust/send']
+          : ['/api/stardust/payment-prepare']
+      );
+    }
+  );
 
   it.each([
     ['transport failure', new Error('timeout')],

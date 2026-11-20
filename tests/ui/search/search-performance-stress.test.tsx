@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
-import { act, cleanup, renderHook } from '@testing-library/react-native';
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react-native';
 import { DEFAULT_SEARCH_FILTERS } from '@/domain/forum/searchFilters';
 import { useDiscourseFilterPickers, useSearchCandidateQueries } from '@/features/search/DiscourseFilterPickers';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
@@ -12,59 +12,84 @@ describe('search candidate pressure through production hooks', () => {
     jest.useRealTimers();
   });
 
-  it('coalesces 250 separately rendered typing events into one request per open picker', async () => {
-    jest.useFakeTimers();
-    const searchDiscourseTags = jest.fn<Parameters<typeof useDiscourseFilterPickers>[0]['searchDiscourseTags']>(
-      async ({ query }) => [{ name: query }]
-    );
-    const searchDiscourseUsers = jest.fn<Parameters<typeof useDiscourseFilterPickers>[0]['searchDiscourseUsers']>(
-      async ({ term }) => [{ id: term, username: term }]
-    );
-    const hook = await renderHook(
-      () =>
-        useDiscourseFilterPickers({
-          categories: [],
-          discourseDraft: DEFAULT_SEARCH_FILTERS.linuxdo,
-          filterSheetVisible: true,
-          requestsEnabled: true,
-          readPlanScopes: { tags: 'stress', users: 'stress' },
-          sessionEpochs: initialForumSessionEpochs,
-          searchDiscourseTags,
-          searchDiscourseUsers
-        }),
-      { wrapper: QueryTestWrapper }
-    );
-    await act(async () => {
-      hook.result.current.tags.open();
-      hook.result.current.users.open();
-    });
-    for (let index = 0; index < 250; index++) {
-      await act(async () => {
-        hook.result.current.tags.setQuery(`tag-${index}`);
-        hook.result.current.users.setQuery(`user-${index}`);
-      });
-      await act(async () => jest.advanceTimersByTime(10));
+  it.each(['tags', 'author'] as const)(
+    'coalesces 250 keystrokes on the %s page and discards edits on close',
+    async (picker) => {
+      jest.useFakeTimers();
+      type PickerProps = { page: typeof picker | null; query: string };
+      const searchDiscourseTags = jest.fn<Parameters<typeof useDiscourseFilterPickers>[0]['searchDiscourseTags']>(
+        async ({ query }) => [{ name: query }]
+      );
+      const searchDiscourseUsers = jest.fn<Parameters<typeof useDiscourseFilterPickers>[0]['searchDiscourseUsers']>(
+        async ({ term }) => [{ id: term, username: term }]
+      );
+      const hook = await renderHook(
+        ({ page, query }: PickerProps) =>
+          useDiscourseFilterPickers({
+            discourseDraft: DEFAULT_SEARCH_FILTERS.linuxdo,
+            picker: page,
+            query,
+            enabled: true,
+            readPlanScopes: { tags: 'stress', users: 'stress' },
+            sessionEpochs: initialForumSessionEpochs,
+            searchDiscourseTags,
+            searchDiscourseUsers
+          }),
+        { initialProps: { page: picker, query: '' } as PickerProps, wrapper: QueryTestWrapper }
+      );
+      for (let index = 0; index < 250; index++) {
+        await hook.rerender({ page: picker, query: `term-${index}` });
+        await act(async () => jest.advanceTimersByTime(10));
+      }
+      expect(searchDiscourseTags).not.toHaveBeenCalled();
+      expect(searchDiscourseUsers).not.toHaveBeenCalled();
+      await act(async () => jest.advanceTimersByTime(300));
+      await act(async () => jest.advanceTimersByTime(0));
+      if (picker === 'tags') {
+        expect(hook.result.current.tags.options).toEqual([{ name: 'term-249' }]);
+      } else {
+        expect(hook.result.current.users.options).toEqual([{ id: 'term-249', username: 'term-249' }]);
+      }
+      await hook.rerender({ page: picker, query: 'closed-before-debounce' });
+      await hook.rerender({ page: null, query: '' });
+      await act(async () => jest.advanceTimersByTime(300));
+      expect(searchDiscourseTags).toHaveBeenCalledTimes(picker === 'tags' ? 1 : 0);
+      expect(searchDiscourseUsers).toHaveBeenCalledTimes(picker === 'author' ? 1 : 0);
     }
-    expect(searchDiscourseTags).not.toHaveBeenCalled();
-    expect(searchDiscourseUsers).not.toHaveBeenCalled();
-    await act(async () => jest.advanceTimersByTime(300));
-    await act(async () => jest.advanceTimersByTime(0));
-    expect(searchDiscourseTags).toHaveBeenCalledTimes(1);
-    expect(searchDiscourseUsers).toHaveBeenCalledTimes(1);
-    expect(hook.result.current.tags.options).toEqual([{ name: 'tag-249' }]);
-    expect(hook.result.current.users.options).toEqual([{ id: 'user-249', username: 'user-249' }]);
+  );
 
-    await act(async () => {
-      hook.result.current.tags.setQuery('closed-before-debounce');
-      hook.result.current.users.setQuery('closed-before-debounce');
-    });
-    await act(async () => {
-      hook.result.current.tags.close();
-      hook.result.current.users.close();
-    });
-    await act(async () => jest.advanceTimersByTime(300));
-    expect(searchDiscourseTags).toHaveBeenCalledTimes(1);
-    expect(searchDiscourseUsers).toHaveBeenCalledTimes(1);
+  it('keeps a shared in-flight tag search when only one picker closes', async () => {
+    const response = Promise.withResolvers<{ name: string }[]>();
+    const searchDiscourseTags = jest.fn<Parameters<typeof useSearchCandidateQueries>[0]['searchDiscourseTags']>(
+      () => response.promise
+    );
+    const tagRequest = { source: 'linuxdo' as const, query: '', selectedTags: [] };
+    const reads = {
+      enabled: true,
+      sessionEpochs: initialForumSessionEpochs,
+      readPlanScopes: { tags: 'shared', users: 'shared' },
+      searchDiscourseTags,
+      searchDiscourseUsers: async () => [],
+      userRequest: null
+    };
+    const hook = await renderHook(
+      ({ firstOpen }: { firstOpen: boolean }) => {
+        useSearchCandidateQueries({ ...reads, tagRequest: firstOpen ? tagRequest : null });
+        return useSearchCandidateQueries({ ...reads, tagRequest });
+      },
+      { initialProps: { firstOpen: true }, wrapper: QueryTestWrapper }
+    );
+    try {
+      expect(searchDiscourseTags).toHaveBeenCalledTimes(1);
+      const { signal } = searchDiscourseTags.mock.calls[0][0];
+      await hook.rerender({ firstOpen: false });
+      expect(signal?.aborted).toBe(false);
+      await act(async () => response.resolve([{ name: '保留' }]));
+      await waitFor(() => expect(hook.result.current.tags.options).toEqual([{ name: '保留' }]));
+      expect(searchDiscourseTags).toHaveBeenCalledTimes(1);
+    } finally {
+      response.resolve([]);
+    }
   });
 
   it('cancels superseded requests over 100 query changes and releases the last pair on unmount', async () => {

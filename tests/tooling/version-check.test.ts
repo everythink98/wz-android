@@ -84,6 +84,79 @@ describe('Android release version gate', () => {
     expect(result.stderr).toContain('版本升级但 versionCode 未递增');
   });
 
+  it('rejects a lower release version even when its Android code is higher', () => {
+    const repository = createRepository('2.0.0', 20);
+    execFileSync('git', ['tag', 'v2.0.0'], { cwd: repository });
+    commitVersions(repository, '1.9.9', 21);
+    const result = runVersionCheck(repository, '--require-previous-release');
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('版本号必须高于 v2.0.0');
+  });
+
+  it('checks new releases against a newer tag on a parallel branch and permits tagged rebuilds', () => {
+    const repository = createRepository('1.0.0', 10);
+    execFileSync('git', ['tag', 'v1.0.0'], { cwd: repository });
+    commitVersions(repository, '1.0.1', 11);
+    execFileSync('git', ['tag', '-a', 'v1.0.1', '-m', 'published'], { cwd: repository });
+    commitVersions(repository, '1.0.10', 20);
+    execFileSync('git', ['tag', 'v1.0.10'], { cwd: repository });
+    execFileSync('git', ['checkout', '--quiet', '-b', 'maintenance', 'v1.0.1'], { cwd: repository });
+
+    expect(runVersionCheck(repository, '--require-previous-release').status).toBe(0);
+    commitVersions(repository, '1.0.9', 21);
+    expect(runVersionCheck(repository, '--require-previous-release').stderr).toContain('版本号必须高于 v1.0.10');
+    commitVersions(repository, '1.0.11', 20);
+    expect(runVersionCheck(repository, '--require-previous-release').stderr).toContain('版本升级但 versionCode 未递增');
+    commitVersions(repository, '1.0.11', 21);
+    expect(runVersionCheck(repository, '--require-previous-release').status).toBe(0);
+  });
+
+  it('accepts the largest Android integer versionCode and rejects overflow at the release gate', () => {
+    const repository = createRepository('1.0.0', 10);
+    execFileSync('git', ['tag', 'v1.0.0'], { cwd: repository });
+    commitVersions(repository, '1.0.1', 2_147_483_647);
+    expect(runVersionCheck(repository, '--require-previous-release').status).toBe(0);
+    writeVersions(repository, '1.0.1', 2_147_483_648);
+    expect(runVersionCheck(repository, '--require-previous-release').status).toBe(1);
+  });
+
+  it('requires a fresh Android versionCode even if a maintenance release used it under a lower version name', () => {
+    const repository = createRepository('1.0.0', 10);
+    execFileSync('git', ['tag', 'v1.0.0'], { cwd: repository });
+    commitVersions(repository, '2.0.0', 20);
+    execFileSync('git', ['tag', 'v2.0.0'], { cwd: repository });
+    execFileSync('git', ['checkout', '--quiet', '-b', 'maintenance', 'v1.0.0'], { cwd: repository });
+    commitVersions(repository, '1.0.1', 21);
+    execFileSync('git', ['tag', 'v1.0.1'], { cwd: repository });
+    execFileSync('git', ['checkout', '--quiet', '-b', 'next', 'v2.0.0'], { cwd: repository });
+
+    commitVersions(repository, '2.0.1', 21);
+    expect(runVersionCheck(repository, '--require-previous-release').stderr).toContain('v1.0.1 为 21');
+    commitVersions(repository, '2.0.1', 22);
+    expect(runVersionCheck(repository, '--require-previous-release').status).toBe(0);
+  });
+
+  it('compares numeric components and only rebuilds an existing version at its tagged commit', () => {
+    const repository = createRepository('1.0.9', 19);
+    execFileSync('git', ['tag', 'v1.0.9'], { cwd: repository });
+    commitVersions(repository, '1.0.10', 20);
+    expect(runVersionCheck(repository, '--require-previous-release').status).toBe(0);
+    execFileSync('git', ['tag', 'v1.0.10'], { cwd: repository });
+    expect(runVersionCheck(repository, '--require-previous-release').status).toBe(0);
+    writeVersions(repository, '1.0.10', 21);
+    expect(runVersionCheck(repository, '--require-previous-release').status).toBe(1);
+    writeVersions(repository, '1.0.10', 20);
+    execFileSync('git', ['commit', '--quiet', '--allow-empty', '-m', 'new change'], { cwd: repository });
+    expect(runVersionCheck(repository).status).toBe(0);
+    expect(runVersionCheck(repository, '--require-previous-release').status).toBe(1);
+  });
+
+  it('rebuilds the first published tag from its own metadata', () => {
+    const repository = createRepository('1.0.0', 10);
+    execFileSync('git', ['tag', '-a', 'v1.0.0', '-m', 'first release'], { cwd: repository });
+    expect(runVersionCheck(repository, '--require-previous-release').status).toBe(0);
+  });
+
   it('warns and continues when a normal local checkout has no release tag', () => {
     const repository = createRepository('1.0.0', 10);
 

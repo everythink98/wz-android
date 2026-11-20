@@ -241,6 +241,49 @@ describe('composer submission through the production controller and sheet', () =
       await waitFor(() => expect(composerProofState(view)).toEqual({ visible: false, content: '', busy: false }));
     }
   );
+  it.each(['refresh', 'draft'] as const)(
+    'refreshes a confirmed linux.do floor reply while checking the draft and stays busy when %s finishes first',
+    async (first) => {
+      const { view, transport } = await open('linuxdo', 'success', true, 'floor');
+      const windowRead = Promise.withResolvers<boolean>();
+      const refresh = jest.spyOn(transport, 'refresh').mockReturnValue(windowRead.promise);
+      await view.rerender(<TopicSubmissionFixture source="linuxdo" entry="floor" transport={transport} />);
+      heldSettlements.add(view);
+      await submit(view);
+      await waitFor(() => expect(transport.requests).toHaveLength(1));
+      expect(new URLSearchParams(transport.requests[0]!.body).get('reply_to_post_number')).toBe('2');
+      expect(refresh).not.toHaveBeenCalled();
+      const newerDraft = COMPOSER_DRAFT + '\n继续写的内容';
+      editWithoutSnapshot(view, newerDraft);
+      await act(async () => transport.release());
+      const requestId = await waitFor(() => {
+        const request = composerHostMessages(view).findLast((message) => message.type === 'REQUEST_SNAPSHOT');
+        expect(request?.payload.submission).toBeDefined();
+        return request!.payload.requestId;
+      });
+      expect(refresh).toHaveBeenCalledTimes(1);
+
+      const finishDraft = () => bridge(view, 'SNAPSHOT', { requestId, snapshot: editorDocuments.get(view)!.snapshot });
+      const finishRefresh = () =>
+        act(async () => {
+          if (first === 'refresh') windowRead.reject(new Error('Window read failed'));
+          else windowRead.resolve(true);
+        });
+      await (first === 'refresh' ? finishRefresh() : finishDraft());
+      expect(view.getByLabelText('发送回复').props.accessibilityState).toMatchObject({ busy: true, disabled: true });
+      expect(view.getByTestId('composer-proof-notice').props.children).toBe('');
+      await fireEvent.press(view.getByLabelText('发送回复'));
+      await (first === 'refresh' ? finishDraft() : finishRefresh());
+      await waitFor(() =>
+        expect(composerProofState(view)).toEqual({ visible: true, content: newerDraft, busy: false })
+      );
+      expect(view.getByTestId('composer-proof-notice').props.children).toBe(
+        first === 'refresh' ? '回复已提交，但暂未能显示；请手动刷新，勿重复发送' : '回复已提交'
+      );
+      expect(transport.requests).toHaveLength(1);
+      expect(refresh).toHaveBeenCalledTimes(1);
+    }
+  );
   it.each(
     (['nodeseek', 'linuxdo'] as const).flatMap((source) =>
       (['reply', 'floor', 'edit'] as const).map((entry) => ({ source, entry }))
@@ -469,7 +512,7 @@ describe('composer submission through the production controller and sheet', () =
     }
     await waitFor(() => expect(transport.requests).toHaveLength(1));
     if (source !== 'yaohuo') expect(view.getByLabelText('发送回复').props.accessibilityState.disabled).toBe(true);
-    await fireEvent.press(view.getByLabelText(source === 'yaohuo' ? '发送中…' : '发送回复'));
+    await fireEvent.press(view.getByLabelText(source === 'yaohuo' ? '发送中' : '发送回复'));
     expect(transport.requests).toHaveLength(1);
     await act(async () => transport.release());
     await waitFor(() => expect(sheetOpen(view)).toBe(false));
@@ -683,8 +726,8 @@ describe('composer submission through the production controller and sheet', () =
     expect(composerProofState(view).visible).toBe(true);
     expect(composerProofState(view).content).toBe(COMPOSER_DRAFT);
   });
-  it('rechecks the account after the document settlement awaits its response', async () => {
-    const { view, transport } = await open('nodeseek', 'success', true);
+  it.each(['nodeseek', 'linuxdo'] as const)('rechecks %s identity before clearing the draft', async (source) => {
+    const { view, transport } = await open(source, 'success', true);
     await submit(view);
     heldSettlements.add(view);
     await act(async () => transport.release());
@@ -694,13 +737,14 @@ describe('composer submission through the production controller and sheet', () =
       ).toBe(true)
     );
     const request = composerHostMessages(view).findLast((message) => message.type === 'REQUEST_SNAPSHOT');
-    await view.rerender(<TopicSubmissionFixture transport={transport} epoch={1} />);
+    await view.rerender(<TopicSubmissionFixture source={source} transport={transport} epoch={1} />);
     await bridge(view, 'SNAPSHOT', {
       requestId: request!.payload.requestId,
       snapshot: editorDocuments.get(view)!.snapshot
     });
     await waitFor(() => expect(composerProofState(view).busy).toBe(false));
     expect(composerProofState(view)).toEqual({ visible: true, content: COMPOSER_DRAFT, busy: false });
+    expect(view.getByTestId('composer-proof-notice').props.children).toBe('');
     expect(transport.requests).toHaveLength(1);
   });
   it.each(

@@ -1,3 +1,4 @@
+import { readInstalledDeviceApk } from './device-apk-install.mjs';
 import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
@@ -7,13 +8,20 @@ import os from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { isDeepStrictEqual } from 'node:util';
 
-export const PROOF_DATABASE_FILES = [
+const databaseFiles = (file) => [file, `${file}-wal`, `${file}-shm`];
+const version2Files = [
   'files/SQLite/reader-data.db',
   'databases/AsyncStorage',
   'files/SQLite/composer-journal.db'
-].flatMap((file) => [file, `${file}-wal`, `${file}-shm`]);
+].flatMap(databaseFiles);
+export const PROOF_DATABASE_FILES = [...version2Files, ...databaseFiles('files/SQLite/topic-drafts.db')];
 
 const hash = (bytes) => (bytes === null ? null : createHash('sha256').update(bytes).digest('hex'));
+const storageAvds = new Map([
+  [29, 'WZ_ReaderRecovery_API29_20261119'],
+  [30, 'WZ_ReaderStorage_API30_20260910'],
+  [35, 'WZ_ReaderStorage_API35_20260910']
+]);
 const manifestPath = (directory) => path.join(directory, 'checkpoint.json');
 const readManifest = (directory) => JSON.parse(readFileSync(manifestPath(directory), 'utf8'));
 function saveManifest(directory, manifest) {
@@ -21,19 +29,19 @@ function saveManifest(directory, manifest) {
   writeFileSync(`${target}.tmp`, JSON.stringify(manifest, null, 2));
   renameSync(`${target}.tmp`, target);
 }
-function readFiles(device) {
-  return Object.fromEntries(PROOF_DATABASE_FILES.map((file) => [file, device.read(file)]));
+function readFiles(device, paths = PROOF_DATABASE_FILES) {
+  return Object.fromEntries(paths.map((file) => [file, device.read(file)]));
 }
 function hashes(files) {
-  return Object.fromEntries(PROOF_DATABASE_FILES.map((file) => [file, hash(files[file])]));
+  return Object.fromEntries(Object.entries(files).map(([file, bytes]) => [file, hash(bytes)]));
 }
 const validMode = (mode) => typeof mode === 'string' && /^(?:0|[1-7][0-7]{0,3})$/u.test(mode);
-function validFileModes(fileHashes, modes) {
-  const keys = [...PROOF_DATABASE_FILES].sort();
+function validFileModes(paths, fileHashes, modes) {
+  const keys = [...paths].sort();
   return (
     isDeepStrictEqual(Object.keys(fileHashes || {}).sort(), keys) &&
     isDeepStrictEqual(Object.keys(modes || {}).sort(), keys) &&
-    PROOF_DATABASE_FILES.every((file) =>
+    paths.every((file) =>
       fileHashes[file] === null
         ? modes[file] === null
         : /^[a-f0-9]{64}$/u.test(fileHashes[file]) && validMode(modes[file])
@@ -41,13 +49,14 @@ function validFileModes(fileHashes, modes) {
   );
 }
 function readModes(device, files) {
-  const modes = Object.fromEntries(PROOF_DATABASE_FILES.map((file) => [file, device.mode(file)]));
-  if (!validFileModes(hashes(files), modes)) throw new Error('Checkpoint file modes are missing or invalid');
+  const paths = Object.keys(files);
+  const modes = Object.fromEntries(paths.map((file) => [file, device.mode(file)]));
+  if (!validFileModes(paths, hashes(files), modes)) throw new Error('Checkpoint file modes are missing or invalid');
   return modes;
 }
 function assertIdentity(actual, expected) {
   if (
-    !/^WZ_ReaderStorage_API(?:30|35)_20260910$/u.test(actual.avd) ||
+    ![...storageAvds.values()].includes(actual.avd) ||
     actual.package !== 'com.wz.reader' ||
     !actual.uid ||
     !actual.firstInstallTime ||
@@ -116,11 +125,21 @@ async function withCheckpointLease(directory, operation) {
 function logicalSnapshot(directory, files) {
   const scratch = mkdtempSync(path.join(directory, 'readback-'));
   try {
-    for (const file of PROOF_DATABASE_FILES) {
-      if (files[file] === null) continue;
+    for (const [file, bytes] of Object.entries(files)) {
+      if (bytes === null) continue;
       const target = path.join(scratch, file);
       mkdirSync(path.dirname(target), { recursive: true });
-      writeFileSync(target, files[file]);
+      writeFileSync(target, bytes);
+    }
+    const draftFile = 'files/SQLite/topic-drafts.db';
+    if (files[draftFile]) {
+      const drafts = new DatabaseSync(path.join(scratch, draftFile), { readOnly: true });
+      try {
+        if (drafts.prepare('PRAGMA quick_check').get()?.quick_check !== 'ok')
+          throw new Error('Checkpoint topic drafts failed the SQLite integrity check');
+      } finally {
+        drafts.close();
+      }
     }
     const reader = new DatabaseSync(path.join(scratch, PROOF_DATABASE_FILES[0]), { readOnly: true });
     let tables;
@@ -165,22 +184,23 @@ function logicalSnapshot(directory, files) {
 }
 
 function restore(directory, device, manifest) {
+  const paths = manifest.version === 2 ? version2Files : PROOF_DATABASE_FILES;
   if (
-    manifest.version !== 2 ||
+    ![2, 3].includes(manifest.version) ||
     manifest.phase !== 'restoring' ||
-    !validFileModes(manifest.baseline, manifest.baselineModes) ||
-    !validFileModes(manifest.restoreFrom, manifest.restoreFromModes)
+    !validFileModes(paths, manifest.baseline, manifest.baselineModes) ||
+    !validFileModes(paths, manifest.restoreFrom, manifest.restoreFromModes)
   ) {
     throw new Error('Invalid or non-resumable checkpoint; recorded file modes are required');
   }
   assertIdentity(device.identity(), manifest.identity);
   device.stop();
   assertIdentity(device.identity(), manifest.identity);
-  const currentFiles = readFiles(device);
+  const currentFiles = readFiles(device, paths);
   const current = hashes(currentFiles);
   const currentModes = readModes(device, currentFiles);
   const originals = {};
-  for (const file of PROOF_DATABASE_FILES) {
+  for (const file of paths) {
     if (
       !(current[file] === manifest.baseline[file] && currentModes[file] === manifest.baselineModes[file]) &&
       !(current[file] === manifest.restoreFrom[file] && currentModes[file] === manifest.restoreFromModes[file])
@@ -191,11 +211,11 @@ function restore(directory, device, manifest) {
     if (hash(originals[file]) !== manifest.baseline[file])
       throw new Error(`Checkpoint backup checksum failed: ${file}`);
   }
-  for (const file of PROOF_DATABASE_FILES) {
+  for (const file of paths) {
     if (originals[file] === null) device.remove(file);
     else device.write(file, originals[file], manifest.baselineModes[file]);
   }
-  const restored = readFiles(device);
+  const restored = readFiles(device, paths);
   if (
     !isDeepStrictEqual(hashes(restored), manifest.baseline) ||
     !isDeepStrictEqual(readModes(device, restored), manifest.baselineModes) ||
@@ -204,7 +224,7 @@ function restore(directory, device, manifest) {
     throw new Error('Checkpoint readback differs from baseline');
   manifest.phase = 'restored';
   saveManifest(directory, manifest);
-  return { phase: 'restored', logicalHash: manifest.logicalHash, token: manifest.token };
+  return { phase: 'restored', logicalHash: manifest.logicalHash, token: manifest.token, fileCount: paths.length };
 }
 
 export async function resumeProofCheckpoint({ directory, device }) {
@@ -226,18 +246,14 @@ export async function withProofCheckpoint({ directory, device, prepare = () => {
     const previousIdentity = device.identity();
     assertIdentity(previousIdentity);
     device.stop();
-    if (prepare) await prepare();
-    device.stop();
-    const identity = device.identity();
-    assertIdentity(identity, { ...previousIdentity, apkSha256: identity.apkSha256 });
-    assertIdentity(device.identity(), identity);
+    assertIdentity(device.identity(), previousIdentity);
     const originals = readFiles(device);
     const baselineModes = readModes(device, originals);
     const logicalHash = logicalSnapshot(directory, originals);
     const manifest = {
-      version: 2,
+      version: 3,
       token: randomUUID(),
-      identity,
+      identity: previousIdentity,
       phase: 'running',
       baseline: hashes(originals),
       baselineModes,
@@ -252,11 +268,21 @@ export async function withProofCheckpoint({ directory, device, prepare = () => {
         throw new Error('Checkpoint backup verification failed');
     }
     saveManifest(directory, manifest);
-    const business = await captureProofOutcome(run);
-    const restoration = await captureProofOutcome(() => {
-      assertIdentity(device.identity(), identity);
+    const business = await captureProofOutcome(async () => {
+      // An overlay install can start the app. Its writes belong to the proof, too.
+      await prepare();
+      const installed = device.identity();
+      assertIdentity(installed, { ...previousIdentity, apkSha256: installed.apkSha256 });
+      manifest.identity = installed;
+      saveManifest(directory, manifest);
       device.stop();
-      assertIdentity(device.identity(), identity);
+      assertIdentity(device.identity(), installed);
+      return run();
+    });
+    const restoration = await captureProofOutcome(() => {
+      assertIdentity(device.identity(), manifest.identity);
+      device.stop();
+      assertIdentity(device.identity(), manifest.identity);
       const restoreFromFiles = readFiles(device);
       manifest.restoreFrom = hashes(restoreFromFiles);
       manifest.restoreFromModes = readModes(device, restoreFromFiles);
@@ -291,11 +317,7 @@ export function proofDeviceForSerial(serial, api = 35) {
   const pkg = 'com.wz.reader';
   const environment = () => {
     const avd = adb('emu', 'avd', 'name').split(/\r?\n/u)[0].trim();
-    if (
-      ![30, 35].includes(api) ||
-      avd !== `WZ_ReaderStorage_API${api}_20260910` ||
-      adb('shell', 'getprop', 'ro.build.version.sdk').trim() !== String(api)
-    )
+    if (avd !== storageAvds.get(api) || adb('shell', 'getprop', 'ro.build.version.sdk').trim() !== String(api))
       throw new Error(`Refusing non-isolated AVD or mismatched SDK: ${avd}`);
     return avd;
   };
@@ -325,14 +347,8 @@ export function proofDeviceForSerial(serial, api = 35) {
     package: pkg,
     identity: () => {
       environment();
-      const installed = adb('shell', 'pm', 'path', pkg).trim().split(/\r?\n/u)[0]?.replace('package:', '');
-      if (!/^\/data\/app\/[^\s]+\/base\.apk$/u.test(installed)) throw new Error('Missing installed APK');
-      const dump = adb('shell', 'dumpsys', 'package', pkg);
-      const uid = adb('shell', 'run-as', pkg, 'id', '-u').trim();
-      const packageUid = /^\s*(?:appId|userId)=(\d+)\b/mu.exec(dump)?.[1];
-      const firstInstallTime = /firstInstallTime=([^\r\n]+)/u.exec(dump)?.[1]?.trim();
-      const user = /^\s*User 0:([^\r\n]*)/mu.exec(dump)?.[1] || '';
-      const apkSha256 = adb('shell', 'sha256sum', installed).trim().split(/\s/u)[0];
+      const { uid, firstInstallTime, apkSha256 } = readInstalledDeviceApk(adb, pkg);
+      const runAsUid = adb('shell', 'run-as', pkg, 'id', '-u').trim();
       const activity = adb(
         'shell',
         'cmd',
@@ -345,15 +361,7 @@ export function proofDeviceForSerial(serial, api = 35) {
         'android.intent.category.LAUNCHER',
         pkg
       );
-      if (
-        !/^\d+$/u.test(uid) ||
-        uid !== packageUid ||
-        !firstInstallTime ||
-        !/\binstalled=true\b/u.test(user) ||
-        /\b(?:hidden|suspended)=true\b/u.test(user) ||
-        !/^[a-f0-9]{64}$/u.test(apkSha256) ||
-        !/^com\.wz\.reader\/(?:\.|com\.wz\.reader\.)MainActivity\s*$/mu.test(activity)
-      )
+      if (runAsUid !== uid || !/^com\.wz\.reader\/(?:\.|com\.wz\.reader\.)MainActivity\s*$/mu.test(activity))
         throw new Error('Incomplete installed proof identity or missing MainActivity; device changes frozen');
       return {
         avd,

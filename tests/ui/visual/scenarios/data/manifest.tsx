@@ -24,7 +24,7 @@ function BackupScenario() {
     },
     backup: {
       recovery: false,
-      busy: false,
+      operation: 'idle',
       exportFile: noop,
       importFile: noop
     },

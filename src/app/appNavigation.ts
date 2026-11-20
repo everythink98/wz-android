@@ -30,21 +30,6 @@ export function currentAppRoute() {
   };
 }
 
-export function shouldUpdateAppRootScreen(previousScreen: Screen, nextScreen: Screen) {
-  return previousScreen !== nextScreen;
-}
-
-export function navigateAppScreen(screen: Screen) {
-  if (!navigationRef.isReady()) return false;
-  if (currentAppRoute().screen === screen) return true;
-  if (screen === 'topic' || screen === 'user') return false;
-  if (screen === 'library') {
-    return openLibraryRoute();
-  }
-  navigateMainTab(screen);
-  return true;
-}
-
 export function openLibraryRoute(initialTab: LibraryTab = 'favorites') {
   if (!navigationRef.isReady()) return false;
   navigationRef.navigate('Library', { initialTab });

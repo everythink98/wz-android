@@ -22,6 +22,7 @@ export type TopicComposerRouteRuntimeValue = {
   ensureNodeImageApiKey: () => Promise<string | null>;
   getUserAgent: (source: TopicCreationSource) => string;
   getEmojiUrls: ReadGateway['getEmojiUrls'];
+  getReadPlan: ReadGateway['getReadPlan'];
   getLinuxDoTopicCreationContext: ReadGateway['getLinuxDoTopicCreationContext'];
   getTopicEditContext: ReadGateway['getTopicEditContext'];
   getTopic: ReadGateway['getTopic'];

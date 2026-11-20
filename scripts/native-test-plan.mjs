@@ -14,7 +14,8 @@ const appClasses = [
   'ComposerKeyboardHostTest',
   'ComposerWebViewInsetsTest',
   'ComposerWebViewPrewarmTest',
-  'DocumentPickerThreadingTest'
+  'DocumentPickerThreadingTest',
+  'SharingModuleTest'
 ].map((name) => `com.wz.reader.${name}`);
 const reactClasses = [
   'com.facebook.react.views.scroll.MaintainVisibleScrollPositionHelperTest',

@@ -1,0 +1,75 @@
+diff --git a/node_modules/expo-sharing/android/src/main/java/expo/modules/sharing/SharingModule.kt b/node_modules/expo-sharing/android/src/main/java/expo/modules/sharing/SharingModule.kt
+--- a/node_modules/expo-sharing/android/src/main/java/expo/modules/sharing/SharingModule.kt
++++ b/node_modules/expo-sharing/android/src/main/java/expo/modules/sharing/SharingModule.kt
+@@ -13,17 +13,18 @@
+ import expo.modules.kotlin.services.FilePermissionService
+ import java.io.File
+ import java.net.URLConnection
++import java.util.concurrent.atomic.AtomicReference
+ 
+ class SharingModule : Module() {
+   private val context: Context
+     get() = appContext.reactContext ?: throw Exceptions.ReactContextLost()
+-  private var pendingPromise: Promise? = null
++  private val pendingPromise = AtomicReference<Promise?>(null)
+ 
+   override fun definition() = ModuleDefinition {
+     Name("ExpoSharing")
+ 
+     AsyncFunction("shareAsync") { url: String?, params: SharingOptions, promise: Promise ->
+-      if (pendingPromise != null) {
++      if (pendingPromise.get() != null) {
+         throw SharingInProgressException()
+       }
+       try {
+@@ -48,11 +49,12 @@
+           val packageName = it.activityInfo.packageName
+           context.grantUriPermission(packageName, contentUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+         }
+-        pendingPromise = promise
++        pendingPromise.set(promise)
+         appContext.throwingActivity.startActivityForResult(intent, REQUEST_CODE)
+-      } catch (e: InvalidArgumentException) {
+-        throw SharingInvalidArgsException(e.message, e)
+       } catch (e: Exception) {
++        // An Activity launch failure has no result callback to release this request.
++        pendingPromise.compareAndSet(promise, null)
++        if (e is InvalidArgumentException) throw SharingInvalidArgsException(e.message, e)
+         throw SharingFailedException("Failed to share the file: ${e.message}", e)
+       }
+     }
+@@ -78,10 +80,7 @@
+     }
+ 
+     OnActivityResult { _, (requestCode) ->
+-      if (requestCode == REQUEST_CODE && pendingPromise != null) {
+-        pendingPromise?.resolve(null)
+-        pendingPromise = null
+-      }
++      if (requestCode == REQUEST_CODE) pendingPromise.getAndSet(null)?.resolve(null)
+     }
+   }
+ 
+diff --git a/node_modules/expo-sharing/android/src/main/java/expo/modules/sharing/SharingExceptions.kt b/node_modules/expo-sharing/android/src/main/java/expo/modules/sharing/SharingExceptions.kt
+--- a/node_modules/expo-sharing/android/src/main/java/expo/modules/sharing/SharingExceptions.kt
++++ b/node_modules/expo-sharing/android/src/main/java/expo/modules/sharing/SharingExceptions.kt
+@@ -2,14 +2,16 @@
+ 
+ import expo.modules.kotlin.exception.CodedException
+ 
++private const val SHARE_NOT_STARTED = "ERR_SHARING_NOT_STARTED"
++
+ internal class SharingInProgressException :
+-  CodedException("Another share request is being processed now.")
++  CodedException(SHARE_NOT_STARTED, "Another share request is being processed now.", null)
+ 
+ internal class SharingFailedException(message: String, e: Exception) :
+-  CodedException(message, e.cause)
++  CodedException(SHARE_NOT_STARTED, message, e.cause)
+ 
+ internal class SharingInvalidArgsException(message: String?, e: Exception) :
+-  CodedException(message, e.cause)
++  CodedException(SHARE_NOT_STARTED, message, e.cause)
+ 
+ internal class FailedToResolveSharedDataException(message: String?, cause: Throwable? = null) :
+   CodedException(message ?: "Unexpected error while resolving shared data", cause)

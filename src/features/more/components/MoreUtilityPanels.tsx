@@ -1,22 +1,23 @@
-import { useCallback, useState } from 'react';
+import { useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
-import { Bug, DatabaseBackup, History, Server, Settings, Star, Users } from 'lucide-react-native';
+import { Bug, DatabaseBackup, Download, History, RotateCcw, Server, Settings, Star, Users } from 'lucide-react-native';
 import type { LibraryTab } from '@/domain/forum/feed';
 import type { ReaderSettings } from '@/domain/reader/readerData';
+import type { ReaderSettingsUpdate } from '@/domain/reader/readerRecordState';
 import type { NetworkProxyProfile, NetworkProxyState, NetworkProxyStatus } from '@/platform/network/networkProxy';
 import { AppButton } from '@/ui/controls/ButtonControls';
 import { ExpandablePanel, MenuButton } from '@/ui/controls/ExpandableControls';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { createMoreScreenStyles } from '../styles';
+import type { DocumentOperation } from '../useDocumentOperation';
 import { AppearancePanel } from './AppearancePanel';
 import { NetworkProxyModal } from './NetworkProxyModal';
 import { ContentSourcesPanel } from './ContentSourcesPanel';
 
 function appearanceSummary(settings: ReaderSettings) {
   const themeLabel = settings.theme === 'dark' ? '深色' : '浅色';
-  const densityLabel =
-    settings.listDensity === 'compact' ? '紧凑密度' : settings.listDensity === 'loose' ? '宽松密度' : '标准密度';
-  return `${themeLabel} · 字号 ${Math.round(settings.fontScale * 100)}% · ${densityLabel}`;
+  const densityLabel = settings.listDensity === 'compact' ? '紧凑' : settings.listDensity === 'loose' ? '宽松' : '标准';
+  return `${themeLabel} · ${Math.round(settings.fontScale * 100)}% · ${densityLabel}`;
 }
 
 export type MoreUtilityCapabilities = {
@@ -25,7 +26,7 @@ export type MoreUtilityCapabilities = {
   };
   backup: {
     recovery: boolean;
-    busy: boolean;
+    operation: DocumentOperation;
     exportFile: () => void;
     importFile: () => void;
   };
@@ -52,7 +53,7 @@ export type MoreUtilityCapabilities = {
     value: ReaderSettings;
     visible: boolean;
     changeVisible: (value: boolean) => void;
-    update: (patch: Partial<ReaderSettings>) => void;
+    update: (patch: ReaderSettingsUpdate) => void;
   };
 };
 
@@ -67,12 +68,9 @@ export function MoreUtilityPanels({
 }) {
   const { styles, theme } = useReaderThemeStyles(createMoreScreenStyles);
   const [backupExpanded, setBackupExpanded] = useState(false);
-  const [diagnosticExpanded, setDiagnosticExpanded] = useState(false);
+  const { operation } = runtime.backup;
+  const backupBusy = operation !== 'idle';
   const updateSettings = runtime.settings.update;
-  const changeContentSources = useCallback(
-    (contentSources: ReaderSettings['contentSources']) => updateSettings({ contentSources }),
-    [updateSettings]
-  );
 
   return (
     <>
@@ -100,15 +98,15 @@ export function MoreUtilityPanels({
         ))}
       </View>
       <View style={styles.settingsSection}>
-        <Text style={styles.settingsSectionLabel}>设置</Text>
         <ContentSourcesPanel
           expanded={contentSourcesExpanded}
           preferences={runtime.settings.value.contentSources}
-          onChange={changeContentSources}
+          onChange={updateSettings}
           onExpandedChange={onContentSourcesExpandedChange}
         />
         <ExpandablePanel
           quiet
+          testID="more-appearance"
           title="外观"
           meta={appearanceSummary(runtime.settings.value)}
           icon={Settings}
@@ -126,7 +124,23 @@ export function MoreUtilityPanels({
       </View>
       <View style={styles.settingsSection}>
         <View style={styles.groupList}>
-          <MenuButton icon={Server} label="服务器代理" value={runtime.proxy.summary} onPress={runtime.proxy.open} />
+          <MenuButton
+            testID="more-proxy"
+            icon={Server}
+            label="服务器代理"
+            value={runtime.proxy.summary}
+            onPress={runtime.proxy.open}
+          />
+          <View style={styles.utilityDivider} />
+          <MenuButton
+            testID="more-diagnostics"
+            accessibilityLabel={runtime.diagnostics.busy ? '问题诊断，正在生成' : '问题诊断'}
+            icon={Bug}
+            label="问题诊断"
+            value={runtime.diagnostics.busy ? '正在生成' : ''}
+            busy={runtime.diagnostics.busy}
+            onPress={runtime.diagnostics.exportLog}
+          />
         </View>
         <NetworkProxyModal
           activeProfile={runtime.proxy.activeProfile}
@@ -143,25 +157,6 @@ export function MoreUtilityPanels({
           onTestProfile={runtime.proxy.testProfile}
           onUpsertProfile={runtime.proxy.upsertProfile}
         />
-        <ExpandablePanel
-          quiet
-          title="问题诊断"
-          meta={runtime.diagnostics.busy ? '正在生成' : undefined}
-          icon={Bug}
-          expanded={diagnosticExpanded}
-          onExpandedChange={setDiagnosticExpanded}
-        >
-          <View style={styles.stack}>
-            <Text style={styles.meta}>
-              日志只保存在本机并经过脱敏。显示问题请同时附截图；特定内容解析异常请附原帖链接。
-            </Text>
-            <AppButton
-              label={runtime.diagnostics.busy ? '正在生成' : '生成并分享诊断日志'}
-              disabled={runtime.diagnostics.busy}
-              onPress={runtime.diagnostics.exportLog}
-            />
-          </View>
-        </ExpandablePanel>
         {runtime.backup.recovery ? (
           <Text accessibilityRole="alert" style={styles.meta}>
             本机资料读取失败，来源访问已暂停。请导入备份恢复；原设置、凭据和通知意图会保留。
@@ -169,25 +164,35 @@ export function MoreUtilityPanels({
         ) : null}
         <ExpandablePanel
           quiet
+          testID="more-backup"
           title="备份 / 恢复"
-          meta={runtime.backup.busy ? '处理中' : undefined}
+          meta={!backupExpanded && backupBusy ? (operation === 'import' ? '恢复中' : '导出中') : undefined}
           icon={DatabaseBackup}
           expanded={backupExpanded}
           onExpandedChange={setBackupExpanded}
         >
           <View style={styles.stack}>
-            <View style={styles.actions}>
-              <AppButton
-                label={runtime.backup.busy ? '处理中' : '导出备份文件'}
-                disabled={runtime.backup.busy || runtime.backup.recovery}
-                onPress={runtime.backup.exportFile}
-              />
-              <AppButton
-                label="选择备份文件恢复"
-                variant="ghost"
-                disabled={runtime.backup.busy}
-                onPress={runtime.backup.importFile}
-              />
+            <View style={styles.backupActions}>
+              <View style={styles.backupActionSlot}>
+                <AppButton
+                  testID="more-backup-export"
+                  icon={Download}
+                  label={operation === 'export' ? '导出中' : '导出备份文件'}
+                  loading={operation === 'export'}
+                  disabled={backupBusy || runtime.backup.recovery}
+                  onPress={runtime.backup.exportFile}
+                />
+              </View>
+              <View style={styles.backupActionSlot}>
+                <AppButton
+                  testID="more-backup-import"
+                  icon={RotateCcw}
+                  label={operation === 'import' ? '恢复中' : '选择备份文件恢复'}
+                  loading={operation === 'import'}
+                  disabled={backupBusy}
+                  onPress={runtime.backup.importFile}
+                />
+              </View>
             </View>
           </View>
         </ExpandablePanel>

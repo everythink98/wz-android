@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import type { ReplyOrder, ReplyWindowPosition, SourceErrorInfo } from '@/domain/forum/models';
+import type { ReplyWindowPosition, SourceErrorInfo } from '@/domain/forum/models';
 import type { ReplyRefreshCommand } from './model/types';
 import type { ReplyWindowEdge } from './model/replyPagination';
 
@@ -17,7 +17,7 @@ function createWindowLifecycle(activeScope: () => string) {
   let currentRun: ReplyWindowRun | null = null;
   let location: { run: ReplyWindowRun; queryKey: readonly unknown[] } | null = null;
   let route: RouteTarget = { phase: 'empty' };
-  const ownedCaches = new Map<ReplyOrder, readonly unknown[]>();
+  const ownedCaches = new Map<string, readonly unknown[]>();
   const beginRead = (scope: string) => {
     const run: ReplyWindowRun = { isCurrent: () => currentRun === run && activeScope() === scope };
     currentRun = run;
@@ -39,16 +39,10 @@ function createWindowLifecycle(activeScope: () => string) {
       if (owned?.run === currentRun) currentRun = null;
       return owned?.queryKey;
     },
-    recordCacheWrite(order: ReplyOrder, queryKey: readonly unknown[]) {
-      ownedCaches.set(order, queryKey);
+    trackRouteQueries(queryKey: readonly unknown[]) {
+      ownedCaches.set(JSON.stringify(queryKey), queryKey);
     },
-    forgetCache(order: ReplyOrder) {
-      ownedCaches.delete(order);
-    },
-    forgetAllCaches() {
-      ownedCaches.clear();
-    },
-    releaseCaches(remove: (key: readonly unknown[]) => void) {
+    releaseRouteQueries(remove: (key: readonly unknown[]) => void) {
       ownedCaches.forEach(remove);
       ownedCaches.clear();
     },
@@ -74,33 +68,33 @@ function createWindowLifecycle(activeScope: () => string) {
   };
 }
 
-export function useTopicReplyWindow(queryIdentity: string, activeScope: () => string) {
+export function useTopicReplyWindow(orderScope: string, activeScope: () => string) {
   const [lifecycle] = useState(() => createWindowLifecycle(activeScope));
   const [failuresByKey, setFailures] = useState<Record<string, ReplyWindowFailures>>({});
   const recordFailure = useCallback(
     (slot: ReplyWindowErrorSlot, failure: ReplyFailure | null) => {
       setFailures((current) => ({
         ...current,
-        [queryIdentity]: { ...(current[queryIdentity] || EMPTY_FAILURES), [slot]: failure }
+        [orderScope]: { ...(current[orderScope] || EMPTY_FAILURES), [slot]: failure }
       }));
     },
-    [queryIdentity]
+    [orderScope]
   );
   const clearErrors = useCallback(
     (edgesOnly = false) => {
       setFailures((current) => ({
         ...current,
-        [queryIdentity]: edgesOnly
-          ? { ...(current[queryIdentity] || EMPTY_FAILURES), start: null, end: null }
+        [orderScope]: edgesOnly
+          ? { ...(current[orderScope] || EMPTY_FAILURES), start: null, end: null }
           : EMPTY_FAILURES
       }));
     },
-    [queryIdentity]
+    [orderScope]
   );
   const clearAllErrors = useCallback(() => setFailures({}), []);
   return {
     lifecycle,
-    failures: failuresByKey[queryIdentity] || EMPTY_FAILURES,
+    failures: failuresByKey[orderScope] || EMPTY_FAILURES,
     recordFailure,
     clearErrors,
     clearAllErrors

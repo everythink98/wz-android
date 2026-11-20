@@ -59,6 +59,7 @@ function fixture() {
     candidateVersion: 158,
     candidateBadging: true,
     uidAfterInstall: '10167',
+    hashAfterInstall: digest,
     scratch: '',
     token: '',
     installs: 0,
@@ -90,6 +91,7 @@ function fixture() {
     if (operation?.startsWith('install -r ')) {
       state.installs++;
       state.uid = state.packageUid = state.uidAfterInstall;
+      state.hash = state.hashAfterInstall;
       return 'Success';
     }
     if (operation === 'shell am force-stop com.wz.reader') return '';
@@ -146,6 +148,14 @@ describe('reader storage proof installation boundary', () => {
     const { state } = fixture();
     state.uidAfterInstall = '10168';
     await expect(import('../../scripts/run-reader-storage-device-proof.mjs')).rejects.toThrow('identity');
+    expect(state.installs).toBe(1);
+    expect(state.launches).toBe(0);
+  });
+
+  it('freezes fixture launches if PackageManager reports success with different APK bytes', async () => {
+    const { state } = fixture();
+    state.hashAfterInstall = 'b'.repeat(64);
+    await expect(import('../../scripts/run-reader-storage-device-proof.mjs')).rejects.toThrow('SHA-256');
     expect(state.installs).toBe(1);
     expect(state.launches).toBe(0);
   });

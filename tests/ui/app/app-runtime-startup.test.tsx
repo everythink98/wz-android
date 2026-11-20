@@ -56,6 +56,7 @@ const mockImportReader = jest.fn<() => Promise<import('@/domain/reader/readerRec
 const mockCommitReader = jest.fn<(command: ReaderCommand) => Promise<ReaderChange>>();
 jest.mock('@/platform/storage/readerDataStore', () => ({
   loadReaderState: () => mockLoadReader(),
+  subscribeReaderStorageFreeze: () => jest.fn(),
   importReaderDataBackup: () => mockImportReader(),
   commitReaderCommand: (command: ReaderCommand) => mockCommitReader(command)
 }));
@@ -74,7 +75,12 @@ let mockScreen = 'feed';
 let mockDiscourseReading: ReadGateway['reading'];
 const mockReadGateway = {
   getEmojiUrls: jest.fn(),
-  getReadPlan: () => ({ state: 'ready', cacheScope: 'public:fixture' }),
+  getReadPlan: (...[source, operation]: Parameters<ReadGateway['getReadPlan']>) => ({
+    source,
+    operation,
+    state: 'ready',
+    cacheScope: 'public:fixture'
+  }),
   getFeed: jest.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
   getCategories: jest.fn(async () => ({ items: [], errors: {} }))
 };
@@ -89,7 +95,6 @@ jest.mock('@/app/useAppLifecycleRuntime', () => ({
     const ReactModule = require('react') as typeof React;
     const value = {
       appActive: true,
-      changeScreen: jest.fn(),
       getCurrentScreen: jest.fn(() => 'feed'),
       height: 800,
       initialForegroundReady: mockInitialForegroundReady,
@@ -237,7 +242,6 @@ jest.mock('@/platform/update/useAppUpdateRuntime', () => ({
     mockUseAppUpdateRuntime(options);
     return {
       appUpdateBusy: false,
-      appUpdateDownloading: false,
       appUpdateInfo: null,
       appUpdateDownloadProgress: mockUpdateProgress
     };
@@ -542,12 +546,15 @@ describe('app runtime startup', () => {
         const routes = hook.result.current.routes!;
         return [
           routes.feedRouteRuntime.reader.data,
-          routes.searchRouteRuntime.readerData,
+          routes.searchRouteRuntime.topicStateIndex,
           routes.topicRouteRuntime.reader.data,
           routes.userRouteRuntime.reader.data
         ];
       };
       const before = views();
+      const libraryState = hook.result.current.routes!.libraryRouteRuntime.reader.data;
+      const historyCacheKey = ['reader-library', 'history', 'nodeseek', 'all', 'all'];
+      appQueryClient.setQueryData(historyCacheKey, { pages: [], pageParams: [] });
       const topic = {
         source: 'nodeseek' as const,
         id: '1',
@@ -567,7 +574,8 @@ describe('app runtime startup', () => {
           changed: ['history']
         });
       });
-      expect(hook.result.current.routes!.libraryRouteRuntime.reader.data.revisions.history).toBe(1);
+      expect(hook.result.current.routes!.libraryRouteRuntime.reader.data).toBe(libraryState);
+      expect(appQueryClient.getQueryState(historyCacheKey)?.isInvalidated).toBe(true);
       expect(hook.result.current.routes!.topicRouteRuntime.reader.dataRef.current).toBe(
         hook.result.current.routes!.libraryRouteRuntime.reader.data
       );
@@ -919,7 +927,7 @@ describe('app runtime startup', () => {
     const readerView = routes.feedRouteRuntime.reader.data;
 
     expect(feedIndex).toBeDefined();
-    expect(routes.searchRouteRuntime.readerData).toBe(readerView);
+    expect(routes.searchRouteRuntime).not.toHaveProperty('readerData');
     expect(routes.topicRouteRuntime.reader.data).toBe(readerView);
     expect(routes.userRouteRuntime.reader.data).toBe(readerView);
     expect((routes.searchRouteRuntime as unknown as { topicStateIndex?: unknown }).topicStateIndex).toBe(feedIndex);
@@ -929,6 +937,7 @@ describe('app runtime startup', () => {
     mockReaderData = { ...mockReaderData!, followedUsers: { ...mockReaderData!.followedUsers } };
     await act(async () => hook.rerender({ revision: 1 }));
     expect(hook.result.current.routes!.userRouteRuntime.reader.data.followedUsers).toBe(mockReaderData.followedUsers);
+    expect(hook.result.current.routes!.searchRouteRuntime.topicStateIndex).toBe(feedIndex);
     expect(
       (hook.result.current.routes!.feedRouteRuntime as unknown as { topicStateIndex?: unknown }).topicStateIndex
     ).toBe(feedIndex);

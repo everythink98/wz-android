@@ -1,6 +1,7 @@
 import { HTMLElement, TextNode, type Node } from 'node-html-parser';
 import { absoluteUrl, isRecord, parseHtml } from '@/domain/forum/html';
 import type { DiscourseBoost, Reply } from '@/domain/forum/models';
+import { discourseDisplayName } from '@/sources/discourse/model';
 import { LINUXDO_BASE_URL, linuxDoAvatarUrl, linuxDoUserUrl } from './protocol';
 
 export function linuxDoBoostFromData(value: unknown): DiscourseBoost | null {
@@ -37,7 +38,7 @@ export function linuxDoBoostFromData(value: unknown): DiscourseBoost | null {
       source: 'linuxdo',
       ...(typeof value.user.id === 'number' ? { id: String(value.user.id) } : {}),
       username,
-      displayName: typeof value.user.name === 'string' ? value.user.name : username,
+      displayName: discourseDisplayName(value.user) || username,
       avatar: linuxDoAvatarUrl(value.user.avatar_template),
       url: linuxDoUserUrl(username)
     },

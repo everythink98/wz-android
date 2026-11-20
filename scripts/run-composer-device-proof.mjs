@@ -13,7 +13,7 @@ import {
   assertComposerExpressionGeometry,
   assertComposerExpressionInsets
 } from './composer-expression-geometry.mjs';
-import { deviceApkSignerSha256, findDeviceApkSigner } from './device-apk-signer.mjs';
+import { installDeviceApk, readInstalledDeviceApk } from './device-apk-install.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 const pkg = 'com.wz.reader';
@@ -21,7 +21,8 @@ const allowedProofAvds = [
   'WZ_ComposerInsets_0916',
   'WZ_TopicCreation_Test_API35',
   'WZ_ComposerExpressions_Test_API35_20261005',
-  'WZ_StateModel_Composer_API35_20261114'
+  'WZ_StateModel_Composer_API35_20261114',
+  'WZ_Review_Composer_API35'
 ];
 export function openComposerFixture(agent, launcher) {
   agent(['open', pkg]);
@@ -599,6 +600,13 @@ export const composerCases = [
     outcome: 'success'
   })),
   { id: 'topic-edit-nodeseek-unknown', source: 'nodeseek', entry: 'topic-edit', outcome: 'unconfirmed' },
+  {
+    id: 'topic-edit-nodeseek-newer-draft',
+    source: 'nodeseek',
+    entry: 'topic-edit',
+    outcome: 'success',
+    stress: 'newer-draft'
+  },
   { id: 'topic-edit-yaohuo-restart', source: 'yaohuo', entry: 'topic-edit', stress: 'restart' },
   ...topicCreationCases,
   ...['nodeseek', 'linuxdo'].flatMap((source) =>
@@ -764,13 +772,23 @@ export function assertTopicEditReceipt(receipt, expected) {
     value.blockedRequests ||
     !edit ||
     edit.blockedRequests ||
-    !edit.bodyExact ||
+    (expected.newerDraft ? !edit.newerDraft : !edit.bodyExact) ||
     !edit.otherDraftRetained ||
     Object.values(value.drafts).some((draft) => !draft.retained) ||
     Object.keys(value.attempts).length
   )
     throw new Error('Editing changed raw text, another draft or used an unmatched request');
-  if (expected.noWrites) {
+  if (expected.newerDraft) {
+    if (
+      edit.status !== 'saved' ||
+      edit.writes !== 1 ||
+      !edit.exists ||
+      edit.title !== expected.title ||
+      value.route !== 'TopicComposer' ||
+      !edit.newerDraftRebased
+    )
+      throw new Error('The older edit receipt lost or dismissed a newer persisted revision');
+  } else if (expected.noWrites) {
     if (edit.writes !== 0 || edit.status || edit.title !== expected.title)
       throw new Error('Editing draft was not retained without writes');
   } else if (
@@ -935,9 +953,7 @@ async function main() {
     execFileSync('adb', ['-s', values.serial, ...args], { encoding: 'utf8', windowsHide: true }).trim();
   const avd = adb('emu', 'avd', 'name').split(/\r?\n/)[0].trim();
   assertComposerProofAvd(avd);
-  const identity = () => adb('shell', 'dumpsys', 'package', pkg).match(/firstInstallTime=([^\r\n]+)/)?.[1];
-  const installedAt = identity();
-  if (!installedAt) throw new Error('Expected an existing isolated proof installation');
+  const before = readInstalledDeviceApk(adb, pkg);
   const ime = adb('shell', 'settings', 'get', 'secure', 'default_input_method');
   if (ime.includes('imehelper')) throw new Error('Select a real keyboard on the isolated device before running');
   const windowAnimationScale = adb('shell', 'settings', 'get', 'global', 'window_animation_scale');
@@ -974,17 +990,13 @@ async function main() {
   const artifact = JSON.parse(readFileSync(`${apk}.json`, 'utf8'));
   if (artifact.sourceHash !== composerSourceHash() || artifact.apkHash !== hash(readFileSync(apk)))
     throw new Error('APK does not match the current composer sources');
-  const signer = findDeviceApkSigner();
-  const installedPath = adb('shell', 'pm', 'path', pkg)
-    .split(/\r?\n/)[0]
-    .replace(/^package:/, '');
-  const installedCopy = path.join(output, 'previous.apk');
-  adb('pull', installedPath, installedCopy);
-  const certificate = deviceApkSignerSha256(signer, apk);
-  if (!certificate || certificate !== deviceApkSignerSha256(signer, installedCopy))
-    throw new Error('APK signer mismatch; installation frozen');
-  adb('install', '-r', apk);
-  if (identity() !== installedAt) throw new Error('Installation identity changed; device changes frozen');
+  const { certificate, firstInstallTime: installedAt } = installDeviceApk({
+    adb,
+    pkg,
+    apk,
+    expected: before,
+    previousApk: path.join(output, 'previous.apk')
+  });
   const report = {
     artifact,
     runnerHash: hash(readFileSync(fileURLToPath(import.meta.url))),
@@ -1305,6 +1317,27 @@ async function main() {
             );
             assertTopicEditReceipt(restored, { token, buildId: artifact.buildId, noWrites: true, title });
             writeFileSync(path.join(directory, 'restored.json'), JSON.stringify(restored));
+          } else if (scenario.stress === 'newer-draft') {
+            agent(['press', 'label="保存修改"']);
+            await receipt(
+              token,
+              (value) =>
+                value.topic?.edit?.status === 'saved' && value.topic.route === 'MainTabs' && value.topic.edit.newerDraft
+            );
+            openComposerFixture(agent, '编辑测试主帖');
+            const resumed = await receipt(
+              token,
+              (value) => value.topic?.route === 'TopicComposer' && value.topic.edit?.newerDraftRebased
+            );
+            assertTopicEditReceipt(resumed, { token, buildId: artifact.buildId, newerDraft: true, title });
+            const deadline = Date.now() + 30000;
+            while (
+              !JSON.stringify(snapshot(directory, 'reopened-newer-body')).includes('另一页在旧回执返回前保存的新正文')
+            ) {
+              if (Date.now() > deadline) throw new Error('The newer body is missing from the reopened native editor');
+              await delay(300);
+            }
+            writeFileSync(path.join(directory, 'reopened-newer-body.json'), JSON.stringify(resumed));
           } else {
             agent(['press', 'label="保存修改"']);
             const status = scenario.outcome === 'success' ? 'saved' : 'unknown';

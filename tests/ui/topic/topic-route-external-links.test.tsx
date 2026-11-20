@@ -1,9 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import type { ComponentProps, ReactNode } from 'react';
-import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { AppState, Linking, Share } from 'react-native';
+import { NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack';
+import { AppState, Linking, Pressable, Share, Text } from 'react-native';
+import RenderHTML from 'react-native-render-html';
 import * as Clipboard from 'expo-clipboard';
 import * as WebBrowser from 'expo-web-browser';
+import { navigationRef } from '@/app/appNavigation';
+import { useAppDeepLinkNavigation } from '@/app/useAppDeepLinkNavigation';
 import type { Topic, TopicDetail } from '@/domain/forum/models';
 import { createEmptyReaderData, topicKey } from '@/domain/reader/readerData';
 import { TopicRoute, TopicRouteRuntimeProvider, type TopicRouteRuntimeValue } from '@/features/topic/TopicRoute';
@@ -15,16 +19,20 @@ import { useTopicSessionController } from '@/features/topic/useTopicSessionContr
 import type { TopicScreen } from '@/features/topic/TopicScreen';
 import { ForumSessionEpochProvider } from '@/platform/media/mediaSessionEpoch';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import { forumQueryKeys } from '@/platform/query/serverState';
+import { ImagePreviewModal } from '@/ui/media/ImagePreviewModal';
+import { saveImageUriToLibrary } from '@/platform/media/imageSave';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { createTheme } from '@/ui/theme/tokens';
 import { act, fireEvent, render, waitFor } from '../render';
 
 const mockTopicScreen = jest.fn<(_props: ComponentProps<typeof TopicScreen>) => ReactNode>(() => null);
 let mockFocused = true;
+let mockReadTopicFocus = () => mockFocused;
 
 jest.mock('@react-navigation/native', () => ({
   ...(jest.requireActual('@react-navigation/native') as Record<string, unknown>),
-  useIsFocused: () => mockFocused,
+  useIsFocused: () => mockReadTopicFocus(),
   usePreventRemove: jest.fn(),
   useScrollToTop: jest.fn()
 }));
@@ -35,7 +43,8 @@ jest.mock('@/features/topic/media/useImagePreviewController', () => ({ useImageP
 jest.mock('@/features/topic/TopicScreen', () => ({
   TopicScreen: (props: ComponentProps<typeof TopicScreen>) => mockTopicScreen(props)
 }));
-jest.mock('@/ui/media/ImagePreviewModal', () => ({ ImagePreviewModal: () => null }));
+jest.mock('@/ui/media/ImagePreviewModal', () => ({ ImagePreviewModal: jest.fn(() => null) }));
+jest.mock('@/platform/media/imageSave', () => ({ saveImageUriToLibrary: jest.fn(async () => undefined) }));
 jest.mock('expo-media-library', () => ({ requestPermissionsAsync: jest.fn(), saveToLibraryAsync: jest.fn() }));
 jest.mock('@shopify/flash-list', () => ({ useRecyclingState: (initialValue: unknown) => [initialValue, jest.fn()] }));
 jest.mock('expo-video', () => ({
@@ -63,6 +72,9 @@ const detail: TopicDetail = {
 
 beforeEach(() => {
   mockFocused = true;
+  mockReadTopicFocus = () => mockFocused;
+  jest.mocked(ImagePreviewModal).mockImplementation(() => null);
+  jest.mocked(saveImageUriToLibrary).mockClear();
   mockTopicScreen.mockReset();
   mockTopicScreen.mockImplementation(() => null);
 });
@@ -85,8 +97,7 @@ function setup(topicDetail: TopicDetail | null = null, routeTopic = topic) {
       composer: { toggle: jest.fn() },
       view: {
         changeCommentQuery: jest.fn(),
-        changeReplyFilter: jest.fn(),
-        rememberScrollY: jest.fn()
+        changeReplyFilter: jest.fn()
       }
     }
   } as never);
@@ -141,11 +152,17 @@ function setup(topicDetail: TopicDetail | null = null, routeTopic = topic) {
     addListener: jest.fn(() => jest.fn()),
     dispatch: jest.fn(),
     goBack: jest.fn(),
+    isFocused: () => true,
     push: jest.fn(),
     setParams: jest.fn()
   } as unknown as NativeStackScreenProps<RootStackParamList, 'Topic'>['navigation'];
-  const element = (value = runtime, currentTopic = routeTopic, sessionEpochs = initialForumSessionEpochs) => (
-    <ForumSessionEpochProvider sessionEpochs={sessionEpochs} transportIdentity="applied">
+  const element = (
+    value = runtime,
+    currentTopic = routeTopic,
+    sessionEpochs = initialForumSessionEpochs,
+    transportIdentity = 'applied'
+  ) => (
+    <ForumSessionEpochProvider sessionEpochs={sessionEpochs} transportIdentity={transportIdentity}>
       <TopicRouteRuntimeProvider value={value}>
         <TopicRoute navigation={navigation} route={{ key: 'topic', name: 'Topic', params: { topic: currentTopic } }} />
       </TopicRouteRuntimeProvider>
@@ -154,7 +171,178 @@ function setup(topicDetail: TopicDetail | null = null, routeTopic = topic) {
   return { controller, element, notify, runtime };
 }
 
+async function renderWarmTopic(
+  opening: TopicDetail,
+  renderScreen: (props: ComponentProps<typeof TopicScreen>) => ReactNode
+) {
+  const { controller, runtime } = setup(opening, opening);
+  mockReadTopicFocus =
+    jest.requireActual<typeof import('@react-navigation/native')>('@react-navigation/native').useIsFocused;
+  jest
+    .mocked(useTopicController)
+    .mockImplementation(
+      ({ topic: selected }) => ({ ...controller, topicDetail: selected.id === opening.id ? opening : null }) as never
+    );
+  mockTopicScreen.mockImplementation((props) => (props.article.topic?.id === opening.id ? renderScreen(props) : null));
+  const subscription = Linking.addEventListener('url', () => {});
+  const addEventListener = jest.fn<typeof Linking.addEventListener>(() => subscription);
+  const linking = { addEventListener, getInitialURL: async () => null };
+  const Stack = createNativeStackNavigator<RootStackParamList>();
+  function WarmTopicNavigator() {
+    const onReady = useAppDeepLinkNavigation(linking);
+    return (
+      <ForumSessionEpochProvider sessionEpochs={initialForumSessionEpochs} transportIdentity="default">
+        <TopicRouteRuntimeProvider value={runtime}>
+          <NavigationContainer ref={navigationRef} onReady={onReady}>
+            <Stack.Navigator screenOptions={{ headerShown: false, animation: 'none' }}>
+              <Stack.Screen name="Topic" component={TopicRoute} initialParams={{ topic: opening }} />
+            </Stack.Navigator>
+          </NavigationContainer>
+        </TopicRouteRuntimeProvider>
+      </ForumSessionEpochProvider>
+    );
+  }
+  const view = await render(<WarmTopicNavigator />);
+  const [[, onUrl]] = addEventListener.mock.calls;
+  return { view, onUrl };
+}
+it('keeps a topic image through a proxy change and closes it when the source session changes', async () => {
+  const { controller, element, runtime } = setup(detail);
+  jest.mocked(useTopicController).mockImplementation(
+    ({ sessionEpochs }) =>
+      ({
+        ...controller,
+        topicQueryKey: forumQueryKeys.topic({
+          source: topic.source,
+          topicId: topic.id,
+          scope: sessionEpochs ?? initialForumSessionEpochs
+        })
+      }) as never
+  );
+  jest
+    .mocked(useImagePreviewController)
+    .mockImplementation(
+      jest.requireActual<typeof import('@/features/topic/media/useImagePreviewController')>(
+        '@/features/topic/media/useImagePreviewController'
+      ).useImagePreviewController
+    );
+  jest
+    .mocked(ImagePreviewModal)
+    .mockImplementation(
+      jest.requireActual<typeof import('@/ui/media/ImagePreviewModal')>('@/ui/media/ImagePreviewModal')
+        .ImagePreviewModal
+    );
+  const view = await render(element());
+  const openImage = async (url: string) => {
+    await act(() =>
+      latestScreen().html.htmlRenderersProps.a?.onPress?.(
+        { stopPropagation: jest.fn() } as never,
+        url,
+        {} as never,
+        {} as never
+      )
+    );
+  };
+  const oldUri = 'https://example.invalid/first-account-picture.png';
+  await openImage(oldUri);
+  expect(view.getByLabelText('保存图片')).toBeTruthy();
+
+  await view.rerender(element(runtime, topic, initialForumSessionEpochs, 'rotated'));
+  expect(view.getByLabelText('保存图片')).toBeTruthy();
+
+  const epochs = { ...initialForumSessionEpochs, nodeseek: 1 };
+  await view.rerender(
+    element({ ...runtime, account: { ...runtime.account, sessionEpochs: epochs } }, topic, epochs, 'rotated')
+  );
+  const oldSave = view.queryByLabelText('保存图片');
+  if (oldSave) await fireEvent.press(oldSave);
+  expect(view.queryByLabelText('保存图片')).toBeNull();
+  expect(saveImageUriToLibrary).not.toHaveBeenCalled();
+
+  const currentUri = 'https://example.invalid/current-account-picture.png';
+  await openImage(currentUri);
+  await fireEvent.press(view.getByLabelText('保存图片'));
+  expect(saveImageUriToLibrary).toHaveBeenCalledTimes(1);
+  expect(jest.mocked(saveImageUriToLibrary).mock.calls[0]?.[0]).toBe(currentUri);
+  mockFocused = false;
+  await view.rerender(
+    element({ ...runtime, account: { ...runtime.account, sessionEpochs: epochs } }, topic, epochs, 'rotated')
+  );
+  expect(view.queryByLabelText('保存图片')).toBeNull();
+  mockFocused = true;
+  await view.rerender(
+    element({ ...runtime, account: { ...runtime.account, sessionEpochs: epochs } }, topic, epochs, 'rotated')
+  );
+  expect(view.queryByLabelText('保存图片')).toBeNull();
+});
+
 describe('Topic Route external links', () => {
+  it('ignores a queued same-topic floor link after a warm deep link and still locates the floor on return', async () => {
+    const linkTitle = '打开本主题3楼';
+    const opening = {
+      ...detail,
+      contentHtml: `<p><a href="https://www.nodeseek.com/post-42-1#3">${linkTitle}</a></p>`
+    };
+    const { view, onUrl } = await renderWarmTopic(opening, ({ html }) => (
+      <RenderHTML contentWidth={360} source={{ html: opening.contentHtml }} renderersProps={html.htmlRenderersProps} />
+    ));
+    try {
+      await fireEvent.press(view.getByText(linkTitle));
+      const before = navigationRef.getRootState()?.routes[0]?.params;
+      expect(before).toMatchObject({ location: { kind: 'reply', target: { floor: 3 } }, locationRequestId: 1 });
+      await act(async () => {
+        onUrl({ url: 'https://linux.do/t/176543' });
+        expect(navigationRef.getCurrentRoute()?.params).toMatchObject({ topic: { id: '176543' } });
+        await fireEvent.press(view.getByText(linkTitle, { includeHiddenElements: true }));
+      });
+      expect(navigationRef.getRootState()?.routes[0]?.params).toEqual(before);
+
+      await act(() => navigationRef.goBack());
+      await fireEvent.press(view.getByText(linkTitle));
+      expect(navigationRef.getCurrentRoute()?.params).toMatchObject({ locationRequestId: 2 });
+    } finally {
+      await view.unmount();
+    }
+  });
+
+  it.each(['分享链接', '复制链接'] as const)(
+    'ignores a queued %s after a warm deep link and still works on return',
+    async (label) => {
+      const share = jest.spyOn(Share, 'share').mockResolvedValue({ action: Share.dismissedAction });
+      const copy = jest.spyOn(Clipboard, 'setStringAsync').mockResolvedValue(true);
+      const { view, onUrl } = await renderWarmTopic(detail, ({ chrome }) => (
+        <Pressable accessibilityRole="button" accessibilityLabel="打开分享" onPress={chrome.share}>
+          <Text>打开分享</Text>
+        </Pressable>
+      ));
+      try {
+        await fireEvent.press(view.getByRole('button', { name: '打开分享' }));
+        expect(view.getByRole('button', { name: label })).toBeTruthy();
+        await act(async () => {
+          onUrl({ url: 'https://linux.do/t/176543' });
+          expect(navigationRef.getCurrentRoute()?.params).toMatchObject({ topic: { id: '176543' } });
+          await fireEvent.press(view.getByRole('button', { name: label, includeHiddenElements: true }));
+        });
+        expect(share).not.toHaveBeenCalled();
+        expect(copy).not.toHaveBeenCalled();
+
+        await act(() => navigationRef.goBack());
+        await fireEvent.press(view.getByRole('button', { name: '打开分享' }));
+        await fireEvent.press(view.getByRole('button', { name: label }));
+        if (label === '分享链接') {
+          expect(share.mock.calls).toEqual([
+            [{ title: detail.title, message: `${detail.title}\n${detail.url}`, url: detail.url }]
+          ]);
+          expect(copy).not.toHaveBeenCalled();
+        } else {
+          expect(copy.mock.calls).toEqual([[detail.url]]);
+          expect(share).not.toHaveBeenCalled();
+        }
+      } finally {
+        await view.unmount();
+      }
+    }
+  );
   it('reports a Custom Tab rejection, keeps original-site opening in the full browser, and stops native content in the background', async () => {
     const { element, notify, runtime } = setup();
     const openBrowserAsync = jest
@@ -422,6 +610,26 @@ describe('Topic Route sharing', () => {
     await act(() => latestScreen().chrome.share());
     await fireEvent.press(view.getAllByRole('button', { name: '关闭分享' })[0]);
     expect(view.queryByRole('header', { name: '分享帖子' })).toBeNull();
+  });
+
+  it.each<{ state: string; current: TopicDetail }>([
+    { state: 'empty', current: { ...detail, contentHtml: '' } },
+    {
+      state: 'a permission notice',
+      current: {
+        ...detail,
+        accessRequirement: { type: 'permission', label: '需权限', detail: '暂无权限查看此内容' },
+        contentHtml: '<p>暂无权限查看此内容</p>'
+      }
+    }
+  ])('keeps link sharing available when the body is $state', async ({ current }) => {
+    const { element } = setup(current);
+    const view = await render(element());
+    await act(() => latestScreen().chrome.share());
+
+    expect(view.getByRole('button', { name: '分享链接' })).toBeEnabled();
+    expect(view.getByRole('button', { name: '复制链接' })).toBeEnabled();
+    expect(view.getByRole('button', { name: '生成长图' })).toBeDisabled();
   });
 
   it('enables image sharing in the already open choices when the current body finishes loading', async () => {

@@ -4,7 +4,7 @@ import type { NodeSeekCreditEntry } from '@/domain/forum/accountData';
 import { formatDateTime } from '@/domain/forum/presentation';
 import { errorMessage } from '@/platform/network/errors';
 import { AppButton } from '@/ui/controls/ButtonControls';
-import { EmptyText } from '@/ui/controls/FeedbackStates';
+import { EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { createReaderFontSizer, type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 import type { CreditDay } from './nodeSeekCredits';
@@ -14,8 +14,8 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontFamily = fontFamilyValue(settings.fontFamily);
   const size = createReaderFontSizer(settings);
   return StyleSheet.create({
-    list: { flex: 1, backgroundColor: theme.background },
-    content: { paddingHorizontal: 16, paddingBottom: 16 },
+    list: { flex: 1, backgroundColor: theme.surface },
+    content: { paddingHorizontal: 20, paddingBottom: 16 },
     header: {
       gap: 12,
       paddingVertical: 20,
@@ -23,10 +23,18 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       borderBottomWidth: StyleSheet.hairlineWidth
     },
     title: { fontFamily, color: theme.ink, fontSize: size(14), fontWeight: '600' },
-    total: { fontFamily, color: theme.ink, fontSize: size(32), fontWeight: '700', fontVariant: ['tabular-nums'] },
+    summarySlot: { minHeight: size(40), justifyContent: 'center' },
+    total: {
+      fontFamily,
+      color: theme.ink,
+      fontSize: size(32),
+      lineHeight: size(40),
+      fontWeight: '700',
+      fontVariant: ['tabular-nums']
+    },
     value: { fontFamily, color: theme.ink, fontSize: size(16), fontWeight: '600', fontVariant: ['tabular-nums'] },
     text: { fontFamily, color: theme.ink, fontSize: size(14), lineHeight: size(21), flexShrink: 1 },
-    meta: { fontFamily, color: theme.muted, fontSize: size(12), lineHeight: size(18) },
+    meta: { fontFamily, color: theme.muted, fontSize: size(12), lineHeight: size(18), fontVariant: ['tabular-nums'] },
     error: { fontFamily, color: theme.danger, fontSize: size(13), lineHeight: size(19) },
     day: { gap: 4, paddingTop: 24, paddingBottom: 8 },
     entry: { gap: 6, paddingVertical: 14, borderBottomColor: theme.line, borderBottomWidth: StyleSheet.hairlineWidth },
@@ -89,28 +97,37 @@ export function NodeSeekCreditsScreen({
               </Text>
             ) : null}
           </View>
-          <Text testID="credits-today-summary" style={summary.today.complete ? styles.total : styles.text}>
-            {summary.today.complete
-              ? `${summary.today.net > 0 ? '+' : ''}${summary.today.net}`
-              : busy
-                ? '统计中'
-                : '待补齐'}
-          </Text>
-          {summary.today.complete ? (
-            <View style={styles.breakdown}>
-              <Text style={styles.meta}>收入 {summary.today.income}</Text>
-              <Text style={styles.meta}>支出 {summary.today.expense}</Text>
+          <View style={styles.summarySlot}>
+            <Text testID="credits-today-summary" style={summary.today.complete ? styles.total : styles.text}>
+              {summary.today.complete
+                ? `${summary.today.net > 0 ? '+' : ''}${summary.today.net}`
+                : busy
+                  ? '统计中'
+                  : '待补齐'}
+            </Text>
+          </View>
+          <View style={styles.breakdown}>
+            <Text style={styles.meta}>收入 {summary.today.complete ? summary.today.income : '—'}</Text>
+            <Text style={styles.meta}>支出 {summary.today.complete ? summary.today.expense : '—'}</Text>
+          </View>
+          {!summary.consistent ? <Text style={styles.meta}>流水有更新，请刷新后统计</Text> : null}
+          {!summary.ordered && hasMore && summary.today.complete ? <Text style={styles.meta}>记录待补齐</Text> : null}
+          {error ? (
+            <View style={styles.row}>
+              <Text style={styles.error}>{errorMessage(error)}</Text>
+              {!loaded && !busy ? (
+                <AppButton compact variant="ghost" label="重试读取" onPress={() => void refresh()} />
+              ) : null}
             </View>
           ) : null}
-          {!summary.consistent ? <Text style={styles.meta}>流水有更新，请刷新后统计</Text> : null}
-          {!summary.ordered && hasMore ? <Text style={styles.meta}>记录待补齐</Text> : null}
-          {error ? <Text style={styles.error}>{errorMessage(error)}</Text> : null}
         </View>
       }
       ListEmptyComponent={
-        <EmptyText
-          text={busy ? `读取${currencyLabel}流水中` : loaded ? `暂无${currencyLabel}流水` : '流水未读取，请刷新重试'}
-        />
+        busy ? (
+          <LoadingState text="加载中" />
+        ) : (
+          <EmptyText text={loaded ? `暂无${currencyLabel}流水` : '流水未读取，请刷新重试'} />
+        )
       }
       renderItem={({ item }) =>
         item.kind === 'day' ? (
@@ -148,6 +165,7 @@ export function NodeSeekCreditsScreen({
               compact
               variant="ghost"
               label={busy || refreshing ? '读取中' : error ? '重试加载更多' : '加载更多流水'}
+              loading={busy || refreshing}
               disabled={busy || refreshing}
               onPress={loadMore}
             />

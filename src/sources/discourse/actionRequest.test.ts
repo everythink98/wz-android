@@ -77,11 +77,13 @@ describe('Discourse action requests', () => {
   });
 
   it('builds edit and delete requests with shared validation', () => {
-    expect(buildDiscourseActionRequest({ type: 'edit-post', postId: 1002, content: '  edited  ' })).toEqual({
+    expect(
+      buildDiscourseActionRequest({ type: 'edit-post', postId: 1002, content: '  edited  ', originalContent: ' old\n' })
+    ).toEqual({
       path: '/posts/1002.json',
       method: 'PUT',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: 'post%5Braw%5D=edited'
+      body: 'post%5Braw%5D=edited&post%5Boriginal_text%5D=+old%0A'
     });
     expect(buildDiscourseActionRequest({ type: 'delete-post', postId: 1002 })).toEqual({
       path: '/posts/1002.json',

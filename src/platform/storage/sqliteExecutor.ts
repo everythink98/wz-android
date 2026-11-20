@@ -5,12 +5,20 @@ type SqliteHealth = { phase: 'usable' } | { phase: 'frozen'; cause: AggregateErr
 
 export function createSqliteExecutor(uncertainMessage: string, rollbackMessage: string) {
   const operations = createKeyedSerialRunner<null>();
+  const freezeListeners = new Set<() => void>();
   let health: SqliteHealth = { phase: 'usable' };
   const assertUsable = () => {
     if (health.phase === 'frozen') throw new Error(uncertainMessage, { cause: health.cause });
   };
   return {
     assertUsable,
+    subscribeToFreeze(listener: () => void) {
+      if (health.phase === 'frozen') listener();
+      else freezeListeners.add(listener);
+      return () => {
+        freezeListeners.delete(listener);
+      };
+    },
     enqueue<T>(operation: () => Promise<T>): Promise<T> {
       return operations.run(null, operation);
     },
@@ -32,6 +40,9 @@ export function createSqliteExecutor(uncertainMessage: string, rollbackMessage: 
         } catch (rollback) {
           const cause = new AggregateError([error, rollback], rollbackMessage);
           health = { phase: 'frozen', cause };
+          const listeners = [...freezeListeners];
+          freezeListeners.clear();
+          for (const listener of listeners) listener();
           throw cause;
         }
         throw error;

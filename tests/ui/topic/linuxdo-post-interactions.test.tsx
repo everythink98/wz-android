@@ -178,7 +178,14 @@ function Harness({
       readGateway: {
         ...testPostInteractionReads(),
         ...(readInteractionConfig ? { getLinuxDoInteractionConfig: readInteractionConfig } : {}),
-        getReadPlan: () => ({ state: 'ready', lane: 'authenticated', transport: 'managed-session', cacheScope: '' })
+        getReadPlan: (source, operation) => ({
+          source,
+          operation,
+          state: 'ready',
+          lane: 'authenticated',
+          transport: 'managed-session',
+          cacheScope: ''
+        })
       },
       refreshTopicReplies: async () => true,
       refreshWholeTopic: async () => true

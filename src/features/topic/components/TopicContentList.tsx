@@ -61,7 +61,7 @@ import type { ForumImagePreviewDescriptor } from '@/domain/forum/forumContentMed
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import type { HtmlRenderers } from '../rendering/types';
 import type { ReplyFilter } from '../model/types';
-import { formatDateTime, forumAccessRequirementText, sourceLabel } from '@/domain/forum/presentation';
+import { formatDateTime, forumAccessRequirementText } from '@/domain/forum/presentation';
 import { contentBoundaryForContinuation } from '../rendering/htmlStyles';
 import { HTML_ALLOWED_INLINE_STYLES } from '@/ui/content/forumHtmlStyles';
 import {
@@ -69,7 +69,6 @@ import {
   nodeSeekStardustReceiveFromAttributes
 } from '@/sources/nodeseek/stardustMarkup';
 import {
-  sourceBadgeColorStyle,
   topicStatusBadgeColorStyle,
   topicStatusBadgeTextColorStyle,
   topicTagColorStyle,
@@ -77,7 +76,7 @@ import {
   type ReaderTheme
 } from '@/ui/theme/tokens';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
-import { EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
+import { EmptyText, LoadingState, RecoverableEmptyState } from '@/ui/controls/FeedbackStates';
 import { PopupMenu, PopupMenuItem } from '@/ui/controls/PopupMenu';
 import { PillRail } from '@/ui/controls/SelectionControls';
 import { TOUCH_HIT_SLOP } from '@/ui/controls/touchTarget';
@@ -95,7 +94,13 @@ import {
   LinuxDoReactionButton,
   useLinuxDoInteractionOverlayOpen
 } from './LinuxDoPostInteractions';
-import { replyForQuotedPost, topicOpeningPostAsReply, topicForQuotedPost } from '@/domain/forum/quotedPosts';
+import {
+  quotedPostReferenceKey,
+  referencedPostAuthorName,
+  replyForQuotedPost,
+  topicOpeningPostAsReply,
+  topicForQuotedPost
+} from '@/domain/forum/quotedPosts';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import { TopicPolls } from './TopicPolls';
 import { AcceptedAnswerPreview } from './AcceptedAnswerPreview';
@@ -130,6 +135,7 @@ import {
   topicListCompiledRow,
   topicListItemKey,
   topicListItemType,
+  unresolvedLinuxDoAuthorReferences,
   projectTopicListItems,
   type TopicListItem
 } from '../model/topicListModel';
@@ -300,6 +306,15 @@ function rowPresentationPart(row: CompiledForumContentRow) {
 type QuoteContentLayoutProgress =
   { contentToken: string; primed: false; frame: number | null } | { contentToken: string; primed: true };
 
+function TopicEntryProgress({ text }: { text: string }) {
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const timer = setTimeout(() => setVisible(true), 300);
+    return () => clearTimeout(timer);
+  }, []);
+  return visible ? <LoadingState compact text={text} /> : null;
+}
+
 function TopicListItemFrame({
   children,
   firstRowStartedAt,
@@ -381,14 +396,13 @@ export const TopicContentList = memo(function TopicContentList({
   commentSearchFocused,
   currentNodeSeekUser,
   discourseEmojiUrls,
-  headerState,
+  headerError,
   html,
   nodeSeekUserId,
   onImagePreviewDescriptors,
   onCommentSearchFocusChange,
   onOpenTopic,
   onOpenUser,
-  onScroll: onTopicScroll,
   onScrollProgress,
   read,
   session,
@@ -410,14 +424,13 @@ export const TopicContentList = memo(function TopicContentList({
   commentSearchFocused: boolean;
   currentNodeSeekUser: SiteSessionViewModels['nodeseek']['currentUser'];
   discourseEmojiUrls: DiscourseEmojiUrlMap;
-  headerState: ReactNode;
+  headerError: ReactNode;
   html: ReturnType<typeof useHtmlRenderingController> & { contentWidth: number; mediaSessionIdentity: string };
   nodeSeekUserId: number | null;
   onImagePreviewDescriptors: (descriptors: readonly ForumImagePreviewDescriptor[]) => void;
   onCommentSearchFocusChange: (focused: boolean) => void;
   onOpenTopic: (topic: Topic, location?: TopicLocationTarget) => void;
   onOpenUser: (user: UserReference) => void;
-  onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   onScrollProgress?: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   read: ReturnType<typeof useTopicController>;
   session: TopicSessionController;
@@ -503,7 +516,6 @@ export const TopicContentList = memo(function TopicContentList({
   const loadingQuotedFloors = read.loadingQuotedFloors;
   const replyStartError = read.replyStartError;
   const replyEndError = read.replyEndError;
-  const replyCollectionComplete = read.replyCollectionComplete;
   const replyRowsPartial = read.replyRowsPartial;
   const repliesError = read.repliesError;
   const repliesLoading = read.repliesLoading;
@@ -755,32 +767,6 @@ export const TopicContentList = memo(function TopicContentList({
         : openingPreviewImages,
     [itemSource, openingPreviewImages, selectedTopic.id]
   );
-  const loadedQuotedReplyValues = useMemo(() => Object.values(loadedQuotedReplies), [loadedQuotedReplies]);
-  const imagePreviewDescriptors = useMemo(
-    () =>
-      itemSource
-        ? [
-            ...openingImagePreviewDescriptors,
-            ...imagePreviewDescriptorsForReplies(sourceReplies, itemSource, selectedTopic.id),
-            ...imagePreviewDescriptorsForReplies(loadedQuotedReplyValues, itemSource)
-          ]
-        : openingImagePreviewDescriptors,
-    [itemSource, loadedQuotedReplyValues, openingImagePreviewDescriptors, sourceReplies, selectedTopic.id]
-  );
-  const catalogReadyElapsedRef = useRef<{ elapsedMs?: number; topicRef: string }>({ topicRef: '' });
-  useLayoutEffect(() => {
-    onImagePreviewDescriptors(imagePreviewDescriptors);
-    if (!detailTopicDiagnosticRef || topicResponseReadyCandidate === undefined) {
-      catalogReadyElapsedRef.current = { topicRef: detailTopicDiagnosticRef };
-      return;
-    }
-    const current = catalogReadyElapsedRef.current;
-    if (current.topicRef === detailTopicDiagnosticRef && current.elapsedMs !== undefined) return;
-    catalogReadyElapsedRef.current = {
-      elapsedMs: Math.max(0, Math.floor(monotonicNowMs() - topicResponseReadyCandidate)),
-      topicRef: detailTopicDiagnosticRef
-    };
-  }, [detailTopicDiagnosticRef, imagePreviewDescriptors, onImagePreviewDescriptors, topicResponseReadyCandidate]);
   const acceptedAnswer = useMemo(
     () =>
       buildAcceptedAnswerPresentation({
@@ -807,6 +793,39 @@ export const TopicContentList = memo(function TopicContentList({
       topicShowsAccessNotice
     ]
   );
+  const acceptedReferenceKey = acceptedAnswer?.reply ? quotedPostReferenceKey(acceptedAnswer.reference) : undefined;
+  const loadedQuotedReplyValues = useMemo(
+    () =>
+      Object.entries(loadedQuotedReplies)
+        .filter(([key]) => key === acceptedReferenceKey || !read.authorOnlyQuotedReferences?.has(key))
+        .map(([, reply]) => reply),
+    [acceptedReferenceKey, loadedQuotedReplies, read.authorOnlyQuotedReferences]
+  );
+  const imagePreviewDescriptors = useMemo(
+    () =>
+      itemSource
+        ? [
+            ...openingImagePreviewDescriptors,
+            ...imagePreviewDescriptorsForReplies(sourceReplies, itemSource, selectedTopic.id),
+            ...imagePreviewDescriptorsForReplies(loadedQuotedReplyValues, itemSource)
+          ]
+        : openingImagePreviewDescriptors,
+    [itemSource, loadedQuotedReplyValues, openingImagePreviewDescriptors, sourceReplies, selectedTopic.id]
+  );
+  const catalogReadyElapsedRef = useRef<{ elapsedMs?: number; topicRef: string }>({ topicRef: '' });
+  useLayoutEffect(() => {
+    onImagePreviewDescriptors(imagePreviewDescriptors);
+    if (!detailTopicDiagnosticRef || topicResponseReadyCandidate === undefined) {
+      catalogReadyElapsedRef.current = { topicRef: detailTopicDiagnosticRef };
+      return;
+    }
+    const current = catalogReadyElapsedRef.current;
+    if (current.topicRef === detailTopicDiagnosticRef && current.elapsedMs !== undefined) return;
+    catalogReadyElapsedRef.current = {
+      elapsedMs: Math.max(0, Math.floor(monotonicNowMs() - topicResponseReadyCandidate)),
+      topicRef: detailTopicDiagnosticRef
+    };
+  }, [detailTopicDiagnosticRef, imagePreviewDescriptors, onImagePreviewDescriptors, topicResponseReadyCandidate]);
   const replyItems = useMemo<TopicReplyListItem[]>(
     () =>
       buildVirtualizedReplyItems({
@@ -864,7 +883,7 @@ export const TopicContentList = memo(function TopicContentList({
     if (!acceptedAnswer) return;
     onToggleTopicBodyQuote({
       instanceKey: acceptedAnswer.instanceKey,
-      prefetch: true,
+      prefetch: 'accepted-answer',
       reference: acceptedAnswer.reference
     });
   }, [acceptedAnswer, onToggleTopicBodyQuote]);
@@ -1069,13 +1088,21 @@ export const TopicContentList = memo(function TopicContentList({
   });
   const bodyMediaViewportRowKeySet = useMemo(() => new Set(bodyMediaViewportRowKeys), [bodyMediaViewportRowKeys]);
   const [loadedDetailKey, setLoadedDetailKey] = useState('');
+  const pendingBodyKey = useRef('');
+  useLayoutEffect(() => {
+    if (!topic) {
+      pendingBodyKey.current = detailTopicStateKey;
+      setLoadedDetailKey('');
+    }
+  }, [detailTopicStateKey, topic]);
   const onListLoad = useCallback(() => setLoadedDetailKey(detailTopicStateKey), [detailTopicStateKey]);
   const {
     visible: replyOrderMenuOpen,
     placement: replyOrderMenuPlacement,
     open: openReplyOrderMenu,
     close: closeReplyOrderMenu,
-    select: selectReplyOrder
+    select: selectReplyOrder,
+    cancelPendingScroll: cancelOrderScroll
   } = useTopicReplyOrder({
     active,
     windowHeight,
@@ -1090,12 +1117,15 @@ export const TopicContentList = memo(function TopicContentList({
     list: topicScrollRef,
     recordScroll: recordScrollCommand
   });
+  useLayoutEffect(cancelOrderScroll, [active, detailTopicStateKey, mediaSessionIdentity, cancelOrderScroll]);
+  useLayoutEffect(() => {
+    if (targetReplyCommandKey) cancelOrderScroll();
+  }, [targetReplyCommandKey, cancelOrderScroll]);
   const replyOrderLabel = replyOrder === 'newest' ? '倒序' : '正序';
   const listExtraData = useMemo(
     () => ({
       actionBusy,
       quoteStateVersion,
-      replyCollectionComplete,
       replyEndError,
       replyOrder,
       replyOrderMenuOpen,
@@ -1106,7 +1136,6 @@ export const TopicContentList = memo(function TopicContentList({
     [
       actionBusy,
       quoteStateVersion,
-      replyCollectionComplete,
       repliesError,
       repliesLoading,
       replyEndError,
@@ -1279,6 +1308,8 @@ export const TopicContentList = memo(function TopicContentList({
     topicScrollRef.current?.recomputeViewableItems?.();
   }, [read.readingRuntime, reportReadingVisible, topicListItems, topicScrollRef]);
   const readingPositionReady = read.readingEntry?.ready !== false && read.readingEntry?.positionReady !== false;
+  const listDrawn = Boolean(topic) && loadedDetailKey === detailTopicStateKey;
+  const listVisible = listDrawn && readingPositionReady;
   useEffect(() => {
     readingSessionRef.current?.active(
       Boolean(
@@ -1304,16 +1335,57 @@ export const TopicContentList = memo(function TopicContentList({
     detailTopicStateKey,
     readingScope
   ]);
+  const authorReadScope = `${detailTopicStateKey}:${mediaSessionIdentity}`;
+  const authorReads = useRef({ scope: '', seen: new Set<string>() });
+  const readVisibleAuthors = useCallback(() => {
+    if (
+      !active ||
+      topic?.source !== 'linuxdo' ||
+      topicShowsAccessNotice ||
+      authorReads.current.scope !== authorReadScope
+    )
+      return;
+    for (const { item: row } of readingVisibleRef.current) {
+      for (const reference of unresolvedLinuxDoAuthorReferences(
+        row,
+        topic.id,
+        acceptedAnswerExpanded ? acceptedAnswerReply : undefined
+      )) {
+        const key = quotedPostReferenceKey(reference);
+        if (
+          authorReads.current.seen.has(key) ||
+          replyForQuotedPost(reference, topic.source, topic.id, repliesByFloor, loadedQuotedReplies)
+        )
+          continue;
+        authorReads.current.seen.add(key);
+        void onToggleTopicBodyQuote({ instanceKey: `author:${key}`, reference, prefetch: 'author' });
+      }
+    }
+  }, [
+    active,
+    topic,
+    topicShowsAccessNotice,
+    authorReadScope,
+    acceptedAnswerExpanded,
+    acceptedAnswerReply,
+    repliesByFloor,
+    loadedQuotedReplies,
+    onToggleTopicBodyQuote
+  ]);
+  useEffect(readVisibleAuthors, [readVisibleAuthors]);
   const handleViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: { index?: number | null; isViewable?: boolean; item: TopicListItem }[] }) => {
       observeViewableItems({ viewableItems });
       readingVisibleRef.current = viewableItems
         .filter((item) => item.isViewable !== false)
         .sort((a, b) => (a.index || 0) - (b.index || 0));
+      if (authorReads.current.scope !== authorReadScope)
+        authorReads.current = { scope: authorReadScope, seen: new Set() };
+      readVisibleAuthors();
       reportReadingVisible();
       confirmTargetPosition();
     },
-    [confirmTargetPosition, observeViewableItems, reportReadingVisible]
+    [authorReadScope, confirmTargetPosition, observeViewableItems, readVisibleAuthors, reportReadingVisible]
   );
   const {
     stop: stopReplyScroll,
@@ -1326,18 +1398,23 @@ export const TopicContentList = memo(function TopicContentList({
   } = useTopicReplyEdgeLoad({ active, read, startIndex: replyWindowStartIndex, list: topicScrollRef });
   const beginReplyScroll = useCallback(
     ({ nativeEvent }: NativeSyntheticEvent<NativeScrollEvent>) => {
+      cancelOrderScroll();
       cancelTargetPosition();
       onCancelReplyLocation();
       readingSessionRef.current?.interact();
       beginEdgeScroll(nativeEvent);
     },
-    [beginEdgeScroll, cancelTargetPosition, onCancelReplyLocation]
+    [beginEdgeScroll, cancelOrderScroll, cancelTargetPosition, onCancelReplyLocation]
   );
+  const stopForAcceptedAnswer = useCallback(() => {
+    cancelOrderScroll();
+    stopReplyScroll();
+  }, [cancelOrderScroll, stopReplyScroll]);
   const scrollToAcceptedAnswer = useTopicAcceptedScroll({
     topicKey: String(item?.source) + ':' + String(item?.id),
     acceptedIndex: acceptedAnswerListIndex,
     list: topicScrollRef,
-    stop: stopReplyScroll,
+    stop: stopForAcceptedAnswer,
     clearFilters: clearReplyFilters,
     recordScroll: recordScrollCommand
   });
@@ -1825,31 +1902,15 @@ export const TopicContentList = memo(function TopicContentList({
       <View style={[styles.topicHeaderStack, titleOnlyV2ex && styles.titleOnlyHeaderStack]}>
         <View style={[styles.article, topicColumnStyle]}>
           {topic || topicError?.reason !== 'site-notice' ? (
-            <View style={[styles.topicMetaStack, titleOnlyV2ex && styles.titleOnlyMetaStack]}>
-              {!titleOnlyV2ex ? (
-                <View style={styles.topicBadgeRow}>
-                  <Text style={[styles.topicSourceBadge, sourceBadgeColorStyle(item.source, theme)]} numberOfLines={1}>
-                    {sourceLabel(item.source)}
-                  </Text>
-                  {item.category ? (
-                    <Text style={styles.topicCategoryBadge} numberOfLines={1}>
-                      {item.category}
-                    </Text>
-                  ) : null}
-                </View>
-              ) : null}
-              <Text
-                selectable
-                style={[styles.articleTitle, titleOnlyV2ex && styles.titleOnlyTitle]}
-                textBreakStrategy={titleOnlyV2ex ? 'balanced' : undefined}
-              >
+            <View style={styles.topicMetaStack}>
+              <Text accessibilityRole="header" selectable style={styles.articleTitle}>
                 {item.title}
               </Text>
               <Pressable
                 testID="topic-author"
                 accessibilityRole="button"
                 disabled={!userFromTopic(item)}
-                style={[styles.topicAuthorRow, titleOnlyV2ex && styles.titleOnlyAuthorRow]}
+                style={styles.topicAuthorRow}
                 onPress={() => {
                   const user = userFromTopic(item);
                   if (user) {
@@ -1857,10 +1918,10 @@ export const TopicContentList = memo(function TopicContentList({
                   }
                 }}
               >
-                <Avatar contentSource={item.source} name={item.author} uri={item.authorAvatar} small={titleOnlyV2ex} />
+                <Avatar contentSource={item.source} name={item.author} uri={item.authorAvatar} />
                 <View style={styles.topicAuthorMeta}>
                   <View style={styles.replyAuthorNameRow}>
-                    <Text style={[styles.replyAuthor, titleOnlyV2ex && styles.titleOnlyAuthorName]} numberOfLines={1}>
+                    <Text style={styles.replyAuthor} numberOfLines={1}>
                       {item.author || '未知作者'}
                     </Text>
                     {item.authorLevelLabel ? (
@@ -1872,7 +1933,7 @@ export const TopicContentList = memo(function TopicContentList({
                       </Text>
                     ) : null}
                   </View>
-                  <Text style={[styles.meta, titleOnlyV2ex && styles.titleOnlyAuthorDate]}>
+                  <Text style={styles.meta}>
                     {formatDateTime(item.createdAt)}
                     {typeof item.replyCount === 'number' ? ` · ${item.replyCount} 回复` : ''}
                     {item.viewCount ? ` · ${item.viewCount} 浏览` : ''}
@@ -1919,23 +1980,11 @@ export const TopicContentList = memo(function TopicContentList({
               ) : null}
             </View>
           ) : null}
-          {headerState}
-          {topic && !topicError && !readingPositionReady ? <LoadingState text="正在读取主题..." /> : null}
+          {listVisible ? headerError : null}
         </View>
       </View>
     );
-  }, [
-    headerState,
-    item,
-    onOpenUser,
-    readingPositionReady,
-    styles,
-    theme,
-    titleOnlyV2ex,
-    topic,
-    topicColumnStyle,
-    topicError
-  ]);
+  }, [headerError, item, onOpenUser, listVisible, styles, theme, titleOnlyV2ex, topic, topicColumnStyle, topicError]);
 
   const renderReplyItem = useCallback<ListRenderItem<TopicListItem>>(
     ({ index, item: listItem }) => {
@@ -1948,6 +1997,7 @@ export const TopicContentList = memo(function TopicContentList({
         const { reference } = quote;
         const quotedPost = replyForQuotedPost(reference, itemSource, item?.id, repliesByFloor, loadedQuotedReplies);
         const expanded = Boolean(expandedQuotes[instanceKey]);
+        const authorName = referencedPostAuthorName(quotedPost, quote.author?.label) || '引用内容';
         const sameTopic = reference.source === itemSource && reference.topicId === item?.id;
         const quotedTopic = sameTopic ? null : topicForQuotedPost(quote, item?.url);
         const canOpenReference = sameTopic || Boolean(quotedTopic);
@@ -1968,11 +2018,11 @@ export const TopicContentList = memo(function TopicContentList({
                   <Avatar
                     contentSource={reference.source}
                     small
-                    name={quote.author?.label}
+                    name={authorName}
                     uri={quote.author?.avatar || quotedPost?.authorAvatar}
                   />
                   <Pressable
-                    accessibilityLabel={`${quote.author?.label || '引用内容'}，${
+                    accessibilityLabel={`${authorName}，${
                       sameTopic
                         ? `定位引用回复，第 ${reference.postNumber} 楼`
                         : `打开引用楼层，第 ${reference.postNumber} 楼`
@@ -1983,7 +2033,7 @@ export const TopicContentList = memo(function TopicContentList({
                     onPress={openReference}
                   >
                     <Text style={styles.quoteAuthorText} numberOfLines={1}>
-                      {quote.author?.label || '引用内容'}
+                      {authorName}
                     </Text>
                     <Text style={[styles.replyMeta, styles.quoteMeta]} numberOfLines={1}>
                       引用 #{reference.postNumber}
@@ -2046,6 +2096,12 @@ export const TopicContentList = memo(function TopicContentList({
               floor={acceptedAnswer.floor}
               fullAnswerVisible={acceptedAnswerFullVisible}
               loading={acceptedAnswerLoading}
+              quoteAuthorName={(quote) =>
+                referencedPostAuthorName(
+                  replyForQuotedPost(quote.reference, topic.source, topic.id, repliesByFloor, loadedQuotedReplies),
+                  quote.author?.label
+                )
+              }
               reply={acceptedAnswerReply}
               styles={styles}
               theme={theme}
@@ -2106,43 +2162,39 @@ export const TopicContentList = memo(function TopicContentList({
                       onChange={(value) => onReplyFilterChange(value as ReplyFilter)}
                     />
                   </View>
-                  {replyCollectionComplete ? (
-                    <>
-                      <Pressable
-                        ref={replyOrderMenuTriggerRef}
-                        collapsable={false}
-                        accessibilityRole="button"
-                        accessibilityLabel={`回复排序，当前${replyOrderLabel}`}
-                        accessibilityState={{ expanded: replyOrderMenuOpen }}
-                        hitSlop={TOUCH_HIT_SLOP}
-                        style={styles.replyOrderButton}
-                        onPress={openReplyOrderMenu}
-                      >
-                        <Text style={styles.replyOrderButtonText}>{replyOrderLabel}</Text>
-                        <ChevronDown size={14} color={theme.primary} strokeWidth={1.8} />
-                      </Pressable>
-                      <PopupMenu
-                        accessibilityLabel="关闭回复排序菜单"
-                        placementStyle={replyOrderMenuPlacement}
-                        visible={active && replyOrderMenuOpen}
-                        onRequestClose={closeReplyOrderMenu}
-                      >
-                        <PopupMenuItem
-                          compact
-                          label="正序"
-                          selected={replyOrder === 'oldest'}
-                          onPress={() => selectReplyOrder('oldest')}
-                        />
-                        <PopupMenuItem
-                          compact
-                          label="倒序"
-                          last
-                          selected={replyOrder === 'newest'}
-                          onPress={() => selectReplyOrder('newest')}
-                        />
-                      </PopupMenu>
-                    </>
-                  ) : null}
+                  <Pressable
+                    ref={replyOrderMenuTriggerRef}
+                    collapsable={false}
+                    accessibilityRole="button"
+                    accessibilityLabel={`回复排序，当前${replyOrderLabel}`}
+                    accessibilityState={{ expanded: replyOrderMenuOpen }}
+                    hitSlop={TOUCH_HIT_SLOP}
+                    style={styles.replyOrderButton}
+                    onPress={openReplyOrderMenu}
+                  >
+                    <Text style={styles.replyOrderButtonText}>{replyOrderLabel}</Text>
+                    <ChevronDown size={14} color={theme.primary} strokeWidth={1.8} />
+                  </Pressable>
+                  <PopupMenu
+                    accessibilityLabel="关闭回复排序菜单"
+                    placementStyle={replyOrderMenuPlacement}
+                    visible={active && replyOrderMenuOpen}
+                    onRequestClose={closeReplyOrderMenu}
+                  >
+                    <PopupMenuItem
+                      compact
+                      label="正序"
+                      selected={replyOrder === 'oldest'}
+                      onPress={() => selectReplyOrder('oldest')}
+                    />
+                    <PopupMenuItem
+                      compact
+                      label="倒序"
+                      last
+                      selected={replyOrder === 'newest'}
+                      onPress={() => selectReplyOrder('newest')}
+                    />
+                  </PopupMenu>
                 </View>
                 {read.hasNewReplies ? (
                   <Text style={styles.noticeText}>有新回复</Text>
@@ -2198,7 +2250,7 @@ export const TopicContentList = memo(function TopicContentList({
                 </View>
               </>
             ) : null}
-            {sourceReplies.length > 0 ? renderReplyErrorState(repliesError) : null}
+            {replyItems.length > 0 ? renderReplyErrorState(repliesError) : null}
           </View>
         );
       }
@@ -2210,9 +2262,10 @@ export const TopicContentList = memo(function TopicContentList({
               renderReplyErrorState(replyStartError, 'start')
             ) : (
               <AppButton
-                label={
-                  loadingPreviousReplies ? '正在加载...' : replyOrder === 'newest' ? '加载更新回复' : '加载更早回复'
-                }
+                compact
+                variant="ghost"
+                label={loadingPreviousReplies ? '加载中' : replyOrder === 'newest' ? '加载更新回复' : '加载更早回复'}
+                loading={loadingPreviousReplies}
                 disabled={loadingPreviousReplies}
                 onPress={requestWindowStartLoad}
               />
@@ -2225,9 +2278,15 @@ export const TopicContentList = memo(function TopicContentList({
         return renderTopicListItemFrame(
           <View style={[styles.replyListItem, topicColumnStyle]}>
             {repliesLoading ? (
-              <LoadingState text={replyOrder === 'newest' ? '正在读取最新回复...' : '正在读取回复...'} />
+              <LoadingState compact text={replyOrder === 'newest' ? '正在读取最新回复' : '加载回复中'} />
             ) : repliesError ? (
               renderReplyErrorState(repliesError)
+            ) : sourceReplies.length > 0 ? (
+              <RecoverableEmptyState
+                message="已加载的回复中没有匹配项"
+                actionLabel="显示全部回复"
+                onAction={clearReplyFilters}
+              />
             ) : (
               <EmptyText text="暂无回复" />
             )}
@@ -2309,6 +2368,7 @@ export const TopicContentList = memo(function TopicContentList({
       endedEmpty,
       closeReplyOrderMenu,
       commentQuery,
+      clearReplyFilters,
       copyAcceptedAnswerToClipboard,
       contentWidth,
       decisionFor,
@@ -2354,7 +2414,6 @@ export const TopicContentList = memo(function TopicContentList({
       itemSource,
       replyHighlightQuery,
       replyFilter,
-      replyCollectionComplete,
       replyOrderLabel,
       replyOrder,
       replyOrderMenuOpen,
@@ -2362,6 +2421,7 @@ export const TopicContentList = memo(function TopicContentList({
       renderReplyErrorState,
       repliesError,
       replyStartError,
+      replyItems.length,
       repliesByFloor,
       replyDisplayCount,
       repliesLoading,
@@ -2423,126 +2483,134 @@ export const TopicContentList = memo(function TopicContentList({
                 renderers={genericHtmlRenderers}
                 renderersProps={htmlRenderersProps}
               >
-                {!readingPositionReady ? (
+                {!listVisible ? (
                   <ScrollView
                     overScrollMode="never"
                     style={[styles.content, styles.topicContent, StyleSheet.absoluteFill]}
                     contentContainerStyle={styles.topicContentInner}
                   >
                     {listHeader}
+                    <View style={[styles.readingEntryStatus, topicColumnStyle]}>
+                      {headerError ||
+                        (topic && !readingPositionReady && read.readingEntry?.location ? (
+                          <TopicEntryProgress text="正在定位阅读位置" />
+                        ) : !topic || (!listDrawn && pendingBodyKey.current === detailTopicStateKey) ? (
+                          <TopicEntryProgress text="正在加载正文" />
+                        ) : null)}
+                    </View>
                   </ScrollView>
                 ) : null}
-                <FlashList
-                  ref={topicScrollRef}
-                  onLoad={onListLoad}
-                  onLayout={onListViewportLayout}
-                  onContentSizeChange={() => {
-                    confirmTargetPosition();
-                    revealCommentSearch();
-                  }}
-                  accessibilityLabel={topic ? '主题详情，已加载' : '主题详情'}
-                  testID={topic ? 'topic-detail-loaded' : undefined}
-                  style={[styles.content, styles.topicContent, !readingPositionReady && { opacity: 0 }]}
-                  pointerEvents={readingPositionReady ? 'auto' : 'none'}
-                  accessibilityElementsHidden={!readingPositionReady}
-                  importantForAccessibility={readingPositionReady ? 'auto' : 'no-hide-descendants'}
-                  contentContainerStyle={[
-                    styles.topicContentInner,
-                    { paddingBottom: Math.max(styles.topicContentInner.paddingBottom, bottomContentInset) }
-                  ]}
-                  data={topicListItems}
-                  keyExtractor={topicListItemKey}
-                  getItemType={topicListItemType}
-                  ItemSeparatorComponent={TopicListItemSeparator}
-                  keyboardShouldPersistTaps="handled"
-                  keyboardDismissMode="on-drag"
-                  onTouchStart={({ nativeEvent }) => {
-                    // Exempt the same bubbling touch from the search field and its controls.
-                    if (commentSearchTouchRef.current !== nativeEvent) commentSearchRef.current?.blur();
-                    commentSearchTouchRef.current = null;
-                  }}
-                  onScroll={(event) => {
-                    const previousViewport = nativeViewportRef.current;
-                    if (
-                      previousViewport.topicKey === detailTopicStateKey &&
-                      event.nativeEvent.layoutMeasurement.height > 0 &&
-                      previousViewport.offset > event.nativeEvent.layoutMeasurement.height &&
-                      event.nativeEvent.contentOffset.y <= 24
-                    ) {
-                      const nativeEvent: NativeScrollEvent & { contentOffsetCorrection?: { y: number } } =
-                        event.nativeEvent;
-                      const fields = {
-                        source: item?.source,
-                        topicRef: detailTopicDiagnosticRef,
-                        previousOffset: previousViewport.offset,
-                        offset: nativeEvent.contentOffset.y,
-                        contentHeight: nativeEvent.contentSize.height,
-                        viewportHeight: nativeEvent.layoutMeasurement.height,
-                        correction: nativeEvent.contentOffsetCorrection?.y || 0,
-                        scrollPhase: replyScrollPhase()
+                {topic ? (
+                  <FlashList
+                    ref={topicScrollRef}
+                    onLoad={onListLoad}
+                    onCommitLayoutEffect={confirmTargetPosition}
+                    onLayout={onListViewportLayout}
+                    onContentSizeChange={() => {
+                      confirmTargetPosition();
+                      revealCommentSearch();
+                    }}
+                    accessibilityLabel="主题详情，已加载"
+                    testID="topic-detail-loaded"
+                    style={[styles.content, styles.topicContent, !listVisible && { opacity: 0 }]}
+                    pointerEvents={listVisible ? 'auto' : 'none'}
+                    accessibilityElementsHidden={!listVisible}
+                    importantForAccessibility={listVisible ? 'auto' : 'no-hide-descendants'}
+                    contentContainerStyle={[
+                      styles.topicContentInner,
+                      { paddingBottom: Math.max(styles.topicContentInner.paddingBottom, bottomContentInset) }
+                    ]}
+                    data={topicListItems}
+                    keyExtractor={topicListItemKey}
+                    getItemType={topicListItemType}
+                    ItemSeparatorComponent={TopicListItemSeparator}
+                    keyboardShouldPersistTaps="handled"
+                    keyboardDismissMode="on-drag"
+                    onTouchStart={({ nativeEvent }) => {
+                      // Exempt the same bubbling touch from the search field and its controls.
+                      if (commentSearchTouchRef.current !== nativeEvent) commentSearchRef.current?.blur();
+                      commentSearchTouchRef.current = null;
+                    }}
+                    onScroll={(event) => {
+                      const previousViewport = nativeViewportRef.current;
+                      if (
+                        previousViewport.topicKey === detailTopicStateKey &&
+                        event.nativeEvent.layoutMeasurement.height > 0 &&
+                        previousViewport.offset > event.nativeEvent.layoutMeasurement.height &&
+                        event.nativeEvent.contentOffset.y <= 24
+                      ) {
+                        const nativeEvent: NativeScrollEvent & { contentOffsetCorrection?: { y: number } } =
+                          event.nativeEvent;
+                        const fields = {
+                          source: item?.source,
+                          topicRef: detailTopicDiagnosticRef,
+                          previousOffset: previousViewport.offset,
+                          offset: nativeEvent.contentOffset.y,
+                          contentHeight: nativeEvent.contentSize.height,
+                          viewportHeight: nativeEvent.layoutMeasurement.height,
+                          correction: nativeEvent.contentOffsetCorrection?.y || 0,
+                          scrollPhase: replyScrollPhase()
+                        };
+                        const trace = beginDiagnosticTrace('topic', 'scroll-position', fields);
+                        finishDiagnosticTrace(trace, 'success', fields);
+                      }
+                      nativeViewportRef.current = {
+                        topicKey: detailTopicStateKey,
+                        offset: event.nativeEvent.contentOffset.y,
+                        height: event.nativeEvent.layoutMeasurement.height
                       };
-                      const trace = beginDiagnosticTrace('topic', 'scroll-position', fields);
-                      finishDiagnosticTrace(trace, 'success', fields);
+                      confirmTargetPosition();
+                      revealCommentSearch();
+                      onScrollProgress?.(event);
+                      readingScrollOffset.current = event.nativeEvent.contentOffset.y;
+                      readingSessionRef.current?.interact();
+                      reportReadingVisible();
+                      advanceReplyScroll(event.nativeEvent);
+                    }}
+                    scrollEventThrottle={16}
+                    onMomentumScrollBegin={beginEdgeMomentum}
+                    onMomentumScrollEnd={endEdgeMomentum}
+                    onScrollEndDrag={(event) => endEdgeDrag(event.nativeEvent)}
+                    onScrollBeginDrag={beginReplyScroll}
+                    onViewableItemsChanged={handleViewableItemsChanged}
+                    extraData={listExtraData}
+                    {...TOPIC_DETAIL_LIST_PERFORMANCE_PROPS}
+                    maintainVisibleContentPosition={TOPIC_VISIBLE_CONTENT_POSITION}
+                    ListFooterComponent={
+                      canShowReplies && replyEndError ? (
+                        <View style={styles.topicListItemFrame}>
+                          <View style={[styles.topicFooter, topicColumnStyle]}>
+                            {renderReplyErrorState(replyEndError, 'end')}
+                          </View>
+                        </View>
+                      ) : canShowReplies && replyHasMore ? (
+                        <View style={styles.topicListItemFrame}>
+                          <View style={[styles.topicFooter, topicColumnStyle]}>
+                            <AppButton
+                              compact
+                              variant="ghost"
+                              loading={loadingMoreReplies}
+                              label={loadingMoreReplies ? '加载中' : '加载更多回复'}
+                              disabled={loadingMoreReplies}
+                              onPress={requestWindowEndLoad}
+                            />
+                          </View>
+                        </View>
+                      ) : replyBoundaryConfirmed ? (
+                        <View style={styles.topicListItemFrame}>
+                          <Text
+                            accessible
+                            accessibilityLabel={replyOrder === 'newest' ? '已到最早回复' : '已到最新回复'}
+                            style={[styles.replyEndMarker, topicColumnStyle]}
+                          >
+                            {replyOrder === 'newest' ? '已到最早回复' : '已到最新回复'}
+                          </Text>
+                        </View>
+                      ) : null
                     }
-                    nativeViewportRef.current = {
-                      topicKey: detailTopicStateKey,
-                      offset: event.nativeEvent.contentOffset.y,
-                      height: event.nativeEvent.layoutMeasurement.height
-                    };
-                    confirmTargetPosition();
-                    revealCommentSearch();
-                    onScrollProgress?.(event);
-                    readingScrollOffset.current = event.nativeEvent.contentOffset.y;
-                    readingSessionRef.current?.interact();
-                    reportReadingVisible();
-                    advanceReplyScroll(event.nativeEvent);
-                  }}
-                  scrollEventThrottle={16}
-                  onMomentumScrollBegin={beginEdgeMomentum}
-                  onMomentumScrollEnd={(event) => {
-                    endEdgeMomentum();
-                    onTopicScroll(event);
-                  }}
-                  onScrollEndDrag={(event) => {
-                    endEdgeDrag(event.nativeEvent);
-                    onTopicScroll(event);
-                  }}
-                  onScrollBeginDrag={beginReplyScroll}
-                  onViewableItemsChanged={handleViewableItemsChanged}
-                  extraData={listExtraData}
-                  {...TOPIC_DETAIL_LIST_PERFORMANCE_PROPS}
-                  maintainVisibleContentPosition={TOPIC_VISIBLE_CONTENT_POSITION}
-                  ListFooterComponent={
-                    canShowReplies && replyEndError ? (
-                      <View style={styles.topicListItemFrame}>
-                        <View style={[styles.topicFooter, topicColumnStyle]}>
-                          {renderReplyErrorState(replyEndError, 'end')}
-                        </View>
-                      </View>
-                    ) : canShowReplies && replyHasMore ? (
-                      <View style={styles.topicListItemFrame}>
-                        <View style={[styles.topicFooter, topicColumnStyle]}>
-                          <AppButton
-                            label={loadingMoreReplies ? '正在加载...' : '加载更多回复'}
-                            disabled={loadingMoreReplies}
-                            onPress={requestWindowEndLoad}
-                          />
-                        </View>
-                      </View>
-                    ) : replyBoundaryConfirmed ? (
-                      <View style={styles.topicListItemFrame}>
-                        <Text
-                          accessible
-                          accessibilityLabel={replyOrder === 'newest' ? '已到最早回复' : '已到最新回复'}
-                          style={[styles.replyEndMarker, topicColumnStyle]}
-                        >
-                          {replyOrder === 'newest' ? '已到最早回复' : '已到最新回复'}
-                        </Text>
-                      </View>
-                    ) : null
-                  }
-                  renderItem={renderReplyItem}
-                />
+                    renderItem={renderReplyItem}
+                  />
+                ) : null}
               </TopicSelectionRenderHtmlConfig>
             </TopicSelectionSurface>
           </TopicBodyMediaCoordinatorProvider>

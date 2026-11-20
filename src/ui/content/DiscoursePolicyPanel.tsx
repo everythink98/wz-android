@@ -12,7 +12,8 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     title: { color: theme.ink, fontFamily, fontSize: scaled(15), fontWeight: '600', lineHeight: scaled(22) },
     text: { color: theme.muted, fontFamily, fontSize: scaled(13), lineHeight: scaled(20) },
     confirmed: { color: theme.primary, fontFamily, fontSize: scaled(14), fontWeight: '600', lineHeight: scaled(21) },
-    error: { color: theme.danger, fontFamily, fontSize: scaled(13), lineHeight: scaled(20) }
+    error: { color: theme.danger, fontFamily, fontSize: scaled(13), lineHeight: scaled(20) },
+    actions: { alignItems: 'flex-start' }
   });
 }
 
@@ -41,21 +42,29 @@ export function DiscoursePolicyPanel({
         {policy.accepted ? '已确认阅读当前版本' : policy.revoked ? '已撤销阅读确认' : '尚未确认阅读当前版本'}
       </Text>
       {policy.canAccept ? (
-        <AppButton
-          label={busy ? '正在提交…' : policy.acceptLabel}
-          accessibilityLabel={policy.acceptLabel}
-          variant="primary"
-          disabled={disabled || busy}
-          onPress={() => onSetAcceptance(true)}
-        />
+        <View style={styles.actions}>
+          <AppButton
+            compact
+            label={busy ? '正在提交…' : policy.acceptLabel}
+            accessibilityLabel={policy.acceptLabel}
+            loading={busy}
+            variant="primary"
+            disabled={disabled || busy}
+            onPress={() => onSetAcceptance(true)}
+          />
+        </View>
       ) : null}
       {policy.canRevoke ? (
-        <AppButton
-          label={busy ? '正在提交…' : policy.revokeLabel || '撤销阅读确认'}
-          accessibilityLabel={policy.revokeLabel || '撤销阅读确认'}
-          disabled={disabled || busy}
-          onPress={() => onSetAcceptance(false)}
-        />
+        <View style={styles.actions}>
+          <AppButton
+            compact
+            label={busy ? '正在提交…' : policy.revokeLabel || '撤销阅读确认'}
+            accessibilityLabel={policy.revokeLabel || '撤销阅读确认'}
+            loading={busy}
+            disabled={disabled || busy}
+            onPress={() => onSetAcceptance(false)}
+          />
+        </View>
       ) : null}
       {!policy.accepted && !policy.canAccept && !policy.canRevoke ? (
         <Text style={styles.text}>原站当前未开放此账号的确认操作。</Text>

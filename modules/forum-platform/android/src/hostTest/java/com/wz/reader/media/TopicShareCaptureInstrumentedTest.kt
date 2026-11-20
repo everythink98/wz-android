@@ -10,6 +10,7 @@ import android.graphics.Rect
 import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
+import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.FrameLayout
 import android.widget.ScrollView
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -45,33 +46,27 @@ class TopicShareCaptureInstrumentedTest {
     error("Missing $testId")
   }
 
-  private fun click(label: String) {
-    fun find(node: android.view.accessibility.AccessibilityNodeInfo?): android.view.accessibility.AccessibilityNodeInfo? =
+  private fun awaitEnabledButton(label: String, action: (AccessibilityNodeInfo) -> Boolean = { true }) {
+    fun find(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? =
       if (node?.text?.toString()?.equals(label, ignoreCase = true) == true ||
         node?.contentDescription?.toString()?.equals(label, ignoreCase = true) == true) node
       else if (node != null) (0 until node.childCount).firstNotNullOfOrNull { find(node.getChild(it)) }
       else null
-    val deadline = SystemClock.elapsedRealtime() + 20_000
-    while (SystemClock.elapsedRealtime() < deadline) {
-      var node = find(instrumentation.uiAutomation.rootInActiveWindow)
-      while (node != null && !node.isClickable) node = node.parent
-      if (node?.isEnabled == true && node.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)) return
-      SystemClock.sleep(25)
-    }
-    error("Cannot click $label")
-  }
-
-  private fun awaitText(label: String) {
-    fun contains(node: android.view.accessibility.AccessibilityNodeInfo?): Boolean =
-      node != null && (node.text?.toString()?.contains(label) == true ||
-        (0 until node.childCount).any { contains(node.getChild(it)) })
+    val appPackage = instrumentation.targetContext.packageName
     val deadline = SystemClock.elapsedRealtime() + 40_000
     while (SystemClock.elapsedRealtime() < deadline) {
-      if (contains(instrumentation.uiAutomation.rootInActiveWindow)) return
+      val root = instrumentation.uiAutomation.rootInActiveWindow
+      if (root?.packageName?.toString() == appPackage) {
+        var node = find(root)
+        while (node != null && !node.isClickable && node.isEnabled) node = node.parent
+        if (node?.isClickable == true && node.isEnabled && node.isVisibleToUser && action(node)) return
+      }
       SystemClock.sleep(25)
     }
-    error("Missing text $label")
+    error("No enabled button for $label in $appPackage")
   }
+
+  private fun click(label: String) = awaitEnabledButton(label) { it.performAction(AccessibilityNodeInfo.ACTION_CLICK) }
 
   @Suppress("DEPRECATION")
   @Test fun realFabricScrollViewAndExpoImageCaptureThroughTheJsBridge() {
@@ -267,7 +262,6 @@ class TopicShareCaptureInstrumentedTest {
     try {
       awaitView(activity, "long-capture-ready")
       click("Open share sheet")
-      awaitText("上下滑动预览")
       click("分享图片")
       val deadline = SystemClock.elapsedRealtime() + 40_000
       while (SystemClock.elapsedRealtime() < deadline) {
@@ -312,7 +306,9 @@ class TopicShareCaptureInstrumentedTest {
         })
       } finally { bitmap.recycle() }
       instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
-      awaitText("上下滑动预览")
+      awaitEnabledButton("分享图片")
+      assertEquals("canceling the chooser must retain the single exported PNG", listOf(captured),
+        directory.listFiles().orEmpty().filter { it !in existing && it.extension == "png" })
     } finally {
       file?.delete()
       instrumentation.runOnMainSync { activity.finish() }

@@ -3,6 +3,9 @@ import { nodeSeekMarkdownToHtml } from '@/sources/nodeseek/markdown';
 import { extractNodeSeekVoteIds, prepareNodeSeekForumContent } from '@/sources/nodeseek/topicParser';
 import { sourceSupportsTopicAction } from '@/domain/forum/sourceCatalog';
 import type { Reply, Source, Topic, TopicDetail, TopicPoll, UserIdentity } from '@/domain/forum/models';
+import { findReplyLocation } from '@/domain/forum/replyLocation';
+import type { InfiniteData, QueryClient, QueryKey } from '@tanstack/react-query';
+import type { ReplyPage, ReplyPageParam } from '../model/replyPagination';
 
 type TopicActionTopic = Topic | TopicDetail;
 
@@ -44,6 +47,50 @@ export function matchesReplyRefreshTarget(reply: Reply, target: ReplyRefreshTarg
 
 export function removeRepliesForRefresh(replies: Reply[], target?: ReplyRefreshTarget) {
   return target ? replies.filter((reply) => !matchesReplyRefreshTarget(reply, target)) : replies;
+}
+
+export function replaceConfirmedReplyBody(replies: Reply[], commentId: number, body: Reply, submittedMarkdown: string) {
+  const existing = findReplyLocation(replies, { commentId });
+  if (!existing) return replies;
+  return replies.map((reply) =>
+    reply === existing
+      ? {
+          ...reply,
+          contentHtml: body.contentHtml,
+          contentMarkdown: body.contentMarkdown ?? submittedMarkdown,
+          preparedContent: body.preparedContent,
+          quotedPosts: body.quotedPosts
+        }
+      : reply
+  );
+}
+
+export function updateConfirmedReplyCaches(
+  queryClient: QueryClient,
+  keys: readonly QueryKey[],
+  update: (replies: Reply[]) => Reply[],
+  quotedReplyKey?: QueryKey
+) {
+  for (const queryKey of keys) {
+    const state = queryClient.getQueryState<InfiniteData<ReplyPage, ReplyPageParam>>(queryKey);
+    if (!state?.data) continue;
+    const { data, dataUpdatedAt, isInvalidated } = state;
+    const pages = data.pages.map((page) => {
+      const items = update(page.items);
+      return items === page.items ? page : { ...page, items };
+    });
+    if (pages.every((page, index) => page === data.pages[index])) continue;
+    queryClient.setQueryData(queryKey, { ...data, pages }, { updatedAt: dataUpdatedAt });
+    if (isInvalidated) void queryClient.invalidateQueries({ queryKey, exact: true, refetchType: 'none' });
+  }
+  if (!quotedReplyKey) return;
+  const quote = queryClient.getQueryState<Reply>(quotedReplyKey);
+  if (!quote?.data) return;
+  const [reply] = update([quote.data]);
+  if (reply === quote.data) return;
+  queryClient.setQueryData(quotedReplyKey, reply, { updatedAt: quote.dataUpdatedAt });
+  if (quote.isInvalidated)
+    void queryClient.invalidateQueries({ queryKey: quotedReplyKey, exact: true, refetchType: 'none' });
 }
 
 export function yaohuoFavoriteActionKey(topicKey: string) {

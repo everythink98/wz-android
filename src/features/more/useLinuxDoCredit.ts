@@ -57,7 +57,7 @@ export function useLinuxDoCredit({
   const account = useQuery({
     queryKey: keys.account,
     enabled,
-    queryFn: ({ signal }) => gateway.getLinuxDoCreditAccount({ userId, username, signal }, { readPlanScope: scope }),
+    queryFn: ({ signal }) => gateway.getLinuxDoCreditAccount({ userId, username, signal }, { plan }),
     gcTime: Infinity,
     retry: false
   });
@@ -65,7 +65,7 @@ export function useLinuxDoCredit({
     queryKey: keys.transactions,
     enabled: enabled && transactions && Boolean(account.data) && !account.error,
     queryFn: ({ signal, pageParam }) =>
-      gateway.getLinuxDoCreditTransactions({ userId, username, page: pageParam, signal }, { readPlanScope: scope }),
+      gateway.getLinuxDoCreditTransactions({ userId, username, page: pageParam, signal }, { plan }),
     initialPageParam: 1,
     getNextPageParam: (page) => page.nextPage ?? undefined,
     gcTime: Infinity,
@@ -92,11 +92,18 @@ export function useLinuxDoCredit({
     if (!current.current.enabled) return;
     await Promise.all(ownedKeys.map((key) => client.cancelQueries({ queryKey: key, exact: true })));
     if (!current.current.enabled || current.current.keys !== keys) return;
-    client.setQueryData<InfiniteData<LinuxDoCreditPage, number>>(keys.transactions, keepFirstQueryPage);
+    if (transactions)
+      client.setQueryData<InfiniteData<LinuxDoCreditPage, number>>(keys.transactions, keepFirstQueryPage);
     await client.invalidateQueries({ queryKey: keys.account, exact: true });
-    if (!current.current.enabled || current.current.keys !== keys || client.getQueryState(keys.account)?.error) return;
+    if (
+      !transactions ||
+      !current.current.enabled ||
+      current.current.keys !== keys ||
+      client.getQueryState(keys.account)?.error
+    )
+      return;
     await client.invalidateQueries({ queryKey: keys.transactions, exact: true });
-  }, [client, current, keys, ownedKeys]);
+  }, [client, current, keys, ownedKeys, transactions]);
   const loadMore = useCallback(() => {
     if (!enabled || !transactions || account.error || ledger.isFetching || !ledger.hasNextPage) return;
     void ledger.fetchNextPage({ cancelRefetch: false });

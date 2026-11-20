@@ -44,9 +44,10 @@ const compiledPreviewImages = new Map<string, ReturnType<typeof compileForumCont
 
 function useImagePreviewController({
   htmlParts,
+  scope = 'fixture',
   ...options
-}: Parameters<typeof useRawImagePreviewController>[0] & { htmlParts?: string[] }) {
-  const controller = useRawImagePreviewController(options);
+}: Omit<Parameters<typeof useRawImagePreviewController>[0], 'scope'> & { htmlParts?: string[]; scope?: string }) {
+  const controller = useRawImagePreviewController({ ...options, scope });
   const cacheKey = htmlParts ? `${options.contentSource || 'nodeseek'}\n${htmlParts.join('\n')}` : '';
   let previewImages = cacheKey ? compiledPreviewImages.get(cacheKey) : undefined;
   if (cacheKey && !previewImages) {
@@ -153,18 +154,24 @@ describe('Image preview controller', () => {
     }
     const notify = jest.fn();
     const hook = await renderHook(
-      () => useImagePreviewController({ contentSource: 'nodeseek', contentWidth: 360, notify }),
-      { wrapper: SessionEpochHarness }
+      ({ scope }: { scope: string }) =>
+        useImagePreviewController({ contentSource: 'nodeseek', contentWidth: 360, notify, scope }),
+      { wrapper: SessionEpochHarness, initialProps: { scope: 'nodeseek:0' } }
     );
     let pending: Promise<void> | undefined;
     try {
-      await act(() => hook.result.current.openImagePreview('https://www.nodeseek.com/epoch.png'));
+      const poster = 'file:///cache/first-epoch-poster.png';
+      await act(() => hook.result.current.openImagePreview('https://www.nodeseek.com/epoch.png', undefined, poster));
+      expect(imagePreviewItemAt(hook.result.current.imagePreview!, 0)?.displayUri).toBe(poster);
+      const staleSave = hook.result.current.savePreviewImage;
       await act(async () => {
         pending = hook.result.current.savePreviewImage();
       });
       await waitFor(() => expect(mockImageDownload.download).toHaveBeenCalledTimes(1));
       const oldOptions = mockSaveImageUriToLibrary.mock.calls[0][1];
       await act(() => setEpoch?.(1));
+      await hook.rerender({ scope: 'nodeseek:1' });
+      expect(hook.result.current.imagePreview).toBeNull();
       expect(oldOptions.signal?.aborted).toBe(true);
       expect(oldOptions.assertCurrent).toThrow('取消');
       expect(mockImageDownload.cancelDownload.mock.calls).toEqual([['old-save']]);
@@ -176,6 +183,9 @@ describe('Image preview controller', () => {
       expect(mockImageDownload.releaseDownload.mock.calls).toEqual([['old-save']]);
       expect(notify).not.toHaveBeenCalled();
 
+      await act(staleSave);
+      expect(mockSaveImageUriToLibrary).toHaveBeenCalledTimes(1);
+      await act(() => hook.result.current.openImagePreview('https://www.nodeseek.com/current-epoch.png'));
       await act(() => hook.result.current.savePreviewImage());
       expect(mockSaveImageUriToLibrary.mock.calls[1][1].mediaContext.sessionIdentity).not.toBe(
         oldOptions.mediaContext.sessionIdentity
@@ -376,7 +386,7 @@ describe('Image preview controller', () => {
     );
     const next = edge === 'prepend' ? [...added, ...previous] : [...previous, ...added];
     const hook = await renderHook(() =>
-      useRawImagePreviewController({ contentSource: 'linuxdo', contentWidth: 360, notify: jest.fn() })
+      useRawImagePreviewController({ contentSource: 'linuxdo', contentWidth: 360, notify: jest.fn(), scope: 'fixture' })
     );
     const parse = jest.spyOn(forumContentMedia, 'parseSrcsetCandidates');
     try {
@@ -429,7 +439,8 @@ describe('Image preview controller', () => {
           contentSource,
           contentWidth: width,
           mediaReferrer,
-          notify: jest.fn()
+          notify: jest.fn(),
+          scope: 'fixture'
         }),
       {
         initialProps: {

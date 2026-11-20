@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BackHandler, ScrollView } from 'react-native';
+import { ScrollView } from 'react-native';
 import {
   type NavigationProp,
   type RouteProp,
@@ -16,6 +16,7 @@ import { ReadingSettingsScreen } from './ReadingSettingsScreen';
 import { useBackupStatusController } from './useBackupStatusController';
 import { useDiagnosticLogController } from './useDiagnosticLogController';
 import { useReaderSettingsController } from './useReaderSettingsController';
+import { useCloseOnBack } from './useCloseOnBack';
 
 import type { MainTabParamList } from '@/ui/navigation/appRouteTypes';
 import type { LibraryTab } from '@/domain/forum/feed';
@@ -35,7 +36,7 @@ export function MoreRoute() {
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
   useScrollToTop(scrollRef);
   const { updateSettings } = useReaderSettingsController({ commitReaderData: runtime.reader.commit });
-  const { backupBusy, exportBackupFile, importBackupFile } = useBackupStatusController({
+  const { backupOperation, exportBackupFile, importBackupFile } = useBackupStatusController({
     notify: runtime.notify,
     importBackup: runtime.reader.importBackup,
     exportBackup: runtime.reader.exportBackup
@@ -65,35 +66,38 @@ export function MoreRoute() {
       [closeAccountSurfaces]
     )
   );
-  useEffect(() => {
-    if (!active || !showSettingsPanel) return;
-    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      setShowSettingsPanel(false);
-      return true;
-    });
-    return () => subscription.remove();
-  }, [active, showSettingsPanel]);
+  useCloseOnBack(active && showSettingsPanel, setShowSettingsPanel);
 
-  const account = useMemo<typeof runtime.account>(
-    () => ({
+  const whenFocused = useCallback(
+    <Args extends unknown[], Result>(operation: (...args: Args) => Result) =>
+      (...args: Args) => {
+        if (navigation.isFocused()) return operation(...args);
+      },
+    [navigation]
+  );
+  const account = useMemo<typeof runtime.account>(() => {
+    const { center } = runtime.account;
+    return {
       ...runtime.account,
       active: active && runtime.account.active,
       center: {
-        ...runtime.account.center,
-        openCredits: (currency) => {
-          if (navigation.isFocused()) runtime.account.center.openCredits(currency);
+        ...center,
+        openCredits: whenFocused(center.openCredits),
+        openLinuxDoCredit: whenFocused(center.openLinuxDoCredit),
+        command: whenFocused(center.command),
+        nodeImageKey: {
+          ...center.nodeImageKey,
+          authorize: whenFocused(center.nodeImageKey.authorize),
+          clear: whenFocused(center.nodeImageKey.clear),
+          save: whenFocused(center.nodeImageKey.save)
         },
-        openLinuxDoCredit: () => {
-          if (navigation.isFocused()) runtime.account.center.openLinuxDoCredit();
-        },
-        command: (command) => {
-          if (!navigation.isFocused()) return;
-          return runtime.account.center.command(command);
+        nodeSeek: {
+          ...center.nodeSeek,
+          checkIn: whenFocused(center.nodeSeek.checkIn)
         }
       }
-    }),
-    [active, navigation, runtime.account]
-  );
+    };
+  }, [active, runtime.account, whenFocused]);
   const utilities = useMemo(
     () => ({
       library: {
@@ -103,13 +107,13 @@ export function MoreRoute() {
       },
       backup: {
         recovery: runtime.reader.status === 'recovery',
-        busy: backupBusy,
-        exportFile: exportBackupFile,
-        importFile: importBackupFile
+        operation: backupOperation,
+        exportFile: whenFocused(exportBackupFile),
+        importFile: whenFocused(importBackupFile)
       },
       diagnostics: {
         busy: diagnosticBusy,
-        exportLog: exportDiagnosticLogFile
+        exportLog: whenFocused(exportDiagnosticLogFile)
       },
       proxy: {
         activeProfile: proxy.activeProfile,
@@ -138,7 +142,7 @@ export function MoreRoute() {
       navigation,
       runtime.reader.status,
       runtime.reader.data.settings,
-      backupBusy,
+      backupOperation,
       exportBackupFile,
       importBackupFile,
       diagnosticBusy,
@@ -146,7 +150,8 @@ export function MoreRoute() {
       proxy,
       showNetworkProxyPanel,
       showSettingsPanel,
-      updateSettings
+      updateSettings,
+      whenFocused
     ]
   );
 
@@ -158,6 +163,7 @@ export function MoreRoute() {
       update={{
         phase: update.phase,
         artifact: update.artifact,
+        restoreFailed: update.restoreFailed,
         progress: update.appUpdateDownloadProgress,
         info: update.appUpdateInfo,
         message: update.appUpdateMessage,
@@ -165,7 +171,7 @@ export function MoreRoute() {
         start: update.startAppUpdateDownload,
         pause: update.pauseAppUpdateDownload,
         resume: update.resumeAppUpdateDownload,
-        install: update.installAppUpdate
+        install: whenFocused(update.installAppUpdate)
       }}
       utilities={utilities}
       onContentSourcesExpandedChange={setContentSourcesExpanded}

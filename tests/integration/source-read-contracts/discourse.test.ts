@@ -39,7 +39,7 @@ describe('Android local sources', () => {
     setDiagnosticWriter(null);
   });
 
-  it('reads linux.do author trust levels from list and topic post data', async () => {
+  it('displays linux.do author names with their trust levels and links by username across lists, topics and replies', async () => {
     const fetcher = routeFetcher([
       [
         '/latest.json',
@@ -57,7 +57,7 @@ describe('Android local sources', () => {
               }
             ]
           },
-          users: [{ id: 7, username: 'alice', trust_level: 4 }]
+          users: [{ id: 7, username: 'alice', name: '山月', trust_level: 4 }]
         })
       ],
       [
@@ -75,6 +75,7 @@ describe('Android local sources', () => {
                 id: 100,
                 post_number: 1,
                 username: 'alice',
+                name: '山月',
                 trust_level: 4,
                 cooked: '<p>body</p>',
                 created_at: '2026-05-20T00:00:00.000Z'
@@ -83,6 +84,8 @@ describe('Android local sources', () => {
                 id: 101,
                 post_number: 2,
                 username: 'bob',
+                name: ' ',
+                display_username: '青禾',
                 trust_level: 2,
                 cooked: '<p>reply</p>',
                 created_at: '2026-05-20T00:01:00.000Z'
@@ -102,9 +105,20 @@ describe('Android local sources', () => {
     const feed = await getFeed({ source: 'linuxdo', fetcher });
     const topic = await getTopic({ source: 'linuxdo', id: '42', fetcher });
 
-    expect(feed.items[0].authorLevelLabel).toBe('Lv4');
-    expect(topic.authorLevelLabel).toBe('Lv4');
-    expect(topic.replies[0].authorLevelLabel).toBe('Lv2');
+    for (const opening of [feed.items[0], topic]) {
+      expect(opening).toMatchObject({
+        author: '山月',
+        authorId: 'alice',
+        authorUrl: 'https://linux.do/u/alice',
+        authorLevelLabel: 'Lv4'
+      });
+    }
+    expect(topic.replies[0]).toMatchObject({
+      author: '青禾',
+      authorId: 'bob',
+      authorUrl: 'https://linux.do/u/bob',
+      authorLevelLabel: 'Lv2'
+    });
   });
 
   it('renders the available linux.do subset when hydration omits one stream post', async () => {
@@ -940,6 +954,31 @@ describe('Android local sources', () => {
     });
 
     expect(profile).toMatchObject({ topicCount: 0, replyCount: 0 });
+  });
+
+  it('prefers the current user topic list continuation to a stale summary count', async () => {
+    const row = { id: 31, title: 'Topic', created_at: '2026-01-01T00:00:00Z', posts_count: 1 };
+    const fetcher = async (url: string) =>
+      jsonResponse({
+        topic_list:
+          new URL(url).searchParams.get('page') === '0'
+            ? { topics: [row], more_topics_url: '/topics/created-by/alice.json?page=1' }
+            : { topics: [{ ...row, id: 32 }], more_topics_url: null }
+      });
+    const profile = {
+      source: 'linuxdo' as const,
+      id: 'alice',
+      username: 'alice',
+      url: 'https://linux.do/u/alice',
+      topicCount: 1
+    };
+    const first = await getLinuxDoUserTopics(profile, { fetcher });
+    expect(first).toMatchObject({ hasMoreTopics: true, nextTopicsCursor: '1' });
+    const last = await getLinuxDoUserTopics(
+      { ...profile, topicCount: 90 },
+      { fetcher, cursor: first.nextTopicsCursor }
+    );
+    expect(last).toMatchObject({ topics: [{ id: '32' }], hasMoreTopics: false, nextTopicsCursor: null });
   });
 
   it('paginates linux.do user topics by consumed source rows and the summary total', async () => {

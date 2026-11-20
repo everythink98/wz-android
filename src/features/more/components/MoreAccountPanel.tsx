@@ -56,6 +56,7 @@ export type MoreAccountCapabilities = {
     };
     nodeImageKey: {
       authorize: () => unknown;
+      authorized: boolean;
       busy: boolean;
       clear: () => unknown;
       save: (value: string) => unknown;
@@ -259,7 +260,7 @@ export function MoreAccountPanel({
             <MenuButton
               icon={Activity}
               label="linux.do 等级"
-              value={linuxDoLevelMeta}
+              value={linuxDoLevelExpanded && linuxDoLevelProfile ? '' : linuxDoLevelMeta}
               expanded={linuxDoLevelExpanded}
               onPress={() => {
                 setLevelDetails((current) =>
@@ -294,6 +295,7 @@ export function MoreAccountPanel({
           ? (active) => (
               <NodeSeekServicesPanel
                 active={active}
+                apiKeyAuthorized={runtime.center.nodeImageKey.authorized}
                 apiKeyBusy={runtime.center.nodeImageKey.busy}
                 apiKeySaved={runtime.center.nodeImageKey.saved}
                 recoveryThreshold={nodeSeekRecoveryThreshold}

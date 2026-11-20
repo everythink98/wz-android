@@ -68,17 +68,14 @@ export function useAccountOverview({
     queryKey: profileKey,
     enabled: enabled && profilePlan.state === 'ready',
     queryFn: ({ signal }) =>
-      gateway.getUserDetails(
-        { source: site, id: userId, username: user?.username, signal },
-        { readPlanScope: profilePlan.cacheScope }
-      )
+      gateway.getUserDetails({ source: site, id: userId, username: user?.username, signal }, { plan: profilePlan })
   });
   const overviewQuery = useQuery<AccountOverview>({
     gcTime: Infinity,
     queryKey: privateKey,
     enabled: enabled && privatePlan.state === 'ready' && site !== 'linuxdo',
     queryFn: ({ signal }) => {
-      const context = { readPlanScope: privatePlan.cacheScope };
+      const context = { plan: privatePlan };
       if (site === 'nodeseek') return gateway.getNodeSeekAccountOverview({ userId, signal }, context);
       if (site === 'yaohuo') return gateway.getYaohuoAccountOverview({ userId, signal }, context);
       throw new Error('该站点没有私有概要');
@@ -88,8 +85,7 @@ export function useAccountOverview({
     gcTime: Infinity,
     queryKey: boardKey,
     enabled: enabled && privatePlan.state === 'ready' && site === 'nodeseek',
-    queryFn: ({ signal }) =>
-      gateway.getNodeSeekAttendanceBoard({ userId, signal }, { readPlanScope: privatePlan.cacheScope })
+    queryFn: ({ signal }) => gateway.getNodeSeekAttendanceBoard({ userId, signal }, { plan: privatePlan })
   });
   const keys = useMemo(
     () => [profileKey, ...(site === 'linuxdo' ? [] : [privateKey]), ...(site === 'nodeseek' ? [boardKey] : [])],

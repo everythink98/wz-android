@@ -18,6 +18,7 @@ import type {
 } from '@/domain/notifications/models';
 import type { NotificationAdapter, NotificationAdapterAccess, NotificationListOptions } from './notificationAdapter';
 import { discourseAvatarUrl } from '@/sources/discourse/content';
+import { discourseDisplayName } from '@/sources/discourse/model';
 import { fetchLinuxDoJson, getLinuxDoConversationPage, getLinuxDoReply } from '@/sources/linuxdo/reader';
 import { LINUXDO_BASE_URL } from '@/sources/linuxdo/protocol';
 import { runLinuxDoAction } from '@/sources/linuxdo/actionClient';
@@ -139,11 +140,11 @@ function parseNotification(value: unknown, ownUsername?: string): ForumNotificat
   const id = text(value, 'id');
   if (!id) return null;
   const data = isRecord(value.data) ? value.data : {};
-  const actorUsername =
-    text(value, 'acting_user_name') || text(data, 'username', 'original_username', 'acting_user_name');
+  const actorUsername = text(data, 'username', 'original_username');
   const actorName =
     text(value, 'acting_user_name') ||
-    text(data, 'display_username', 'username', 'original_username', 'acting_user_name') ||
+    text(data, 'display_name', 'name', 'original_name', 'display_username', 'acting_user_name') ||
+    actorUsername ||
     '站内消息';
   const topicId = text(value, 'topic_id') || text(data, 'topic_id');
   const postNumber = positiveInteger(value.post_number ?? data.post_number);
@@ -276,7 +277,7 @@ function privateMessageItems(data: Record<string, unknown>, ownUsername: string,
         ? peers.values().next().value
         : undefined;
     const actorUsername = actor ? text(actor, 'username') : '';
-    const actorName = (actor ? text(actor, 'name') : '') || actorUsername || '私信会话';
+    const actorName = discourseDisplayName(actor) || actorUsername || '私信会话';
     const avatarTemplate = actor ? text(actor, 'avatar_template') : '';
     const unread = boolean(value.unread) || Number(value.unread_posts) > 0;
     if (unreadOnly && !unread) {
@@ -343,7 +344,7 @@ function conversationMessages(
       author: reply.author,
       contentHtml: reply.contentHtml,
       createdAt: reply.createdAt || null,
-      mine: Boolean(username && reply.author.toLowerCase() === username)
+      mine: Boolean(username && reply.authorId?.toLowerCase() === username)
     })),
     olderCursor: page.olderCursor
   };
@@ -357,13 +358,21 @@ async function runMarkRead(id: string | undefined, options: NotificationAdapterA
     headers: id ? { 'content-type': 'application/x-www-form-urlencoded' } : ({} as Record<string, string>),
     ...(id ? { body: new URLSearchParams({ id }).toString() } : {})
   };
-  await runLinuxDoAction({
+  const result = await runLinuxDoAction({
     request,
     fetcher: options.fetcher,
     signal: options.signal,
     timeoutMs: options.timeoutMs,
     userAgent: options.userAgent
   });
+  if (
+    isRecord(result) &&
+    (result.success === true || result.success === 'OK') &&
+    !result.error &&
+    !(Array.isArray(result.errors) ? result.errors.length : result.errors)
+  )
+    return { confirmed: true };
+  return { confirmed: false, message: 'linux.do 未确认消息已读，请刷新核对原站状态' };
 }
 
 export const linuxDoNotificationAdapter = {
@@ -526,7 +535,7 @@ export const linuxDoNotificationAdapter = {
       if (!cooked) throw new Error('站内消息对应的帖子内容未找到');
       contentHtml = sanitizeLinuxDoContentHtml(cooked, undefined);
       policy = discoursePostPolicy(data);
-      author = text(data, 'username') || author;
+      author = discourseDisplayName(data) || text(data, 'username') || author;
       createdAt = toIsoString(text(data, 'created_at')) || createdAt;
     } else if (item.target.postNumber) {
       const reply = await getLinuxDoReply(item.target.topicId, item.target.postNumber, readOptions(options));
@@ -599,12 +608,10 @@ export const linuxDoNotificationAdapter = {
   ): Promise<NotificationMarkResult> {
     if (item.target.type === 'private-conversation') return { confirmed: true };
     const id = item.remoteReadId || item.id;
-    await runMarkRead(id, options);
-    return { confirmed: true };
+    return runMarkRead(id, options);
   },
 
   async markAllRead(options: NotificationAdapterAccess): Promise<NotificationMarkResult> {
-    await runMarkRead(undefined, options);
-    return { confirmed: true };
+    return runMarkRead(undefined, options);
   }
 } satisfies NotificationAdapter;

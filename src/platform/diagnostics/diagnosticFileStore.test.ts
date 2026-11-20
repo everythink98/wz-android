@@ -1348,6 +1348,19 @@ describe('diagnostic export leases', () => {
     expect(boundary.files.has(boundary.shared[0].uri)).toBe(true);
   });
 
+  it('removes the diagnostic copy when the native chooser confirms it never opened', async () => {
+    const Sharing = await import('expo-sharing');
+    const failure = Object.assign(new Error('chooser did not open'), { code: 'ERR_SHARING_NOT_STARTED' });
+    vi.mocked(Sharing.shareAsync).mockRejectedValueOnce(failure);
+
+    await expect(exportDiagnosticLog(metadata)).rejects.toBe(failure);
+    expect([...boundary.files.keys()].filter((uri) => uri.endsWith('.txt'))).toEqual([]);
+
+    await exportDiagnosticLog(metadata);
+    expect(boundary.shared).toHaveLength(1);
+    expect(boundary.files.has(boundary.shared[0].uri)).toBe(true);
+  });
+
   it.each([new Error('synchronous chooser failure'), 0])(
     'retains the handed-off file when sharing synchronously throws %s',
     async (failure) => {

@@ -48,27 +48,6 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       fontWeight: '600',
       lineHeight: Math.round(30 * titleFontScale)
     },
-    titleOnlyTitle: {
-      fontSize: Math.round(20 * titleFontScale),
-      fontWeight: '600',
-      lineHeight: Math.round(28 * titleFontScale)
-    },
-    titleOnlyAuthorRow: {
-      gap: 10,
-      minHeight: 48
-    },
-    titleOnlyAuthorName: {
-      fontSize: Math.round(13 * fontScale),
-      fontWeight: '500',
-      lineHeight: Math.round(18 * fontScale)
-    },
-    titleOnlyAuthorDate: {
-      fontSize: Math.round(12 * fontScale),
-      lineHeight: Math.round(17 * fontScale)
-    },
-    titleOnlyMetaStack: {
-      gap: 8
-    },
     titleOnlyHeaderStack: {
       paddingBottom: 12
     },
@@ -163,46 +142,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       flexDirection: 'row',
       gap: 10
     },
-    topicBadgeRow: {
-      flex: 1,
-      minWidth: 0,
-      alignItems: 'center',
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 6
-    },
-    topicCategoryBadge: {
-      overflow: 'hidden',
-      color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 11,
-      fontWeight: '400',
-      includeFontPadding: false,
-      lineHeight: 16,
-      backgroundColor: 'transparent',
-      borderColor: theme.line,
-      borderRadius: readerRadii.badge,
-      borderWidth: 0,
-      paddingHorizontal: 0,
-      paddingVertical: 3,
-      textAlignVertical: 'center'
-    },
-    topicSourceBadge: {
-      overflow: 'hidden',
-      color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 11,
-      fontWeight: '600',
-      includeFontPadding: false,
-      lineHeight: 16,
-      backgroundColor: theme.surface2,
-      borderColor: theme.line,
-      borderRadius: readerRadii.badge,
-      borderWidth: 0,
-      paddingHorizontal: 0,
-      paddingVertical: 3,
-      textAlignVertical: 'center'
-    },
+    readingEntryStatus: { alignSelf: 'center', width: '100%' },
     topicTagPill: {
       alignItems: 'center',
       backgroundColor: 'transparent',
@@ -394,6 +334,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       fontSize: 12,
       fontWeight: '700',
       includeFontPadding: false,
+      fontVariant: ['tabular-nums'],
       lineHeight: 16
     },
     topicPrimaryActionLabel: {
@@ -405,7 +346,8 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       color: theme.muted,
       fontSize: Math.round(12 * fontScale),
       fontWeight: '500',
-      lineHeight: Math.round(16 * fontScale)
+      lineHeight: Math.round(16 * fontScale),
+      fontVariant: ['tabular-nums']
     },
     detailActionCompactLabel: {
       fontSize: 11,
@@ -496,11 +438,19 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     pollMetaWrap: {
       alignItems: 'center',
+      flex: 1,
       flexDirection: 'row',
       flexWrap: 'wrap',
       gap: 6,
       justifyContent: 'flex-start',
-      width: '100%'
+      minWidth: 160
+    },
+    pollMetaSummary: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      lineHeight: 18,
+      fontVariant: ['tabular-nums']
     },
     pollParticipationPill: {
       alignItems: 'center',
@@ -556,7 +506,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       borderWidth: StyleSheet.hairlineWidth
     },
     pollOptionRow: {
-      minHeight: 46,
+      minHeight: 48,
       backgroundColor: 'transparent',
       overflow: 'hidden',
       position: 'relative'
@@ -579,7 +529,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       alignItems: 'flex-start',
       flexDirection: 'row',
       gap: 8,
-      minHeight: 46,
+      minHeight: 48,
       paddingHorizontal: 10,
       paddingVertical: 8,
       position: 'relative',
@@ -610,11 +560,15 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       fontSize: 12,
       fontWeight: '600',
       lineHeight: 17,
-      textAlign: 'left'
+      textAlign: 'left',
+      fontVariant: ['tabular-nums']
     },
     pollFooter: {
-      alignItems: 'flex-start',
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
       gap: 8,
+      justifyContent: 'space-between',
       paddingTop: 2
     },
     pollSubmitRow: {
@@ -622,7 +576,8 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       flexDirection: 'row',
       flexWrap: 'wrap',
       gap: 8,
-      justifyContent: 'flex-start',
+      justifyContent: 'flex-end',
+      marginLeft: 'auto',
       paddingTop: 0
     },
     topicStatRail: {
@@ -675,6 +630,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       fontWeight: '700',
       includeFontPadding: false,
       lineHeight: 17,
+      fontVariant: ['tabular-nums'],
       textAlignVertical: 'center'
     },
     linuxDoReactionPill: {
@@ -714,6 +670,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       fontWeight: '700',
       includeFontPadding: false,
       lineHeight: 17,
+      fontVariant: ['tabular-nums'],
       textAlignVertical: 'center'
     },
     topicStatusRow: {
@@ -830,7 +787,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       overflow: 'hidden'
     },
     topicAcceptedAnswerReadMore: {
-      minHeight: 44,
+      minHeight: 48,
       alignItems: 'center',
       borderTopColor: theme.line,
       borderTopWidth: StyleSheet.hairlineWidth,
@@ -1014,7 +971,8 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       fontSize: 12,
       fontWeight: '600',
       letterSpacing: 0,
-      lineHeight: 16
+      lineHeight: 16,
+      fontVariant: ['tabular-nums']
     },
     replyAuthorBlock: {
       flex: 1,
@@ -1226,7 +1184,9 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       flexDirection: 'row',
       flexShrink: 0,
       gap: 6,
-      minHeight: 48
+      justifyContent: 'flex-end',
+      minHeight: 48,
+      minWidth: 56
     },
     quotePanelStateText: {
       color: theme.ink,

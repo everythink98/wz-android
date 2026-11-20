@@ -69,18 +69,6 @@ export function createReaderCommandQueue() {
     settled(operation: Readonly<Operation>) {
       pending = pending.filter((item) => item !== operation);
       project();
-    },
-    imported(data: ReaderState) {
-      committed = {
-        ...data,
-        revisions: {
-          favorites: committed.revisions.favorites + 1,
-          history: committed.revisions.history + 1,
-          followedUsers: committed.revisions.followedUsers + 1
-        }
-      };
-      status = 'ready';
-      project();
     }
   };
 }

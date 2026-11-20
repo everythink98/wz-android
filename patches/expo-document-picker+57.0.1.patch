@@ -1,23 +1,39 @@
 diff --git a/node_modules/expo-document-picker/android/src/main/java/expo/modules/documentpicker/DocumentPickerModule.kt b/node_modules/expo-document-picker/android/src/main/java/expo/modules/documentpicker/DocumentPickerModule.kt
-index 6c2bff0..bdbf0e6 100644
+index 6c2bff05..cde5b541 100644
 --- a/node_modules/expo-document-picker/android/src/main/java/expo/modules/documentpicker/DocumentPickerModule.kt
 +++ b/node_modules/expo-document-picker/android/src/main/java/expo/modules/documentpicker/DocumentPickerModule.kt
-@@ -10,8 +10,14 @@ import expo.modules.core.utilities.FileUtilities
+@@ -4,135 +4,235 @@ import android.app.Activity
+ import android.content.Context
+ import android.content.Intent
+ import android.net.Uri
+-import android.os.Build
+-import android.os.FileUtils
+ import expo.modules.core.utilities.FileUtilities
  import expo.modules.kotlin.Promise
  import expo.modules.kotlin.exception.Exceptions
++import expo.modules.kotlin.exception.CodedException
  import expo.modules.kotlin.exception.toCodedException
 +import expo.modules.kotlin.functions.Queues
  import expo.modules.kotlin.modules.Module
  import expo.modules.kotlin.modules.ModuleDefinition
 +import kotlinx.coroutines.Dispatchers
 +import kotlinx.coroutines.CoroutineStart
++import kotlinx.coroutines.currentCoroutineContext
++import kotlinx.coroutines.ensureActive
 +import kotlinx.coroutines.Job
 +import kotlinx.coroutines.launch
 +import kotlinx.coroutines.withContext
  import org.apache.commons.io.FilenameUtils
  import java.io.File
  import java.io.FileNotFoundException
-@@ -22,64 +28,132 @@ private const val OPEN_DOCUMENT_CODE = 4137
+ import java.io.FileOutputStream
++import java.io.IOException
++import java.io.InputStream
++import java.io.OutputStream
++import java.util.Locale
+ 
+ private const val OPEN_DOCUMENT_CODE = 4137
+ 
  class DocumentPickerModule : Module() {
    private val context: Context
      get() = appContext.reactContext ?: throw Exceptions.ReactContextLost()
@@ -27,7 +43,7 @@ index 6c2bff0..bdbf0e6 100644
 +  private sealed interface PickerState {
 +    data object Idle : PickerState
 +    data object Destroyed : PickerState
-+    data class Selecting(val promise: Promise, val copyToCacheDirectory: Boolean) : PickerState
++    data class Selecting(val promise: Promise, val options: DocumentPickerOptions) : PickerState
 +    data class Copying(val request: Selecting, val job: Job) : PickerState
 +  }
 +  private var state: PickerState = PickerState.Idle
@@ -61,7 +77,14 @@ index 6c2bff0..bdbf0e6 100644
 -        type = if (options.type.size > 1) {
 -          putExtra(Intent.EXTRA_MIME_TYPES, options.type.toTypedArray())
 -          "*/*"
-+        val request = PickerState.Selecting(promise, options.copyToCacheDirectory)
++        if (options.copyToCacheDirectory) {
++          options.copyLimits?.let { limits ->
++            require(limits.maxBytes in 1L until Long.MAX_VALUE)
++            require(limits.maxFiles == null || limits.maxFiles >= 0)
++            require(limits.alternate == null || limits.alternate.maxBytes in 1L until Long.MAX_VALUE)
++          }
++        }
++        val request = PickerState.Selecting(promise, options)
 +        state = request
 +        val action = if (options.copyToCacheDirectory && options.type == listOf("image/*")) {
 +          Intent.ACTION_GET_CONTENT
@@ -114,19 +137,17 @@ index 6c2bff0..bdbf0e6 100644
 -          } else {
 -            handleSingleSelection(intent)
 +          val selectedContext = context
-+          val shouldCopy = request.copyToCacheDirectory
 +          // Register ownership before the coroutine can settle or the scope can cancel it.
 +          val job = appContext.mainQueue.launch(start = CoroutineStart.LAZY) {
++            val copies = mutableListOf<File>()
 +            try {
 +              val result = withContext(Dispatchers.IO) {
-+                if (intent?.clipData != null) {
-+                  handleMultipleSelection(intent, selectedContext, shouldCopy)
-+                } else {
-+                  handleSingleSelection(intent, selectedContext, shouldCopy)
-+                }
++                val ioContext = currentCoroutineContext()
++                readSelection(intent, selectedContext, request.options, copies) { ioContext.ensureActive() }
 +              }
-+              finish(promise) { promise.resolve(result) }
++              if (!finish(promise) { promise.resolve(result) }) deleteCopies(copies)
 +            } catch (e: Exception) {
++              deleteCopies(copies)
 +              finish(promise) { promise.reject(e.toCodedException()) }
 +            }
            }
@@ -141,10 +162,31 @@ index 6c2bff0..bdbf0e6 100644
          } catch (e: Exception) {
 -          promise.reject(e.toCodedException())
 +          finish(promise) { promise.reject(e.toCodedException()) }
-+        }
-+      }
-+    }
-+
+         }
+-      } else {
+-        promise.resolve(
+-          DocumentPickerResult(canceled = true)
+-        )
+       }
+-
+-      pendingPromise = null
+     }
+-  }
+ 
+-  private fun copyDocumentToCacheDirectory(documentUri: Uri, name: String): Uri {
+-    val outputFilePath = FileUtilities.generateOutputPath(
+-      context.cacheDir,
+-      "DocumentPicker",
+-      FilenameUtils.getExtension(name)
+-    )
+-    val outputFile = File(outputFilePath)
+-    context.contentResolver.openInputStream(documentUri).use { inputStream ->
+-      inputStream ?: throw FileNotFoundException("Inputstream for $documentUri was null.")
+-      FileOutputStream(outputFile).use { outputStream ->
+-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+-          FileUtils.copy(inputStream, outputStream)
+-        } else {
+-          inputStream.copyTo(outputStream)
 +    OnDestroy {
 +      synchronized(requestLock) {
 +        val pending = state
@@ -157,79 +199,237 @@ index 6c2bff0..bdbf0e6 100644
 +          }
 +          PickerState.Idle, PickerState.Destroyed -> Unit
          }
--      } else {
--        promise.resolve(
--          DocumentPickerResult(canceled = true)
--        )
        }
-+    }
-+  }
- 
--      pendingPromise = null
-+  private fun finish(promise: Promise, settle: () -> Unit) {
-+    // Module destruction can arrive off the main queue. Never settle a later request.
-+    synchronized(requestLock) {
-+      val pending = when (val current = state) {
-+        is PickerState.Selecting -> current.promise
-+        is PickerState.Copying -> current.request.promise
-+        PickerState.Idle, PickerState.Destroyed -> return
-+      }
-+      if (pending !== promise) return
-+      state = PickerState.Idle
-+      settle()
      }
-   }
- 
--  private fun copyDocumentToCacheDirectory(documentUri: Uri, name: String): Uri {
-+  private fun copyDocumentToCacheDirectory(documentUri: Uri, name: String, context: Context): Uri {
-     val outputFilePath = FileUtilities.generateOutputPath(
-       context.cacheDir,
-       "DocumentPicker",
-@@ -99,37 +173,36 @@ class DocumentPickerModule : Module() {
-     return Uri.fromFile(outputFile)
+-    return Uri.fromFile(outputFile)
    }
  
 -  private fun handleSingleSelection(intent: Intent?) {
 -    intent?.data?.let { uri ->
 -      val details = readDocumentDetails(uri)
 -      val result = DocumentPickerResult(
-+  private fun handleSingleSelection(intent: Intent?, context: Context, shouldCopy: Boolean): DocumentPickerResult {
-+    return intent?.data?.let { uri ->
-+      val details = readDocumentDetails(uri, context, shouldCopy)
-+      DocumentPickerResult(
-         assets = listOf(details)
-       )
+-        assets = listOf(details)
+-      )
 -      pendingPromise?.resolve(result)
-     } ?: throw FailedToReadDocumentException()
+-    } ?: throw FailedToReadDocumentException()
++  private fun finish(promise: Promise, settle: () -> Unit): Boolean {
++    // Module destruction can arrive off the main queue. Never settle a later request.
++    synchronized(requestLock) {
++      val pending = when (val current = state) {
++        is PickerState.Selecting -> current.promise
++        is PickerState.Copying -> current.request.promise
++        PickerState.Idle, PickerState.Destroyed -> return false
++      }
++      if (pending !== promise) return false
++      state = PickerState.Idle
++      settle()
++      return true
++    }
    }
  
 -  private fun handleMultipleSelection(intent: Intent?) {
-+  private fun handleMultipleSelection(intent: Intent?, context: Context, shouldCopy: Boolean): DocumentPickerResult {
-     val count = intent?.clipData?.itemCount ?: 0
-     val assets = mutableListOf<DocumentInfo>()
+-    val count = intent?.clipData?.itemCount ?: 0
+-    val assets = mutableListOf<DocumentInfo>()
++  private fun deleteCopies(copies: List<File>) {
++    copies.forEach { file -> runCatching { file.delete() } }
++  }
  
-     for (i in 0 until count) {
-       val uri = intent?.clipData?.getItemAt(i)?.uri
+-    for (i in 0 until count) {
+-      val uri = intent?.clipData?.getItemAt(i)?.uri
++  private fun readSelection(
++    intent: Intent?,
++    context: Context,
++    options: DocumentPickerOptions,
++    copies: MutableList<File>,
++    checkActive: () -> Unit
++  ): DocumentPickerResult {
++    val clip = intent?.clipData
++    val count = clip?.itemCount ?: 1
++    val limits = options.copyLimits.takeIf { options.copyToCacheDirectory }
++    if (limits?.maxFiles?.let { count > it } == true) {
++      throw CodedException("ERR_PICKER_FILE_COUNT", "选择的文件数量超出上限", null)
++    }
++    val reader = DocumentDetailsReader(context)
++    val assets = List(count) { index ->
++      checkActive()
++      val uri = (if (clip == null) intent?.data else clip.getItemAt(index).uri)
          ?: throw FailedToReadDocumentException()
 -      val document = readDocumentDetails(uri)
-+      val document = readDocumentDetails(uri, context, shouldCopy)
-       assets.add(document)
+-      assets.add(document)
++      val document = reader.read(uri)
++      if (options.copyToCacheDirectory) copyDocument(document, context, limits, copies, checkActive) else document
      }
- 
+-
 -    pendingPromise?.resolve(DocumentPickerResult(assets = assets))
 +    return DocumentPickerResult(assets = assets)
    }
  
 -  private fun readDocumentDetails(uri: Uri): DocumentInfo {
-+  private fun readDocumentDetails(uri: Uri, context: Context, shouldCopy: Boolean): DocumentInfo {
-     val originalDocumentDetails = DocumentDetailsReader(context).read(uri)
- 
+-    val originalDocumentDetails = DocumentDetailsReader(context).read(uri)
+-
 -    val details = if (!copyToCacheDirectory) {
-+    val details = if (!shouldCopy) {
-       originalDocumentDetails
-     } else {
+-      originalDocumentDetails
+-    } else {
 -      val copyPath = copyDocumentToCacheDirectory(uri, originalDocumentDetails.name)
-+      val copyPath = copyDocumentToCacheDirectory(uri, originalDocumentDetails.name, context)
-       originalDocumentDetails.copy(uri = copyPath)
+-      originalDocumentDetails.copy(uri = copyPath)
++  private fun copyDocument(
++    document: DocumentInfo,
++    context: Context,
++    limits: DocumentPickerCopyLimits?,
++    copies: MutableList<File>,
++    checkActive: () -> Unit
++  ): DocumentInfo {
++    val extension = FilenameUtils.getExtension(document.name)
++    val alternate = limits?.alternate
++    val limit = if (alternate != null &&
++      (document.mimeType?.lowercase(Locale.ROOT)?.let(alternate.mimeTypes::contains) == true ||
++        document.name.substringAfterLast('.').lowercase(Locale.ROOT) in alternate.extensions)
++    ) alternate.maxBytes else limits?.maxBytes
++    if (limit != null && document.size?.let { it > limit } == true) return document
++
++    val file = File(FileUtilities.generateOutputPath(context.cacheDir, "DocumentPicker", extension))
++    if (!file.createNewFile()) throw IOException("Unable to create a picker cache file.")
++    copies.add(file)
++    val written = context.contentResolver.openInputStream(document.uri).use { input ->
++      input ?: throw FileNotFoundException("The selected document is unavailable.")
++      FileOutputStream(file).use { output -> copyBytes(input, output, limit, checkActive) }
      }
++    if (written != null) return document.copy(uri = Uri.fromFile(file), size = written)
++    if (!file.delete()) throw IOException("Unable to remove an oversized picker cache file.")
++    copies.remove(file)
++    // Keep the per-file failure visible to the existing caller without discarding other accepted files.
++    return document.copy(size = requireNotNull(limit) + 1)
++  }
  
+-    return details
++  private fun copyBytes(input: InputStream, output: OutputStream, limit: Long?, checkActive: () -> Unit): Long? {
++    val buffer = ByteArray(64 * 1024)
++    var written = 0L
++    while (true) {
++      checkActive()
++      val readLimit = limit?.let { minOf(buffer.size.toLong(), it - written + 1).toInt() } ?: buffer.size
++      val count = input.read(buffer, 0, readLimit)
++      if (count == -1) return written
++      if (count == 0) throw IOException("Unable to read the selected document.")
++      if (limit != null && count.toLong() > limit - written) return null
++      output.write(buffer, 0, count)
++      written += count
++    }
+   }
+ }
+diff --git a/node_modules/expo-document-picker/android/src/main/java/expo/modules/documentpicker/DocumentPickerOptions.kt b/node_modules/expo-document-picker/android/src/main/java/expo/modules/documentpicker/DocumentPickerOptions.kt
+index 2479eb98..b66f1626 100644
+--- a/node_modules/expo-document-picker/android/src/main/java/expo/modules/documentpicker/DocumentPickerOptions.kt
++++ b/node_modules/expo-document-picker/android/src/main/java/expo/modules/documentpicker/DocumentPickerOptions.kt
+@@ -13,5 +13,22 @@ data class DocumentPickerOptions(
+   val type: List<String>,
+ 
+   @Field
+-  val multiple: Boolean
++  val multiple: Boolean,
++
++  @Field
++  val copyLimits: DocumentPickerCopyLimits? = null
++) : Record
++
++@OptimizedRecord
++data class DocumentPickerCopyLimits(
++  @Field val maxBytes: Long,
++  @Field val maxFiles: Int? = null,
++  @Field val alternate: DocumentPickerFileSizeOverride? = null
++) : Record
++
++@OptimizedRecord
++data class DocumentPickerFileSizeOverride(
++  @Field val maxBytes: Long,
++  @Field val mimeTypes: List<String>,
++  @Field val extensions: List<String>
+ ) : Record
+diff --git a/node_modules/expo-document-picker/build/index.js b/node_modules/expo-document-picker/build/index.js
+index 803d9898..0ca77023 100644
+--- a/node_modules/expo-document-picker/build/index.js
++++ b/node_modules/expo-document-picker/build/index.js
+@@ -11,13 +11,14 @@ import ExpoDocumentPicker from './ExpoDocumentPicker';
+  *
+  * If the user cancelled the document picking, the promise resolves to `{ type: 'cancel' }`.
+  */
+-export async function getDocumentAsync({ type = '*/*', copyToCacheDirectory = true, multiple = false, base64 = true, } = {}) {
++export async function getDocumentAsync({ type = '*/*', copyToCacheDirectory = true, copyLimits, multiple = false, base64 = true, } = {}) {
+     if (typeof type === 'string') {
+         type = [type];
+     }
+     return await ExpoDocumentPicker.getDocumentAsync({
+         type,
+         copyToCacheDirectory,
++        copyLimits,
+         multiple,
+         base64,
+     });
+diff --git a/node_modules/expo-document-picker/build/types.d.ts b/node_modules/expo-document-picker/build/types.d.ts
+index e27ab0b8..fead3c2e 100644
+--- a/node_modules/expo-document-picker/build/types.d.ts
++++ b/node_modules/expo-document-picker/build/types.d.ts
+@@ -1,3 +1,8 @@
++export type DocumentPickerCopyLimits = {
++    maxFiles?: number;
++    maxBytes: number;
++    alternate?: { maxBytes: number; mimeTypes: readonly string[]; extensions: readonly string[] };
++};
+ export type DocumentPickerOptions = {
+     /**
+      * The [MIME type(s)](https://en.wikipedia.org/wiki/Media_type) of the documents that are available
+@@ -16,6 +21,7 @@ export type DocumentPickerOptions = {
+      * @default true
+      */
+     copyToCacheDirectory?: boolean;
++    copyLimits?: DocumentPickerCopyLimits;
+     /**
+      * Allows multiple files to be selected from the system UI.
+      * @default false
+diff --git a/node_modules/expo-document-picker/src/index.ts b/node_modules/expo-document-picker/src/index.ts
+index 0d9c5775..f94920f3 100644
+--- a/node_modules/expo-document-picker/src/index.ts
++++ b/node_modules/expo-document-picker/src/index.ts
+@@ -16,6 +16,7 @@ import type { DocumentPickerOptions, DocumentPickerResult } from './types';
+ export async function getDocumentAsync({
+   type = '*/*',
+   copyToCacheDirectory = true,
++  copyLimits,
+   multiple = false,
+   base64 = true,
+ }: DocumentPickerOptions = {}): Promise<DocumentPickerResult> {
+@@ -25,6 +26,7 @@ export async function getDocumentAsync({
+   return await ExpoDocumentPicker.getDocumentAsync({
+     type,
+     copyToCacheDirectory,
++    copyLimits,
+     multiple,
+     base64,
+   });
+diff --git a/node_modules/expo-document-picker/src/types.ts b/node_modules/expo-document-picker/src/types.ts
+index 8fc34f17..25ed0f97 100644
+--- a/node_modules/expo-document-picker/src/types.ts
++++ b/node_modules/expo-document-picker/src/types.ts
+@@ -1,4 +1,10 @@
+ // @needsAudit
++export type DocumentPickerCopyLimits = {
++  maxFiles?: number;
++  maxBytes: number;
++  alternate?: { maxBytes: number; mimeTypes: readonly string[]; extensions: readonly string[] };
++};
++
+ export type DocumentPickerOptions = {
+   /**
+    * The [MIME type(s)](https://en.wikipedia.org/wiki/Media_type) of the documents that are available
+@@ -17,6 +23,11 @@ export type DocumentPickerOptions = {
+    * @default true
+    */
+   copyToCacheDirectory?: boolean;
++  /**
++   * Android limits for optional cache copies. Files over the byte limit keep their original URI
++   * and an oversized byte count so callers can reject them without losing valid selections.
++   */
++  copyLimits?: DocumentPickerCopyLimits;
+   /**
+    * Allows multiple files to be selected from the system UI.
+    * @default false

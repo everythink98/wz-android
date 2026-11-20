@@ -30,6 +30,12 @@ import {
 } from '@/domain/session/siteSessionState';
 import { createReadGateway } from '@/sources/readGateway';
 import { getFeed } from '@/sources/feedRead';
+import { searchTopics } from '@/sources/searchRead';
+import { linuxDoNotificationAdapter } from '@/sources/discourseNotifications';
+import { getLinuxDoUserTopics } from '@/sources/linuxdo/account';
+import { nodeSeekNotificationAdapter } from '@/sources/nodeseek/notifications';
+import { embeddedTopics } from '@/sources/nodeseek/feedParser';
+import { parseYaohuoListHtml } from '@/sources/yaohuo/feedParser';
 import { mergeTopics } from '@/domain/forum/feed';
 import { accessRequirementLevelValue } from '@/domain/forum/presentation';
 import { createForumTextIndex, isRecord, parseForumContentHtml, parseHtml } from '@/domain/forum/html';
@@ -64,7 +70,7 @@ import {
   dismissSourceNotificationExact
 } from '@/platform/notifications/notificationSystem';
 import { diagnosticBuildContext } from '@/platform/diagnostics/nativeDiagnosticJournal';
-import { laneFor, userResponses } from '../../tests/fixtures/userActivityEvidence';
+import { createUserActivityResponse, laneFor } from '../../tests/fixtures/userActivityEvidence';
 import type { Source, Topic } from '@/domain/forum/models';
 import { FeedScreen } from '@/features/feed/FeedScreen';
 import { useFeedController } from '@/features/feed/useFeedController';
@@ -83,8 +89,14 @@ import { createContentWorkSample, measureContentWork, verifyContentChain, type C
 import { verifyPendingPollMaterialization } from './pendingPollProof';
 import { acquireReviewProofEnvironment, finishReviewProofEnvironment, type ReviewProofFailure } from './environment';
 import { runReviewProofCheck, type ReviewProofCheck, type ReviewProofCheckResult } from './check';
-import { verificationRecoveryProofModes, verifyRecoveryProof } from './verificationRecoveryProof';
+import {
+  verificationRecoveryProofModes,
+  verifyLegacyIdentityDeadline,
+  verifyRecoveryProof
+} from './verificationRecoveryProof';
 import { readingEntryProofModes, verifyReadingEntryProof, type ReadingProofAction } from './readingEntryProof';
+import { verifyEditorReceiptReview } from './editorReceiptReview';
+import { verifySourcePaginationReview } from './sourcePaginationReview';
 
 // Isolated developer entry only. Synthetic payloads test boundaries, never upstream protocol claims.
 // HTTP fixtures use the supplied fetcher; the platform-export route uses an instrumentation-owned loopback server.
@@ -1241,17 +1253,99 @@ async function execute(token: string, mount: (node: ReactNode) => void, status: 
         'Remaining cursor candidates were lost, repeated, or fetched again'
       );
     });
+    await run('source-pagination-and-publication-dates', verifySourcePaginationReview);
+    await run('sources-receipts-search-pagination-dates', async () => {
+      const json = (body: unknown) =>
+        new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } });
+      const linuxRead = await linuxDoNotificationAdapter.markAllRead({
+        identityKey: 'linuxdo:proof',
+        userId: 'proof',
+        userAgent: 'proof',
+        fetcher: async (url) => json(new URL(url).pathname === '/session/csrf' ? { csrf: 'proof' } : { success: false })
+      });
+      const mention = {
+        source: 'nodeseek',
+        id: 'at-me:11',
+        kind: 'mention',
+        actor: { name: 'Proof' },
+        title: 'Topic',
+        createdAt: null,
+        unread: true,
+        target: { type: 'information' },
+        remoteGroup: 'at-me',
+        remoteReadId: '11'
+      } as const;
+      const nodeRead = await nodeSeekNotificationAdapter.markRead(
+        mention,
+        { notification: mention, title: mention.title },
+        {
+          identityKey: 'nodeseek:7',
+          userId: '7',
+          userAgent: 'proof',
+          fetcher: async () => json({})
+        }
+      );
+      check(!linuxRead.confirmed && !nodeRead.confirmed, 'Missing mark-read receipts cleared notifications');
+
+      const invalid = await searchTopics({
+        source: 'v2ex',
+        query: 'topic',
+        fetcher: async () => new Response('<html>Maintenance</html>')
+      }).then(
+        () => undefined,
+        (error: unknown) => isRecord(error) && error.reason
+      );
+      check(invalid === 'parse_empty', 'Malformed V2EX response appeared as an empty result');
+      const search = await searchTopics({
+        source: 'v2ex',
+        query: 'topic',
+        fetcher: async () => json({ hits: [{ id: 12, title: 'Topic' }] })
+      });
+      const undated = search.items[0];
+      const nodeTopic = embeddedTopics({ posts: [{ postId: 12, title: 'Topic' }] })[0];
+      const yaohuoTopic = parseYaohuoListHtml('<div class="list"><a href="/bbs-12.html">Topic</a></div>').items[0];
+      check(
+        [undated, nodeTopic, yaohuoTopic].every(
+          (topic) => topic?.id === '12' && topic.createdAt === '' && topic.lastReplyAt === undefined
+        ),
+        'An undated source topic gained a timestamp'
+      );
+      const cursor = encodeURIComponent(JSON.stringify({ buffers: { v2ex: [undated] } }));
+      const buffered = await getFeed({
+        source: 'all',
+        page: 2,
+        limit: 1,
+        includedSources: ['v2ex'],
+        cursor,
+        fetcher: async () => {
+          throw new Error('Unexpected source read for buffered topic');
+        }
+      });
+      check(buffered.items[0]?.id === '12' && !buffered.hasMore, 'Aggregate feed lost an undated buffered topic');
+
+      const userPage = await getLinuxDoUserTopics(
+        { source: 'linuxdo', id: 'proof', username: 'proof', url: 'https://linux.do/u/proof', topicCount: 1 },
+        {
+          fetcher: async () =>
+            json({
+              topic_list: {
+                topics: [{ id: 31, title: 'Topic', created_at: '2025-02-01T00:00:00Z', posts_count: 1 }],
+                more_topics_url: '/topics/created-by/proof.json?page=1'
+              }
+            })
+        }
+      );
+      check(userPage.hasMoreTopics && userPage.nextTopicsCursor === '1', 'Stale profile total hid a linked topic page');
+    });
     for (const source of ['nodeseek', 'linuxdo', 'v2ex', 'yaohuo'] as const) {
       for (const failedLane of ['topics', 'replies'] as const) {
         await run(`user-${source}-${failedLane}-failure-retry-refresh`, async () => {
-          const responses = userResponses(source, false);
-          let failure: string | undefined = failedLane;
+          const responseFor = createUserActivityResponse(source, false);
+          let failure: typeof failedLane | undefined = failedLane;
           const requests: string[] = [];
           const fetcher = async (url: string) => {
             requests.push(url);
-            if (laneFor(url) === failure) return new Response('Injected HTTP failure', { status: 503 });
-            if (url.includes('/feed/member/')) return new Response('<feed xmlns="http://www.w3.org/2005/Atom"></feed>');
-            return new Response(responses[laneFor(url)]);
+            return responseFor(url, failure);
           };
           const gateway = userGateway(source, fetcher);
           const get = await hook(function useValue() {
@@ -1440,11 +1534,17 @@ async function execute(token: string, mount: (node: ReactNode) => void, status: 
         metrics
       );
     }
+    await run('identity-legacy-confirmation-deadline', () =>
+      verifyLegacyIdentityDeadline({ hook, unmount: () => mount(null), until })
+    );
     for (const mode of verificationRecoveryProofModes) {
       await run(`verification-core-${mode}`, () =>
         verifyRecoveryProof(mode, { hook, unmount: () => mount(null), until })
       );
     }
+    await run('write-retained-editor-reward-receipt', () =>
+      verifyEditorReceiptReview({ hook, unmount: () => mount(null), until })
+    );
     for (const invalidation of ['identity', 'epoch', 'source', 'surface'] as const) {
       await run(`write-csrf-${invalidation}`, async () => {
         const csrf = deferred();
@@ -1935,7 +2035,9 @@ function ProofApp() {
         setContent(<PlatformExportsProof token={exports[1]} />);
         return;
       }
-      const acceptance = /^wzreviewproof:\/\/(boundaries|recovery|notification)\/([a-f0-9]{32})$/.exec(url || '');
+      const acceptance = /^wzreviewproof:\/\/(boundaries|recovery|cold-recovery|notification)\/([a-f0-9]{32})$/.exec(
+        url || ''
+      );
       if (acceptance) {
         setContent(<AcceptanceProof mode={acceptance[1]} token={acceptance[2]} />);
         setStatus('Pro 修复专项设备验收');

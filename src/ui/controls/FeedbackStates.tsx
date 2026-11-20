@@ -1,14 +1,20 @@
 import { ActivityIndicator } from 'react-native-paper';
 import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
+import {
+  dispatchFocusedRoute,
+  goBackFromFocusedRoute,
+  manageContentSourcesAction,
+  type FocusedRouteNavigation
+} from '@/ui/navigation/appRouteActions';
 import type { ReactNode } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { sourceCatalog, type Source } from '@/domain/forum/sourceCatalog';
 import type { AuthNotice } from '@/domain/session/siteSessionPrompts';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import {
+  createReaderFontSizer,
   readerRadii,
   type ReaderStyleSettings,
-  alphaColor,
   fontFamilyValue,
   type ReaderTheme
 } from '@/ui/theme/tokens';
@@ -16,6 +22,7 @@ import { AppButton } from './ButtonControls';
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontFamily = fontFamilyValue(settings.fontFamily);
+  const fontSize = createReaderFontSizer(settings);
   return StyleSheet.create({
     authNoticeBox: {
       gap: 8,
@@ -25,11 +32,11 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       borderWidth: StyleSheet.hairlineWidth,
       padding: 12
     },
-    authNoticeText: { fontFamily, fontSize: 13, lineHeight: 19 },
+    authNoticeText: { fontFamily, fontSize: fontSize(13), lineHeight: fontSize(19) },
     authNoticeDanger: { color: theme.danger },
     authNoticeNeutral: { color: theme.muted },
     authNoticeWarning: { color: theme.warning },
-    empty: { color: theme.muted, fontFamily, fontSize: 13, paddingVertical: 24, textAlign: 'center' },
+    empty: { color: theme.muted, fontFamily, fontSize: fontSize(13), paddingVertical: 24, textAlign: 'center' },
     recoverableEmpty: {
       alignItems: 'center',
       justifyContent: 'center',
@@ -37,30 +44,53 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       paddingHorizontal: 16,
       paddingVertical: 24
     },
-    state: {
+    loadingRow: {
       width: '100%',
-      alignItems: 'stretch',
+      alignItems: 'center',
+      flexDirection: 'row',
+      justifyContent: 'center',
+      gap: 8,
+      minHeight: 112,
+      paddingHorizontal: 16,
+      paddingVertical: 28
+    },
+    loadingRowCompact: {
+      minHeight: 48,
+      paddingVertical: 12
+    },
+    indicatorSlot: {
+      width: 24,
+      height: 24,
+      alignItems: 'center',
+      justifyContent: 'center'
+    },
+    indicatorSpace: { width: 24, height: 24 },
+    loadingText: {
+      color: theme.muted,
+      fontFamily,
+      fontSize: fontSize(13),
+      fontWeight: '500',
+      includeFontPadding: false,
+      lineHeight: fontSize(18)
+    },
+    disabledCard: {
+      width: '100%',
+      alignItems: 'center',
       justifyContent: 'center',
       gap: 12,
-      minHeight: 156,
-      backgroundColor: alphaColor(theme.primary, 0.035),
-      borderColor: alphaColor(theme.primary, theme.dark ? 0.2 : 0.12),
+      minHeight: 140,
+      backgroundColor: theme.surface2,
+      borderColor: theme.line,
       borderRadius: readerRadii.surface,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 16,
       paddingVertical: 22
     },
-    routeState: { flex: 1, margin: 16 },
-    header: { alignItems: 'center', flexDirection: 'row', gap: 9 },
-    indicatorSpace: { width: 24, height: 24 },
-    stateTitle: { color: theme.ink, fontFamily, fontSize: 17, fontWeight: '700', textAlign: 'center' },
-    text: { color: theme.muted, fontFamily, fontSize: 13 },
+    routeState: { flex: 1, margin: 16, width: undefined },
+    stateTitle: { color: theme.ink, fontFamily, fontSize: fontSize(17), fontWeight: '600', textAlign: 'center' },
+    text: { color: theme.muted, fontFamily, fontSize: fontSize(13), lineHeight: fontSize(19) },
     centeredText: { textAlign: 'center' },
-    actions: { alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 },
-    placeholders: { gap: 8 },
-    line: { alignSelf: 'stretch', height: 10, borderRadius: readerRadii.pill, backgroundColor: theme.line },
-    shortLine: { width: '42%' },
-    mutedLine: { width: '68%' }
+    actions: { alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 }
   });
 }
 
@@ -103,7 +133,15 @@ export function RecoverableEmptyState({
   );
 }
 
-export function LoadingState({ text, animating = true }: { text: string; animating?: boolean }) {
+export function LoadingState({
+  text = '加载中',
+  animating = true,
+  compact = false
+}: {
+  text?: string;
+  animating?: boolean;
+  compact?: boolean;
+}) {
   const { styles, theme } = useReaderThemeStyles(createStyles);
   return (
     <View
@@ -112,49 +150,46 @@ export function LoadingState({ text, animating = true }: { text: string; animati
       accessibilityLiveRegion="polite"
       accessibilityState={{ busy: true }}
       role="status"
-      style={styles.state}
+      style={[styles.loadingRow, compact && styles.loadingRowCompact]}
     >
-      <View style={styles.header}>
-        {animating ? (
-          <ActivityIndicator accessible={false} color={theme.primary} size="small" />
-        ) : (
-          <View testID="loading-indicator-space" style={styles.indicatorSpace} />
-        )}
-        <Text accessible={false} style={styles.text}>
-          {text}
-        </Text>
-      </View>
-      <View style={styles.placeholders}>
-        {Array.from({ length: 3 }).map((_, index) => (
-          <View key={index} style={[styles.line, index === 0 && styles.shortLine, index === 2 && styles.mutedLine]} />
-        ))}
-      </View>
+      {animating ? (
+        <View style={styles.indicatorSlot}>
+          <ActivityIndicator accessible={false} color={theme.primary} size={18} />
+        </View>
+      ) : (
+        <View testID="loading-indicator-space" style={styles.indicatorSpace} />
+      )}
+      <Text accessible={false} style={styles.loadingText}>
+        {text}
+      </Text>
     </View>
   );
 }
 
 export function ContentSourceDisabledState({
   source,
-  onBack,
-  onManage
+  navigation
 }: {
   source: Source;
-  onBack: () => void;
-  onManage: () => void;
+  navigation: FocusedRouteNavigation;
 }) {
   const { styles } = useReaderThemeStyles(createStyles);
   const title = `${sourceCatalog[source].label}已停用`;
   const text = '该内容源已停用，启用后才能查看此内容。';
   const onPageLayout = useStartupPageLayout();
   return (
-    <View style={[styles.state, styles.routeState]} onLayout={onPageLayout}>
+    <View style={[styles.disabledCard, styles.routeState]} onLayout={onPageLayout}>
       <Text accessibilityRole="header" style={styles.stateTitle}>
         {title}
       </Text>
       <Text style={[styles.text, styles.centeredText]}>{text}</Text>
       <View style={styles.actions}>
-        <AppButton label="管理内容源" variant="primary" onPress={onManage} />
-        <AppButton label="返回" variant="ghost" onPress={onBack} />
+        <AppButton
+          label="管理内容源"
+          variant="primary"
+          onPress={() => dispatchFocusedRoute(navigation, manageContentSourcesAction())}
+        />
+        <AppButton label="返回" variant="ghost" onPress={() => goBackFromFocusedRoute(navigation)} />
       </View>
     </View>
   );

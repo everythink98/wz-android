@@ -7,7 +7,13 @@ import { sourceLabel } from '@/domain/forum/presentation';
 import { errorMessage } from '@/platform/network/errors';
 import { ModalSheetFrame, ModalSheetHeader } from '@/ui/controls/ModalSheetFrame';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { createReaderFontSizer, readerRadii, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
+import {
+  createReaderFontSizer,
+  fontFamilyValue,
+  readerRadii,
+  type ReaderStyleSettings,
+  type ReaderTheme
+} from '@/ui/theme/tokens';
 
 type ShareActivity =
   { phase: 'idle' } | { phase: 'acquiring-controller' } | { phase: 'in-flight'; controller: AbortController };
@@ -71,7 +77,7 @@ export function TopicShareOptions({
     {
       key: 'link',
       label: '分享链接',
-      description: '发送标题和原帖链接',
+      description: '',
       icon: Share2,
       disabled: false,
       onPress: () => void run('link')
@@ -79,7 +85,7 @@ export function TopicShareOptions({
     {
       key: 'copy',
       label: '复制链接',
-      description: '复制原帖地址',
+      description: '',
       icon: Copy,
       disabled: false,
       onPress: () => void run('copy')
@@ -87,7 +93,7 @@ export function TopicShareOptions({
     {
       key: 'image',
       label: '生成长图',
-      description: onShareImage ? '保留主帖的完整文字和图片' : '正文加载后可生成',
+      description: onShareImage ? '' : '正文加载后可生成',
       icon: Image,
       disabled: !onShareImage,
       onPress: () => {
@@ -127,7 +133,7 @@ export function TopicShareOptions({
             </View>
             <View style={styles.labelGroup}>
               <Text style={styles.label}>{label}</Text>
-              <Text style={styles.description}>{description}</Text>
+              {description ? <Text style={styles.description}>{description}</Text> : null}
             </View>
             <ChevronRight size={18} color={theme.muted} />
           </Pressable>
@@ -149,39 +155,40 @@ export function TopicShareOptions({
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const font = createReaderFontSizer(settings);
+  const fontFamily = fontFamilyValue(settings.fontFamily);
   return StyleSheet.create({
     content: { flexShrink: 1 },
     topic: {
-      paddingBottom: 16,
+      paddingBottom: 14,
       marginBottom: 4,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderColor: theme.line,
       gap: 6
     },
-    title: { fontSize: font(15), lineHeight: font(22), color: theme.ink, fontWeight: '500' },
-    source: { fontSize: font(12), color: theme.muted },
+    title: { fontFamily, fontSize: font(15), lineHeight: font(22), color: theme.ink, fontWeight: '500' },
+    source: { fontFamily, fontSize: font(12), color: theme.muted },
     action: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 14,
-      paddingVertical: 14,
-      paddingHorizontal: 4,
-      minHeight: 76,
+      gap: 12,
+      paddingVertical: 10,
+      paddingHorizontal: 2,
+      minHeight: 56,
       borderRadius: readerRadii.control
     },
     disabled: { opacity: 0.45 },
     icon: {
-      width: 44,
-      height: 44,
+      width: 38,
+      height: 38,
       borderRadius: readerRadii.control,
       backgroundColor: theme.primarySoft,
       alignItems: 'center',
       justifyContent: 'center'
     },
-    labelGroup: { flex: 1, gap: 4 },
-    label: { fontSize: font(15), fontWeight: '600', color: theme.ink },
-    description: { fontSize: font(12), lineHeight: font(18), color: theme.muted },
-    feedback: { color: theme.success, fontSize: font(13), paddingVertical: 8 },
-    error: { color: theme.danger, fontSize: font(13), paddingVertical: 8 }
+    labelGroup: { flex: 1, gap: 3 },
+    label: { fontFamily, fontSize: font(15), fontWeight: '600', color: theme.ink },
+    description: { fontFamily, fontSize: font(12), lineHeight: font(18), color: theme.muted },
+    feedback: { fontFamily, color: theme.success, fontSize: font(13), paddingVertical: 8 },
+    error: { fontFamily, color: theme.danger, fontSize: font(13), paddingVertical: 8 }
   });
 }

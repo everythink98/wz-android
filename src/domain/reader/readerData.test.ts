@@ -8,6 +8,7 @@ import {
   MAX_READER_STRING_LENGTH,
   mergeReaderData,
   normalizeFontScale,
+  readReaderBackupContent,
   sanitizeReaderData,
   sanitizeReaderSettings,
   topicKey,
@@ -700,26 +701,6 @@ describe('Android reader data helpers', () => {
     expect(clean?.visitCount).toBeUndefined();
   });
 
-  it('decodes HTML entities in stored topic titles', () => {
-    const encodedTopic: Topic = {
-      ...topic,
-      id: 'encoded-title',
-      title: '&#129765;完辣，ai又来抢饭碗啦，装机仔下岗'
-    };
-
-    const data = sanitizeReaderData({
-      ...createEmptyReaderData(),
-      favorites: {
-        [topicKey(encodedTopic)]: {
-          topic: encodedTopic,
-          savedAt: '2026-05-20T03:00:00.000Z'
-        }
-      }
-    });
-
-    expect(data.favorites[topicKey(encodedTopic)]?.topic.title).toBe('🫥完辣，ai又来抢饭碗啦，装机仔下岗');
-  });
-
   it('rejects records with strings beyond the local backup field limit', () => {
     const unsafeTopic: Topic = {
       ...topic,
@@ -762,7 +743,7 @@ describe('Android reader data helpers', () => {
       }
     };
 
-    const merged = mergeReaderData(local, remote);
+    const merged = mergeReaderData(local, readReaderBackupContent(remote));
 
     expect(merged.settings.theme).toBe('dark');
     expect(merged.settings.listDensity).toBe('compact');
@@ -783,7 +764,7 @@ describe('Android reader data helpers', () => {
       }
     };
 
-    expect(mergeReaderData(local, remote).settings.contentSources).toEqual([
+    expect(mergeReaderData(local, readReaderBackupContent(remote)).settings.contentSources).toEqual([
       { source: 'linuxdo', enabled: false },
       { source: 'v2ex', enabled: true },
       { source: 'nodeseek', enabled: true },
@@ -805,7 +786,7 @@ describe('Android reader data helpers', () => {
       settings: null
     };
 
-    const merged = mergeReaderData(local, remote);
+    const merged = mergeReaderData(local, readReaderBackupContent(remote));
 
     expect(merged.settings).toEqual(local.settings);
   });

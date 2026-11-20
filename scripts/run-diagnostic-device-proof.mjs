@@ -1,4 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
+import { installDeviceApk, readIsolatedDeviceApk } from './device-apk-install.mjs';
 import { deviceProofFixture } from './device-proof-build.mjs';
 import { randomUUID } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -169,6 +170,7 @@ export async function runDiagnosticDeviceProof() {
     }
   };
   if (pid()) throw new Error('Close the app on the isolated AVD before starting this proof.');
+  const initialInstallation = readIsolatedDeviceApk(adb, packageName);
   if (!existsSync(path.join(android, 'diagnostic-build.json')))
     throw new Error('Fresh diagnostic prebuild is required.');
   const scratchRoot = path.join(root, '.codex-tmp');
@@ -191,11 +193,7 @@ export async function runDiagnosticDeviceProof() {
     if (result.error) throw result.error;
     if (result.status !== 0) throw new Error(`Gradle failed: ${result.status}`);
   };
-  const installedIdentity = () => {
-    const dump = adb('shell', 'dumpsys', 'package', packageName);
-    return /firstInstallTime=([^\r\n]+)/u.exec(dump)?.[1]?.trim();
-  };
-  const initialIdentity = installedIdentity();
+  let proofInstallation;
   /** @type {'unchanged' | 'rebuild-output' | 'rebuild-and-reinstall' | 'device-frozen'} */
   let restorePolicy = 'unchanged';
   let proofPassed = false;
@@ -235,12 +233,19 @@ export async function runDiagnosticDeviceProof() {
       gitSha: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
     });
     symbols = JSON.parse(readFileSync(path.join(directory, 'manifest.json'), 'utf8'));
-    adb('install', '-r', proofApk);
+    proofInstallation = installDeviceApk({
+      adb,
+      pkg: packageName,
+      apk: proofApk,
+      allowNew: true,
+      expected: initialInstallation,
+      previousApk: path.join(fixture, 'previous.apk'),
+      install: () => {
+        restorePolicy = 'device-frozen';
+        adb('install', '-r', proofApk);
+      }
+    });
     restorePolicy = 'rebuild-and-reinstall';
-    if (initialIdentity && installedIdentity() !== initialIdentity) {
-      restorePolicy = 'device-frozen';
-      throw new Error('Installation identity changed; device changes frozen.');
-    }
     // Installation can restart the process; this fixture reads its deep link only on mount.
     adb('shell', 'am', 'force-stop', packageName);
     const readSnapshot = () => {
@@ -304,7 +309,15 @@ export async function runDiagnosticDeviceProof() {
           if (composer.error) throw composer.error;
           if (composer.status !== 0) throw new Error('Composer build failed while restoring the production entry.');
           gradle([':app:assembleRelease']);
-          if (restorePolicy === 'rebuild-and-reinstall') adb('install', '-r', productionApk);
+          if (restorePolicy === 'rebuild-and-reinstall') {
+            installDeviceApk({
+              adb,
+              pkg: packageName,
+              apk: productionApk,
+              expected: proofInstallation,
+              previousApk: path.join(fixture, 'installed-proof.apk')
+            });
+          }
         }
         restorePassed = restorePolicy !== 'device-frozen';
       },

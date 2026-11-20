@@ -2,6 +2,50 @@ import { describe, expect, it, vi } from 'vitest';
 import { parseHtml } from './html';
 import { sanitizeContentHtml } from './contentSanitizer';
 
+describe('picture sources in forum posts', () => {
+  it('resolves the first supported unconditional source for a linked cover without an img src', () => {
+    const root = parseHtml(
+      sanitizeContentHtml(
+        '<a href="https://packet.example/open"><picture>' +
+          '<source media="(min-width: 900px)" srcset="/wide.png">' +
+          '<source type="video/mp4" srcset="/clip.mp4"><source srcset="file:///missing">' +
+          '<source type="image/svg+xml" srcset="/covers/🧧.svg 1x, /covers/large.svg 2x">' +
+          '<img width="300" height="400" alt="矿洞夺宝"></picture></a>',
+        'https://linux.do/'
+      )
+    );
+    const img = root.querySelector('a picture img');
+    expect(img?.getAttribute('src')).toBe('https://linux.do/covers/%F0%9F%A7%A7.svg');
+    expect(img?.getAttribute('srcset')).toBe(
+      'https://linux.do/covers/%F0%9F%A7%A7.svg 1x, https://linux.do/covers/large.svg 2x'
+    );
+    expect(img?.getAttribute('alt')).toBe('矿洞夺宝');
+    expect(root.querySelector('a')?.getAttribute('href')).toBe('https://packet.example/open');
+  });
+
+  it('uses the authored fallback when no supported picture source precedes the image', () => {
+    const root = parseHtml(
+      sanitizeContentHtml(
+        '<picture><source media="(prefers-color-scheme: dark)" srcset="/dark.svg"><img src="/default.png"><source srcset="/late.svg"></picture>',
+        'https://linux.do/'
+      )
+    );
+    expect(root.querySelector('img')?.getAttribute('src')).toBe('https://linux.do/default.png');
+    expect(root.querySelector('img')?.getAttribute('srcset')).toBeUndefined();
+  });
+
+  it('keeps the img fallback while selecting a descriptorless source at the default density', () => {
+    const root = parseHtml(
+      sanitizeContentHtml(
+        '<picture><source srcset="/bad.png 0x, /cover.png"><img src="/fallback.jpg"></picture>',
+        'https://linux.do/'
+      )
+    );
+    expect(root.querySelector('img')?.getAttribute('src')).toBe('https://linux.do/fallback.jpg');
+    expect(root.querySelector('img')?.getAttribute('srcset')).toBe('https://linux.do/cover.png 1x');
+  });
+});
+
 describe('forum content sanitizer media referrer policy', () => {
   it('keeps repeated escapes and entity text cut by terminal spans visible', () => {
     const html = sanitizeContentHtml(

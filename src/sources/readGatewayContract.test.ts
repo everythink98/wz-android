@@ -25,6 +25,7 @@ import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDi
 import { acceptForumReadResponse, registerForumReadResponseEvidence } from './forumSourceReadAttempt';
 import { forumReadEvidenceFetcher } from '../../tests/helpers/forumReadEvidence';
 import type { LinuxDoOptions } from '@/sources/linuxdo/reader';
+import { aggregateForumReadPlan, resolveForumReadPlan } from '@/domain/forum/readPlan';
 
 const forumMocks = vi.hoisted(() => ({
   getCategories: vi.fn(),
@@ -180,6 +181,15 @@ describe('source gateway read contract', () => {
 
   afterEach(() => {
     setDiagnosticWriter(null);
+  });
+
+  it('rejects a captured read for another site or operation even when the cache scopes match', async () => {
+    const gateway = createReadGateway({ fetcher: vi.fn(), nodeSeekUserAgent: () => '' });
+    for (const plan of [gateway.getReadPlan('linuxdo', 'topic'), gateway.getReadPlan('v2ex', 'feed')]) {
+      expect(plan.cacheScope).toBe(gateway.getReadPlan('v2ex', 'topic').cacheScope);
+      await expect(gateway.getTopic({ source: 'v2ex', id: '42' }, { plan })).rejects.toThrow('请求已取消');
+    }
+    expect(forumMocks.getTopic).not.toHaveBeenCalled();
   });
 
   function runtime(
@@ -342,11 +352,11 @@ describe('source gateway read contract', () => {
     await expect(read).rejects.toThrow('请求已取消');
   });
 
-  it('routes aggregate V2EX search through its explicit public child plan', async () => {
+  it('routes V2EX search through its explicit public read plan', async () => {
     const anonymousFetcher = vi.fn<Fetcher>(async () => new Response('{}'));
     const managedFetcher = vi.fn<Fetcher>(async () => new Response('{}'));
-    forumMocks.searchTopics.mockImplementationOnce(async ({ fetcherForSource }) => {
-      await fetcherForSource?.('v2ex')('https://www.sov2ex.com/api/search?q=read-plan', {
+    forumMocks.searchTopics.mockImplementationOnce(async ({ fetcher }) => {
+      await fetcher('https://www.sov2ex.com/api/search?q=read-plan', {
         credentials: 'include'
       });
       return { items: [], errors: {}, hasMore: false, nextPage: null };
@@ -357,10 +367,7 @@ describe('source gateway read contract', () => {
       nodeSeekUserAgent: () => ''
     });
 
-    await gateway.searchTopics(
-      { source: 'all', query: 'read-plan' },
-      { includedSources: ['v2ex'], readPlanScopes: [['v2ex', 'public:omit']] }
-    );
+    await gateway.searchTopics({ source: 'v2ex', query: 'read-plan' }, { plan: gateway.getReadPlan('v2ex', 'search') });
 
     expect(anonymousFetcher).toHaveBeenCalledWith(
       'https://www.sov2ex.com/api/search?q=read-plan',
@@ -630,7 +637,8 @@ describe('source gateway read contract', () => {
       nodeSeekUserAgent
     });
 
-    await expect(gateway.getFeed({ source: 'all' }, { includedSources: ['linuxdo'] })).rejects.toThrow('请求已取消');
+    const plan = aggregateForumReadPlan('feed', [resolveForumReadPlan('linuxdo', 'feed', true, runtime('linuxdo'))]);
+    await expect(gateway.getFeed({ source: 'all' }, { plan })).rejects.toThrow('请求已取消');
 
     expect(isSourceAuthenticated).not.toHaveBeenCalled();
     expect(linuxDoUserAgent).not.toHaveBeenCalled();
@@ -646,7 +654,11 @@ describe('source gateway read contract', () => {
       nodeSeekUserAgent: () => 'NodeSeek UA'
     });
 
-    await expect(gateway.getFeed({ source: 'all' }, { includedSources: ['nodeseek', 'v2ex'] })).resolves.toMatchObject({
+    const plan = aggregateForumReadPlan('feed', [
+      gateway.getReadPlan('nodeseek', 'feed'),
+      gateway.getReadPlan('v2ex', 'feed')
+    ]);
+    await expect(gateway.getFeed({ source: 'all' }, { plan })).resolves.toMatchObject({
       items: []
     });
     expect(forumMocks.getFeed).toHaveBeenCalledWith(expect.objectContaining({ includedSources: ['nodeseek', 'v2ex'] }));

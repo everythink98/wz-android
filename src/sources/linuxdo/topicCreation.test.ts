@@ -185,13 +185,15 @@ describe('linux.do topic creation', () => {
       async (url: string, _init?: RequestInit) =>
         new Response(
           JSON.stringify(
-            url.endsWith('/session/csrf') ? { csrf: 'fresh' } : { post: { id: 101, topic_id: 12, post_number: 1 } }
+            url.endsWith('/session/csrf')
+              ? { csrf: 'fresh' }
+              : { post: { id: 101, topic_id: 12, post_number: 1, username: 'alice', name: '山月' } }
           )
         )
     );
     expect(await createLinuxDoTopic({ input: input(), fetcher, userAgent: 'test' })).toMatchObject({
       status: 'posted',
-      topic: { id: '12' }
+      topic: { id: '12', author: '山月', authorId: 'alice' }
     });
     const [url, init] = fetcher.mock.calls[1]!;
     expect(url).toBe('https://linux.do/posts');

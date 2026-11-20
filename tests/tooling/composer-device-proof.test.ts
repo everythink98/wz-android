@@ -513,6 +513,22 @@ describe('composer device evidence', () => {
     expect(() =>
       assertTopicEditReceipt(receipt, { token: 'edit', buildId: 'build', status: 'saved', writes: 2 })
     ).toThrow();
+    const retained = {
+      ...receipt.topic.edit,
+      exists: true,
+      title: '已保存标题',
+      bodyExact: false,
+      newerDraft: true,
+      newerDraftRebased: true
+    };
+    const resumed = (patch: Partial<typeof retained>) => ({
+      ...receipt,
+      topic: { ...receipt.topic, route: 'TopicComposer', edit: { ...retained, ...patch } }
+    });
+    const newer = { token: 'edit', buildId: 'build', title: retained.title, newerDraft: true };
+    expect(() => assertTopicEditReceipt(resumed({}), newer)).not.toThrow();
+    for (const patch of [{ newerDraft: false }, { newerDraftRebased: false }, { writes: 2 }])
+      expect(() => assertTopicEditReceipt(resumed(patch), newer)).toThrow();
     for (const patch of [
       { bodyExact: false },
       { otherDraftRetained: false },
@@ -569,7 +585,8 @@ describe('composer device evidence', () => {
       'WZ_ComposerInsets_0916',
       'WZ_TopicCreation_Test_API35',
       'WZ_ComposerExpressions_Test_API35_20261005',
-      'WZ_StateModel_Composer_API35_20261114'
+      'WZ_StateModel_Composer_API35_20261114',
+      'WZ_Review_Composer_API35'
     ]) {
       const args = composerReplayArgs({ name: 'submit', avd, submitLabel: '发送回复' });
       expect(args).toContain(`PROOF_DEVICE=${avd}`);
@@ -601,7 +618,8 @@ describe('composer device evidence', () => {
       'WZ_ComposerInsets_0916',
       'WZ_TopicCreation_Test_API35',
       'WZ_ComposerExpressions_Test_API35_20261005',
-      'WZ_StateModel_Composer_API35_20261114'
+      'WZ_StateModel_Composer_API35_20261114',
+      'WZ_Review_Composer_API35'
     ])
       expect(() => assertComposerProofAvd(name)).not.toThrow();
     for (const name of [
@@ -614,7 +632,8 @@ describe('composer device evidence', () => {
       'WZ_ComposerInsets_0916_backup',
       'WZ_StateModel_Composer_API35_20261114_copy',
       'WZ_StateModel_Composer_API35_20261114 ',
-      'wz_statemodel_composer_api35_20261114'
+      'wz_statemodel_composer_api35_20261114',
+      'WZ_Review_Composer_API35_copy'
     ])
       expect(() => assertComposerProofAvd(name)).toThrow('Refusing non-proof device');
   });

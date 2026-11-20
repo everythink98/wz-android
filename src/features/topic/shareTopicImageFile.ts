@@ -1,6 +1,7 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { nativeSecureRandomHex } from '@/platform/android/secureRandom';
+import { androidShareDidNotStart } from '@/platform/android/shareChooserError';
 
 const RETENTION_MS = 24 * 60 * 60 * 1000;
 
@@ -35,23 +36,29 @@ export async function shareTopicImageFile(
 
   const target = new File(directory, `topic-${now}-${suffix}.png`);
   if (target.exists) throw new Error('分享图片文件已存在，请重试。');
+  let preserveForReceiver = false;
   try {
     await original.copy(target);
     if (!target.exists || target.size <= 0) throw new Error('图片复制失败，请重试。');
-  } catch (error) {
-    try {
-      if (target.exists) target.delete();
-    } catch {
-      // Preserve the copy failure if its partial file cannot be removed.
-    }
-    throw error;
-  }
+    if (!isCurrent()) return;
 
-  // The receiving app may read after the chooser closes; keep the copy until it expires.
-  if (!isCurrent()) return;
-  await Sharing.shareAsync(target.uri, {
-    dialogTitle: title,
-    mimeType: 'image/png',
-    UTI: 'public.png'
-  });
+    // The receiving app may still need the copy after the chooser rejects or closes.
+    preserveForReceiver = true;
+    await Sharing.shareAsync(target.uri, {
+      dialogTitle: title,
+      mimeType: 'image/png',
+      UTI: 'public.png'
+    });
+  } catch (error) {
+    if (androidShareDidNotStart(error)) preserveForReceiver = false;
+    throw error;
+  } finally {
+    if (!preserveForReceiver) {
+      try {
+        if (target.exists) target.delete();
+      } catch {
+        // Keep the original copy failure or cancellation even if cleanup fails.
+      }
+    }
+  }
 }

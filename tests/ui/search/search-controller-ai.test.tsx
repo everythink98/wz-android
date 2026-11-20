@@ -192,7 +192,6 @@ function renderSearchController(
       request: Parameters<ReadGateway['searchTopics']>[0],
       context?: Parameters<ReadGateway['searchTopics']>[1]
     ) => {
-      if (request.source === 'all') throw new Error('Search controller must execute aggregate reads per source');
       const plan = getReadPlan(request.source, 'search');
       if (plan.state === 'blocked') {
         const loginRequired = plan.reason === 'login-required';
@@ -241,6 +240,88 @@ async function prepareLinuxDoSearch(hook: Awaited<ReturnType<typeof renderSearch
 describe('linux.do AI search controller', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockStorageGetItem.mockReset().mockResolvedValue(null);
+    mockStorageSetItem.mockReset().mockResolvedValue(undefined);
+  });
+
+  it('does not open Google from a queued search submission after leaving Search', async () => {
+    appQueryClient.clear();
+    let active = true;
+    const onOpenExternalSearch = jest.fn<(url: string) => void>();
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>();
+    const readGateway = createGateway({ searchTopics });
+    readGateway.getReadPlan = (source, operation) =>
+      resolveForumReadPlan(
+        source,
+        operation,
+        true,
+        isSessionSource(source)
+          ? {
+              source,
+              authenticated: false,
+              authSurfaceOpen: false,
+              identityKey: `${source}:anonymous`,
+              identityTrust: 'none',
+              sessionEpoch: 0,
+              sourceEnabled: true
+            }
+          : undefined
+      );
+    const hook = await renderHook(
+      () =>
+        useSearchController({
+          active,
+          categories: [],
+          enabledSearchSources: ['linuxdo'],
+          linuxDoVerificationActive: false,
+          notify: jest.fn(),
+          onOpenExternalSearch,
+          reconcileIdentityStatus: reconcileSameIdentity,
+          sessionViewModels: projectTestAccountSessions(createSiteSessionStates()),
+          showLinuxDoVerification: jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
+          showNodeSeekVerification: jest.fn(),
+          showYaohuoLogin: jest.fn(),
+          readGateway
+        }),
+      { wrapper: QueryTestWrapper }
+    );
+    const queuedSubmit = hook.result.current.runSearch;
+    active = false;
+    await hook.rerender(undefined);
+
+    await act(async () => {
+      await queuedSubmit({ query: 'candidate', source: 'linuxdo' });
+    });
+    expect(onOpenExternalSearch).not.toHaveBeenCalled();
+    expect(searchTopics).not.toHaveBeenCalled();
+    expect(hook.result.current.recentSearches).toEqual([]);
+  });
+
+  it('does not carry a queued next-page event into a new search', async () => {
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ query, source, page }) => ({
+      items: [{ ...standardTopic, source, id: query }],
+      errors: {},
+      hasMore: page === 1,
+      nextPage: page === 1 ? 2 : null
+    }));
+    const hook = await renderSearchController(createGateway({ searchTopics }));
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'first', source: 'v2ex' });
+    });
+    await waitFor(() => expect(hook.result.current.searchGroups[0]?.nextPage).toBe(2));
+    const queuedPage = hook.result.current.loadMoreSearchSource;
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'second', source: 'v2ex' });
+    });
+    await waitFor(() => expect(hook.result.current.searchGroups[0]?.items[0]?.id).toBe('second'));
+
+    await act(async () => {
+      await queuedPage('v2ex', 2);
+    });
+    expect(searchTopics.mock.calls.map(([{ query, page }]) => [query, page])).toEqual([
+      ['first', 1],
+      ['second', 1]
+    ]);
   });
 
   it('keeps the first search submit enabled before any Query has started', async () => {
@@ -864,7 +945,7 @@ describe('linux.do AI search controller', () => {
         throw Object.assign(new Error('妖火需要登录'), { kind: 'login-required' });
       }
       return {
-        items: [],
+        items: source === 'v2ex' ? [{ ...standardTopic, source: 'v2ex', id: 'successful-source' }] : [],
         errors:
           source === 'linuxdo' || source === 'nodeseek'
             ? {
@@ -906,6 +987,9 @@ describe('linux.do AI search controller', () => {
       )
     );
     expect(searchTopics).toHaveBeenCalledTimes(4);
+    expect(hook.result.current.searchGroups.find(({ source }) => source === 'v2ex')?.items).toEqual([
+      expect.objectContaining({ id: 'successful-source', source: 'v2ex' })
+    ]);
     expect(showLinuxDoVerification).not.toHaveBeenCalled();
     expect(showNodeSeekVerification).not.toHaveBeenCalled();
     expect(showYaohuoLogin).not.toHaveBeenCalled();
@@ -1473,12 +1557,10 @@ describe('linux.do AI search controller', () => {
     });
     notify.mockClear();
 
-    let outcome: Awaited<ReturnType<typeof hook.result.current.runSearch>> | undefined;
     await act(async () => {
-      outcome = await hook.result.current.runSearch('nodeseek');
+      hook.result.current.retrySearchSource('nodeseek');
     });
 
-    expect(outcome).toBe('completed');
     await waitFor(() =>
       expect(hook.result.current.searchGroups.find((group) => group.source === 'nodeseek')).toMatchObject({
         items: [expect.objectContaining({ id: 'ns-1' })],
@@ -1719,6 +1801,49 @@ describe('linux.do AI search controller', () => {
     });
   });
 
+  it.each([
+    { label: 'full cap', prefixLength: 120 },
+    { label: 'space at the cap', prefixLength: 119 }
+  ])('keeps a re-added long query when saved history finishes loading ($label)', async ({ prefixLength }) => {
+    const storedHistory = Promise.withResolvers<string | null>();
+    mockStorageGetItem.mockReturnValueOnce(storedHistory.promise);
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>().mockResolvedValue({
+      items: [standardTopic],
+      errors: {},
+      hasMore: false,
+      nextPage: null
+    });
+    const hook = await renderSearchController(createGateway({ searchTopics }));
+    const displayedQuery = 'A'.repeat(prefixLength);
+    const fullQuery = displayedQuery + ' over the history cap';
+    const restoredQuery = displayedQuery.toLowerCase();
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: fullQuery, source: 'v2ex' });
+    });
+    expect(hook.result.current.recentSearches).toEqual([displayedQuery]);
+    await act(async () => hook.result.current.removeRecentSearch(displayedQuery));
+    expect(hook.result.current.recentSearches).toEqual([]);
+    await act(async () => {
+      await hook.result.current.runSearch({ query: fullQuery.toLowerCase(), source: 'v2ex' });
+    });
+    expect(hook.result.current.recentSearches).toEqual([restoredQuery]);
+
+    await act(async () => {
+      storedHistory.resolve(JSON.stringify([displayedQuery, 'saved query']));
+      await storedHistory.promise;
+    });
+
+    expect(hook.result.current.recentSearches).toEqual([restoredQuery, 'saved query']);
+    expect(searchTopics.mock.calls.map(([request]) => request.query)).toContain(fullQuery.toLowerCase());
+    await waitFor(() => {
+      expect(mockStorageSetItem).toHaveBeenCalledWith(
+        'reader-search-history',
+        JSON.stringify([restoredQuery, 'saved query'])
+      );
+    });
+  });
+
   it('does not overwrite saved history when the initial storage read fails', async () => {
     const storedHistory = Promise.withResolvers<string | null>();
     mockStorageGetItem.mockImplementationOnce(async () => storedHistory.promise);
@@ -1736,6 +1861,121 @@ describe('linux.do AI search controller', () => {
 
     expect(hook.result.current.recentSearches).toEqual([]);
     expect(mockStorageSetItem).not.toHaveBeenCalled();
+  });
+
+  it.each(['add', 'remove'] as const)(
+    'restores the last saved search history when the %s write fails',
+    async (mode) => {
+      let stored = JSON.stringify(['saved query']);
+      const pending = Promise.withResolvers<void>();
+      mockStorageGetItem.mockImplementation(async () => stored);
+      mockStorageSetItem.mockImplementation(async (_key, value) => {
+        stored = value;
+      });
+      const notify = jest.fn<(message: string) => void>();
+      const gateway = createGateway({
+        searchTopics: async () => ({ items: [], errors: {}, hasMore: false, nextPage: null })
+      });
+      const hook = await renderSearchController(gateway, notify);
+      let latestSaved: string[];
+      try {
+        await waitFor(() => expect(hook.result.current.recentSearches).toEqual(['saved query']));
+        await act(async () => {
+          await hook.result.current.runSearch({ query: 'last successful search', source: 'v2ex' });
+        });
+        latestSaved = ['last successful search', 'saved query'];
+        await waitFor(() => expect(JSON.parse(stored)).toEqual(latestSaved));
+        mockStorageSetItem.mockImplementationOnce(() => pending.promise);
+        const change = async () => {
+          if (mode === 'remove') {
+            hook.result.current.removeRecentSearch('saved query');
+          } else {
+            await hook.result.current.runSearch({ query: 'new search', source: 'v2ex' });
+          }
+        };
+        const edited = mode === 'remove' ? ['last successful search'] : ['new search', ...latestSaved];
+        await act(change);
+        expect(hook.result.current.recentSearches).toEqual(edited);
+        await act(async () => pending.reject(new Error('temporary local write failure')));
+        expect(hook.result.current.recentSearches).toEqual(latestSaved);
+        expect(notify).toHaveBeenCalledTimes(1);
+        expect(notify).toHaveBeenCalledWith(expect.stringContaining('最近搜索保存失败'));
+        await act(change);
+        await waitFor(() => expect(JSON.parse(stored)).toEqual(edited));
+        latestSaved = edited;
+      } finally {
+        pending.resolve();
+        await hook.unmount();
+      }
+      const reopened = await renderSearchController(gateway);
+      try {
+        await waitFor(() => expect(reopened.result.current.recentSearches).toEqual(latestSaved));
+      } finally {
+        await reopened.unmount();
+      }
+    }
+  );
+
+  it('keeps a newer search intent after an older history write fails', async () => {
+    let stored = JSON.stringify(['saved query']);
+    mockStorageGetItem.mockImplementation(async () => stored);
+    mockStorageSetItem.mockImplementation(async (_key, value) => {
+      stored = value;
+    });
+    const pending = Promise.withResolvers<void>();
+    mockStorageSetItem.mockImplementationOnce(() => pending.promise);
+    const notify = jest.fn<(message: string) => void>();
+    const hook = await renderSearchController(
+      createGateway({ searchTopics: async () => ({ items: [], errors: {}, hasMore: false, nextPage: null }) }),
+      notify
+    );
+    try {
+      await waitFor(() => expect(hook.result.current.recentSearches).toEqual(['saved query']));
+      await act(async () => {
+        await hook.result.current.runSearch({ query: 'first search', source: 'v2ex' });
+      });
+      await waitFor(() => expect(mockStorageSetItem).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        await hook.result.current.runSearch({ query: 'second search', source: 'v2ex' });
+      });
+      const latest = ['second search', 'first search', 'saved query'];
+      expect(hook.result.current.recentSearches).toEqual(latest);
+      await act(async () => pending.reject(new Error('temporary local write failure')));
+      await waitFor(() => expect(JSON.parse(stored)).toEqual(latest));
+      expect(hook.result.current.recentSearches).toEqual(latest);
+      expect(notify).not.toHaveBeenCalled();
+    } finally {
+      pending.resolve();
+      await hook.unmount();
+    }
+  });
+
+  it('does not report a failed search history write after its route closes', async () => {
+    const stored = JSON.stringify(['saved query']);
+    mockStorageGetItem.mockResolvedValueOnce(stored);
+    const pending = Promise.withResolvers<void>();
+    mockStorageSetItem.mockImplementationOnce(() => pending.promise);
+    const notify = jest.fn<(message: string) => void>();
+    const gateway = createGateway({
+      searchTopics: async () => ({ items: [], errors: {}, hasMore: false, nextPage: null })
+    });
+    const hook = await renderSearchController(gateway, notify);
+    try {
+      await waitFor(() => expect(hook.result.current.recentSearches).toEqual(['saved query']));
+      await act(async () => hook.result.current.removeRecentSearch('saved query'));
+      await waitFor(() => expect(mockStorageSetItem).toHaveBeenCalledTimes(1));
+    } finally {
+      await hook.unmount();
+      await act(async () => pending.reject(new Error('temporary local write failure')));
+    }
+    expect(notify).not.toHaveBeenCalled();
+    mockStorageGetItem.mockResolvedValueOnce(stored);
+    const reopened = await renderSearchController(gateway);
+    try {
+      await waitFor(() => expect(reopened.result.current.recentSearches).toEqual(['saved query']));
+    } finally {
+      await reopened.unmount();
+    }
   });
 
   it('retries a failed history read before persisting a new search', async () => {
@@ -2092,6 +2332,7 @@ describe('linux.do AI search controller', () => {
       expect(hook.result.current.searchGroups[0]).toMatchObject({
         items: [expect.objectContaining({ id: '1' })],
         error: expect.stringContaining('无法解析'),
+        retainedResults: { retryPage: 2 },
         hasMore: true,
         loadingMore: false,
         nextPage: 2
@@ -2152,7 +2393,7 @@ describe('linux.do AI search controller', () => {
     await waitFor(() => expect(hook.result.current.searchGroups[0]?.items).toEqual([standardTopic]));
 
     await act(async () => {
-      void hook.result.current.runSearch('linuxdo');
+      hook.result.current.retrySearchSource('linuxdo');
     });
 
     await waitFor(() =>
@@ -2160,6 +2401,7 @@ describe('linux.do AI search controller', () => {
         items: [expect.objectContaining({ id: '1' })],
         error: expect.stringContaining('无法解析'),
         hasMore: true,
+        retainedResults: { retryPage: null },
         nextPage: 2
       })
     );
@@ -2316,6 +2558,38 @@ describe('linux.do AI search controller', () => {
     await waitFor(() =>
       expect(hook.result.current.searchGroups[0]?.items.map((topic) => topic.id)).toEqual(['1', '2'])
     );
+  });
+
+  it('keeps deferred candidate requests bound to the account that owns their query key', async () => {
+    let epochs = { ...initialForumSessionEpochs, linuxdo: 7 };
+    const gateway = createGateway({ searchTopics: jest.fn<ReadGateway['searchTopics']>() });
+    const tags = jest.fn<ReadGateway['searchTagOptions']>().mockResolvedValue([]);
+    const users = jest.fn<ReadGateway['searchUserOptions']>().mockResolvedValue([]);
+    gateway.searchTagOptions = tags;
+    gateway.searchUserOptions = users;
+    const hook = await renderSearchController(gateway, undefined, undefined, () => epochs);
+    const first = hook.result.current;
+    epochs = { ...epochs, linuxdo: 8 };
+    await act(async () => {
+      hook.rerender(undefined);
+    });
+    await act(async () => {
+      await first.searchDiscourseTags({ query: 'before', selectedTags: [] });
+      await first.searchDiscourseUsers({ term: 'before' });
+      await hook.result.current.searchDiscourseTags({ query: 'after', selectedTags: [] });
+      await hook.result.current.searchDiscourseUsers({ term: 'after' });
+    });
+    for (const [mock, kind] of [
+      [tags, 'tags'],
+      [users, 'users']
+    ] as const) {
+      const scopes = mock.mock.calls.map(([, context]) => context?.plan?.cacheScope);
+      expect(scopes).toEqual([
+        first.searchCandidateReadPlanScopes[kind],
+        hook.result.current.searchCandidateReadPlanScopes[kind]
+      ]);
+      expect(scopes).toEqual(['authenticated:7', 'authenticated:8']);
+    }
   });
 
   it('passes one safe controller trace into each generic candidate gateway read', async () => {
@@ -2599,7 +2873,7 @@ describe('linux.do AI search controller', () => {
         throw Object.assign(new Error('您执行此操作的次数过多，请稍后再试。'), { status: 429 });
       }
       return {
-        items: [{ ...standardTopic, source: source as Source, id: `${source}-result` }],
+        items: [{ ...standardTopic, source: source, id: `${source}-result` }],
         errors: {},
         hasMore: false,
         nextPage: null
@@ -2842,7 +3116,7 @@ describe('linux.do AI search controller', () => {
 
   it('settles an unknown forum source as an external action inside aggregate search', async () => {
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ source }) => ({
-      items: [{ ...standardTopic, source: source as Source, id: source }],
+      items: [{ ...standardTopic, source: source, id: source }],
       errors: {},
       hasMore: false,
       nextPage: null
@@ -2984,9 +3258,7 @@ describe('linux.do AI search controller', () => {
     const pendingSearches = new Map<Source, ReturnType<typeof Promise.withResolvers<SearchResponse>>>(
       requestSources.map((source) => [source, Promise.withResolvers<SearchResponse>()])
     );
-    const searchTopics = jest.fn<ReadGateway['searchTopics']>(
-      ({ source }) => pendingSearches.get(source as Source)!.promise
-    );
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(({ source }) => pendingSearches.get(source)!.promise);
     const hook = await renderSearchController(createGateway({ searchTopics }));
 
     await act(async () => {
@@ -3018,7 +3290,7 @@ describe('linux.do AI search controller', () => {
 
   it('keeps settled aggregate groups stable across an unrelated rerender', async () => {
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ source }) => ({
-      items: [{ ...standardTopic, source: source === 'all' ? 'v2ex' : source, id: `${source}-stable` }],
+      items: [{ ...standardTopic, source, id: `${source}-stable` }],
       errors: {},
       hasMore: false,
       nextPage: null
@@ -3039,7 +3311,7 @@ describe('linux.do AI search controller', () => {
 
   it('keeps settled single-source groups stable across an unrelated rerender', async () => {
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ source }) => ({
-      items: [{ ...standardTopic, source: source === 'all' ? 'v2ex' : source, id: `${source}-stable` }],
+      items: [{ ...standardTopic, source, id: `${source}-stable` }],
       errors: {},
       hasMore: false,
       nextPage: null
@@ -3067,7 +3339,7 @@ describe('linux.do AI search controller', () => {
       }
     >();
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(({ source, signal }) => {
-      if (source === 'all' || !signal) throw new Error('aggregate Search must dispatch one signaled source request');
+      if (!signal) throw new Error('aggregate Search must dispatch one signaled source request');
       const deferred = Promise.withResolvers<SearchResponse>();
       signal.addEventListener('abort', () => deferred.reject(new DOMException('aborted', 'AbortError')), {
         once: true
@@ -3115,7 +3387,6 @@ describe('linux.do AI search controller', () => {
 
   it('reorders aggregate groups without refetching and settles an empty source set', async () => {
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ source }) => {
-      if (source === 'all') throw new Error('aggregate Search must dispatch one source request');
       return {
         items: [{ ...standardTopic, source, id: `${source}-enabled` }],
         errors: {},
@@ -3170,7 +3441,7 @@ describe('linux.do AI search controller', () => {
 
   it('gates a disabled direct Search across queries, retries, pagination, AI and filter candidates', async () => {
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ source }) => ({
-      items: [{ ...standardTopic, source: source === 'all' ? 'v2ex' : source, id: `${source}-result` }],
+      items: [{ ...standardTopic, source, id: `${source}-result` }],
       errors: {},
       hasMore: true,
       nextPage: 2

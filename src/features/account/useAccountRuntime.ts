@@ -268,8 +268,7 @@ export function useAccountRuntime({
   >(async () => ({ status: 'stale' }));
   const applyAccountSessionEventRef = useRef<(event: ScopedSiteSessionEvent) => boolean>(() => false);
   const readSessionRuntimeSnapshot = useCallback(
-    (source: SessionSite): SessionRuntimeSnapshot => {
-      const sourceEnabled = enabledSourcesRef.current.includes(source);
+    (source: SessionSite, sourceEnabled = enabledSourcesRef.current.includes(source)): SessionRuntimeSnapshot => {
       const account =
         appQueryClient.getQueryData<AccountSessionSnapshot>(accountQueryKeys.snapshot(source)) ||
         createAccountSessionSnapshot(source);
@@ -584,6 +583,12 @@ export function useAccountRuntime({
     notify,
     onAccountStatusChanged: handleAccountStatusChanged
   });
+  const startupRestoreError = sessionRestoreError || (status.restoreFailed ? '本机账号记录读取失败，请重试' : '');
+  const retryStoredAccounts = status.retryStoredAccounts;
+  const retryStartupRestore = useCallback(() => {
+    retrySessionRestore();
+    retryStoredAccounts();
+  }, [retrySessionRestore, retryStoredAccounts]);
   const reconcileAccountStatusBase = status.reconcileAccountStatus;
   const settleAccountSessionHandoff = status.settleAccountSessionHandoff;
   const reconcileAccountStatus = useCallback(
@@ -684,15 +689,16 @@ export function useAccountRuntime({
   useCommitRefValue(beginAccountIdentityCheckRef, status.beginAccountIdentityCheck);
   useCommitRefValue(reconcileAccountStatusRef, reconcileAccountStatus);
   useCommitRefValue(applyAccountSessionEventRef, status.applyAccountSessionEvent);
-  const attemptedInterruptedSourcesRef = useRef(new Set<SessionSite>());
+  const handledInterruptedSourcesRef = useRef(new Set<SessionSite>());
   useEffect(() => {
-    if (!status.hydrated || !appActive) return;
+    if (!status.hydrated) return;
     for (const source of status.interruptedSources) {
       if (!enabledSessionSourceSet.has(source)) {
-        attemptedInterruptedSourcesRef.current.delete(source);
+        // Re-enabling a source leaves its handoff pending for explicit confirmation.
+        handledInterruptedSourcesRef.current.add(source);
         continue;
       }
-      if (!isSourceIdentityReady(source) || attemptedInterruptedSourcesRef.current.has(source)) continue;
+      if (!appActive || !isSourceIdentityReady(source) || handledInterruptedSourcesRef.current.has(source)) continue;
       if (
         !appQueryClient.getQueryData<AccountSessionSnapshot>(accountQueryKeys.snapshot(source))?.handoffPending ||
         Object.values(authSurfaceRegistryRef.current.active).some(
@@ -700,7 +706,7 @@ export function useAccountRuntime({
         )
       )
         continue;
-      attemptedInterruptedSourcesRef.current.add(source);
+      handledInterruptedSourcesRef.current.add(source);
       void reconcileAccountStatus(source);
     }
   }, [
@@ -732,6 +738,7 @@ export function useAccountRuntime({
     [reconcileAccountStatus]
   );
   const nodeImage = useNodeImageAuthController({
+    access: readSessionRuntimeSnapshot('nodeseek', enabledSessionSourceSet.has('nodeseek')),
     beginSurface: beginNodeImageSurface,
     finishSurface: finishNodeImageSurface,
     notify,
@@ -1047,18 +1054,36 @@ export function useAccountRuntime({
     closeYaohuoLoginPanel,
     enabledSessionSourceSet
   ]);
-  const account = useAccountController({
-    checkingRequestIdRef,
-    clearLinuxDoLoginState: async () => {
-      const isCurrent = status.beginAccountSessionClear('linuxdo');
+  const clearLoginState = async (source: SessionSite) => {
+    const surface = `${source}-login` as const;
+    const preparation = authSurfacePreparationsRef.current[source];
+    if (!preparation || !authSurfaceVisible(surface)) return false;
+    const ownsClear = status.beginAccountSessionClear(source);
+    const isCurrent = () =>
+      ownsClear() && authSurfacePreparationsRef.current[source] === preparation && authSurfaceVisible(surface);
+    try {
+      await preparation.promise;
+    } catch {
+      if (!isCurrent()) return false;
+      throw new Error(preparation.error || '登录会话保存失败，请关闭后重试');
+    }
+    if (!isCurrent()) return false;
+    if (source === 'linuxdo') {
       cancelLinuxDoBrowserHandoff();
       linuxDoWebViewRef.current?.stopLoading();
       setMountLinuxDoWebView(false);
       await setLinuxDoCookieResponseBarrier(true, 'explicit-clear');
       return session.clearLinuxDoLoginState(isCurrent);
-    },
-    clearNodeSeekLoginState: () => session.clearNodeSeekLoginState(status.beginAccountSessionClear('nodeseek')),
-    clearYaohuoLoginState: () => session.clearYaohuoLoginState(status.beginAccountSessionClear('yaohuo')),
+    }
+    return source === 'nodeseek'
+      ? session.clearNodeSeekLoginState(isCurrent)
+      : session.clearYaohuoLoginState(isCurrent);
+  };
+  const account = useAccountController({
+    checkingRequestIdRef,
+    clearLinuxDoLoginState: () => clearLoginState('linuxdo'),
+    clearNodeSeekLoginState: () => clearLoginState('nodeseek'),
+    clearYaohuoLoginState: () => clearLoginState('yaohuo'),
     commitNodeSeekWebViewUserAgent,
     sessionEpochs: session.forumSessionEpochs,
     nodeSeekLoginPanelRequestRef,
@@ -1098,12 +1123,12 @@ export function useAccountRuntime({
         return;
       }
       if (command.type === 'refresh' && (!sessionIdentityReady || !status.hydrated)) {
-        if (sessionRestoreError) retrySessionRestore();
+        if (startupRestoreError) retryStartupRestore();
         return;
       }
       await credentials.handleAccountCenterCommand(command);
     },
-    [credentials, openUser, retrySessionRestore, sessionIdentityReady, sessionRestoreError, status.hydrated]
+    [credentials, openUser, retryStartupRestore, sessionIdentityReady, startupRestoreError, status.hydrated]
   );
   const showYaohuoLogin = useCallback(
     (message = '请先登录妖火。') => {
@@ -1298,8 +1323,8 @@ export function useAccountRuntime({
     async (ticket: WritableSessionTicket) => {
       if (!isWritableSessionTicketCurrent(ticket)) throw new CancelledError();
       const userId = ticket.identityKey.slice('nodeseek:'.length);
-      const readPlanScope = `authenticated:${ticket.sessionEpoch}`;
-      const board = await readGateway.getNodeSeekAttendanceBoard({ userId }, { readPlanScope });
+      const plan = readGateway.getReadPlan(ticket.source, 'account-data');
+      const board = await readGateway.getNodeSeekAttendanceBoard({ userId }, { plan });
       if (!isWritableSessionTicketCurrent(ticket)) throw new CancelledError();
       appQueryClient.setQueryData(
         forumQueryKeys.accountData({
@@ -1307,7 +1332,7 @@ export function useAccountRuntime({
           kind: 'attendance',
           userId,
           sessionEpoch: ticket.sessionEpoch,
-          readPlanScope
+          readPlanScope: plan.cacheScope
         }),
         board
       );
@@ -1319,7 +1344,7 @@ export function useAccountRuntime({
     (ticket: WritableSessionTicket, current?: number) => {
       if (!isWritableSessionTicketCurrent(ticket)) return;
       const userId = ticket.identityKey.slice('nodeseek:'.length);
-      const readPlanScope = `authenticated:${ticket.sessionEpoch}`;
+      const readPlanScope = readGateway.getReadPlan(ticket.source, 'account-data').cacheScope;
       const overviewKey = forumQueryKeys.accountData({
         source: 'nodeseek',
         kind: 'overview',
@@ -1343,7 +1368,7 @@ export function useAccountRuntime({
         exact: true
       });
     },
-    [isWritableSessionTicketCurrent]
+    [isWritableSessionTicketCurrent, readGateway]
   );
   const nodeSeekSnapshot = readWritableSessionSnapshot('nodeseek');
   const currentSessionTicket: WritableSessionTicket | null =
@@ -1445,7 +1470,7 @@ export function useAccountRuntime({
       statusBusy: status.statusBusy
     },
     write: {
-      ensureNodeImageApiKey: nodeImage.key.ensure,
+      ensureNodeImageApiKey: nodeImage.ensureApiKey,
       ensureWritableSession,
       isWritableSessionTicketCurrent,
       onSessionExpired: handleSessionExpired,
@@ -1474,22 +1499,14 @@ export function useAccountRuntime({
         pendingCredentialFillSite: credentials.pendingCredentialFillSite
       },
       handleAccountCenterCommand,
-      nodeImage: {
-        key: {
-          authorize: nodeImage.key.authorize,
-          busy: nodeImage.key.busy,
-          clear: nodeImage.key.clear,
-          save: nodeImage.key.save,
-          saved: nodeImage.key.saved
-        }
-      }
+      nodeImage: { key: nodeImage.key }
     },
     hosts: {
-      startupRecovery: sessionRestoreError
+      startupRecovery: startupRestoreError
         ? createElement(RecoverableEmptyState, {
-            message: sessionRestoreError,
+            message: startupRestoreError,
             actionLabel: '重试启动',
-            onAction: retrySessionRestore
+            onAction: retryStartupRestore
           })
         : null,
       closePanels,

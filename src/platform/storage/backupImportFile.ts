@@ -1,20 +1,18 @@
-import * as FileSystem from 'expo-file-system/legacy';
-import { assertBackupJsonSize } from '@/domain/reader/readerBackup';
+import { requireOptionalNativeModule } from 'expo';
+import * as DocumentPicker from 'expo-document-picker';
+import { assertBackupJsonSize, MAX_BACKUP_JSON_BYTES } from '@/domain/reader/readerBackup';
 
-type BackupFileAsset = {
-  uri: string;
-  size?: number | null;
-};
-
-export async function readBackupFileText(asset: BackupFileAsset) {
+export async function pickBackupFileText() {
+  const result = await DocumentPicker.getDocumentAsync({
+    copyToCacheDirectory: false,
+    type: ['application/json', 'text/json', '*/*']
+  });
+  const asset = result.assets?.[0];
+  if (result.canceled || !asset?.uri) return null;
   assertBackupJsonSize(asset.size);
-  const info = await FileSystem.getInfoAsync(asset.uri);
-  if (!info.exists || info.isDirectory) {
-    throw new Error('备份文件不存在，请重新选择。');
-  }
-  if (typeof info.size !== 'number') {
-    throw new Error('备份文件大小无法确认，请重新选择文件。');
-  }
-  assertBackupJsonSize(info.size);
-  return FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.UTF8 });
+  const module = requireOptionalNativeModule<{
+    readBackupDocument(uri: string, maxBytes: number): Promise<string>;
+  }>('BackupExport');
+  if (!module?.readBackupDocument) throw new Error('当前安装包不支持读取备份，请更新后重试。');
+  return module.readBackupDocument(asset.uri, MAX_BACKUP_JSON_BYTES);
 }

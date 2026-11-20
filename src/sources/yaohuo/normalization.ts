@@ -40,27 +40,28 @@ export function parseYaohuoDate(value: unknown, now = currentYaohuoClock()) {
   return date || '';
 }
 
+const fullDatePattern = /\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/;
+const partialDatePattern = /\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/;
+const relativeDatePattern =
+  /(?:刚刚|刚才|\d{1,4}\s*(?:分钟|小时|天)前|(?:今天|昨天|前天)\s*(?:(?:午夜|凌晨|上午|中午|下午|晚上)\s*)?\d{1,2}:\d{1,2}|(?:今天|昨天|前天)\s*(?:午夜|凌晨|上午|中午|下午|晚上))/;
+const trailingDatePattern = new RegExp(
+  `(?:${fullDatePattern.source}|${partialDatePattern.source}|${relativeDatePattern.source})$`
+);
+
 function yaohuoFullDateText(text: string) {
-  return text.match(/\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0] || '';
+  return text.match(fullDatePattern)?.[0] || '';
 }
 
 function yaohuoPartialDateText(text: string) {
-  if (yaohuoFullDateText(text)) {
-    return '';
-  }
-  return text.match(/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0] || '';
-}
-
-function yaohuoRelativeDateText(text: string) {
-  return (
-    text.match(
-      /(?:刚刚|刚才|\d{1,4}\s*(?:分钟|小时|天)前|(?:今天|昨天|前天)\s*(?:(?:午夜|凌晨|上午|中午|下午|晚上)\s*)?\d{1,2}:\d{1,2}|(?:今天|昨天|前天)\s*(?:午夜|凌晨|上午|中午|下午|晚上))/
-    )?.[0] || ''
-  );
+  return text.match(partialDatePattern)?.[0] || '';
 }
 
 export function yaohuoDisplayTimeText(text: string) {
-  return yaohuoFullDateText(text) || yaohuoPartialDateText(text) || yaohuoRelativeDateText(text);
+  return yaohuoFullDateText(text) || yaohuoPartialDateText(text) || text.match(relativeDatePattern)?.[0] || '';
+}
+
+export function yaohuoTrailingTimeText(text: string) {
+  return text.trimEnd().match(trailingDatePattern)?.[0] || '';
 }
 
 function beijingDateToIso(year: number, month: number, day: number, hour: number, minute: number) {
@@ -196,8 +197,7 @@ export function safeYaohuoCurrentUserName(value: unknown) {
   return text && !/^(我的|个人|空间|资料|消息|退出|用户中心|个人中心|我的地盘)$/.test(text) ? text : '';
 }
 
-export function topicTitle(root: ReturnType<typeof parseHtml>) {
-  const content = elementText(root.querySelector('div.content'));
+export function topicTitle(root: ReturnType<typeof parseHtml>, content: string) {
   return (
     content.match(/\[标题\]\s*(.*?)\s*\(阅/i)?.[1]?.trim() ||
     elementText(root.querySelector('title'))

@@ -16,7 +16,16 @@ jest.mock('react-native-safe-area-context', () => ({
 
 jest.mock('lucide-react-native', () => {
   const Icon = () => null;
-  return { ArrowLeft: Icon, Check: Icon, Info: Icon, Trash2: Icon, X: Icon };
+  return {
+    Activity: Icon,
+    ArrowLeft: Icon,
+    Check: Icon,
+    Info: Icon,
+    Pencil: Icon,
+    Plus: Icon,
+    Trash2: Icon,
+    X: Icon
+  };
 });
 
 const readerData = createEmptyReaderData();

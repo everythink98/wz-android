@@ -1,7 +1,7 @@
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import type { ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
-import { Button, IconButton as PaperIconButton } from 'react-native-paper';
+import { ActivityIndicator, Button, IconButton as PaperIconButton } from 'react-native-paper';
 import type { LucideIcon } from 'lucide-react-native';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import {
@@ -12,7 +12,7 @@ import {
   readerRadii,
   type ReaderTheme
 } from '@/ui/theme/tokens';
-import { TOUCH_HIT_SLOP } from './touchTarget';
+import { COMPACT_BUTTON_HIT_SLOP, TOUCH_HIT_SLOP } from './touchTarget';
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontSize = createReaderFontSizer(settings);
@@ -34,23 +34,32 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     button: {
       borderRadius: readerRadii.control,
       borderWidth: StyleSheet.hairlineWidth,
-      borderColor: theme.lineStrong,
-      backgroundColor: theme.surface
+      borderColor: alphaColor(theme.ink, theme.dark ? 0.09 : 0.06),
+      backgroundColor: theme.surface2
     },
-    content: { minHeight: 48, paddingHorizontal: 12 },
-    compactContent: { minHeight: 40, paddingHorizontal: 8 },
-    iconContent: { columnGap: 6, paddingLeft: 6 },
-    compactIconContent: { paddingLeft: 2 },
+    content: { minHeight: 36, paddingHorizontal: 15 },
+    largeContent: { minHeight: 42, paddingHorizontal: 18 },
+    compactContent: { minHeight: 32, paddingHorizontal: 13 },
+    iconContent: { columnGap: 6 },
     iconOnly: { width: 48, height: 48, margin: 0, borderRadius: 0, backgroundColor: 'transparent' },
     tiny: { alignSelf: 'flex-start', backgroundColor: theme.mist, borderColor: 'transparent' },
     ghost: { backgroundColor: 'transparent', borderColor: 'transparent' },
     danger: {
-      backgroundColor: alphaColor(theme.danger, theme.dark ? 0.12 : 0.045),
-      borderColor: alphaColor(theme.danger, 0.2)
+      backgroundColor: alphaColor(theme.danger, theme.dark ? 0.16 : 0.09),
+      borderColor: 'transparent'
     },
-    primary: { backgroundColor: theme.mist, borderColor: alphaColor(theme.primary, 0.22) },
+    primary: {
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.16 : 0.1),
+      borderColor: 'transparent'
+    },
+    solid: {
+      backgroundColor: theme.dark ? theme.primary : theme.primaryStrong,
+      borderColor: 'transparent'
+    },
     active: { backgroundColor: theme.mist, borderColor: 'transparent' },
-    disabled: { opacity: 0.45 },
+    disabled: { opacity: 0.5 },
+    disabledNeutral: { backgroundColor: theme.surface2, borderColor: 'transparent', opacity: 0.78 },
+    loadingBusy: { opacity: 0.88 },
     text: {
       fontFamily: fontFamilyValue(settings.fontFamily),
       fontSize: fontSize(13),
@@ -59,9 +68,12 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       includeFontPadding: false,
       letterSpacing: 0,
       marginHorizontal: 0,
-      marginVertical: 10
+      marginVertical: 0
     },
-    textCompact: { fontSize: fontSize(12), lineHeight: fontSize(16), marginVertical: 8 },
+    textEmphasis: { fontWeight: '600' },
+    textLarge: { fontSize: fontSize(14), lineHeight: fontSize(20), fontWeight: '600' },
+    textCompact: { fontSize: fontSize(12), lineHeight: fontSize(16), marginVertical: 0 },
+    iconSlot: { alignItems: 'center', justifyContent: 'center', marginLeft: -6 },
     backdrop: { borderRadius: readerRadii.control, overflow: 'hidden' },
     floatingBackdrop: { width: 52, height: 52, borderRadius: readerRadii.pill, overflow: 'hidden' },
     transparent: { backgroundColor: 'transparent' }
@@ -182,20 +194,15 @@ export function IconButton({
       compact
       icon={icon}
       textColor={labelColor}
-      hitSlop={TOUCH_HIT_SLOP}
+      hitSlop={compact || tiny ? COMPACT_BUTTON_HIT_SLOP : TOUCH_HIT_SLOP}
       style={[
         styles.button,
-        ghost && styles.ghost,
         tiny && styles.tiny,
+        ghost && styles.ghost,
         active && styles.active,
         disabled && styles.disabled
       ]}
-      contentStyle={[
-        styles.content,
-        (compact || tiny) && styles.compactContent,
-        styles.iconContent,
-        (compact || tiny) && styles.compactIconContent
-      ]}
+      contentStyle={[styles.content, (compact || tiny) && styles.compactContent, styles.iconContent]}
       labelStyle={[styles.text, (compact || tiny) && styles.textCompact, { color: labelColor }]}
       onPress={press}
     >
@@ -209,7 +216,11 @@ export function AppButton({
   backdrop,
   compact = false,
   disabled = false,
+  icon: Icon,
   label,
+  loading = false,
+  minWidth,
+  size = 'md',
   testID,
   tiny = false,
   variant = 'default',
@@ -219,43 +230,80 @@ export function AppButton({
   backdrop?: ReactNode;
   compact?: boolean;
   disabled?: boolean;
+  icon?: LucideIcon;
   label: string;
+  loading?: boolean;
+  minWidth?: number;
+  size?: 'md' | 'lg';
   testID?: string;
   tiny?: boolean;
-  variant?: 'default' | 'danger' | 'ghost' | 'primary';
+  variant?: 'default' | 'danger' | 'ghost' | 'primary' | 'solid';
   onPress: () => void;
 }) {
   const { styles, theme } = useReaderThemeStyles(createStyles);
-  const color =
-    variant === 'danger'
-      ? theme.danger
-      : variant === 'primary'
-        ? theme.dark
-          ? theme.primary
-          : theme.primaryStrong
-        : theme.ink;
+  const isDisabled = disabled || loading;
+  const mutedDisabled = disabled && !loading && !backdrop && (variant === 'solid' || variant === 'primary');
+  const color = mutedDisabled
+    ? theme.muted
+    : variant === 'solid'
+      ? theme.onPrimary
+      : variant === 'danger'
+        ? theme.danger
+        : variant === 'primary'
+          ? theme.dark
+            ? theme.primary
+            : theme.primaryStrong
+          : theme.ink;
+  const iconSize = compact || tiny ? 14 : size === 'lg' ? 17 : 15;
+  const hasLeading = Boolean(Icon || loading);
   const button = (
     <Button
       testID={testID}
       collapsableChildren={false}
       accessibilityLabel={accessibilityLabel || label}
-      accessibilityState={{ disabled }}
-      disabled={disabled}
+      accessibilityState={{ disabled: isDisabled, busy: loading }}
+      disabled={isDisabled}
+      icon={
+        hasLeading
+          ? () => (
+              <View style={[styles.iconSlot, { width: iconSize, height: iconSize }]}>
+                {loading ? (
+                  <ActivityIndicator accessible={false} size={iconSize} color={color} />
+                ) : Icon ? (
+                  <Icon size={iconSize} color={color} strokeWidth={1.8} accessible={false} />
+                ) : null}
+              </View>
+            )
+          : undefined
+      }
       mode="text"
       compact
       textColor={color}
-      hitSlop={TOUCH_HIT_SLOP}
+      hitSlop={compact || tiny ? COMPACT_BUTTON_HIT_SLOP : TOUCH_HIT_SLOP}
       style={[
         styles.button,
+        minWidth !== undefined ? { minWidth } : undefined,
         tiny && styles.tiny,
-        variant === 'ghost' && styles.ghost,
         variant === 'primary' && styles.primary,
+        variant === 'solid' && styles.solid,
         variant === 'danger' && styles.danger,
+        variant === 'ghost' && styles.ghost,
         backdrop ? styles.transparent : undefined,
-        disabled && styles.disabled
+        mutedDisabled ? styles.disabledNeutral : loading ? styles.loadingBusy : isDisabled && styles.disabled
       ]}
-      contentStyle={[styles.content, (compact || tiny) && styles.compactContent]}
-      labelStyle={[styles.text, (compact || tiny) && styles.textCompact, { color }]}
+      contentStyle={[
+        styles.content,
+        size === 'lg' && styles.largeContent,
+        (compact || tiny) && styles.compactContent,
+        hasLeading && styles.iconContent
+      ]}
+      labelStyle={[
+        styles.text,
+        (variant === 'solid' || variant === 'primary') && styles.textEmphasis,
+        size === 'lg' && styles.textLarge,
+        (compact || tiny) && styles.textCompact,
+        { color }
+      ]}
       onPress={() => {
         recordUserInteraction();
         onPress();
@@ -265,8 +313,10 @@ export function AppButton({
     </Button>
   );
   return backdrop ? (
-    <View style={styles.backdrop}>
-      {backdrop}
+    <View>
+      <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.backdrop]}>
+        {backdrop}
+      </View>
       {button}
     </View>
   ) : (

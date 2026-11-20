@@ -1,8 +1,7 @@
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 import { StackActions, useIsFocused, useNavigation, useScrollToTop } from '@react-navigation/native';
 import type { FlashListRef } from '@shopify/flash-list';
 import type { Topic } from '@/domain/forum/models';
-import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 
 import { openForumSearchCustomTab } from '@/platform/android/forumSearchCustomTab';
 import { errorMessage } from '@/platform/network/errors';
@@ -10,6 +9,7 @@ import { dispatchFocusedRoute, manageContentSourcesAction } from '@/ui/navigatio
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 import type { SearchListItem } from './listItems';
 import { SearchScreen } from './SearchScreen';
+import { SearchFilterSheet, type SearchFilterPlacement } from './SearchFilterSheet';
 import { useSearchController } from './useSearchController';
 import { useSearchRouteRuntime } from './SearchRouteRuntime';
 
@@ -26,6 +26,7 @@ export function SearchRoute() {
   const requestNodeSeekVerification = runtime.account.requestNodeSeekVerification;
   const openExternalSearch = useCallback(
     async (url: string) => {
+      if (!navigation.isFocused()) return;
       try {
         const customTabOpened = await openForumSearchCustomTab(url);
         if (!customTabOpened) {
@@ -35,7 +36,7 @@ export function SearchRoute() {
         notify(`无法打开 Google 搜索：${errorMessage(error)}`);
       }
     },
-    [notify]
+    [navigation, notify]
   );
   const showNodeSeekVerification = useCallback(
     (message?: string) => requestNodeSeekVerification(message || 'NodeSeek 需要完成 Cloudflare 验证'),
@@ -57,15 +58,52 @@ export function SearchRoute() {
     showYaohuoLogin: runtime.account.showYaohuoLogin,
     readGateway: runtime.account.readGateway
   });
-  const candidateSource =
-    controller.searchSource !== 'all' && isDiscourseSource(controller.searchSource)
-      ? controller.searchSource
-      : 'linuxdo';
-  const tagReadPlan = runtime.account.readGateway.getReadPlan(candidateSource, 'search-tags');
-  const userReadPlan = runtime.account.readGateway.getReadPlan(candidateSource, 'search-users');
-  const candidateReadPlanScopes = useMemo(
-    () => ({ tags: tagReadPlan.cacheScope, users: userReadPlan.cacheScope }),
-    [tagReadPlan.cacheScope, userReadPlan.cacheScope]
+  const readGateway = runtime.account.readGateway;
+  const loadV2exNodes = useCallback(
+    async (signal: AbortSignal) => {
+      const { items, errors } = await readGateway.getCategories({ source: 'v2ex', v2exNodeDirectory: true, signal });
+      if (errors.v2ex) throw new Error(errors.v2ex.message);
+      return items;
+    },
+    [readGateway]
+  );
+  const {
+    searchFilters,
+    searchCandidateReadPlanScopes,
+    searchCandidateRequestsEnabled,
+    searchDiscourseTags,
+    searchDiscourseUsers
+  } = controller;
+  const renderFilters = useCallback(
+    (placement: SearchFilterPlacement) => (
+      <SearchFilterSheet
+        {...placement}
+        active={active}
+        onApply={(source, filter) => {
+          if (navigation.isFocused()) placement.onApply(source, filter);
+        }}
+        categories={runtime.catalogCategories}
+        sessionEpochs={runtime.account.sessionEpochs}
+        readPlanScopes={searchCandidateReadPlanScopes}
+        requestsEnabled={searchCandidateRequestsEnabled}
+        searchFilters={searchFilters}
+        onLoadV2exNodes={loadV2exNodes}
+        onSearchDiscourseTags={searchDiscourseTags}
+        onSearchDiscourseUsers={searchDiscourseUsers}
+      />
+    ),
+    [
+      active,
+      loadV2exNodes,
+      navigation,
+      runtime.account.sessionEpochs,
+      runtime.catalogCategories,
+      searchCandidateReadPlanScopes,
+      searchCandidateRequestsEnabled,
+      searchDiscourseTags,
+      searchDiscourseUsers,
+      searchFilters
+    ]
   );
   const runControllerSearch = controller.runSearch;
   const runSearch = useCallback(
@@ -86,15 +124,13 @@ export function SearchRoute() {
   return (
     <SearchScreen
       active={active}
+      isRouteFocused={navigation.isFocused}
       busy={controller.searchBusy}
-      categories={runtime.catalogCategories}
-      sessionEpochs={runtime.account.sessionEpochs}
-      searchCandidateReadPlanScopes={candidateReadPlanScopes}
-      requestsEnabled={active && tagReadPlan.state === 'ready' && userReadPlan.state === 'ready'}
+      renderFilters={renderFilters}
       query={controller.searchQuery}
+      readScope={controller.searchReadScope}
       topicStateIndex={runtime.topicStateIndex}
       recentSearches={controller.recentSearches}
-      searchFilters={controller.searchFilters}
       searchGroups={controller.searchGroups}
       expectedSearchSources={enabledSearchSources}
       externalSearchSources={controller.externalSearchSources}
@@ -112,8 +148,6 @@ export function SearchRoute() {
       onRetryLinuxDoAiSearch={controller.retryLinuxDoAiSearch}
       onSearch={runSearch}
       onSearchFilterApply={controller.applySearchFilter}
-      onSearchDiscourseTags={controller.searchDiscourseTags}
-      onSearchDiscourseUsers={controller.searchDiscourseUsers}
       onSearchSourceChange={changeSearchSource}
       onRetrySearchSource={controller.retrySearchSource}
       onToggleLinuxDoAiSearch={controller.toggleLinuxDoAiSearch}

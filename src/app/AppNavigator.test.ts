@@ -17,15 +17,7 @@ vi.mock('@react-navigation/native', () => ({
   createNavigationContainerRef: () => navigation
 }));
 
-import {
-  isNativeStackScreen,
-  navigateAppScreen,
-  navigateMainTab,
-  openLibraryRoute,
-  pushTopicRoute,
-  pushUserRoute,
-  shouldUpdateAppRootScreen
-} from './appNavigation';
+import { isNativeStackScreen, navigateMainTab, openLibraryRoute, pushTopicRoute, pushUserRoute } from './appNavigation';
 
 const topic: Topic = {
   source: 'linuxdo',
@@ -37,14 +29,6 @@ const topic: Topic = {
   replyCount: 0
 };
 const user: UserReference = { source: 'linuxdo', id: '7', username: 'alice', url: 'https://linux.do/u/alice' };
-
-describe('route change projection', () => {
-  it('publishes only real route changes', () => {
-    expect(shouldUpdateAppRootScreen('feed', 'topic')).toBe(true);
-    expect(shouldUpdateAppRootScreen('topic', 'user')).toBe(true);
-    expect(shouldUpdateAppRootScreen('feed', 'feed')).toBe(false);
-  });
-});
 
 describe('navigation commands', () => {
   beforeEach(() => {
@@ -82,9 +66,7 @@ describe('navigation commands', () => {
     expect(isNativeStackScreen()).toBe(false);
   });
 
-  it('requires canonical data for detail routes', () => {
-    expect(navigateAppScreen('topic')).toBe(false);
-    expect(navigateAppScreen('user')).toBe(false);
+  it('pushes each detail route with its canonical data', () => {
     expect(pushTopicRoute({ topic })).toBe(true);
     expect(pushUserRoute(user)).toBe(true);
 

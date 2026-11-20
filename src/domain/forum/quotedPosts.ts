@@ -8,7 +8,7 @@ export type { QuotedPostReference } from './models';
 
 export interface ToggleTopicBodyQuoteOptions {
   instanceKey: string;
-  prefetch?: boolean;
+  prefetch?: 'author' | 'accepted-answer';
   reference: QuotedPostReference;
   quotedPost?: Reply;
 }
@@ -113,10 +113,10 @@ export function discourseQuotedPostMetadataFromNode(
   const avatarUrl = absoluteUrl(rawAvatar, sourceCatalog[source].baseUrl);
   const avatar = avatarUrl && /^https?:\/\//i.test(avatarUrl) ? avatarUrl : undefined;
   const label =
-    username ||
     discourseQuoteNodeAttribute(node, 'data-display-name') ||
-    quotedAuthorLabelFromAvatarUrl(rawAvatar) ||
-    quotedAuthorLabelFromTitle(title, topicLink);
+    quotedAuthorLabelFromTitle(title, topicLink) ||
+    username ||
+    quotedAuthorLabelFromAvatarUrl(rawAvatar);
   const preview = boundedQuotedPostPreview(
     discourseQuoteNodeText(node.querySelector('blockquote')).replace(/\[![^\]]+\][+-]?[ \t]*/gim, '')
   );
@@ -186,6 +186,26 @@ export function replyForQuotedPost(
   const localReply = repliesByFloor.get(reference.postNumber);
   if (!localReply || (!localReply.preparedContent && loadedReply?.preparedContent)) return loadedReply;
   return localReply;
+}
+
+export function referencedPostAuthorName(post: Reply | undefined, label?: string) {
+  return post?.author && post.author !== post.authorId ? post.author : label || post?.author || '';
+}
+
+export function replyTargetPost(
+  floor: number | undefined,
+  source: Source | undefined,
+  topicId: string | undefined,
+  repliesByFloor: Map<number, Reply>,
+  loadedQuotedReplies: Record<string, Reply>
+) {
+  if (!floor) return undefined;
+  return (
+    repliesByFloor.get(floor) ??
+    (source === 'linuxdo' && topicId
+      ? loadedQuotedReplies[quotedPostReferenceKey({ source, topicId, postNumber: floor })]
+      : undefined)
+  );
 }
 
 export function replyQuotedPostInstanceKey(replyKey: string, reference: QuotedPostReference) {

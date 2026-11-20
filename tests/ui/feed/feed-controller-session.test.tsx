@@ -13,7 +13,7 @@ import { resetForumSourceQueries } from '@/features/account/sessionQueryOwnershi
 import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import { sessionSources, sourceValues, type SessionSource, type Source } from '@/domain/forum/sourceCatalog';
 import type { Category, FeedResponse, SourceErrors, Topic } from '@/domain/forum/models';
-import { forumReadPlanScopesKey, resolveForumReadPlan, type ForumReadOperation } from '@/domain/forum/readPlan';
+import { aggregateForumReadPlan, resolveForumReadPlan, type ForumReadOperation } from '@/domain/forum/readPlan';
 import { isSessionSource } from '@/domain/forum/sourceCatalog';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 
@@ -67,11 +67,10 @@ function aggregateReadPlanScope(
   identityBarriers: readonly SessionSource[] = [],
   sessionEpochs: ForumSessionEpochs = initialForumSessionEpochs
 ) {
-  return forumReadPlanScopesKey(
-    enabledSources.map(
-      (source) => [source, testReadPlan(source, operation, true, identityBarriers, sessionEpochs).cacheScope] as const
-    )
-  );
+  return aggregateForumReadPlan(
+    operation,
+    enabledSources.map((source) => testReadPlan(source, operation, true, identityBarriers, sessionEpochs))
+  ).cacheScope;
 }
 
 function useFeedRuntime({ catalogActive, deferSecondaryCatalogs, ...options }: FeedRuntimeOptions) {
@@ -121,6 +120,54 @@ function readerDataWithEnabledSources(enabledSources: readonly Source[]) {
 }
 
 describe('Feed controller sessions', () => {
+  it.each([
+    ['focus', 'loadFeed'],
+    ['focus', 'refreshFeed'],
+    ['source', 'loadFeed'],
+    ['source', 'refreshFeed']
+  ] as const)('ignores a queued viewport read after the %s changes (%s)', async (change, read) => {
+    let active = true;
+    const getFeed = jest.fn(async ({ page }: Parameters<ReadGateway['getFeed']>[0]): Promise<FeedResponse> => {
+      return { items: [], errors: {}, hasMore: page === 1, nextPage: page === 1 ? 2 : null };
+    });
+    const readGateway = {
+      getFeed,
+      getCategories: jest.fn(async () => ({ items: [], errors: {} }))
+    } as unknown as ReadGateway;
+    const readerData = createEmptyReaderData();
+    const hook = await renderHook(() =>
+      useFeedRuntime({
+        active,
+        linuxDoVerificationActive: false,
+        notify: jest.fn(),
+        readerData,
+        readerDataLoaded: true,
+        readGateway,
+        showLinuxDoVerification: jest.fn(),
+        showNodeSeekVerification: jest.fn(),
+        showYaohuoLogin: jest.fn()
+      })
+    );
+    await waitFor(() => expect(hook.result.current.activeFeedState.hasMore).toBe(true));
+    const queuedRead = hook.result.current[read];
+
+    if (change === 'focus') {
+      active = false;
+      await hook.rerender(undefined);
+    } else {
+      await act(async () => {
+        hook.result.current.changeFeedSource('v2ex');
+      });
+      await waitFor(() => expect(hook.result.current.activeFeedState.hasMore).toBe(true));
+    }
+    const expectedCalls = change === 'focus' ? 1 : 2;
+    expect(getFeed).toHaveBeenCalledTimes(expectedCalls);
+    await act(async () => {
+      await queuedRead();
+    });
+    expect(getFeed).toHaveBeenCalledTimes(expectedCalls);
+  });
+
   it('shows first source posts before the aggregate settles without enabling premature pagination or replacing a refresh', async () => {
     const enabledSources: Source[] = ['linuxdo', 'v2ex'];
     const readerData = readerDataWithEnabledSources(enabledSources);
@@ -194,6 +241,7 @@ describe('Feed controller sessions', () => {
       });
       await waitFor(() => expect(pending).toHaveLength(1));
       expect(hook.result.current.shownFeedItems.map(topicKey)).toEqual(['v2ex:1', 'linuxdo:71']);
+      expect(hook.result.current.activeFeedState.refreshing).toBe(true);
       await act(async () => {
         pending.shift()!(linuxResponse());
         await refresh;
@@ -203,7 +251,8 @@ describe('Feed controller sessions', () => {
           expect.arrayContaining(['v2ex:2', 'linuxdo:71'])
         )
       );
-      expect(notify.mock.calls.map(([message]) => message)).toEqual(['正在更新列表', '列表已更新']);
+      expect(hook.result.current.activeFeedState.refreshing).toBe(false);
+      expect(notify).not.toHaveBeenCalled();
     } finally {
       await hook.unmount();
     }
@@ -597,22 +646,22 @@ describe('Feed controller sessions', () => {
     await waitFor(() => expect(getFeed).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(hook.result.current.shownFeedItems).toEqual([topic]));
     expect(getCategories.mock.calls[0]?.[1]).toMatchObject({
-      readPlanScope: 'public:omit'
+      plan: { source: 'linuxdo', operation: 'categories', cacheScope: 'public:omit' }
     });
     expect(getFeed.mock.calls[0]?.[1]).toMatchObject({
-      readPlanScopes: [['linuxdo', 'public:omit']]
+      plan: { source: 'all', sites: [{ source: 'linuxdo', cacheScope: 'public:omit' }] }
     });
   });
 
   it('replaces aggregate Feed with the same enabled-source snapshot', async () => {
     type FeedResult = Awaited<ReturnType<ReadGateway['getFeed']>>;
     const requests: {
-      context?: { includedSources?: readonly Source[] };
+      context?: Parameters<ReadGateway['getFeed']>[1];
       deferred: ReturnType<typeof Promise.withResolvers<FeedResult>>;
       signal: AbortSignal;
     }[] = [];
     const getFeed = jest.fn(
-      ({ signal }: { signal: AbortSignal }, context?: { includedSources?: readonly Source[] }): Promise<FeedResult> => {
+      ({ signal }: { signal: AbortSignal }, context?: Parameters<ReadGateway['getFeed']>[1]): Promise<FeedResult> => {
         const deferred = Promise.withResolvers<FeedResult>();
         signal.addEventListener('abort', () => deferred.reject(new DOMException('aborted', 'AbortError')), {
           once: true
@@ -642,7 +691,7 @@ describe('Feed controller sessions', () => {
     );
 
     await waitFor(() => expect(requests).toHaveLength(1));
-    expect(requests[0].context?.includedSources).toEqual(['v2ex', 'nodeseek']);
+    expect(requests[0].context?.plan).toMatchObject({ sites: [{ source: 'v2ex' }, { source: 'nodeseek' }] });
 
     readerData = readerDataWithEnabledSources(['v2ex']);
     await act(async () => {
@@ -652,7 +701,7 @@ describe('Feed controller sessions', () => {
 
     await waitFor(() => expect(requests).toHaveLength(2));
     expect(requests[0].signal.aborted).toBe(true);
-    expect(requests[1].context?.includedSources).toEqual(['v2ex']);
+    expect(requests[1].context?.plan).toMatchObject({ sites: [{ source: 'v2ex' }] });
   });
 
   it('keeps Feed selection on reorder and exposes no warm data when all sources are disabled', async () => {
@@ -1141,12 +1190,14 @@ describe('Feed controller sessions', () => {
     await waitFor(() => expect(getFeed).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(getCategories).toHaveBeenCalledTimes(4));
     await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([topic]));
-    expect(getFeed.mock.calls[0]?.[1]?.readPlanScopes).toEqual([
-      ['v2ex', 'public:omit'],
-      ['linuxdo', 'public:omit'],
-      ['nodeseek', 'public:omit'],
-      ['yaohuo', 'blocked:identity-pending']
-    ]);
+    expect(getFeed.mock.calls[0]?.[1]?.plan).toMatchObject({
+      sites: [
+        { source: 'v2ex', cacheScope: 'public:omit' },
+        { source: 'linuxdo', cacheScope: 'public:omit' },
+        { source: 'nodeseek', cacheScope: 'public:omit' },
+        { source: 'yaohuo', cacheScope: 'blocked:identity-pending' }
+      ]
+    });
   });
 
   it('keeps unrelated single-source pagination active during aggregate reconciliation', async () => {
@@ -1330,7 +1381,7 @@ describe('Feed controller sessions', () => {
     });
     expect(recoveryOutcome).toBe('stale');
     expect(getFeed.mock.calls.filter(([request]) => request.source === 'linuxdo')).toHaveLength(3);
-    expect(getFeed.mock.calls.at(-1)?.[1]).toMatchObject({ readPlanScope: 'public:omit' });
+    expect(getFeed.mock.calls.at(-1)?.[1]).toMatchObject({ plan: { cacheScope: 'public:omit' } });
   });
 
   it('keeps shared categories on Search without starting Feed and cancels them after leaving both owners', async () => {
@@ -2116,7 +2167,7 @@ describe('Feed controller sessions', () => {
     expect(hook.result.current.categories).toEqual([]);
     expect(hook.result.current.feedCategories).toEqual([]);
     expect(getFeed.mock.calls.some(([request]) => request.source === 'nodeseek')).toBe(true);
-    expect(getFeed.mock.calls.at(-1)?.[1]).toMatchObject({ readPlanScope: 'public:omit' });
+    expect(getFeed.mock.calls.at(-1)?.[1]).toMatchObject({ plan: { cacheScope: 'public:omit' } });
 
     await act(async () => hook.rerender({}));
 
@@ -2130,7 +2181,7 @@ describe('Feed controller sessions', () => {
     await waitFor(() =>
       expect(getFeed.mock.calls.filter(([request]) => request.source === 'nodeseek')).toHaveLength(2)
     );
-    expect(getFeed.mock.calls.at(-1)?.[1]).toMatchObject({ readPlanScope: 'authenticated:0' });
+    expect(getFeed.mock.calls.at(-1)?.[1]).toMatchObject({ plan: { cacheScope: 'authenticated:0' } });
     expect(hook.result.current.activeFeedState.items).toEqual([]);
   });
 
@@ -2312,12 +2363,14 @@ describe('Feed controller sessions', () => {
     }>();
     let feedReadCount = 0;
     const readGateway = {
-      getCategories: jest.fn(async ({ source }: { source: Source }, context?: { readPlanScope?: string }) => {
-        if (source === 'v2ex') return { items: [safeCategory], errors: {} };
-        if (source === 'nodeseek' && context?.readPlanScope?.startsWith('authenticated:'))
-          return fullCategoriesRead.promise;
-        return { items: [], errors: {} };
-      }),
+      getCategories: jest.fn(
+        async ({ source }: { source: Source }, context?: Parameters<ReadGateway['getCategories']>[1]) => {
+          if (source === 'v2ex') return { items: [safeCategory], errors: {} };
+          if (source === 'nodeseek' && context?.plan?.cacheScope?.startsWith('authenticated:'))
+            return fullCategoriesRead.promise;
+          return { items: [], errors: {} };
+        }
+      ),
       getFeed: jest.fn(async () => {
         feedReadCount += 1;
         return feedReadCount === 1
@@ -2566,15 +2619,17 @@ describe('Feed controller sessions', () => {
     }>();
     let nodeSeekReads = 0;
     const readGateway = {
-      getCategories: jest.fn(async ({ source }: { source: Source }, context?: { readPlanScope?: string }) => {
-        if (source === 'v2ex') return { items: [safeCategory], errors: {} };
-        if (source === 'linuxdo')
-          return { items: context?.readPlanScope === 'public:omit' ? [] : [unchangedCategory], errors: {} };
-        if (source !== 'nodeseek') return { items: [], errors: {} };
-        nodeSeekReads += 1;
-        if (nodeSeekReads === 1) return { items: [], errors: {} };
-        return nodeSeekReads === 2 ? fullRead.promise : changedEpochRead.promise;
-      }),
+      getCategories: jest.fn(
+        async ({ source }: { source: Source }, context?: Parameters<ReadGateway['getCategories']>[1]) => {
+          if (source === 'v2ex') return { items: [safeCategory], errors: {} };
+          if (source === 'linuxdo')
+            return { items: context?.plan?.cacheScope === 'public:omit' ? [] : [unchangedCategory], errors: {} };
+          if (source !== 'nodeseek') return { items: [], errors: {} };
+          nodeSeekReads += 1;
+          if (nodeSeekReads === 1) return { items: [], errors: {} };
+          return nodeSeekReads === 2 ? fullRead.promise : changedEpochRead.promise;
+        }
+      ),
       getFeed: jest.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
       hasYaohuoCredential: jest.fn(async () => false)
     } as unknown as ReadGateway;
@@ -2994,7 +3049,8 @@ describe('Feed controller sessions', () => {
       await canceledRefreshRead.promise;
       await canceledRefresh;
     });
-    expect(notify).not.toHaveBeenCalledWith('列表已更新');
+    expect(hook.result.current.activeFeedState.refreshing).toBe(false);
+    expect(notify).not.toHaveBeenCalled();
     active = true;
     await act(async () => {
       hook.rerender({});
@@ -3409,7 +3465,7 @@ describe('Feed controller sessions', () => {
     });
 
     expect(getFeed.mock.calls.some(([request]) => request.source === 'nodeseek')).toBe(true);
-    expect(getFeed.mock.calls.at(-1)?.[1]).toMatchObject({ readPlanScope: 'public:omit' });
+    expect(getFeed.mock.calls.at(-1)?.[1]).toMatchObject({ plan: { cacheScope: 'public:omit' } });
     await waitFor(() => expect(hook.result.current.feedBusy).toBe(false));
     expect(hook.result.current.feedBusy).toBe(false);
     expect(hook.result.current.feedOutcomeKind).toBe('empty');
@@ -3621,7 +3677,7 @@ describe('Feed controller sessions', () => {
     await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([v2exTopic]));
     await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
     const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
-    const initialReadPlanScopes = getFeed.mock.calls[0]?.[1]?.readPlanScopes;
+    const initialReadPlanScopes = getFeed.mock.calls[0]?.[1]?.plan;
 
     await act(async () => {
       await expect(recovery.resume()).resolves.toBe('verification-required');
@@ -3635,7 +3691,7 @@ describe('Feed controller sessions', () => {
 
     await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([v2exTopic, linuxDoTopic]));
     expect(getFeed).toHaveBeenCalledTimes(3);
-    expect(getFeed.mock.calls.slice(1).map((call) => call[1]?.readPlanScopes)).toEqual([
+    expect(getFeed.mock.calls.slice(1).map((call) => call[1]?.plan)).toEqual([
       initialReadPlanScopes,
       initialReadPlanScopes
     ]);

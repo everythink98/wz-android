@@ -297,7 +297,8 @@ describe('notification gateway', () => {
   });
 
   it.each([
-    ['nodeseek', 'mark-read', ['/api/notification/message/markViewed']],
+    ['nodeseek', 'mark-read', ['/api/notification/message/markViewed'], 'access'],
+    ['nodeseek', 'mark-read', ['/api/notification/message/markViewed'], 'session'],
     [
       'nodeseek',
       'mark-all-read',
@@ -305,18 +306,20 @@ describe('notification gateway', () => {
         '/api/notification/at-me/markViewed',
         '/api/notification/reply-to-me/markViewed',
         '/api/notification/message/markViewed'
-      ]
+      ],
+      'access'
     ],
-    ['linuxdo', 'mark-all-read', ['/notifications/mark-read']],
-    ['nodeseek', 'upload', ['/api/upload']],
-    ['linuxdo', 'upload', ['/uploads.json']],
-    ['yaohuo', 'reply', ['/bbs/messagelist_add.aspx']]
+    ['linuxdo', 'mark-all-read', ['/notifications/mark-read'], 'access'],
+    ['nodeseek', 'upload', ['/api/upload'], 'access'],
+    ['linuxdo', 'upload', ['/uploads.json'], 'access'],
+    ['yaohuo', 'reply', ['/bbs/messagelist_add.aspx'], 'access']
   ] as const)(
-    'rechecks %s %s access after transport preparation and sends each authorized write once',
-    async (source, operation, expectedPaths) => {
+    'rechecks %s %s to %j after transport preparation when %s changes',
+    async (source, operation, expectedPaths, change) => {
       const preparing = Promise.withResolvers<void>();
       const prepared = Promise.withResolvers<void>();
       let current = true;
+      let epoch = 0;
       const transport = vi.fn<Fetcher>(async () =>
         source === 'yaohuo'
           ? new Response('<div class="tip">发送信息成功！</div>')
@@ -345,6 +348,7 @@ describe('notification gateway', () => {
       const gateway = createNotificationGateway({
         onSessionExpired,
         privateAccessAllowed: () => current,
+        requestSessionEpoch: () => epoch,
         readAccess: () => ({ identityKey: `${source}:7`, userId: '7', fetcher })
       });
       const item: ForumNotification = {
@@ -377,7 +381,8 @@ describe('notification gateway', () => {
       const rejected = expect(request).rejects.toMatchObject({ reason: 'private-access-stale' });
       try {
         await preparing.promise;
-        current = false;
+        if (change === 'session') epoch++;
+        else current = false;
         prepared.resolve();
         await rejected;
         expect(transport).not.toHaveBeenCalled();
@@ -396,6 +401,35 @@ describe('notification gateway', () => {
       }
     }
   );
+
+  it('discards a completed aggregate child when its session changes while another source is pending', async () => {
+    const nodeseek = adapter('ok');
+    const linuxdo = adapter('ok');
+    const delayed = Promise.withResolvers<void>();
+    const linuxdoResponse = linuxdo.listPage;
+    linuxdo.listPage = vi.fn(async (access) => {
+      await delayed.promise;
+      return linuxdoResponse(access);
+    });
+    let epoch = 0;
+    const gateway = createNotificationGateway({
+      adapters: { nodeseek, linuxdo, yaohuo: adapter('ok') },
+      readAccess: (source) => ({ identityKey: `${source}:7`, userId: '7' }),
+      requestSessionEpoch: (source) => (source === 'nodeseek' ? epoch : 0)
+    });
+    const request = gateway.listAllPage({ sources: ['nodeseek', 'linuxdo'] });
+    try {
+      await vi.waitFor(() => expect(nodeseek.listPage).toHaveBeenCalledTimes(1));
+      epoch++;
+      delayed.resolve();
+      const page = await request;
+      expect(page.items.map((item) => item.source)).toEqual(['linuxdo']);
+      expect(page.errors.nodeseek).toMatchObject({ reason: 'private-access-stale' });
+    } finally {
+      delayed.resolve();
+      await request;
+    }
+  });
 
   it('returns valid partial items with a retryable source error and isolates invalid source pages', async () => {
     const partial = adapter('ok');
@@ -599,7 +633,7 @@ describe('notification gateway', () => {
   });
 
   it.each(['success', 'http-401'] as const)(
-    'captures the notification epoch after access settles for %s',
+    'drops credentials prepared across a session change and only handles the current %s',
     async (result) => {
       const access = Promise.withResolvers<NotificationAdapterAccess>();
       const readAccess = vi.fn(() => access.promise);
@@ -617,6 +651,7 @@ describe('notification gateway', () => {
         requestSessionEpoch: () => epoch
       });
       const request = gateway.listPage('nodeseek');
+      const stale = expect(request).rejects.toMatchObject({ reason: 'private-access-stale' });
       await vi.waitFor(() => expect(readAccess).toHaveBeenCalledTimes(1));
       epoch = 10;
       access.resolve({
@@ -624,12 +659,16 @@ describe('notification gateway', () => {
         userId: '42',
         fetcher: async () => new Response('', { status: result === 'http-401' ? 401 : 200 })
       });
+      await stale;
+      expect(sourceAdapter.listPage).not.toHaveBeenCalled();
+      expect(onSessionExpired).not.toHaveBeenCalled();
 
+      const active = gateway.listPage('nodeseek');
       if (result === 'http-401') {
-        await expect(request).rejects.toMatchObject({ reason: 'http-401' });
+        await expect(active).rejects.toMatchObject({ reason: 'http-401' });
         expect(onSessionExpired).toHaveBeenCalledExactlyOnceWith('nodeseek', 10);
       } else {
-        await expect(request).resolves.toMatchObject({ items: [] });
+        await expect(active).resolves.toMatchObject({ items: [] });
         expect(onSessionExpired).not.toHaveBeenCalled();
       }
       expect(sourceAdapter.listPage).toHaveBeenCalledTimes(1);

@@ -65,6 +65,7 @@ jest.mock('lucide-react-native', () => {
     Maximize2: Icon,
     Minimize2: Icon,
     Redo2: Icon,
+    SquarePen: Icon,
     TextCursorInput: Icon,
     Undo2: Icon,
     X: Icon
@@ -533,6 +534,46 @@ describe('notification screens', () => {
     }
   });
 
+  it.each(['data-original', 'lightbox'] as const)(
+    'opens the tapped private-message original when two photos share one thumbnail: %s',
+    async (kind) => {
+      const display = 'https://www.nodeseek.com/shared-thumb.png';
+      const first = 'https://www.nodeseek.com/first-full.png';
+      const second = 'https://www.nodeseek.com/second-full.png';
+      const firstOriginal = kind === 'lightbox' ? second : '/first-full.png';
+      const firstImage = `<img src="${display}" data-original="${firstOriginal}" width="300" height="200" alt="第一张">`;
+      const firstHtml =
+        kind === 'lightbox' ? `<a class="lightbox" href="/first-full.png">${firstImage}</a>` : firstImage;
+      const detail: NotificationDetail = {
+        ...imageDetail,
+        messages: [
+          { ...imageDetail.messages[0], contentHtml: `<p>${firstHtml}</p>` },
+          {
+            ...imageDetail.messages[1],
+            contentHtml: `<p><img src="${display}" data-original="${second}" width="300" height="200" alt="第二张"></p>`
+          }
+        ]
+      };
+      const view = await render(
+        <NotificationDetailScreen
+          contentWidth={360}
+          detail={detail}
+          loading={false}
+          onOpenTopic={jest.fn()}
+          onRetry={jest.fn()}
+        />
+      );
+      await fireEvent.press(view.getByLabelText('预览图片：第一张'));
+      const firstPreview = JSON.parse(view.getByTestId('message-preview-data').props.children);
+      expect(firstPreview.items.map((item: { originalUri: string }) => item.originalUri)).toEqual([first, second]);
+      expect(firstPreview.items[firstPreview.index]).toMatchObject({ displayUri: display, originalUri: first });
+      await fireEvent.press(view.getByLabelText('关闭图片预览'));
+      await fireEvent.press(view.getByLabelText('预览图片：第二张'));
+      const secondPreview = JSON.parse(view.getByTestId('message-preview-data').props.children);
+      expect(secondPreview.items[secondPreview.index]).toMatchObject({ displayUri: display, originalUri: second });
+    }
+  );
+
   it.each(['blur', 'identity', 'unavailable', 'conversation'] as const)(
     'closes private image previews on %s changes',
     async (change) => {
@@ -591,12 +632,10 @@ describe('notification screens', () => {
     expect(view.getByText('NodeSeek · 还有更多消息')).toBeTruthy();
     expect(view.getByText('linux.do · 已到当前末尾')).toBeTruthy();
     expect(view.getByText('妖火 · 读取中断，可重试')).toBeTruthy();
-    expect(view.queryByText('各站当前可提供的消息已加载完成')).toBeNull();
     await fireEvent.press(view.getByRole('button', { name: '继续加载消息' }));
     expect(onLoadMore).toHaveBeenCalledTimes(1);
     await view.rerender(<NotificationsScreen {...props} hasMore={false} />);
     expect(view.queryByRole('button', { name: '继续加载消息' })).toBeNull();
-    expect(view.queryByText('各站当前可提供的消息已加载完成')).toBeNull();
     expect(view.getByRole('button', { name: '重试 妖火' })).toBeTruthy();
     await view.rerender(
       <NotificationsScreen
@@ -606,8 +645,25 @@ describe('notification screens', () => {
         pagination={{ nodeseek: 'complete', linuxdo: 'complete', yaohuo: 'complete' }}
       />
     );
-    expect(view.getByText('各站当前可提供的消息已加载完成')).toBeTruthy();
+    expect(view.queryByText('NodeSeek · 还有更多消息')).toBeNull();
     expect(view.queryByText('linux.do · 已到当前末尾')).toBeNull();
+  });
+
+  it('keeps an empty filtered page in place while only its pagination control loads', async () => {
+    const props = { ...listProps(), source: 'nodeseek' as const, items: [], unreadOnly: true };
+    const view = await render(<NotificationsScreen {...props} loading />);
+    expect(view.getByRole('status', { name: '加载中' })).toBeTruthy();
+    await view.rerender(<NotificationsScreen {...props} hasMore />);
+    expect(view.getByText('当前页没有匹配消息')).toBeTruthy();
+    await fireEvent.press(view.getByRole('button', { name: '继续加载消息' }));
+    expect(props.onLoadMore).toHaveBeenCalledTimes(1);
+    await view.rerender(<NotificationsScreen {...props} hasMore fetchingMore />);
+    expect(view.getByText('当前页没有匹配消息')).toBeTruthy();
+    expect(view.queryByRole('status', { name: '加载中' })).toBeNull();
+    expect(view.getByRole('button', { name: '继续加载消息', busy: true })).toBeDisabled();
+    await view.rerender(<NotificationsScreen {...props} />);
+    expect(view.getByText('暂无未读消息')).toBeTruthy();
+    expect(view.queryByRole('button', { name: '继续加载消息' })).toBeNull();
   });
 
   it('keeps the list mounted while filters reset its position and manual refresh suppresses pagination', async () => {
@@ -807,20 +863,37 @@ describe('notification screens', () => {
 
   it('distinguishes a failed empty list from an empty inbox and offers unread recovery', async () => {
     const onChangeUnreadOnly = jest.fn();
+    const onRetrySource = jest.fn();
     const view = await render(
       <NotificationsScreen
         {...listProps()}
         items={[]}
         errors={{ nodeseek: { kind: 'ordinary', message: '网络中断' } }}
+        onRetrySource={onRetrySource}
       />
     );
-    expect(view.getByText('消息暂未加载成功')).toBeTruthy();
+    expect(view.getByText('NodeSeek：网络中断')).toBeTruthy();
+    expect(view.queryByText('消息暂未加载成功')).toBeNull();
+    expect(view.queryByText('NodeSeek · 读取中断，可重试')).toBeNull();
+    await fireEvent.press(view.getByRole('button', { name: '重试 NodeSeek' }));
+    expect(onRetrySource).toHaveBeenCalledWith('nodeseek');
     expect(view.queryByText('暂无消息')).toBeNull();
     await view.rerender(
       <NotificationsScreen {...listProps()} items={[]} unreadOnly onChangeUnreadOnly={onChangeUnreadOnly} />
     );
     await fireEvent.press(view.getByRole('button', { name: '查看全部消息' }));
     expect(onChangeUnreadOnly).toHaveBeenCalledWith(false);
+  });
+
+  it('announces restoring the message list as progress and keeps a storage failure actionable', async () => {
+    const props = { ...listProps(), storageReady: false, onRetryInitialization: jest.fn() };
+    const view = await render(<NotificationsScreen {...props} />);
+    expect(view.getByRole('status', { name: '正在恢复通知' }).props.accessibilityState.busy).toBe(true);
+    await view.rerender(<NotificationsScreen {...props} initializationError="本机读取失败" />);
+    expect(view.queryByRole('status')).toBeNull();
+    expect(view.getByText('本机读取失败')).toBeTruthy();
+    await fireEvent.press(view.getByRole('button', { name: '重试通知初始化' }));
+    expect(props.onRetryInitialization).toHaveBeenCalledTimes(1);
   });
 
   it('keeps account confirmation distinct from login actions', async () => {
@@ -927,7 +1000,6 @@ describe('notification screens', () => {
     );
 
     expect(view.getByText('尚未启用内容源')).toBeTruthy();
-    expect(view.getByText('请前往“更多”中的“内容源”面板启用想看的站点。')).toBeTruthy();
     expect(view.getByTestId('notification-source-all')).toBeTruthy();
     expect(view.queryByTestId('notification-source-nodeseek')).toBeNull();
     expect(view.queryByLabelText('NodeSeek，未读，张三，回复了你，一个主题')).toBeNull();
@@ -958,6 +1030,20 @@ describe('notification screens', () => {
     expect(view.queryByText('重试暂不可用的站点')).toBeNull();
   });
 
+  it('keeps retry reachable without scrolling back after single-site pagination fails', async () => {
+    const props = { ...listProps(), source: 'nodeseek' as const };
+    const view = await render(<NotificationsScreen {...props} hasMore fetchingMore />);
+    await view.rerender(
+      <NotificationsScreen {...props} errors={{ nodeseek: { kind: 'ordinary', message: '读取下一页失败' } }} />
+    );
+
+    const list = within(view.getByTestId('notification-outcome-partial-nodeseek'));
+    expect(list.getByLabelText('NodeSeek，未读，张三，回复了你，一个主题')).toBeTruthy();
+    expect(list.queryByRole('button', { name: '重试 NodeSeek' })).toBeNull();
+    await fireEvent.press(view.getByRole('button', { name: '重试 NodeSeek' }));
+    expect(props.onRetrySource).toHaveBeenCalledWith('nodeseek');
+  });
+
   it('shows mark-all only where the source protocol supports it', async () => {
     const categories = [{ id: 'inbox', label: '全部' }];
     const view = await render(
@@ -969,7 +1055,7 @@ describe('notification screens', () => {
       <NotificationsScreen {...listProps()} categories={categories} categoryId="inbox" source="yaohuo" />
     );
     expect(view.queryByText('全部已读')).toBeNull();
-    expect(view.getByText('逐条打开后已读')).toBeTruthy();
+    expect(view.queryByTestId('notification-mark-all')).toBeNull();
   });
 
   it('keeps the category strip in place while a selected source loads its categories', async () => {
@@ -1873,8 +1959,9 @@ describe('notification screens', () => {
       />
     );
 
-    expect(view.getByText('已关闭')).toBeTruthy();
-    expect(view.getAllByText('未登录；开关意图会保留')).toHaveLength(2);
+    expect(view.getByTestId('notification-source-switch-linuxdo').props.disabled).toBe(false);
+    expect(view.queryByText('账号状态暂不可确认')).toBeNull();
+    expect(view.getAllByText('未登录')).toHaveLength(2);
   });
 
   it('shows terminal unknown as retryable instead of logged out', async () => {
@@ -1895,8 +1982,8 @@ describe('notification screens', () => {
       />
     );
 
-    expect(view.getByText('账号状态暂不可确认；开关意图会保留，可重试核对')).toBeTruthy();
-    expect(view.getAllByText('未登录；开关意图会保留')).toHaveLength(2);
+    expect(view.getByText('账号状态暂不可确认')).toBeTruthy();
+    expect(view.getAllByText('未登录')).toHaveLength(2);
   });
 
   it('keeps denied permission intent visible and offers system settings', async () => {

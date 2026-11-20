@@ -51,9 +51,6 @@ export function createAppUpdateOperations() {
     get phase() {
       return work.phase;
     },
-    get attached() {
-      return binding === 'attached';
-    },
     restore() {
       binding = 'attached';
       const identity = {};
@@ -76,8 +73,17 @@ export function createAppUpdateOperations() {
     },
     pause() {
       if (binding === 'detached' || work.phase !== 'downloading') return null;
+      const identity = work.identity;
       work = { ...work, phase: 'pausing', intent: 'pause' };
-      return { task: resource.kind === 'owned' && resource.identity === work.identity ? resource.task : null };
+      return {
+        task: resource.kind === 'owned' && resource.identity === identity ? resource.task : null,
+        failed() {
+          if (!current(identity) || work.phase !== 'pausing') return false;
+          // Keep the pause intent so completion leaves the package ready for manual installation.
+          work = { ...work, phase: 'downloading' };
+          return true;
+        }
+      };
     }
   };
 }

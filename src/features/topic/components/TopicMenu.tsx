@@ -1,5 +1,5 @@
 import type { TopicStyles } from '../styles';
-import { ArrowUp, ExternalLink, RefreshCw, Settings, Share2, Pencil } from 'lucide-react-native';
+import { ArrowUp, ExternalLink, ListRestart, RefreshCw, Settings, Share2, Pencil } from 'lucide-react-native';
 import { PopupMenu, PopupMenuItem } from '@/ui/controls/PopupMenu';
 
 export function TopicMenu({
@@ -11,6 +11,7 @@ export function TopicMenu({
   onRefreshWholeTopic,
   onRequestClose,
   onShareTopic,
+  refreshing = false,
   runTopicMenuAction,
   styles,
   topicUrl,
@@ -20,10 +21,11 @@ export function TopicMenu({
   onOpenOpening?: () => void;
   onOpenOriginal: (url: string) => void;
   onOpenReadingSettings: () => void;
-  onRefreshTopic: () => void;
+  onRefreshTopic?: () => void;
   onRefreshWholeTopic: () => void;
   onRequestClose: () => void;
   onShareTopic: () => void;
+  refreshing?: boolean;
   runTopicMenuAction: (action: () => void) => void;
   styles: TopicStyles;
   topicUrl: string;
@@ -43,8 +45,20 @@ export function TopicMenu({
       {onOpenOpening ? (
         <PopupMenuItem icon={ArrowUp} label="回到主楼" onPress={() => runTopicMenuAction(onOpenOpening)} />
       ) : null}
-      <PopupMenuItem icon={RefreshCw} label="刷新评论" onPress={() => runTopicMenuAction(onRefreshTopic)} />
-      <PopupMenuItem icon={RefreshCw} label="刷新全文" onPress={() => runTopicMenuAction(onRefreshWholeTopic)} />
+      {onRefreshTopic ? (
+        <PopupMenuItem
+          disabled={refreshing}
+          icon={ListRestart}
+          label="刷新评论"
+          onPress={() => runTopicMenuAction(onRefreshTopic)}
+        />
+      ) : null}
+      <PopupMenuItem
+        disabled={refreshing}
+        icon={RefreshCw}
+        label="刷新全文"
+        onPress={() => runTopicMenuAction(onRefreshWholeTopic)}
+      />
       <PopupMenuItem icon={Settings} label="阅读设置" onPress={() => runTopicMenuAction(onOpenReadingSettings)} />
       <PopupMenuItem
         last

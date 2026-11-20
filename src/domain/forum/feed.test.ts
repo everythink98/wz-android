@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { dateTime } from './presentation';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { applyFeedFilter, balanceTopicsBySource, mergeTopics } from './feed';
+import { applyFeedFilter, balanceTopicsBySource, mergeTopics, searchExpressionText } from './feed';
 import type { Topic } from './models';
 
 describe('Android feed logic helpers', () => {
+  it('keeps both the linux.do nickname and account searchable for local exclusion terms', () => {
+    const text = searchExpressionText({ ...topic, source: 'linuxdo', author: '山月', authorId: 'reader_one' });
+    expect(text).toContain('山月');
+    expect(text).toContain('reader_one');
+  });
   const topic: Topic = {
     source: 'nodeseek',
     id: '1',

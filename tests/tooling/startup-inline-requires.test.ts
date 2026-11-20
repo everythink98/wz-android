@@ -7,6 +7,7 @@ import type { ConfigT } from '@expo/metro/metro-config';
 import type { transform } from '@expo/metro-config/build/transform-worker/metro-transform-worker';
 import type { NotificationAdapterAccess } from '@/sources/notificationAdapter';
 import type { NotificationWorkerDependencies } from '@/platform/notifications/notificationWorker';
+import { createNotificationWorkerDeadline } from '@/platform/notifications/notificationWorkerDeadline';
 import { accountSessionAccess, type AccountSessionSnapshot } from '@/domain/session/siteSessionState';
 
 const nativeRequire = createRequire(import.meta.url);
@@ -90,16 +91,19 @@ describe('experimental startup inline requires', () => {
 
   it('registers the background task immediately but evaluates worker dependencies only when it runs', async () => {
     const filename = 'src/app/notificationBackgroundTask.ts';
+    const proxyAuthority = 'src/platform/network/networkProxyAuthority.ts';
     const deferred = [
       '@/sources/notificationAdapters',
       '@/platform/notifications/notificationWorker',
+      '@/platform/notifications/notificationWorkerDeadline',
       '@/platform/storage/readerDataStore',
       '@/platform/storage/accountSessionStore',
       '@/domain/session/siteSessionState',
-      '@/platform/network/networkProxy'
+      '@/platform/network/networkProxyAuthority',
+      './networkProxy'
     ];
     for (const config of [defaults, candidate]) {
-      const modules = await productionTransform(config, [filename]);
+      const modules = await productionTransform(config, [filename, proxyAuthority]);
       const loads = new Set<string>();
       let task: (() => Promise<unknown>) | undefined;
       const settings = { contentSources: { nodeseek: true } };
@@ -142,10 +146,13 @@ describe('experimental startup inline requires', () => {
         '@/domain/reader/contentSourcePreferences': {
           projectContentSourcePreferences: () => ({ notificationSources: ['nodeseek'] })
         },
-        '@/platform/storage/readerDataStore': { loadReaderSettings: vi.fn(async () => settings) },
+        '@/platform/storage/readerDataStore': {
+          withReaderSettings: (run: (read: () => Promise<typeof settings>) => Promise<unknown>) =>
+            run(async () => settings)
+        },
         '@/platform/storage/accountSessionStore': { loadAccountSessionSnapshot: loadAccountSnapshot },
         '@/domain/session/siteSessionState': { accountSessionAccess },
-        '@/platform/network/networkProxy': {
+        './networkProxy': {
           loadNetworkProxyState: async () => ({ enabled: false }),
           applyNetworkProxy: applyProxy
         },
@@ -163,14 +170,17 @@ describe('experimental startup inline requires', () => {
         '@/platform/diagnostics/diagnosticPolicy': { normalizeDiagnosticReason: () => 'unknown' },
         '@/sources/notificationBackgroundAccess': { probeBackgroundNotificationAccess: probeAccess },
         '@/sources/notificationAdapters': { notificationAdapters: { nodeseek: { listPage } } },
-        '@/platform/notifications/notificationWorker': { runNotificationBackgroundWorker: runWorker }
+        '@/platform/notifications/notificationWorker': { runNotificationBackgroundWorker: runWorker },
+        '@/platform/notifications/notificationWorkerDeadline': { createNotificationWorkerDeadline }
       };
-      evaluate(modules.get(filename)!, (name) => {
+      const load = (name: string): ModuleExports => {
         loads.add(name);
+        if (name === '@/platform/network/networkProxyAuthority') return evaluate(modules.get(proxyAuthority)!, load);
         if (name.startsWith('@babel/runtime/')) return nativeRequire(name);
         if (!(name in stubs)) throw new Error(`Unexpected background dependency ${name}`);
         return stubs[name];
-      });
+      };
+      evaluate(modules.get(filename)!, load);
       expect(task).toBeTypeOf('function');
       expect(deferred.filter((name) => loads.has(name))).toEqual(config === candidate ? [] : deferred);
       expect(loadAccountSnapshot).not.toHaveBeenCalled();

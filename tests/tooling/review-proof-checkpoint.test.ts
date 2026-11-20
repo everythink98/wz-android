@@ -276,6 +276,58 @@ describe('isolated device proof checkpoint', () => {
       expect(context.device.read(`${file}-shm`)).toBeNull();
     }
   );
+  it.each([false, true])(
+    'restores the topic draft database and sidecars after an interrupted edit: exists=%s',
+    async (exists) => {
+      const context = fixture();
+      const file = 'files/SQLite/topic-drafts.db';
+      if (exists) {
+        const db = new DatabaseSync(path.join(context.remote, file));
+        db.exec("CREATE TABLE topic_drafts(payload); INSERT INTO topic_drafts VALUES ('previous draft')");
+        db.close();
+        context.modes.set(file, '660');
+      }
+      const original = context.device.read(file);
+      await expect(
+        withProofCheckpoint({
+          ...context,
+          run: async () => {
+            context.start();
+            for (const suffix of ['', '-wal', '-shm'])
+              writeFileSync(path.join(context.remote, file + suffix), 'fixture');
+            context.modes.set(file, '600');
+            throw new Error('editor interrupted');
+          }
+        })
+      ).rejects.toMatchObject({ message: 'editor interrupted', checkpoint: { phase: 'restored', fileCount: 12 } });
+      expect(context.device.read(file)).toEqual(original);
+      expect(context.device.mode(file)).toEqual(exists ? '660' : null);
+      expect(context.device.read(file + '-wal')).toBeNull();
+      expect(context.device.read(file + '-shm')).toBeNull();
+    }
+  );
+
+  it('resumes a version 2 checkpoint without touching drafts it never captured', async () => {
+    const context = fixture();
+    await withProofCheckpoint({ ...context, run: async () => undefined });
+    const file = path.join(context.directory, 'checkpoint.json');
+    const manifest = JSON.parse(readFileSync(file, 'utf8'));
+    const drafts = 'files/SQLite/topic-drafts.db';
+    for (const entries of [
+      manifest.baseline,
+      manifest.baselineModes,
+      manifest.restoreFrom,
+      manifest.restoreFromModes
+    ]) {
+      for (const suffix of ['', '-wal', '-shm']) delete entries[drafts + suffix];
+    }
+    expect(Object.keys(manifest.baseline)).toHaveLength(9);
+    writeFileSync(file, JSON.stringify({ ...manifest, version: 2, phase: 'restoring' }));
+    writeFileSync(path.join(context.remote, drafts), 'draft created after legacy replay');
+    await expect(resumeProofCheckpoint(context)).resolves.toMatchObject({ phase: 'restored', fileCount: 9 });
+    expect(context.device.read(drafts)?.toString()).toBe('draft created after legacy replay');
+  });
+
   it('keeps transfer and remote cleanup failures while always removing local scratch', () => {
     const transfer = new Error('transfer failed');
     const cleanup = new Error('remote cleanup failed');
@@ -399,6 +451,9 @@ describe('isolated device proof checkpoint', () => {
   it.each([
     { api: undefined, avd: 'WZ_ReaderStorage_API35_20260910', sdk: 35, accepted: true },
     { api: 30, avd: 'WZ_ReaderStorage_API30_20260910', sdk: 30, accepted: true },
+    { api: 29, avd: 'WZ_ReaderRecovery_API29_20261119', sdk: 29, accepted: true },
+    { api: 29, avd: 'WZ_ReaderStorage_API30_20260910', sdk: 29, accepted: false },
+    { api: 29, avd: 'WZ_ReaderRecovery_API29_20261119', sdk: 30, accepted: false },
     { api: undefined, avd: 'WZ_ReaderStorage_API30_20260910', sdk: 30, accepted: false },
     { api: 30, avd: 'WZ_ReaderStorage_API30_20260910', sdk: 35, accepted: false },
     { api: 35, avd: 'WZ_Pixel_API_35', sdk: 35, accepted: false },
@@ -438,7 +493,7 @@ describe('isolated device proof checkpoint', () => {
   });
 
   it.each(['owner', 'identity', 'backup'] as const)(
-    'refuses business writes when %s validation fails',
+    'refuses installation and business writes when %s validation fails',
     async (failure) => {
       const context = fixture();
       if (failure === 'owner') {
@@ -451,15 +506,18 @@ describe('isolated device proof checkpoint', () => {
         mkdirSync(context.directory, { recursive: true });
         writeFileSync(path.join(context.directory, 'baseline'), 'not a directory');
       }
+      const prepare = vi.fn();
       let writes = 0;
       await expect(
         withProofCheckpoint({
           ...context,
+          prepare,
           run: async () => {
             writes++;
           }
         })
       ).rejects.toThrow();
+      expect(prepare).not.toHaveBeenCalled();
       expect(writes).toBe(0);
     }
   );
@@ -606,7 +664,7 @@ describe('isolated device proof checkpoint', () => {
       result: 'new acceptance',
       checkpoint: { phase: 'restored' }
     });
-    expect(JSON.parse(readFileSync(file, 'utf8')).version).toBe(2);
+    expect(JSON.parse(readFileSync(file, 'utf8')).version).toBe(3);
   });
 
   it('freezes restore writes if installation identity changes', async () => {
@@ -627,8 +685,9 @@ describe('isolated device proof checkpoint', () => {
     ).rejects.toThrow('identity');
     expect(writes).toBe(0);
   });
-  it('stops again after installation and verifies the backup before business writes', async () => {
+  it('restores storage captured before installation can start the app', async () => {
     const context = fixture();
+    const original = context.device.read('databases/AsyncStorage');
     let stops = 0;
     const stop = context.device.stop;
     context.device.stop = () => {
@@ -640,11 +699,32 @@ describe('isolated device proof checkpoint', () => {
       prepare: async () => {
         context.start();
         context.identity.apkSha256 = 'new-build';
+        const storage = new DatabaseSync(path.join(context.remote, 'databases/AsyncStorage'));
+        storage.exec("UPDATE Storage SET value='changed during install' WHERE key='notifications'");
+        storage.close();
       },
       run: async () => {
         expect(stops).toBe(2);
       }
     });
+    expect(context.device.read('databases/AsyncStorage')).toEqual(original);
+  });
+
+  it('freezes the device immediately when installation changes its identity', async () => {
+    const context = fixture();
+    const stop = vi.spyOn(context.device, 'stop');
+    const run = vi.fn();
+    await expect(
+      withProofCheckpoint({
+        ...context,
+        prepare: async () => {
+          context.identity.uid = 'different-install';
+        },
+        run
+      })
+    ).rejects.toThrow();
+    expect(run).not.toHaveBeenCalled();
+    expect(stop).toHaveBeenCalledTimes(1);
   });
 
   it.each(['corrupt-backup', 'false-write-acknowledgement', 'false-mode-acknowledgement'])(

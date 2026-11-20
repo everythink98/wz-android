@@ -1,4 +1,5 @@
-import { isRecord } from '@/domain/forum/html';
+import { isRecord, recordText } from '@/domain/forum/html';
+import { discourseDisplayName } from '@/sources/discourse/model';
 import { linuxDoPreloadedData, parseLinuxDoRecord } from './preloadedData';
 import type {
   CreateTopicInput,
@@ -272,6 +273,7 @@ export async function createLinuxDoTopic({
   const topicId = positive(post.topic_id, 0);
   if (!topicId || !positive(post.id, 0) || post.post_number !== 1)
     return { status: 'unknown', message: 'linux.do 未返回新话题凭据，请到原站核对' };
+  const username = recordText(post, 'username');
   return {
     status: 'posted',
     message: '发帖成功',
@@ -279,7 +281,8 @@ export async function createLinuxDoTopic({
       source: 'linuxdo',
       id: String(topicId),
       title: draft.title.trim(),
-      author: typeof post.username === 'string' ? post.username : '',
+      author: discourseDisplayName(post) || username,
+      authorId: username || undefined,
       url: `${LINUXDO_BASE_URL}/t/${topicId}`,
       createdAt: typeof post.created_at === 'string' ? post.created_at : new Date().toISOString(),
       categoryId: draft.categoryId,

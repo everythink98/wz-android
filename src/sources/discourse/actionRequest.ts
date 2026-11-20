@@ -43,6 +43,7 @@ export type DiscourseAction =
       type: 'edit-post';
       postId: string | number;
       content: string;
+      originalContent: string;
     }
   | {
       type: 'delete-post';
@@ -185,7 +186,10 @@ export function buildDiscourseActionRequest(action: DiscourseAction): DiscourseA
       path: `/posts/${postId}.json`,
       method: 'PUT',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ 'post[raw]': requiredText(action.content, '请输入回复内容') }).toString()
+      body: new URLSearchParams({
+        'post[raw]': requiredText(action.content, '请输入回复内容'),
+        'post[original_text]': action.originalContent
+      }).toString()
     };
   }
   if (action.type === 'set-like') {

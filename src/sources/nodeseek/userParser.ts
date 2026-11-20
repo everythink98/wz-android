@@ -18,6 +18,7 @@ import {
 } from '@/domain/forum/html';
 import { accessRequirementFromObject } from '@/domain/forum/accessRequirements';
 import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
+import { nodeSeekGuestControls } from '@/platform/network/nodeSeekGuestControls';
 import {
   NODESEEK_BASE_URL,
   extractNodeSeekEmbeddedData,
@@ -108,20 +109,11 @@ function normalizeNodeSeekUserReply(
   };
 }
 
-function parseNodeSeekCurrentUserHtml(html: string, { allowUidText = false }: { allowUidText?: boolean } = {}) {
-  const embeddedUser = nodeSeekCurrentUserFromConfig(extractNodeSeekEmbeddedData(html));
-  if (embeddedUser) {
-    return embeddedUser;
-  }
-  return parseNodeSeekCurrentUserRoot(parseHtml(html), { allowUidText });
-}
-
 export function parseNodeSeekCurrentUserRoot(
   root: ReturnType<typeof parseHtml>,
   { allowUidText = false }: { allowUidText?: boolean } = {}
 ) {
-  const text = elementText(root);
-  const uid = allowUidText ? text.match(/UID\s*[:：]\s*(\d+)/i)?.[1] || '' : '';
+  const uid = allowUidText ? elementText(root).match(/UID\s*[:：]\s*(\d+)/i)?.[1] || '' : '';
   const explicitUserLink =
     root.querySelector('a.Username[href*="/space/"]') || root.querySelector('.Username a[href*="/space/"]');
   const explicitUserId = explicitUserLink?.getAttribute('href')?.match(/\/space\/(\d+)/i)?.[1] || '';
@@ -147,47 +139,76 @@ export function parseNodeSeekCurrentUserRoot(
   };
 }
 
-function isNodeSeekLoggedOutHtml(html: string) {
-  return isNodeSeekLoggedOutRoot(parseHtml(html));
-}
+const hiddenStyle =
+  /(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*(?:hidden|collapse)|opacity\s*:\s*0(?:\.0+)?)(?:\s*!important)?\s*(?:;|$)/i;
 
-export function isNodeSeekLoggedOutRoot(root: ReturnType<typeof parseHtml>) {
-  if (root.querySelector('meta[name="nodeseekAccountState"][content="anonymous"]')) {
-    return true;
-  }
-  const controls = root.querySelectorAll(
-    'a.btn[href], header a[href], nav a[href], .header a[href], .navbar a[href], .topbar a[href]'
-  );
-  const kinds = new Set(
-    controls.flatMap((link) => {
-      const href = link.getAttribute('href') || '';
-      const label = elementText(link).trim();
-      if (
-        /^\/(?:login|signin|sign-in)(?:\.html?)?(?:[/?#]|$)/i.test(href) &&
-        /^(?:登录|sign in|log in)$/i.test(label)
-      ) {
-        return ['login'];
-      }
-      if (
-        /^\/(?:register|signup|sign-up)(?:\.html?)?(?:[/?#]|$)/i.test(href) &&
-        /^(?:注册|sign up|register)$/i.test(label)
-      ) {
-        return ['register'];
-      }
-      return [];
+export function isNodeSeekLoggedOutRoot(root: ReturnType<typeof parseHtml>, url = BASE_URL) {
+  const marker = 'meta[name="nodeseekAccountState"]';
+  const rendered = root
+    .querySelector(`head > ${marker}, html > ${marker}, :scope > ${marker}`)
+    ?.getAttribute('content');
+  if (rendered === 'anonymous') return true;
+  if (rendered === 'no-visible-guest-controls') return false;
+  const rules = nodeSeekGuestControls;
+  const selector = rules.accountPage.test(url) ? rules.accountPageLinks : rules.navigationLinks;
+  const links = root.querySelectorAll(selector);
+  if (!links.length) return false;
+  // A matching visibility rule can depend on the viewport. Let the WebView resolve it.
+  const hiddenSelectors = root.querySelectorAll('style').flatMap((style) =>
+    style.rawText.split('}').flatMap((rule) => {
+      const [selector, declarations] = rule.split('{').slice(-2);
+      return declarations && hiddenStyle.test(declarations) ? [selector.trim()] : [];
     })
   );
-  return kinds.has('login') && kinds.has('register');
+  let login = false;
+  let register = false;
+  for (const link of links) {
+    const href = link.getAttribute('href')?.trim();
+    if (!href) continue;
+    let target: URL;
+    try {
+      target = new URL(href, url);
+    } catch {
+      continue;
+    }
+    const key = `${target.href}\n${elementText(link)}`;
+    const loginLink = rules.login.test(key);
+    const registerLink = rules.register.test(key);
+    if ((!loginLink && !registerLink) || link.closest(rules.excluded)) continue;
+    if (
+      hiddenSelectors.some((selector) => {
+        try {
+          return Boolean(link.closest(selector));
+        } catch {
+          // Browser-only selectors cannot identify a hidden ancestor in the HTML parser.
+          return false;
+        }
+      })
+    )
+      continue;
+    let node: typeof link | null = link;
+    while (node) {
+      if (hiddenStyle.test(node.getAttribute('style') || '')) break;
+      node = node.parentNode;
+    }
+    if (node) continue;
+    login ||= loginLink;
+    register ||= registerLink;
+    if (login && register) return true;
+  }
+  return false;
 }
 
 export function hasNodeSeekAccountEvidenceHtml(html: string, url = BASE_URL) {
+  if (nodeSeekCurrentUserFromConfig(extractNodeSeekEmbeddedData(html))) return true;
   let allowUidText = false;
   try {
     allowUidText = new URL(url, BASE_URL).pathname === '/setting';
   } catch {
     // Keep ambiguous URLs on the stricter path.
   }
-  return Boolean(parseNodeSeekCurrentUserHtml(html, { allowUidText }) || isNodeSeekLoggedOutHtml(html));
+  const root = parseHtml(html);
+  return Boolean(parseNodeSeekCurrentUserRoot(root, { allowUidText }) || isNodeSeekLoggedOutRoot(root, url));
 }
 
 export function parseNodeSeekUserReference(requestedUsername: string, data: unknown): UserReference {

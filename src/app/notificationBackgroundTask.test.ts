@@ -2,10 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { notificationSources, sourceCatalog, type NotificationSource } from '@/domain/forum/sourceCatalog';
 import type { AccountSessionSnapshot } from '@/domain/session/siteSessionState';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import {
   defaultNotificationState,
   loadNotificationState,
+  NOTIFICATION_STORAGE_KEY,
   saveNotificationState
 } from '@/platform/notifications/notificationStore';
 import type {
@@ -13,6 +15,7 @@ import type {
   runNotificationBackgroundWorker
 } from '@/platform/notifications/notificationWorker';
 import { markAccountSessionHandoffPending, saveAccountSessionSnapshot } from '@/platform/storage/accountSessionStore';
+import { withReaderSettings } from '@/platform/storage/readerDataStore';
 import type { NotificationAdapter } from '@/sources/notificationAdapter';
 
 const mocks = vi.hoisted(() => ({
@@ -70,7 +73,9 @@ vi.mock('@/platform/notifications/notificationWorker', () => ({
   runNotificationBackgroundWorker: mocks.runWorker
 }));
 vi.mock('@/platform/storage/readerDataStore', () => ({
-  loadReaderSettings: mocks.loadReaderSettings
+  withReaderSettings: vi.fn((run: (read: typeof mocks.loadReaderSettings) => Promise<unknown>) =>
+    run(mocks.loadReaderSettings)
+  )
 }));
 
 import './notificationBackgroundTask';
@@ -81,6 +86,7 @@ beforeEach(() => {
     .mockReset()
     .mockImplementation(async (key) => mocks.storage.get(key) ?? null);
   mocks.loadReaderSettings.mockReset();
+  vi.mocked(withReaderSettings).mockClear();
   mocks.listPage.mockReset();
   mocks.probeAccess.mockReset();
   mocks.presentDigest.mockReset().mockImplementation(async (_source, _digest, identifier) => identifier);
@@ -90,6 +96,82 @@ beforeEach(() => {
 });
 
 describe('notification background task content-source allowlist', () => {
+  it.each(['open', 'read'])(
+    'times out a delayed settings %s and closes the connection without starting delivery',
+    async (stage) => {
+      vi.useFakeTimers();
+      let release!: () => void;
+      const blocked = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const close = vi.fn();
+      const read = vi.fn(async () => {
+        if (stage === 'read') await blocked;
+        return createEmptyReaderData().settings;
+      });
+      vi.mocked(withReaderSettings).mockImplementationOnce(async (run) => {
+        if (stage === 'open') await blocked;
+        try {
+          return await run(read);
+        } finally {
+          close();
+        }
+      });
+      let result: unknown = 'pending';
+      const task = mocks.task!().then((value) => {
+        result = value;
+      });
+      try {
+        await vi.advanceTimersByTimeAsync(50_000);
+        expect(result).toBe('failed');
+        release();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(read).toHaveBeenCalledTimes(stage === 'open' ? 0 : 1);
+        expect(close).toHaveBeenCalledOnce();
+        expect(mocks.runWorker).not.toHaveBeenCalled();
+      } finally {
+        release();
+        await task;
+        vi.useRealTimers();
+      }
+    }
+  );
+
+  it('uses the remaining task budget for the worker and rejects a late identity probe', async () => {
+    await prepareBackgroundDelivery('nodeseek');
+    vi.useFakeTimers();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mocks.loadReaderSettings.mockImplementationOnce(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 40_000));
+      return {};
+    });
+    mocks.probeAccess.mockImplementationOnce(async () => {
+      await blocked;
+      return { identityKey: 'nodeseek:7', userId: '7' };
+    });
+    let result: unknown = 'pending';
+    const task = mocks.task!().then((value) => {
+      result = value;
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(49_999);
+      expect(mocks.probeAccess).toHaveBeenCalledOnce();
+      expect(result).toBe('pending');
+      await vi.advanceTimersByTimeAsync(1);
+      expect(result).toBe('failed');
+      expect(mocks.probeAccess.mock.calls[0]?.[1].aborted).toBe(true);
+    } finally {
+      release();
+      await task;
+      vi.useRealTimers();
+    }
+    expect(mocks.listPage).not.toHaveBeenCalled();
+    expect(mocks.presentDigest).not.toHaveBeenCalled();
+  });
+
   it('records task-entry failure before the worker starts', async () => {
     mocks.loadReaderSettings.mockRejectedValueOnce(new Error('storage PRIVATE_SETTINGS'));
     const lines: string[] = [];
@@ -123,10 +205,13 @@ describe('notification background task content-source allowlist', () => {
       .mockResolvedValueOnce({ contentSources: [{ source: 'nodeseek', enabled: false }] })
       .mockResolvedValueOnce({ contentSources: [{ source: 'linuxdo', enabled: true }] });
 
+    mocks.runWorker.mockImplementationOnce(async (dependencies) => {
+      expect(await dependencies.sourceAllowed('nodeseek')).toBe(false);
+      return { status: 'success', delivered: 0, failedSources: 0, timedOut: false };
+    });
     await expect(mocks.task?.()).resolves.toBe('success');
     const firstDependencies = mocks.runWorker.mock.calls[0]![0];
     expect(firstDependencies.sources).toEqual(['nodeseek', 'yaohuo']);
-    await expect(firstDependencies.sourceAllowed('nodeseek')).resolves.toBe(false);
     await firstDependencies.system.dismissDigest('nodeseek', 'wz-message-nodeseek-nodeseek%3A7-a');
     expect(mocks.dismissExact).toHaveBeenCalledWith('wz-message-nodeseek-nodeseek%3A7-a');
     expect(mocks.dismissBroad).not.toHaveBeenCalled();
@@ -136,6 +221,7 @@ describe('notification background task content-source allowlist', () => {
     await expect(mocks.task?.()).resolves.toBe('success');
     expect(mocks.runWorker.mock.calls[1]![0].sources).toEqual(['linuxdo', 'nodeseek', 'yaohuo']);
     expect(mocks.loadReaderSettings).toHaveBeenCalledTimes(3);
+    expect(withReaderSettings).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -185,6 +271,17 @@ async function prepareBackgroundDelivery(source: NotificationSource) {
 }
 
 describe('notification background task account handoff', () => {
+  it('fails closed with malformed notification storage even when the account is confirmed', async () => {
+    await prepareBackgroundDelivery('nodeseek');
+    const corrupted = '{"version":1,"globalEnabled":true,"sources":';
+    mocks.storage.set(NOTIFICATION_STORAGE_KEY, corrupted);
+    await expect(mocks.task?.()).rejects.toThrow('通知存储格式损坏');
+    expect(mocks.storage.get(NOTIFICATION_STORAGE_KEY)).toBe(corrupted);
+    expect(mocks.probeAccess).not.toHaveBeenCalled();
+    expect(mocks.listPage).not.toHaveBeenCalled();
+    expect(mocks.presentDigest).not.toHaveBeenCalled();
+  });
+
   it.each(notificationSources)('delivers %s only after its durable account identity is confirmed', async (source) => {
     await prepareBackgroundDelivery(source);
     await expect(mocks.task?.()).resolves.toBe('success');

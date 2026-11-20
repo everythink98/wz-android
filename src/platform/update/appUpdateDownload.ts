@@ -151,11 +151,6 @@ export async function prepareAppUpdateArtifact(
   const trusted = parseSavedAppUpdate(update);
   const folder = updateDirectory();
   folder.create({ idempotent: true, intermediates: true });
-  let artifact: AppUpdateArtifact = { kind: 'partial', update: trusted, totalBytes: null, downloadedBytes: 0 };
-  // Persist the selected identity before starting any native writer or replacing an older task.
-  if (trace) markDiagnosticStage(trace, 'persist', { state: 'started', versionCode: trusted.versionCode });
-  await saveAppUpdateArtifact(artifact);
-  if (trace) markDiagnosticStage(trace, 'persist', { state: 'persisted' });
   const complete = appUpdateFile(trusted, true);
   if (!complete.exists) {
     for (const folder of [Paths.cache, Paths.document]) {
@@ -170,8 +165,19 @@ export async function prepareAppUpdateArtifact(
       }
     }
   }
-  pruneUpdateFiles(trusted);
-  artifact = await inspectAppUpdateArtifact(artifact, trace);
+  const artifact = await inspectAppUpdateArtifact(
+    { kind: 'partial', update: trusted, totalBytes: null, downloadedBytes: 0 },
+    trace
+  );
+  // Keep the previous target usable until the replacement is ready and its identity is durable.
+  if (trace) markDiagnosticStage(trace, 'persist', { state: 'started', versionCode: trusted.versionCode });
+  await saveAppUpdateArtifact(artifact);
+  if (trace) markDiagnosticStage(trace, 'persist', { state: 'persisted' });
+  try {
+    pruneUpdateFiles(trusted);
+  } catch {
+    if (trace) markDiagnosticStage(trace, 'persist', { state: 'cleanup-pending', reason: 'storage_error' });
+  }
   return artifact;
 }
 

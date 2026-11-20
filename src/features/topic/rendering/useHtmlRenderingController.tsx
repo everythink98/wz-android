@@ -7,12 +7,15 @@ import {
   type CustomMixedRenderer
 } from 'react-native-render-html';
 import { isHttpOrHttpsUrl } from '@/platform/media/imageRequestSource';
-import { isPreviewableImageUrl, type ImageDisplaySize } from '@/platform/media/imagePreviewCatalog';
+import {
+  isPreviewableImageUrl,
+  pictureLinkOpensPreview,
+  type OpenImagePreview
+} from '@/platform/media/imagePreviewCatalog';
 import { parseForumTopicDestination, parseForumUserLink } from '@/domain/forum/links';
 import { topicLocationForReply } from '@/domain/forum/topicLocation';
 import { fontFamilyValue, lineHeightMultiplier, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
 import type {
-  MediaReferrerPolicy,
   ReplyLocationTarget,
   TopicLocationTarget,
   Topic,
@@ -27,7 +30,7 @@ import { FORUM_REPLY_REFERENCE_TAG } from '@/domain/forum/topicContentHtml';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import { createContentMediaRenderers, createIframeRenderer } from './contentMediaRenderers';
-import { createPreviewRenderers, useImagePreviewPress } from './previewRenderers';
+import { createPreviewRenderers, PictureDestinationContext, useImagePreviewPress } from './previewRenderers';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 import { FORUM_MATH_BLOCK_TAG, FORUM_MATH_INLINE_TAG } from '@/domain/forum/html';
 import { useForumContentWidth } from '@/ui/content/ForumContentWidth';
@@ -50,12 +53,7 @@ export function useHtmlRenderingController({
 }: {
   onOpenExternalUrl: (url: string) => void;
   mediaSessionIdentity: string;
-  onOpenImagePreview: (
-    url: string,
-    displaySize?: ImageDisplaySize,
-    renderedPosterUri?: string,
-    referrerPolicy?: MediaReferrerPolicy
-  ) => void;
+  onOpenImagePreview: OpenImagePreview;
   onOpenTopic: (topic: Topic, location?: TopicLocationTarget) => void | Promise<void>;
   onOpenUser: (user: UserReference) => void | Promise<void>;
   nodeSeekMediaUserAgent?: string;
@@ -166,27 +164,52 @@ export function useHtmlRenderingController({
     };
     const ReplyReferenceLinkRenderer: CustomMixedRenderer = (props) => {
       const { Renderer, rendererProps } = useInternalRenderer('a', props);
-      const { onPress, ...touchHandlers } = useImagePreviewPress(rendererProps.onPress);
+      const href = props.tnode.attributes.href || '';
+      const picture = href ? props.tnode.children.find((child) => child.tagName === 'picture') : undefined;
+      const image = picture?.children.find((child) => child.tagName === 'img')?.attributes;
+      const pictureOpensImage =
+        !!image && pictureLinkOpensPreview(href, image, props.tnode.classes.includes('lightbox'));
+      const { onPress, ...touchHandlers } = useImagePreviewPress(
+        pictureOpensImage
+          ? (event) => {
+              event?.stopPropagation?.();
+              openImagePreview(href);
+            }
+          : rendererProps.onPress
+      );
       const className = String(props.tnode.attributes?.class || '');
       const isMentionLink = className.split(/\s+/).includes('forum-mention-link');
       const isFloorLink = className.split(/\s+/).includes('forum-floor-link');
       if (!isMentionLink && !isFloorLink) {
-        if (isPreviewableImageUrl(props.tnode.attributes?.href)) {
+        if (picture || isPreviewableImageUrl(props.tnode.attributes?.href)) {
+          let link;
           if (props.tnode.type === 'block') {
-            return (
+            const nativeProps = getNativePropsForTNode({ ...props, onPress: rendererProps.onPress });
+            const pictureLabel =
+              picture &&
+              props.tnode.children.length === 1 &&
+              (props.tnode.attributes['aria-label'] || image?.alt || props.tnode.attributes.title || '打开链接');
+            link = (
               <Pressable
-                {...getNativePropsForTNode({ ...props, onPress: rendererProps.onPress })}
+                {...nativeProps}
+                accessibilityLabel={pictureLabel || nativeProps.accessibilityLabel}
                 {...touchHandlers}
                 onPress={onPress}
               />
             );
+          } else {
+            link = (
+              <Renderer
+                {...rendererProps}
+                onPress={onPress}
+                textProps={{ ...rendererProps.textProps, ...touchHandlers }}
+              />
+            );
           }
-          return (
-            <Renderer
-              {...rendererProps}
-              onPress={onPress}
-              textProps={{ ...rendererProps.textProps, ...touchHandlers }}
-            />
+          return picture && !pictureOpensImage ? (
+            <PictureDestinationContext.Provider value>{link}</PictureDestinationContext.Provider>
+          ) : (
+            link
           );
         }
         const { InternalRenderer, ...internalRendererProps } = props;
@@ -194,7 +217,6 @@ export function useHtmlRenderingController({
       }
       const nativeProps = getNativePropsForTNode(props);
       if (isFloorLink) {
-        const href = props.tnode.attributes?.href || '';
         const floor = Number(props.tnode.attributes?.['data-forum-reply-floor']);
         const author = props.tnode.attributes?.['data-forum-reply-author'];
         const target =
@@ -211,7 +233,6 @@ export function useHtmlRenderingController({
           />
         );
       }
-      const href = props.tnode.attributes?.href || '';
       return (
         <Text
           {...nativeProps}

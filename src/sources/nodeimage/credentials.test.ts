@@ -11,7 +11,6 @@ import {
   beginNodeImageApiKeyAuthorization,
   clearNodeImageApiKey,
   invalidateNodeImageApiKeyAuthorization,
-  loadNodeImageApiKey,
   loadNodeImageApiKeyCredential,
   nodeImageApiKeyUseStatus,
   NODEIMAGE_API_KEY_STORAGE_KEY,
@@ -208,7 +207,7 @@ describe('NodeImage credential persistence', () => {
     finishNextCandidate.resolve();
     await expect(nextSaving).resolves.toBeUndefined();
 
-    await expect(loadNodeImageApiKey()).resolves.toBe('previous-key');
+    await expect(loadNodeImageApiKeyCredential()).resolves.toMatchObject({ apiKey: 'previous-key' });
     expect(values.get(NODEIMAGE_API_KEY_STORAGE_KEY)).toBe('previous-key');
   });
 
@@ -273,7 +272,7 @@ describe('NodeImage credential persistence', () => {
       });
 
       const initialGeneration = beginNodeImageApiKeyAuthorization();
-      const loading = loadNodeImageApiKey();
+      const loading = loadNodeImageApiKeyCredential();
       await firstReadStarted.promise;
       const generation =
         authorization === 'new authorization' ? beginNodeImageApiKeyAuthorization() : initialGeneration;
@@ -281,7 +280,7 @@ describe('NodeImage credential persistence', () => {
       await saving;
       allowFirstRead.resolve();
 
-      await expect(loading).resolves.toBe('new-key');
+      await expect(loading).resolves.toMatchObject({ apiKey: 'new-key' });
       expect(readCount).toBe(3);
     }
   );

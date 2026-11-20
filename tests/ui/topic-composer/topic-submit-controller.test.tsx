@@ -65,6 +65,7 @@ jest.mock('@/platform/network/managedCookies', () => ({
 const mockDatabases = new Map<string, DatabaseSync>();
 let mockSqlFailure = '';
 let mockDraftSaveGate: (() => Promise<void>) | undefined;
+let mockReceiptGate: (() => Promise<void>) | undefined;
 jest.mock('expo-sqlite', () => ({
   openDatabaseAsync: async (name: string) => {
     const { DatabaseSync } = jest.requireActual<typeof import('node:sqlite')>('node:sqlite');
@@ -83,6 +84,11 @@ jest.mock('expo-sqlite', () => ({
       },
       runAsync: async (sql: string, ...args: unknown[]) => {
         check(sql);
+        if (sql.includes('UPDATE topic_submission_attempts SET payload') && mockReceiptGate) {
+          const gate = mockReceiptGate;
+          mockReceiptGate = undefined;
+          await gate();
+        }
         if (sql.includes('INSERT INTO topic_drafts') && mockDraftSaveGate) {
           const gate = mockDraftSaveGate;
           mockDraftSaveGate = undefined;
@@ -195,6 +201,14 @@ async function setup(source: TopicCreationSource = 'nodeseek', editing = false) 
     requestAccountRecheck: jest.fn(),
     ensureNodeImageApiKey: async () => null,
     getUserAgent: () => 'fixture',
+    getReadPlan: (source, operation) => ({
+      source,
+      operation,
+      state: 'ready',
+      lane: 'authenticated',
+      transport: 'managed-session',
+      cacheScope: 'authenticated:0'
+    }),
     getTopic: async () => {
       throw new Error('No cached topic in this fixture');
     },
@@ -269,6 +283,7 @@ beforeEach(async () => {
   await AsyncStorage.clear();
   mockSqlFailure = '';
   mockDraftSaveGate = undefined;
+  mockReceiptGate = undefined;
   appQueryClient.clear();
 });
 afterEach(() => {
@@ -372,6 +387,7 @@ async function setupAccountChain(source: TopicCreationSource, failureStatus: num
       ...account.write,
       getUserAgent: () => 'synthetic',
       getEmojiUrls: account.read.readGateway.getEmojiUrls,
+      getReadPlan: account.read.readGateway.getReadPlan,
       getLinuxDoTopicCreationContext: account.read.readGateway.getLinuxDoTopicCreationContext,
       getTopicEditContext: account.read.readGateway.getTopicEditContext,
       getTopic: account.read.readGateway.getTopic,
@@ -750,6 +766,53 @@ describe('创建主题发布控制器', () => {
     expect(test.onEdited).toHaveBeenCalledTimes(1);
   });
 
+  it.each(['nodeseek', 'yaohuo'] as const)(
+    'ignores a stale %s charge confirmation after returning to the editor',
+    async (source) => {
+      const test = await setup(source, true);
+      await waitFor(() => expect(test.result.current.editContext).not.toBeNull());
+      await act(() =>
+        test.result.current.change((value) =>
+          value.source === 'nodeseek' ? { ...value, rank: 255 } : { ...value, additionalReward: '1000' }
+        )
+      );
+      const dialog = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+      const confirmCharge = async () => {
+        const expectedCalls = dialog.mock.calls.length + 1;
+        let pending!: Promise<void>;
+        await act(() => {
+          pending = test.result.current.submit();
+        });
+        await waitFor(() => expect(dialog).toHaveBeenCalledTimes(expectedCalls));
+        const press = dialog.mock.calls.at(-1)?.[2]?.find((button) => button.text === '确认保存')?.onPress;
+        if (!press) throw new Error('Missing charge confirmation');
+        return async () =>
+          act(async () => {
+            press();
+            await pending;
+          });
+      };
+      try {
+        const oldConfirmation = await confirmCharge();
+        await test.rerender({ value: test.runtime, active: false });
+        await test.rerender({ value: test.runtime, active: true });
+        await oldConfirmation();
+        expect(test.editTransport.writes().length).toBe(0);
+        expect(
+          await readTopicSubmissionAttempt(source, siteSessionIdentityKey(test.runtime.sessions[source]), 'edit:123')
+        ).toBeNull();
+
+        const currentConfirmation = await confirmCharge();
+        await currentConfirmation();
+        expect(test.editTransport.writes().length).toBe(1);
+        expect(test.onEdited).toHaveBeenCalledTimes(1);
+      } finally {
+        dialog.mockRestore();
+        await test.unmount();
+      }
+    }
+  );
+
   it('keeps local conflicting edits until the user reviews and explicitly rebases them', async () => {
     const test = await setup('nodeseek', true);
     await waitFor(() => expect(test.result.current.editContext).not.toBeNull());
@@ -778,6 +841,251 @@ describe('创建主题发布控制器', () => {
     expect(test.onEdited).toHaveBeenCalledTimes(1);
     expect(test.editTransport.writes()).toHaveLength(1);
   });
+
+  it.each(['saved', 'partial'] as const)(
+    'keeps the canonical title after a %s edit when a newer snapshot changes only the body',
+    async (status) => {
+      const test = await setup('linuxdo', true);
+      await waitFor(() => expect(test.result.current.editContext).not.toBeNull());
+      const canonical = status === 'saved' ? '本机提交的标题…' : test.editTransport.state.title;
+      await act(() =>
+        test.result.current.change((value) => ({
+          ...value,
+          title: status === 'saved' ? '本机提交的标题...' : canonical + ' ',
+          ...(status === 'partial' ? { body: '第一次尝试保存的正文' } : {})
+        }))
+      );
+      const latest = '服务器处理标题时继续输入的新正文，读者明确只希望更新正文这一项。';
+      test.editTransport.respond(async (path) => {
+        if (path === '/t/-/123.json') {
+          if (status === 'saved') test.result.current.acceptSnapshot(snapshot(latest));
+          test.editTransport.state.title = canonical;
+          return new Response(JSON.stringify({ basic_topic: { id: 123, title: canonical } }));
+        }
+        if (path === '/posts/789.json' && status === 'partial') {
+          test.result.current.acceptSnapshot(snapshot(latest));
+          return new Response('{"errors":["正文拒绝"]}', { status: 422 });
+        }
+        return undefined;
+      });
+      await act(async () => {
+        await test.result.current.submit();
+      });
+      const retained = test.result.current.draft;
+      test.editTransport.respond(undefined);
+      await act(async () => {
+        await test.result.current.submit();
+      });
+      expect(test.editTransport.writes().map((request) => request.path)).toEqual([
+        '/t/-/123.json',
+        ...(status === 'partial' ? ['/posts/789.json'] : []),
+        '/posts/789.json'
+      ]);
+      expect(retained).toMatchObject({ title: canonical, body: latest, edit: { original: { title: canonical } } });
+    }
+  );
+
+  it.each(['pending', 'flushed', 'committing receipt'])(
+    'retains newer input across a successful edit and reopening (%s)',
+    async (stage) => {
+      const test = await setup('nodeseek', true);
+      await waitFor(() => expect(test.result.current.editContext).not.toBeNull());
+      const sent = Promise.withResolvers<void>();
+      const receipt = Promise.withResolvers<void>();
+      test.editTransport.respond(async (path) => {
+        if (path.includes('edit-discussion')) {
+          sent.resolve();
+          await receipt.promise;
+        }
+        return undefined;
+      });
+      await act(() => test.result.current.change((value) => ({ ...value, title: '第一版提交的标题' })));
+      let saving!: Promise<void>;
+      await act(() => {
+        saving = test.result.current.submit();
+      });
+      await sent.promise;
+      const latest = '保存上次修改时继续输入的正文';
+      const recording = Promise.withResolvers<void>();
+      const committing = Promise.withResolvers<void>();
+      if (stage === 'committing receipt') {
+        mockReceiptGate = () => {
+          recording.resolve();
+          return committing.promise;
+        };
+        receipt.resolve();
+        await recording.promise;
+      }
+      await act(() => test.result.current.acceptSnapshot(snapshot(latest)));
+      if (stage === 'flushed')
+        await act(async () => {
+          await test.result.current.flush();
+        });
+      await act(async () => {
+        receipt.resolve();
+        committing.resolve();
+        await saving;
+      });
+      const owner = siteSessionIdentityKey(test.runtime.sessions.nodeseek);
+      expect(test.onEdited).not.toHaveBeenCalled();
+      expect(await loadTopicDraft('nodeseek', owner, 'edit:123')).toMatchObject({
+        body: latest,
+        edit: { original: { title: '第一版提交的标题' } }
+      });
+      await test.unmount();
+      const resumed = await renderHook(() =>
+        useTopicComposerController({
+          runtime: test.runtime,
+          intent: { kind: 'edit', source: 'nodeseek', topicId: '123' },
+          active: true,
+          onEdited: test.onEdited,
+          onAccepted: test.onAccepted,
+          onPosted: test.onPosted
+        })
+      );
+      await waitFor(() => expect(resumed.result.current.editContext).not.toBeNull());
+      expect(test.onEdited).not.toHaveBeenCalled();
+      expect(resumed.result.current.draft?.body).toBe(latest);
+      expect(test.editTransport.writes()).toHaveLength(1);
+      await act(async () => {
+        await resumed.result.current.submit();
+      });
+      expect(test.editTransport.state.body).toBe(latest);
+      expect(test.editTransport.writes()).toHaveLength(2);
+      expect(test.onEdited).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each(['reopened', 'still mounted'])(
+    'does not repeat an acknowledged Yaohuo reward from a %s editor with newer body text',
+    async (state) => {
+      const test = await setup('yaohuo', true);
+      await waitFor(() => expect(test.result.current.editContext).not.toBeNull());
+      jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {
+        buttons?.find((button) => button.text === '确认保存')?.onPress?.();
+      });
+      await act(() => test.result.current.change((value) => ({ ...value, additionalReward: '1000' })));
+      await act(async () => {
+        await test.result.current.flush();
+      });
+      const enter = () =>
+        renderHook(() =>
+          useTopicComposerController({
+            runtime: test.runtime,
+            intent: { kind: 'edit', source: 'yaohuo', topicId: '123' },
+            active: true,
+            onEdited: test.onEdited,
+            onAccepted: test.onAccepted,
+            onPosted: test.onPosted
+          })
+        );
+      let other = await enter();
+      await waitFor(() => expect(other.result.current.editContext).not.toBeNull());
+      const sent = Promise.withResolvers<void>();
+      const receipt = Promise.withResolvers<void>();
+      test.editTransport.respond(async () => {
+        sent.resolve();
+        await receipt.promise;
+        return undefined;
+      });
+      let saving!: Promise<void>;
+      await act(() => {
+        saving = test.result.current.submit();
+      });
+      await sent.promise;
+      const latest = '另一个编辑器保留的正文';
+      await act(() => other.result.current.change((value) => ({ ...value, body: latest })));
+      await act(async () => {
+        await other.result.current.flush();
+      });
+      await act(async () => {
+        receipt.resolve();
+        await saving;
+      });
+      await test.unmount();
+      test.editTransport.respond(undefined);
+      if (state === 'reopened') {
+        await other.unmount();
+        other = await enter();
+        await waitFor(() => expect(other.result.current.editContext).not.toBeNull());
+        expect(other.result.current.draft).toMatchObject({ body: latest, additionalReward: '' });
+      }
+      await act(async () => {
+        await other.result.current.submit();
+      });
+      expect(
+        test.editTransport.writes().map((write) => new URLSearchParams(write.body).get('additionalReward') || '')
+      ).toEqual(['1000', '']);
+      expect(test.editTransport.state.body).toBe(latest);
+    }
+  );
+
+  it('preserves editor input received while reviewing a new baseline and while persisting it', async () => {
+    const test = await setup('linuxdo', true);
+    await waitFor(() => expect(test.result.current.editContext).not.toBeNull());
+    await act(() => test.result.current.change((value) => ({ ...value, body: '保留本机初稿' })));
+    test.editTransport.state.title = '其他客户端的新标题';
+    await act(async () => {
+      await test.result.current.reviewLatest();
+    });
+    const confirm = Promise.withResolvers<() => void>();
+    jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {
+      confirm.resolve(() => buttons?.find((button) => button.text === '继续编辑')?.onPress?.());
+    });
+    const entered = Promise.withResolvers<void>();
+    const saveGate = Promise.withResolvers<void>();
+    let rebasing!: Promise<void>;
+    await act(() => {
+      rebasing = test.result.current.rebaseEdit();
+    });
+    const accept = await confirm.promise;
+    await act(() => test.result.current.change((value) => ({ ...value, title: '确认期间修改的标题' })));
+    mockDraftSaveGate = () => {
+      entered.resolve();
+      return saveGate.promise;
+    };
+    await act(() => accept());
+    await entered.promise;
+    const latest = '写入新基准期间又输入的正文';
+    await act(() => test.result.current.acceptSnapshot(snapshot(latest)));
+    await act(async () => {
+      saveGate.resolve();
+      await rebasing;
+      await test.result.current.flush();
+    });
+    const expected = {
+      title: '确认期间修改的标题',
+      body: latest,
+      edit: { original: { title: test.editTransport.state.title } }
+    };
+    expect(test.result.current.draft).toMatchObject(expected);
+    expect(
+      await loadTopicDraft('linuxdo', siteSessionIdentityKey(test.runtime.sessions.linuxdo), 'edit:123')
+    ).toMatchObject(expected);
+    expect(test.editTransport.writes()).toHaveLength(0);
+  });
+
+  it.each([false, true])(
+    'records the selected dynamic template once for the active linux.do topic editor (editing: %s)',
+    async (editing) => {
+      const test = await setup('linuxdo', editing);
+      if (editing) {
+        await waitFor(() => expect(test.result.current.editContext).not.toBeNull());
+        test.editTransport.respond((path) =>
+          path === '/discourse_templates/24/use' ? new Response('{"success":true}') : undefined
+        );
+      } else await ready(test);
+      await act(async () => {
+        await test.result.current.editorServices.useTemplate('24');
+      });
+      expect(test.posts().map(([url]) => new URL(url).pathname)).toEqual(['/discourse_templates/24/use']);
+      await test.rerender({ value: test.runtime, active: false });
+      await expect(test.result.current.editorServices.useTemplate('25')).rejects.toThrow();
+      expect(test.posts()).toHaveLength(1);
+      expect(test.onPosted).not.toHaveBeenCalled();
+      expect(test.onEdited).not.toHaveBeenCalled();
+    }
+  );
 
   it('restores a partial edit and sends only remaining body after remount', async () => {
     const test = await setup('linuxdo', true);
@@ -923,6 +1231,41 @@ describe('创建主题发布控制器', () => {
       body: '编辑器晚到的最新正文',
       edit: { original: { title: '已确认标题' } }
     });
+  });
+
+  it.each(['unknown', 'saved'] as const)('keeps a stored %s edit receipt when an older read fails', async (status) => {
+    const test = await setup('nodeseek', true);
+    await waitFor(() => expect(test.result.current.editContext).not.toBeNull());
+    await act(() => test.result.current.change((value) => ({ ...value, title: '检查中的标题' })));
+    const identity = siteSessionIdentityKey(test.runtime.sessions.nodeseek);
+    const read = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    test.fetcher.mockImplementationOnce(async () => {
+      read.resolve();
+      await release.promise;
+      throw new Error('过期读取失败');
+    });
+    let saving: Promise<void> | undefined;
+    try {
+      await act(() => {
+        saving = test.result.current.submit();
+      });
+      await read.promise;
+      const pending = await readTopicSubmissionAttempt('nodeseek', identity, 'edit:123');
+      if (pending?.status !== 'sending') throw new Error('Missing pending edit');
+      await topicDraftStore.settleTopicSubmissionAttempt(pending, { status, message: '原站核对结果' });
+      await act(async () => {
+        release.resolve();
+        await saving;
+      });
+      expect(test.result.current.attempt).toEqual(await readTopicSubmissionAttempt('nodeseek', identity, 'edit:123'));
+      expect(test.result.current.error).toBe(status === 'saved' ? '' : '原站核对结果');
+      expect(test.editTransport.writes()).toHaveLength(0);
+    } finally {
+      release.resolve();
+      await saving;
+      await test.unmount();
+    }
   });
 
   it('retains an unknown edit and blocks a second save', async () => {
@@ -1084,6 +1427,49 @@ describe('创建主题发布控制器', () => {
     expect(await readTopicSubmissionAttempt('nodeseek', identity)).toHaveProperty('status', 'posted');
   });
 
+  it.each(['posted', 'enqueued'] as const)(
+    'preserves new input delivered while recording a %s publication',
+    async (status) => {
+      const test = await setup('linuxdo');
+      await ready(test);
+      const submitted = test.result.current.draft!.body;
+      const recording = Promise.withResolvers<void>();
+      const commit = Promise.withResolvers<void>();
+      test.response(
+        async () =>
+          new Response(
+            JSON.stringify(
+              status === 'posted'
+                ? { post: { id: 101, topic_id: 123, post_number: 1 } }
+                : { success: true, action: 'enqueued' }
+            )
+          )
+      );
+      mockReceiptGate = () => {
+        recording.resolve();
+        return commit.promise;
+      };
+      let pending!: Promise<void>;
+      await act(() => {
+        pending = test.result.current.submit();
+      });
+      await recording.promise;
+      const latest = '发布结果正在写入时继续输入的新正文';
+      await act(() => test.result.current.acceptSnapshot(snapshot(latest)));
+      await act(async () => {
+        commit.resolve();
+        await pending;
+      });
+      expect(test.posts()).toHaveLength(1);
+      expect(JSON.parse(String(test.posts()[0]![1]?.body)).raw).toBe(submitted);
+      expect(status === 'posted' ? test.onPosted : test.onAccepted).toHaveBeenCalledTimes(1);
+      await test.unmount();
+      expect(await loadTopicDraft('linuxdo', siteSessionIdentityKey(test.runtime.sessions.linuxdo))).toMatchObject({
+        body: latest
+      });
+    }
+  );
+
   it('编辑器报告未完成节点时保留完整正文并定位错误，零发布请求', async () => {
     const test = await setup();
     await ready(test);
@@ -1121,6 +1507,73 @@ describe('创建主题发布控制器', () => {
     expect(test.result.current.attempt?.status).toBe('unknown');
     expect(await loadTopicDraft('nodeseek', siteSessionIdentityKey(test.runtime.sessions.nodeseek))).not.toBeNull();
   });
+
+  it.each([
+    { editing: false, returned: false },
+    { editing: false, returned: true },
+    { editing: true, returned: false },
+    { editing: true, returned: true }
+  ])(
+    'keeps unknown writes protected from stale native confirmation (editing=$editing, returned=$returned)',
+    async ({ editing, returned }) => {
+      const test = await setup('nodeseek', editing);
+      const loseResponse = async () => {
+        throw new Error('connection lost after dispatch');
+      };
+      if (editing) {
+        await waitFor(() => expect(test.result.current.editContext).not.toBeNull());
+        await act(() =>
+          test.result.current.change((value) => ({ ...value, body: '保存后的响应丢失，需要在原站核对。' }))
+        );
+        test.editTransport.respond(loseResponse);
+      } else {
+        await ready(test);
+        test.response(loseResponse);
+      }
+      const writes = editing ? test.editTransport.writes : test.posts;
+      const identity = siteSessionIdentityKey(test.runtime.sessions.nodeseek);
+      const target = editing ? 'edit:123' : 'create';
+      const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+      const askToAcknowledge = async () => {
+        let pending: Promise<void> | undefined;
+        await act(() => {
+          pending = test.result.current.acknowledgeUnknown();
+        });
+        const confirm = alert.mock.calls
+          .at(-1)?.[2]
+          ?.find((button) => button.text === (editing ? '已核对，未保存' : '已核对，未发布'))?.onPress;
+        if (!confirm) throw new Error('Missing unknown submission confirmation');
+        return async () =>
+          act(async () => {
+            confirm();
+            await pending;
+          });
+      };
+      try {
+        await act(async () => test.result.current.submit());
+        const checkpoint = await readTopicSubmissionAttempt('nodeseek', identity, target);
+        expect(checkpoint?.status).toBe('unknown');
+        expect(writes()).toHaveLength(1);
+
+        const oldConfirmation = await askToAcknowledge();
+        await test.rerender({ value: test.runtime, active: false });
+        if (returned) await test.rerender({ value: test.runtime, active: true });
+        await oldConfirmation();
+        if (!returned) await test.rerender({ value: test.runtime, active: true });
+        await act(async () => test.result.current.submit());
+        expect(writes()).toHaveLength(1);
+        expect(await readTopicSubmissionAttempt('nodeseek', identity, target)).toEqual(checkpoint);
+
+        const currentConfirmation = await askToAcknowledge();
+        await currentConfirmation();
+        expect(await readTopicSubmissionAttempt('nodeseek', identity, target)).toBeNull();
+        expect(writes()).toHaveLength(1);
+      } finally {
+        alert.mockRestore();
+        await test.unmount();
+      }
+    }
+  );
 
   it('发送守卫拒绝过期凭证时记录明确未发送并允许修正后重试', async () => {
     const test = await setup();
@@ -1263,6 +1716,7 @@ describe('创建主题发布控制器', () => {
       await test.result.current.submit();
     });
     expect(test.result.current.error).toContain('本机记录保存失败');
+    expect(test.result.current.attempt?.status).toBe('unknown');
     expect(test.onAccepted).not.toHaveBeenCalled();
     await act(async () => {
       await test.result.current.submit();

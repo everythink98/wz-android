@@ -121,11 +121,19 @@ export function createDiscourseReadingRuntime({
     activeFlight()?.batch.topicId === topicId ||
     [...sessions].some((session) => session.topicId === topicId && session.pending());
   const startRequest = (): ReadingRequest => ({ scope: scope(), sequence: ++sequence, localVersion });
-  const observe = (snapshot: DiscourseTopicReading, request: ReadingRequest) => {
-    if (!request.scope || scope() !== request.scope || disposed) return;
-    const previous = state()[snapshot.topicId];
-    const next = mergeDiscourseReading(previous, snapshot, request, Boolean(pending(snapshot.topicId)));
-    if (next !== previous) publish(snapshot.topicId, next);
+  const observe = (snapshots: readonly DiscourseTopicReading[], request: ReadingRequest) => {
+    if (!snapshots.length || !request.scope || scope() !== request.scope || disposed) return;
+    const key = discourseReadingQueryKey(request.scope);
+    const current = queryClient.getQueryData<DiscourseReadingState>(key) || EMPTY_DISCOURSE_READING_STATE;
+    let updated: Record<string, DiscourseReadingState[string]> | undefined;
+    for (const snapshot of snapshots) {
+      const previous = (updated ?? current)[snapshot.topicId];
+      const next = mergeDiscourseReading(previous, snapshot, request, Boolean(pending(snapshot.topicId)));
+      if (next === previous) continue;
+      updated ??= { ...current };
+      updated[snapshot.topicId] = next;
+    }
+    if (updated) queryClient.setQueryData(key, updated);
   };
   const record = (batch: PendingBatch, state: DiagnosticFields['readingRecoveryState']) => {
     const trace = beginDiagnosticTrace('source', 'reading-recovery', {

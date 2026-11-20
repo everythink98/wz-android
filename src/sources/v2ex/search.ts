@@ -12,6 +12,9 @@ const SOV2EX_MAX_PAGE_SIZE = 50;
 const SOV2EX_MAX_PAGING_DEPTH = 1000;
 
 function sov2exHits(data: unknown) {
+  if (isRecord(data) && (data.error || data.success === false)) {
+    throw Object.assign(new Error('V2EX 搜索来源返回错误，请重试'), { reason: 'parse_empty' });
+  }
   if (Array.isArray(data)) {
     return data;
   }
@@ -24,7 +27,7 @@ function sov2exHits(data: unknown) {
   if (isRecord(data) && Array.isArray(data.data)) {
     return data.data;
   }
-  return [];
+  throw Object.assign(new Error('V2EX 搜索响应缺少结果列表，请重试'), { reason: 'parse_empty' });
 }
 
 function sov2exTotal(data: unknown) {
@@ -98,7 +101,7 @@ export async function searchV2ex(
   }
   const data =
     size > 0 ? await fetchJson<unknown>(`${SOV2EX_URL}/api/search?${params.toString()}`, options) : undefined;
-  const hits = sov2exHits(data);
+  const hits = size > 0 ? sov2exHits(data) : [];
   const items = hits
     .map((hit) => {
       const source = isRecord(hit) && isRecord(hit._source) ? hit._source : isRecord(hit) ? hit : {};
@@ -106,7 +109,7 @@ export async function searchV2ex(
       if (!id) {
         return null;
       }
-      const createdAt = toIsoString(source.created) || new Date().toISOString();
+      const createdAt = toIsoString(source.created);
       const accessRequirement = accessRequirementFromObject(source);
       return {
         source: 'v2ex' as const,
@@ -116,7 +119,7 @@ export async function searchV2ex(
         category: typeof source.node === 'string' && !/^\d+$/.test(source.node) ? source.node : undefined,
         url: `${BASE_URL}/t/${id}`,
         createdAt,
-        lastReplyAt: createdAt,
+        lastReplyAt: createdAt || undefined,
         replyCount: Number(source.replies || 0),
         excerpt: textExcerpt(highlightText(isRecord(hit) ? hit.highlight : undefined) || source.content || ''),
         ...(accessRequirement ? { accessRequirement } : {})
@@ -125,6 +128,7 @@ export async function searchV2ex(
     .filter(Boolean) as Topic[];
   const total = sov2exTotal(data);
   const hasMore =
+    hits.length > 0 &&
     from + hits.length < SOV2EX_MAX_PAGING_DEPTH &&
     (typeof total === 'number' ? total > from + hits.length : hits.length >= size);
   const result = {

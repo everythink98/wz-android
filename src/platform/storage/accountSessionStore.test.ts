@@ -114,8 +114,10 @@ describe('account session store', () => {
       lines.push(line);
     });
     try {
-      vi.mocked(AsyncStorage.getItem).mockRejectedValueOnce(new Error('private identity content'));
-      await expect(loadAccountSessionSnapshot('nodeseek')).resolves.toBeNull();
+      vi.mocked(AsyncStorage.getItem)
+        .mockRejectedValueOnce(new Error('private identity content'))
+        .mockRejectedValueOnce(new Error('private identity content'));
+      await expect(loadAccountSessionSnapshot('nodeseek')).rejects.toThrow('本机账号记录读取失败。');
       vi.mocked(AsyncStorage.setItem).mockRejectedValueOnce(new Error('private identity content'));
       await expect(
         saveAccountSessionSnapshot({

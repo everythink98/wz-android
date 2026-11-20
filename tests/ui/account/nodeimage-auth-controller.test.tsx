@@ -13,7 +13,6 @@ jest.mock('@/sources/nodeimage/credentials', () => ({
   clearNodeImageApiKey: jest.fn(async () => true),
   currentNodeImageApiKeyGeneration: jest.fn(() => 3),
   invalidateNodeImageApiKeyAuthorization: jest.fn(),
-  loadNodeImageApiKey: jest.fn(async () => null),
   loadNodeImageApiKeyCredential: jest.fn(async () => null),
   nodeImageApiKeyUseStatus: jest.fn(() => 'missing'),
   saveNodeImageApiKeyForGeneration: jest.fn(async () => 'saved-key')
@@ -63,6 +62,7 @@ async function createControllerHarness() {
   const hook = await renderHook(() => {
     const [surfaceVisible, setSurfaceVisible] = useState(false);
     return useNodeImageAuthController({
+      access: runtime,
       beginSurface: () => {
         const ticket = beginSurface();
         setSurfaceVisible(true);
@@ -178,12 +178,12 @@ describe('NodeImage auth controller', () => {
     { identityTrust: 'unknown' as const },
     { sourceEnabled: false }
   ])('does not return a credential after its requesting owner changes to %j', async (next) => {
+    const harness = await createControllerHarness();
     const credential =
       Promise.withResolvers<Awaited<ReturnType<typeof nodeImageCredentials.loadNodeImageApiKeyCredential>>>();
     jest.mocked(nodeImageCredentials.loadNodeImageApiKeyCredential).mockReturnValueOnce(credential.promise);
     jest.mocked(nodeImageCredentials.nodeImageApiKeyUseStatus).mockReturnValueOnce('usable');
-    const harness = await createControllerHarness();
-    const ensured = harness.hook.result.current.key.ensure();
+    const ensured = harness.hook.result.current.ensureApiKey();
     harness.setRuntime(next);
     let result: string | null = null;
     await act(async () => {
@@ -201,6 +201,7 @@ describe('NodeImage auth controller', () => {
   it('does not return a credential read before its generation was replaced or its controller unmounted', async () => {
     let generation = 3;
     jest.mocked(nodeImageCredentials.currentNodeImageApiKeyGeneration).mockImplementation(() => generation);
+    const { hook } = await createControllerHarness();
     const first =
       Promise.withResolvers<Awaited<ReturnType<typeof nodeImageCredentials.loadNodeImageApiKeyCredential>>>();
     const second =
@@ -210,22 +211,42 @@ describe('NodeImage auth controller', () => {
       .mockReturnValueOnce(first.promise)
       .mockReturnValueOnce(second.promise);
     jest.mocked(nodeImageCredentials.nodeImageApiKeyUseStatus).mockReturnValue('usable');
-    const { hook } = await createControllerHarness();
     const credential = {
       version: 1 as const,
       apiKey: 'replaced-key',
       ownership: { kind: 'verified' as const, identityKey: 'nodeseek:42' }
     };
-    const replacedRead = hook.result.current.key.ensure();
+    const replacedRead = hook.result.current.ensureApiKey();
     generation = 4;
     await act(async () => {
       first.resolve(credential);
       expect(await replacedRead).toBeNull();
     });
-    const closedRead = hook.result.current.key.ensure();
+    const closedRead = hook.result.current.ensureApiKey();
     await hook.unmount();
     second.resolve(credential);
     expect(await closedRead).toBeNull();
+  });
+
+  it('keeps a late startup credential available for clearing without authorizing the replacement account', async () => {
+    const pending =
+      Promise.withResolvers<Awaited<ReturnType<typeof nodeImageCredentials.loadNodeImageApiKeyCredential>>>();
+    jest.mocked(nodeImageCredentials.loadNodeImageApiKeyCredential).mockReturnValueOnce(pending.promise);
+    jest
+      .mocked(nodeImageCredentials.nodeImageApiKeyUseStatus)
+      .mockImplementation(
+        jest.requireActual<typeof nodeImageCredentials>('@/sources/nodeimage/credentials').nodeImageApiKeyUseStatus
+      );
+    const { hook, setRuntime } = await createControllerHarness();
+    setRuntime({ authSurfaceOpen: false, identityKey: 'nodeseek:57', sessionEpoch: 6 });
+    await act(async () => {
+      pending.resolve({
+        version: 1,
+        apiKey: 'synthetic-retained-key',
+        ownership: { kind: 'verified', identityKey: 'nodeseek:42' }
+      });
+    });
+    expect(hook.result.current.key).toMatchObject({ authorized: false, saved: true });
   });
 
   it('serializes manual save and clear commands and releases the busy state after failure', async () => {

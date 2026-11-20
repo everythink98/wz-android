@@ -128,7 +128,6 @@ export function AccountHost({
       <LoginWebViewModal
         visible={showNodeImageAuthPanel}
         title="NodeImage 授权"
-        subtitle="优先复用 NodeImage 登录态，失效时自动连接"
         loading={!webViewBlockMessage && loadingNodeImageAuthPage}
         loadingText="正在打开 NodeImage..."
         error={webViewBlockMessage || nodeImageAuthError}

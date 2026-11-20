@@ -27,7 +27,13 @@ import {
   yaohuoUserUrl as userUrl
 } from './protocol';
 import { normalizeYaohuoReplyDeletePath } from './actionRequest';
-import { categoryNames, parseYaohuoDate, topicTitle, yaohuoAuthorLevelLabel } from './normalization';
+import {
+  categoryNames,
+  parseYaohuoDate,
+  topicTitle,
+  yaohuoAuthorLevelLabel,
+  yaohuoTrailingTimeText
+} from './normalization';
 import { ensureYaohuoHtmlLoggedIn } from './sessionParser';
 
 function extractMarkedContent(html: string, start: string, end: string) {
@@ -579,7 +585,14 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
   const contentHtml = [activitySummaryHtml, postContentHtml]
     .filter((part) => hasRenderableHtmlContent(part))
     .join('\n');
-  const contentText = elementText(root.querySelector('div.content'));
+  const content = root.querySelector('div.content');
+  const header = content?.querySelector(':scope > .Postinfo');
+  const contentText = header
+    ? elementText(header)
+    : (content?.childNodes ?? [])
+        .filter((node) => !(node instanceof HTMLElement) || node.matches('span, br, b, strong, time, a, font'))
+        .map(forumNodeText)
+        .join(' ');
   const classId = root
     .querySelectorAll('a[href*="classid="]')
     .map((link) => link.getAttribute('href')?.match(/[?&]classid=(\d+)/i)?.[1])
@@ -592,12 +605,9 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
     '';
   const authorId = extractUserIdFromHref(authorHref);
   const authorLevelLabel = yaohuoAuthorLevelLabel(elementText(root.querySelector('div.louzhuxinxi, div.subtitle')));
-  const createdAt =
-    parseYaohuoDate(
-      contentText.match(/\[时间\]\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2})/)?.[1] ||
-        contentText.match(/\[时间\]\s*(\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2})/)?.[1] ||
-        contentText.match(/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]
-    ) || new Date().toISOString();
+  const createdAt = parseYaohuoDate(
+    contentText.match(/(?:\[时间\]|\(阅\s*\d+\))\s*((?:\d{4}[-/])?\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2})/)?.[1]
+  );
   const voteContainer = root.querySelectorAll('.vote-container').find((node) => !contentScopes.get(node)?.poll);
   const polls = parseVotePolls(root, String(id || ''), voteContainer);
   const accessRequirement =
@@ -644,7 +654,7 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
   const result: TopicDetail = {
     source: 'yaohuo',
     id: String(id || ''),
-    title: topicTitle(root) || '',
+    title: topicTitle(root, contentText) || '',
     author,
     authorId,
     authorUrl: authorId ? userUrl(authorId) : authorHref ? absoluteUrl(authorHref, BASE_URL) : undefined,
@@ -652,7 +662,7 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
     category: classId ? categoryNames.get(classId) : undefined,
     url: url || `${BASE_URL}/bbs-${id}.html`,
     createdAt,
-    lastReplyAt: createdAt,
+    lastReplyAt: createdAt || undefined,
     closed,
     canEdit: root
       .querySelectorAll('a[href]')
@@ -780,12 +790,16 @@ export function parseYaohuoRepliesDocument(
     const authorId =
       extractUserIdFromHref(authorLink?.getAttribute('href')) ||
       extractUserIdFromHref(actionLink?.getAttribute('href'));
-    const createdAt =
-      parseYaohuoDate(
-        elementText(header?.querySelector('.post-date') || row.querySelector('.retime')) ||
-          text.match(/\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0] ||
-          text.match(/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]
-      ) || '';
+    const timeElement =
+      header?.querySelector('.post-date') ??
+      row.querySelectorAll('.retime').find((node) => !node.closest('.retext, .post-content, blockquote'));
+    const createdAt = parseYaohuoDate(
+      timeElement
+        ? elementText(timeElement)
+        : row.querySelector('.retext, .post-content, blockquote')
+          ? ''
+          : yaohuoTrailingTimeText(text)
+    );
     const authorHtml = authorLink?.toString() || '';
     const contentOnly = yaohuoReplyContentHtml(row, rawHtml, authorHtml);
     if (explicitFloor) {

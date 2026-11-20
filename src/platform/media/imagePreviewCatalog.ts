@@ -1,9 +1,9 @@
 import { isAllowedDataImageUrl } from '@/domain/forum/html';
 import {
-  DISPLAY_CANDIDATE_KIND_ATTR,
+  fallbackForumBodyImageSource,
+  selectImageOriginalSource,
   forumImageAttributeValue as attributeValue,
   isInlineForumImageUrl,
-  ORIGINAL_IMAGE_SOURCE_ATTR,
   parseSrcsetCandidates,
   bestSrcsetImageUrlFromCandidates,
   parseForumImageDimension as parseImageDimension,
@@ -11,12 +11,7 @@ import {
 } from '@/domain/forum/forumContentMedia';
 import { linkDiagnosticRefs } from '@/platform/diagnostics/diagnosticPolicy';
 import type { ForumMediaRequestContext } from './mediaRequestContext';
-import {
-  createImageRequestReferrerResolver,
-  imageRequestHeadersForUrl,
-  isHttpOrHttpsUrl,
-  normalizeImagePreviewUrl
-} from './imageRequestSource';
+import { createImageRequestReferrerResolver, isHttpOrHttpsUrl, normalizeImagePreviewUrl } from './imageRequestSource';
 import {
   normalizeMediaReferrerPolicy,
   type MediaReferrerContext,
@@ -30,7 +25,16 @@ export interface ImageDisplaySize {
   height: number;
 }
 
+export type OpenImagePreview = (
+  url: string,
+  displaySize?: ImageDisplaySize,
+  renderedPosterUri?: string,
+  referrerPolicy?: MediaReferrerPolicy,
+  originalUri?: string
+) => void;
+
 export interface ImagePreviewItem {
+  alt?: string;
   readingOrigin?: { topicId: string; floor: number };
   displayUri: string;
   originalUri: string;
@@ -49,13 +53,13 @@ export interface ImagePreviewList {
 
 export interface ImagePreviewCatalog {
   items: ImagePreviewItem[];
-  itemIndexBySourceUrl: Record<string, number>;
-  mediaContext?: ForumMediaRequestContext;
+  indexForUrl: (url: string, referrerPolicy?: MediaReferrerPolicy, originalUri?: string) => number | undefined;
+  referrer?: MediaReferrerContext;
 }
 
 type ImagePreviewEntry = {
   item: ImagePreviewItem;
-  sourceUrls: string[];
+  aliases: string[];
 };
 
 export interface PreparedImagePreviewCatalog {
@@ -86,6 +90,19 @@ export function isPreviewableImageUrl(url: unknown): boolean {
   return /\.(?:apng|avif|bmp|gif|heic|heif|jpe?g|png|webp)(?:[?#].*)?$/i.test(clean);
 }
 
+export function pictureLinkOpensPreview(href: string, image: Record<string, string>, lightbox: boolean) {
+  if (!isAllowedActiveImageSource(href)) return false;
+  if (
+    lightbox ||
+    isPreviewableImageUrl(href) ||
+    href === image.src ||
+    href === image['data-src'] ||
+    href === selectImageOriginalSource(image)
+  )
+    return true;
+  return srcsetImageUrlsFromCandidates(parseSrcsetCandidates(image.srcset || '')).includes(href);
+}
+
 export function prepareImagePreviewCatalog(
   descriptors: readonly ForumImagePreviewDescriptor[],
   contentWidth: number,
@@ -109,21 +126,6 @@ export function prepareImagePreviewCatalog(
   };
 }
 
-export function projectImagePreviewCatalog(
-  prepared: PreparedImagePreviewCatalog,
-  mediaContext?: ForumMediaRequestContext,
-  isInlineSizedImage?: (url: string, referrerPolicy?: MediaReferrerPolicy) => boolean
-): ImagePreviewCatalog {
-  return createImagePreviewCatalogFromEntries(
-    prepared.entries.flatMap(({ descriptor, entry }) =>
-      entry && !isInlineSizedImage?.(descriptor.source, descriptor.referrerPolicy)
-        ? [{ ...entry, item: { ...entry.item } }]
-        : []
-    ),
-    mediaContext
-  );
-}
-
 function imagePreviewEntryFromDescriptor(
   descriptor: ForumImagePreviewDescriptor,
   contentWidth: number,
@@ -131,7 +133,7 @@ function imagePreviewEntryFromDescriptor(
 ): ImagePreviewEntry | null {
   const sourceSet = String(descriptor.sourceSet || '');
   const sourceSetCandidates = parseSrcsetCandidates(sourceSet);
-  const displaySize = imageDisplaySizeFromDescriptor(descriptor);
+  const displaySize = imageDisplaySize(descriptor.width, descriptor.height);
   const displayUri = firstPreparedPreviewImageSource([
     selectResponsiveSrcsetImageUrlFromCandidates(sourceSetCandidates, contentWidth, pixelRatio),
     descriptor.source,
@@ -142,79 +144,87 @@ function imagePreviewEntryFromDescriptor(
   ]);
   const originalUri = firstPreparedPreviewImageSource([
     descriptor.lightboxOriginal,
+    descriptor.originalSource,
     descriptor.dataOriginal,
     bestSrcsetImageUrlFromCandidates(sourceSetCandidates, isAllowedPreviewImageSource),
     descriptor.dataSource,
     displayUri,
-    descriptor.source,
-    descriptor.originalSource
+    descriptor.source
   ]);
   if (!originalUri) return null;
-  const sourceUrls = [
-    ...new Set(
-      [
-        descriptor.lightboxOriginal,
-        ...srcsetImageUrlsFromCandidates(sourceSetCandidates),
-        descriptor.dataOriginal,
-        descriptor.dataSource,
-        descriptor.source
-      ]
-        .map((url) => normalizeImagePreviewUrl(url || ''))
-        .filter(isPreparedPreviewImageSource)
-    )
+  const aliases = [
+    displayUri || originalUri,
+    originalUri,
+    descriptor.lightboxOriginal,
+    descriptor.originalSource,
+    ...srcsetImageUrlsFromCandidates(sourceSetCandidates),
+    descriptor.dataOriginal,
+    descriptor.dataSource,
+    descriptor.source
   ];
   return {
     item: {
       displayUri: displayUri || originalUri,
       originalUri,
+      ...(descriptor.alt ? { alt: descriptor.alt } : {}),
       ...(descriptor.readingOrigin ? { readingOrigin: descriptor.readingOrigin } : {}),
       ...(displaySize ? { displaySize } : {}),
       ...(descriptor.referrerPolicy ? { referrerPolicy: descriptor.referrerPolicy } : {})
     },
-    sourceUrls
+    aliases: [
+      ...new Set(aliases.map((url) => normalizeImagePreviewUrl(url || '')).filter(isPreparedPreviewImageSource))
+    ]
   };
 }
 
-function createImagePreviewCatalogFromEntries(
-  entries: readonly ImagePreviewEntry[],
+export function projectImagePreviewCatalog(
+  prepared: PreparedImagePreviewCatalog,
   mediaContext?: ForumMediaRequestContext
 ): ImagePreviewCatalog {
-  const itemIndexBySourceUrl: Record<string, number> = {};
+  const itemIndexBySourceUrl = new Map<string, number>();
   const items: ImagePreviewItem[] = [];
   const itemIndexByOriginalUri = new Map<string, number>();
   const requestIdentityCache = new Map<string, string>();
   const referrerForUrl = mediaContext?.referrer ? createImageRequestReferrerResolver(mediaContext) : undefined;
-  const requestIdentity = (url: string, referrerPolicy?: MediaReferrerPolicy) => {
+  const requestIdentity = (url: string, referrerPolicy?: MediaReferrerPolicy) =>
+    referrerForUrl ? `${url}\u0000referrer:${referrerForUrl(url, referrerPolicy) || 'none'}` : url;
+  const registerIdentity = (url: string, referrerPolicy?: MediaReferrerPolicy) => {
+    if (!referrerForUrl) return url;
     const key = `${url}\u0000${referrerPolicy || ''}`;
     const cached = requestIdentityCache.get(key);
     if (cached) return cached;
-    const identity = previewRequestIdentity(url, referrerPolicy, mediaContext, referrerForUrl);
+    const identity = requestIdentity(url, referrerPolicy);
     requestIdentityCache.set(key, identity);
     return identity;
   };
-  entries.forEach((entry) => {
-    const originalUri = normalizeImagePreviewUrl(entry.item.originalUri);
-    const aliases = [
-      ...new Set(
-        [entry.item.displayUri, originalUri, ...entry.sourceUrls].map(normalizeImagePreviewUrl).filter(Boolean)
-      )
-    ];
+  for (const { entry } of prepared.entries) {
+    if (!entry) continue;
+    const { aliases, item } = entry;
     linkDiagnosticRefs('media', aliases);
-    const originalIdentity = requestIdentity(originalUri, entry.item.referrerPolicy);
+    const originalIdentity = registerIdentity(item.originalUri, item.referrerPolicy);
     let itemIndex = itemIndexByOriginalUri.get(originalIdentity);
     if (itemIndex === undefined) {
       itemIndex = items.length;
       itemIndexByOriginalUri.set(originalIdentity, itemIndex);
-      items.push(entry.item);
-    } else if (JSON.stringify(items[itemIndex].readingOrigin) !== JSON.stringify(entry.item.readingOrigin)) {
+      items.push({ ...item });
+    } else if (
+      items[itemIndex].readingOrigin?.topicId !== item.readingOrigin?.topicId ||
+      items[itemIndex].readingOrigin?.floor !== item.readingOrigin?.floor
+    ) {
       // A shared image cannot identify which post the user opened it from.
       items[itemIndex] = { ...items[itemIndex], readingOrigin: undefined };
     }
-    aliases.forEach((url) => {
-      itemIndexBySourceUrl[requestIdentity(url, entry.item.referrerPolicy)] = itemIndex;
-    });
-  });
-  return { items, itemIndexBySourceUrl, ...(mediaContext ? { mediaContext } : {}) };
+    for (const url of aliases) itemIndexBySourceUrl.set(registerIdentity(url, item.referrerPolicy), itemIndex);
+  }
+  return {
+    items,
+    indexForUrl: (url, policy, originalUri) => {
+      if (originalUri) return itemIndexByOriginalUri.get(requestIdentity(originalUri, policy));
+      const identity = requestIdentity(url, policy);
+      return itemIndexByOriginalUri.get(identity) ?? itemIndexBySourceUrl.get(identity);
+    },
+    ...(mediaContext?.referrer ? { referrer: mediaContext.referrer } : {})
+  };
 }
 
 export function imagePreviewListFromCatalog(
@@ -222,14 +232,14 @@ export function imagePreviewListFromCatalog(
   tappedUrl: string,
   contentSource: ForumMediaRequestContext['contentSource'],
   tappedDisplaySize?: ImageDisplaySize,
-  tappedReferrerPolicy?: MediaReferrerPolicy
+  tappedReferrerPolicy?: MediaReferrerPolicy,
+  knownOriginalUri?: string
 ): ImagePreviewList {
   const tapped = normalizeImagePreviewUrl(tappedUrl);
   const referrerPolicy = normalizeMediaReferrerPolicy(tappedReferrerPolicy);
-  const tappedIdentity = previewRequestIdentity(tapped, referrerPolicy, catalog.mediaContext);
-  const mappedIndex = Object.prototype.hasOwnProperty.call(catalog.itemIndexBySourceUrl, tappedIdentity)
-    ? catalog.itemIndexBySourceUrl[tappedIdentity]
-    : undefined;
+  const original = normalizeImagePreviewUrl(knownOriginalUri || '');
+  const originalUri = isAllowedActiveImageSource(original) && !isInlineForumImageUrl(original) ? original : undefined;
+  const index = catalog.indexForUrl(tapped, referrerPolicy, originalUri);
   const tappedUri = isAllowedActiveImageSource(tapped) && !isInlineForumImageUrl(tapped) ? tapped : '';
   const displaySize =
     tappedDisplaySize &&
@@ -239,43 +249,30 @@ export function imagePreviewListFromCatalog(
     tappedDisplaySize.height > 0
       ? tappedDisplaySize
       : undefined;
-  let items = catalog.items;
-  let index = mappedIndex;
-  let itemOverride: ImagePreviewItem | undefined;
-  if (index !== undefined && tappedUri && items[index]) {
-    itemOverride = imagePreviewItemOverride(items[index], tappedUri, displaySize, referrerPolicy);
-  }
-  if (index === undefined && tappedUri) {
-    index = items.findIndex((item) => item.originalUri === tappedUri && item.referrerPolicy === referrerPolicy);
-    if (index < 0) {
-      index = items.length;
-      items = [
-        ...items,
-        {
-          displayUri: tappedUri,
-          originalUri: tappedUri,
-          ...(displaySize ? { displaySize } : {}),
-          ...(referrerPolicy ? { referrerPolicy } : {})
-        }
-      ];
-    } else {
-      itemOverride = imagePreviewItemOverride(items[index], tappedUri, displaySize, referrerPolicy);
-    }
-  }
-  if (index === undefined || index < 0) {
+  const scope = { contentSource, ...(catalog.referrer ? { referrer: catalog.referrer } : {}) };
+  if (index !== undefined) {
+    const itemOverride =
+      tappedUri && imagePreviewItemOverride(catalog.items[index], tappedUri, displaySize, referrerPolicy);
     return {
-      contentSource,
-      items: [],
-      index: 0,
-      ...(catalog.mediaContext?.referrer ? { referrer: catalog.mediaContext.referrer } : {})
+      ...scope,
+      items: catalog.items,
+      index,
+      ...(itemOverride ? { itemOverride, itemOverrideIndex: index } : {})
     };
   }
+  if (!tappedUri) return { ...scope, items: [], index: 0 };
   return {
-    contentSource,
-    items,
-    index,
-    ...(itemOverride ? { itemOverride, itemOverrideIndex: index } : {}),
-    ...(catalog.mediaContext?.referrer ? { referrer: catalog.mediaContext.referrer } : {})
+    ...scope,
+    index: catalog.items.length,
+    items: [
+      ...catalog.items,
+      {
+        displayUri: tappedUri,
+        originalUri: originalUri || tappedUri,
+        ...(displaySize ? { displaySize } : {}),
+        ...(referrerPolicy ? { referrerPolicy } : {})
+      }
+    ]
   };
 }
 
@@ -307,88 +304,43 @@ function imagePreviewItemOverride(
   };
 }
 
-function previewRequestIdentity(
-  url: string,
-  referrerPolicy?: MediaReferrerPolicy,
-  mediaContext?: ForumMediaRequestContext,
-  referrerForUrl?: (url: string, referrerPolicy?: MediaReferrerPolicy) => string | undefined
-) {
-  if (!mediaContext?.referrer) return url;
-  const referrer =
-    (referrerForUrl
-      ? referrerForUrl(url, referrerPolicy)
-      : imageRequestHeadersForUrl(url, { mediaContext, referrerPolicy })?.Referer) || 'none';
-  return `${url}\u0000referrer:${referrer}`;
-}
-
 export function selectImageDisplaySource(
   attributes: Record<string, string | undefined>,
   contentWidth: number,
   pixelRatio: number
 ): { uri: string; candidateKind: ImageDisplayCandidateKind; displaySize?: ImageDisplaySize } | null {
-  const displaySize = imageDisplaySizeFromAttributes(attributes);
-  const srcsetUri = selectResponsiveSrcsetImageUrl(attributeValue(attributes, 'srcset'), contentWidth, pixelRatio);
+  const displaySize = imageDisplaySize(attributeValue(attributes, 'width'), attributeValue(attributes, 'height'));
+  const srcsetUri = selectResponsiveSrcsetImageUrlFromCandidates(
+    parseSrcsetCandidates(attributeValue(attributes, 'srcset')),
+    contentWidth,
+    pixelRatio
+  );
   if (srcsetUri) {
     return { uri: srcsetUri, candidateKind: 'srcset', ...(displaySize ? { displaySize } : {}) };
   }
-  return fallbackBodyImageSource(attributes);
+  const fallback = fallbackForumBodyImageSource(attributes);
+  return fallback && { ...fallback, ...(displaySize ? { displaySize } : {}) };
 }
 
-export function selectImageOriginalSource(attributes: Record<string, string | undefined>) {
-  return firstAllowedPreviewImageSource([
-    attributeValue(attributes, ORIGINAL_IMAGE_SOURCE_ATTR),
-    attributeValue(attributes, 'data-original'),
-    bestSrcsetImageUrl(attributeValue(attributes, 'srcset')),
-    attributeValue(attributes, 'data-src'),
-    attributeValue(attributes, 'src')
-  ]);
-}
-
-function fallbackBodyImageSource(
-  attributes: Record<string, string | undefined>
-): { uri: string; candidateKind: Exclude<ImageDisplayCandidateKind, 'srcset'>; displaySize?: ImageDisplaySize } | null {
-  const displaySize = imageDisplaySizeFromAttributes(attributes);
-  const src = normalizeImagePreviewUrl(attributeValue(attributes, 'src'));
-  if (isAllowedActiveImageSource(src) && !isKnownPlaceholderImageUrl(src)) {
-    const preservedKind = (['data-src', 'data-original'] as const).find(
-      (candidateKind) =>
-        attributeValue(attributes, DISPLAY_CANDIDATE_KIND_ATTR) === candidateKind &&
-        normalizeImagePreviewUrl(attributeValue(attributes, candidateKind)) === src
-    );
-    return { uri: src, candidateKind: preservedKind || 'src', ...(displaySize ? { displaySize } : {}) };
-  }
-  for (const candidateKind of ['data-src', 'data-original'] as const) {
-    const uri = normalizeImagePreviewUrl(attributeValue(attributes, candidateKind));
-    if (isAllowedActiveImageSource(uri) && !isKnownPlaceholderImageUrl(uri)) {
-      return { uri, candidateKind, ...(displaySize ? { displaySize } : {}) };
-    }
-  }
-  return null;
-}
-
-function imageDisplaySizeFromAttributes(attributes: Record<string, string | undefined>): ImageDisplaySize | undefined {
-  const width = parseImageDimension(attributeValue(attributes, 'width'));
-  const height = parseImageDimension(attributeValue(attributes, 'height'));
+function imageDisplaySize(rawWidth = '', rawHeight = ''): ImageDisplaySize | undefined {
+  const width = parseImageDimension(rawWidth);
+  const height = parseImageDimension(rawHeight);
   return width > 0 && height > 0 ? { width, height } : undefined;
 }
 
-function imageDisplaySizeFromDescriptor(descriptor: ForumImagePreviewDescriptor): ImageDisplaySize | undefined {
-  const width = parseImageDimension(descriptor.width || '');
-  const height = parseImageDimension(descriptor.height || '');
-  return width > 0 && height > 0 ? { width, height } : undefined;
-}
-
-function isPreparedPreviewImageSource(url: string) {
-  const clean = normalizeImagePreviewUrl(url);
+function isPreparedPreviewImageSource(clean: string) {
   return !isKnownPlaceholderImageUrl(clean) && (/^https?:\/\//i.test(clean) || isAllowedDataImageUrl(clean));
 }
 
 function firstPreparedPreviewImageSource(urls: readonly (string | undefined)[]) {
-  return urls.map((url) => normalizeImagePreviewUrl(url || '')).find(isPreparedPreviewImageSource) || '';
+  for (const url of urls) {
+    const clean = normalizeImagePreviewUrl(url || '');
+    if (isPreparedPreviewImageSource(clean)) return clean;
+  }
+  return '';
 }
 
-function isKnownPlaceholderImageUrl(url: string) {
-  const clean = normalizeImagePreviewUrl(url);
+function isKnownPlaceholderImageUrl(clean: string) {
   if (
     /^data:image\/gif;base64,R0lGODlhAQABA/i.test(clean) ||
     /^data:image\/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB/i.test(clean)
@@ -413,14 +365,6 @@ function isAllowedActiveImageSource(url: string) {
   return isHttpOrHttpsUrl(clean) || isAllowedDataImageUrl(clean);
 }
 
-function firstAllowedPreviewImageSource(urls: string[]) {
-  return (
-    urls
-      .map((url) => normalizeImagePreviewUrl(url))
-      .find((url) => isAllowedActiveImageSource(url) && !isKnownPlaceholderImageUrl(url)) || ''
-  );
-}
-
 function srcsetImageUrlsFromCandidates(candidates: readonly string[]) {
   return candidates
     .map((candidate) => (candidate.trim().split(/\s+/)[0] || '').trim())
@@ -432,10 +376,6 @@ type ResponsiveSrcsetCandidate = {
   kind: 'w' | 'x';
   value: number;
 };
-
-function selectResponsiveSrcsetImageUrl(srcset: string, contentWidth: number, pixelRatio: number) {
-  return selectResponsiveSrcsetImageUrlFromCandidates(parseSrcsetCandidates(srcset), contentWidth, pixelRatio);
-}
 
 function selectResponsiveSrcsetImageUrlFromCandidates(
   rawCandidates: readonly string[],
@@ -476,8 +416,4 @@ function selectResponsiveSrcsetImageUrlFromCandidates(
     }
   }
   return best?.uri || '';
-}
-
-function bestSrcsetImageUrl(srcset: string) {
-  return bestSrcsetImageUrlFromCandidates(parseSrcsetCandidates(srcset), isAllowedPreviewImageSource);
 }

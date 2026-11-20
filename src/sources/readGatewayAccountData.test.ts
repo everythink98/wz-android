@@ -54,7 +54,9 @@ describe('managed private account data', () => {
       nodeSeekUserAgent: () => 'test-UA',
       readSessionRuntimeSnapshot: () => session()
     });
-    expect(await gateway.getNodeSeekCredits({ userId: '7' }, { readPlanScope: 'authenticated:4' })).toMatchObject({
+    expect(
+      await gateway.getNodeSeekCredits({ userId: '7' }, { plan: gateway.getReadPlan('nodeseek', 'account-data') })
+    ).toMatchObject({
       userId: '7',
       entries: [],
       hasMore: false
@@ -77,7 +79,10 @@ describe('managed private account data', () => {
       readSessionRuntimeSnapshot: () => session()
     });
     expect(
-      await gateway.getNodeSeekStardustCredits({ userId: '7', beforeId: 100 }, { readPlanScope: 'authenticated:4' })
+      await gateway.getNodeSeekStardustCredits(
+        { userId: '7', beforeId: 100 },
+        { plan: gateway.getReadPlan('nodeseek', 'account-data') }
+      )
     ).toEqual({
       source: 'nodeseek',
       userId: '7',
@@ -138,12 +143,18 @@ describe('managed private account data', () => {
       nodeSeekUserAgent: () => 'test',
       readSessionRuntimeSnapshot: () => session()
     });
-    await expect(gateway.getNodeSeekCredits({ userId: '7' }, { readPlanScope: 'authenticated:3' })).rejects.toThrow(
-      '请求已取消'
-    );
+    await expect(
+      gateway.getNodeSeekCredits(
+        { userId: '7' },
+        { plan: { ...gateway.getReadPlan('nodeseek', 'account-data'), cacheScope: 'authenticated:3' } }
+      )
+    ).rejects.toThrow('请求已取消');
     await expect(gateway.getNodeSeekCredits({ userId: '8' })).rejects.toThrow('请求已取消');
     await expect(
-      gateway.getNodeSeekStardustCredits({ userId: '7' }, { readPlanScope: 'authenticated:3' })
+      gateway.getNodeSeekStardustCredits(
+        { userId: '7' },
+        { plan: { ...gateway.getReadPlan('nodeseek', 'account-data'), cacheScope: 'authenticated:3' } }
+      )
     ).rejects.toThrow('请求已取消');
     await expect(gateway.getNodeSeekStardustCredits({ userId: '8' })).rejects.toThrow('请求已取消');
     expect(fetcher).not.toHaveBeenCalled();
@@ -199,8 +210,11 @@ describe('managed private account data', () => {
     });
     const request =
       currency === 'coin'
-        ? gateway.getNodeSeekCredits({ userId: '7' }, { readPlanScope: 'authenticated:4' })
-        : gateway.getNodeSeekStardustCredits({ userId: '7' }, { readPlanScope: 'authenticated:4' });
+        ? gateway.getNodeSeekCredits({ userId: '7' }, { plan: gateway.getReadPlan('nodeseek', 'account-data') })
+        : gateway.getNodeSeekStardustCredits(
+            { userId: '7' },
+            { plan: gateway.getReadPlan('nodeseek', 'account-data') }
+          );
     await proxyWaiting.promise;
     expect(nativeFetcher).not.toHaveBeenCalled();
     if (change === 'identity') current = session({ identityKey: 'nodeseek:8' });

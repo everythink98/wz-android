@@ -1,7 +1,7 @@
 import type { ReaderMembership } from '@/domain/reader/readerRecordState';
 import { categoryKey, topicKey } from '@/domain/reader/readerData';
 import type { Category, Reply, Topic } from './models';
-import { accessRequirementLevelValue, accessRequirementSpecificity, dateTime, sourceLabel } from './presentation';
+import { accessRequirementLevelValue, accessRequirementSpecificity, sourceLabel } from './presentation';
 import { isTopicVisited } from './topicListItemState';
 import type { DiscourseVisitedState } from './discourseReading';
 
@@ -28,7 +28,8 @@ export function parseSearchExpression(query: string): SearchExpression {
 }
 
 export function searchExpressionText(topic: Topic) {
-  return `${topic.title} ${topic.excerpt || ''} ${topic.author || ''} ${topic.category || ''}`;
+  const account = topic.source === 'linuxdo' ? topic.authorId || '' : '';
+  return `${topic.title} ${topic.excerpt || ''} ${topic.author || ''} ${topic.category || ''} ${account}`;
 }
 
 export function positiveSearchQuery(query: string) {
@@ -52,13 +53,6 @@ export function applyFeedFilter(
     return items.filter((topic) => Boolean(data.favorites[topicKey(topic)]));
   }
   return items;
-}
-
-export function sortTopicsByCreatedAt(items: Topic[]) {
-  return items
-    .map((item) => ({ item, time: dateTime(item.createdAt) }))
-    .sort((left, right) => right.time - left.time)
-    .map(({ item }) => item);
 }
 
 function shouldUseIncomingAccessRequirement(current: Topic['accessRequirement'], incoming: Topic['accessRequirement']) {

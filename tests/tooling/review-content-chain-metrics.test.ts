@@ -182,7 +182,10 @@ describe('body and poll chain device work receipts', () => {
       'webview-linuxdo-reinjected-pending-deadline'
     ];
     expect(REVIEW_CHECK_NAMES).toEqual(expect.arrayContaining(deadlineChecks));
-    expect(results).toHaveLength(66);
+    expect(results).toHaveLength(70);
+    const sourceContracts = 'sources-receipts-search-pagination-dates';
+    expect(REVIEW_CHECK_NAMES).toContain(sourceContracts);
+    expect(completeReviewProofResults(results.filter(({ name }) => name !== sourceContracts))).toBe(false);
     expect(REVIEW_CHECK_NAMES).toEqual(expect.arrayContaining(['reading-native-cold', 'reading-native-cached']));
     expect(completeReviewProofResults(results.filter(({ name }) => !deadlineChecks.includes(name)))).toBe(false);
     expect(completeReviewProofResults(results)).toBe(true);

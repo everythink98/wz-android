@@ -150,7 +150,7 @@ export function useTopicFloorPositioning({
       const index = items.findIndex((item) => item.key === request.rowKey);
       if (index < 0) return;
       const layout = list.current?.getLayout(index);
-      if (!layout || layout.height <= 0) return;
+      if (!layout?.isHeightMeasured || layout.height <= 0) return;
       pixel =
         (list.current?.getFirstItemOffset() || 0) +
         layout.y +

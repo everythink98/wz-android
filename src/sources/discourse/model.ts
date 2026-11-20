@@ -3,6 +3,7 @@ import {
   decodeHtml,
   hasRenderableHtmlContent,
   isRecord,
+  recordText,
   textContentFromHtml,
   textExcerpt,
   toIsoString
@@ -41,11 +42,12 @@ export function discourseUserOptions(
     const username = String(user.username || '').trim();
     if (!username) return [];
     const avatar = avatarUrl(user.avatar_template);
+    const displayName = discourseDisplayName(user);
     return [
       {
         id: String(user.id || username),
         username,
-        ...(String(user.name || '').trim() ? { displayName: String(user.name).trim() } : {}),
+        ...(displayName ? { displayName } : {}),
         ...(avatar ? { avatar } : {})
       }
     ];
@@ -162,28 +164,20 @@ export function discourseReplyWindow(data: unknown, limit: number) {
   const postStream = isRecord(data) && isRecord(data.post_stream) ? data.post_stream : {};
   const stream = Array.isArray(postStream.stream) ? postStream.stream : [];
   const posts = (Array.isArray(postStream.posts) ? postStream.posts : []).filter(
-    (post) => isRecord(post) && (positiveInteger(post.post_number) || 0) > 1
+    (post): post is Record<string, unknown> => isRecord(post) && (positiveInteger(post.post_number) || 0) > 1
   );
-  const streamPositionById = new Map<string, number>();
-  stream.forEach((id, index) => {
-    const key = String(id);
-    if (!streamPositionById.has(key)) streamPositionById.set(key, index);
-  });
-  let firstIndex = Number.POSITIVE_INFINITY;
-  let lastIndex = -1;
-  for (const post of posts) {
-    const streamIndex = streamPositionById.get(String((post as Record<string, unknown>).id));
-    if (streamIndex === undefined) throw new Error('Discourse 锚点回复流已变化');
-    if (streamIndex > 0) {
-      firstIndex = Math.min(firstIndex, streamIndex);
-      lastIndex = Math.max(lastIndex, streamIndex);
+  const remainingIds = new Set(posts.map((post) => String(post.id)));
+  let firstIndex: number | undefined;
+  let nextOffset = 1;
+  for (let index = 0; index < stream.length && remainingIds.size > 0; index++) {
+    if (index in stream && remainingIds.delete(String(stream[index])) && index > 0) {
+      firstIndex ??= index;
+      nextOffset = index;
     }
   }
-  if (!Number.isFinite(firstIndex)) firstIndex = 1;
-  if (lastIndex < 0) lastIndex = firstIndex;
+  if (remainingIds.size) throw new Error('Discourse 锚点回复流已变化');
   const pageSize = Math.max(1, limit);
-  const currentOffset = Math.max(0, firstIndex - 1);
-  const nextOffset = Math.max(currentOffset, lastIndex);
+  const currentOffset = (firstIndex ?? 1) - 1;
   const previousOffset = currentOffset > 0 ? Math.max(0, currentOffset - pageSize) : null;
   const hasMore = stream.length - 1 > nextOffset;
   return {
@@ -200,7 +194,11 @@ export function discourseReplyWindow(data: unknown, limit: number) {
   };
 }
 
-type DiscoursePostFields = Pick<Reply, 'author' | 'createdAt' | 'commentId' | 'floor'> & {
+export function discourseDisplayName(user?: Record<string, unknown>) {
+  return user ? recordText(user, 'name', 'display_username') : '';
+}
+
+type DiscoursePostFields = Pick<Reply, 'author' | 'authorId' | 'createdAt' | 'commentId' | 'floor'> & {
   cookedHtml: string;
 } & Partial<
     Pick<
@@ -410,13 +408,13 @@ export function discoursePostFields(
     raw.yours === true ? false : isRecord(action) && typeof action.can_act === 'boolean' ? action.can_act : undefined;
   const commentId = positiveInteger(raw.id);
   const floor = positiveInteger(raw.post_number);
-  const author = String(raw.username || '').trim();
+  const username = String(raw.username || '').trim();
   const createdAt = toIsoString(raw.created_at);
   const actionCode = String(raw.action_code || '').trim();
   if (
     !commentId &&
     !floor &&
-    !author &&
+    !username &&
     !actionCode &&
     !userDeletedPlaceholder &&
     !hasRenderableHtmlContent(cookedHtml)
@@ -428,7 +426,7 @@ export function discoursePostFields(
   const bookmarkId = positiveNumber(raw.bookmark_id);
   const replyToUser = isRecord(raw.reply_to_user) ? raw.reply_to_user : undefined;
   const replyTargetUsername = String(replyToUser?.username || '').trim();
-  const replyTargetAuthor = String(replyToUser?.name || replyTargetUsername).trim();
+  const replyTargetAuthor = discourseDisplayName(replyToUser) || replyTargetUsername;
   const replyTargetFloor = positiveInteger(raw.reply_to_post_number);
   const replyTarget =
     replyTargetFloor || replyTargetAuthor
@@ -452,7 +450,8 @@ export function discoursePostFields(
       ? { id: raw.current_user_reaction.id, canUndo: raw.current_user_reaction.can_undo === true }
       : null;
   return {
-    author,
+    author: discourseDisplayName(raw) || username,
+    authorId: username || undefined,
     cookedHtml,
     createdAt,
     commentId,

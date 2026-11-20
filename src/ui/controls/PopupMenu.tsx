@@ -110,6 +110,7 @@ export function PopupMenu({
 
 export function PopupMenuItem({
   compact = false,
+  disabled = false,
   icon,
   label,
   last = false,
@@ -117,6 +118,7 @@ export function PopupMenuItem({
   onPress
 }: {
   compact?: boolean;
+  disabled?: boolean;
   icon?: LucideIcon;
   label: string;
   last?: boolean;
@@ -130,14 +132,25 @@ export function PopupMenuItem({
       hitSlop={TOUCH_HIT_SLOP}
       accessibilityRole="menuitem"
       accessibilityLabel={label}
-      accessibilityState={selected ? { selected: true } : undefined}
-      style={[styles.item, compact && styles.itemCompact, selected && styles.itemSelected, last && styles.itemLast]}
+      disabled={disabled}
+      accessibilityState={{ disabled: disabled || undefined, selected: selected || undefined }}
+      style={[
+        styles.item,
+        compact && styles.itemCompact,
+        selected && styles.itemSelected,
+        last && styles.itemLast,
+        disabled && { opacity: 0.5 }
+      ]}
       containerStyle={styles.row}
       contentStyle={styles.content}
       title={label}
       titleStyle={[styles.text, compact && styles.textCompact, selected && styles.textSelected]}
       titleNumberOfLines={0}
-      left={Icon ? () => <Icon size={17} color={theme.ink} strokeWidth={1.8} accessible={false} /> : undefined}
+      left={
+        Icon
+          ? () => <Icon size={17} color={selected ? theme.primary : theme.ink} strokeWidth={1.8} accessible={false} />
+          : undefined
+      }
       onPress={onPress}
     />
   );

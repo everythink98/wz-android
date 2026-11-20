@@ -5,6 +5,7 @@ import type { ReplyEditTarget, ReplyFilter, ReplyTarget } from './model/types';
 import { appendReplyImageMarkup } from '@/sources/imageUpload';
 import { filterRepliesWithImages } from './model/topicDerivedData';
 import type { Reply, ReplyOrder, Source, Topic, TopicDetail } from '@/domain/forum/models';
+import { userFromReply, userFromTopic } from '@/domain/forum/userNavigation';
 import type { ComposerSnapshot, PendingNodeSeekPoll } from '@/domain/forum/structuredComposer';
 
 export type ReplyComposerIntent =
@@ -94,7 +95,16 @@ export function filterTopicSessionReplies({
   searchCache?.retain(topicReplies);
   let replies = topicReplies;
   if (replyFilter === 'author') {
-    replies = topicDetail ? replies.filter((reply) => reply.author === topicDetail.author) : replies;
+    if (source === 'linuxdo') {
+      const owner = topicDetail && userFromTopic(topicDetail)?.username?.toLowerCase();
+      replies = owner
+        ? replies.filter(
+            (reply) => (reply.authorId?.trim() || userFromReply(reply, source)?.username)?.toLowerCase() === owner
+          )
+        : [];
+    } else if (topicDetail) {
+      replies = replies.filter((reply) => Boolean(topicDetail.author) && reply.author === topicDetail.author);
+    }
   } else if (replyFilter === 'images') {
     replies = filterRepliesWithImages(replies, source);
   }
@@ -112,7 +122,6 @@ export function useTopicSessionController({ notify, topic }: { notify: (message:
   const [debouncedCommentQuery, setDebouncedCommentQuery] = useState('');
   const [expandedQuotes, setExpandedQuotes] = useState<Record<string, boolean>>({});
   const [quoteStateVersion, setQuoteStateVersion] = useState(0);
-  const topicScrollYRef = useRef(0);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedCommentQuery(commentQuery), 180);
@@ -192,10 +201,6 @@ export function useTopicSessionController({ notify, topic }: { notify: (message:
     setQuoteStateVersion((current) => current + 1);
   }, []);
 
-  const rememberScrollY = useCallback((value: number) => {
-    topicScrollYRef.current = Math.max(0, value);
-  }, []);
-
   const composerCommands = useMemo(
     () => ({
       appendMarkup: appendReplyMarkup,
@@ -233,10 +238,9 @@ export function useTopicSessionController({ notify, topic }: { notify: (message:
     () => ({
       changeCommentQuery: setCommentQuery,
       changeReplyFilter: setReplyFilter,
-      changeReplyOrder: setReplyOrder,
-      rememberScrollY
+      changeReplyOrder: setReplyOrder
     }),
-    [rememberScrollY]
+    []
   );
 
   return {

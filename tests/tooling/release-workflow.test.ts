@@ -17,6 +17,8 @@ const apkBytes = Buffer.from('synthetic release APK');
 const lockBytes = Buffer.from('synthetic package lock');
 
 type Command = { command: string; args: string[]; env: Record<string, string> };
+type Artifact = 'release' | 'built-smoke' | 'smoke';
+type BadgingField = 'package' | 'versionCode' | 'versionName' | 'abi';
 type Failure =
   | 'node'
   | 'checkout'
@@ -34,7 +36,15 @@ type Failure =
   | 'smoke';
 
 // Execute the production entry and helpers. All files, processes and archive I/O stay inside this fixture.
-function release(options: { args?: string[]; failure?: Failure; platform?: string; nodeVersion?: string } = {}) {
+function release(
+  options: {
+    args?: string[];
+    failure?: Failure;
+    platform?: string;
+    nodeVersion?: string;
+    badgingMismatch?: { artifact: Artifact; field: BadgingField };
+  } = {}
+) {
   const files = new Map<string, Buffer>();
   const put = (name: string, value: string | Buffer) => files.set(path.resolve(root, name), Buffer.from(value));
   put(
@@ -133,6 +143,20 @@ function release(options: { args?: string[]; failure?: Failure; platform?: strin
       stage = 'assemble';
       for (const abi of ['arm64-v8a', 'x86_64'])
         put(`android/app/build/outputs/apk/release/app-${abi}-release.apk`, apkBytes);
+    } else if (/^aapt2(?:\.exe)?$/.test(path.basename(command))) {
+      const apk = args[2]!;
+      const artifact: Artifact = apk.endsWith('smoke-dev.apk')
+        ? 'smoke'
+        : apk.endsWith('app-arm64-v8a-release.apk')
+          ? 'release'
+          : 'built-smoke';
+      stage = `${artifact}-apk-identity`;
+      const badging = options.badgingMismatch?.artifact === artifact ? options.badgingMismatch.field : undefined;
+      const packageName = badging === 'package' ? 'fixture.old.reader' : 'fixture.reader';
+      const code = badging === 'versionCode' ? 41 : 42;
+      const version = badging === 'versionName' ? '1.2.2' : '1.2.3';
+      const abi = badging === 'abi' ? 'armeabi-v7a' : artifact === 'release' ? 'arm64-v8a' : 'x86_64';
+      stdout = `package: name='${packageName}' versionCode='${code}' versionName='${version}'\nnative-code: '${abi}'`;
     } else if (args.includes('sign')) {
       stage = 'sign-smoke';
       fs.writeFileSync(args[args.indexOf('--out') + 1]!, 'synthetic smoke APK');
@@ -191,7 +215,14 @@ function release(options: { args?: string[]; failure?: Failure; platform?: strin
           };
         if (['node:path', 'node:url', 'node:crypto', 'fast-xml-parser'].includes(name)) return require(name);
         if (name === './diagnostic-symbols.mjs') return { archiveDiagnosticSymbols: () => events.push('archive') };
-        if (['./release-environment.mjs', './apk-signing.cjs', './native-test-plan.mjs'].includes(name))
+        if (
+          [
+            './release-environment.mjs',
+            './apk-signing.cjs',
+            './device-apk-signer.mjs',
+            './native-test-plan.mjs'
+          ].includes(name)
+        )
           return load(path.resolve(path.dirname(filename), name));
         throw new Error(`Unexpected fixture import: ${name}`);
       }
@@ -251,9 +282,12 @@ describe('release entry execution', () => {
         'prebuild',
         'compile',
         'assemble',
+        'release-apk-identity',
         'release-signer',
+        'built-smoke-apk-identity',
         'built-smoke-signer',
         'sign-smoke',
+        'smoke-apk-identity',
         'smoke-signer',
         'smoke',
         'archive',
@@ -306,6 +340,35 @@ describe('release entry execution', () => {
     expect(result.events.at(-1)).toBe(failure);
     expect(result.manifest).toBeUndefined();
     expect(result.packageText).toBe(packageText);
+  });
+
+  it.each([
+    ['release', 'package'],
+    ['release', 'versionCode'],
+    ['release', 'versionName'],
+    ['release', 'abi'],
+    ['built-smoke', 'versionCode'],
+    ['smoke', 'abi']
+  ] satisfies [Artifact, BadgingField][])(
+    'stops before Smoke or manifest when the %s APK declares a different %s',
+    (artifact, field) => {
+      const result = release({ badgingMismatch: { artifact, field } });
+      expect(result.exitCode).toBe(1);
+      expect(result.events.at(-1)).toBe(`${artifact}-apk-identity`);
+      expect(result.events).not.toContain('smoke');
+      expect(result.output.join('\n')).toContain('APK 包名、版本或 ABI 与发布配置不一致');
+      expect(result.manifest).toBeUndefined();
+    }
+  );
+
+  it.each([
+    ['fixture-replays', 'targeted'],
+    ['./tests/device/', 'full']
+  ])('records the Replay scope for %s when the full JavaScript checks run', (directory, verificationScope) => {
+    const result = release({ args: ['--replay-directory', directory] });
+    expect(result.exitCode).toBe(0);
+    expect(result.events).toContain('verify');
+    expect(result.manifest).toMatchObject({ verificationScope });
   });
 
   it('forwards a targeted Replay directory and records the explicitly reduced verification scope', () => {

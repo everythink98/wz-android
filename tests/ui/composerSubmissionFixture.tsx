@@ -241,7 +241,9 @@ export function TopicSubmissionFixture({
     requestAccountRecheck: () => {},
     readGateway: {
       ...testPostInteractionReads(),
-      getReadPlan: () => ({
+      getReadPlan: (source, operation) => ({
+        source,
+        operation,
         state: 'ready',
         lane: 'authenticated',
         authenticated: true,

@@ -11,7 +11,8 @@ import {
   runAgentDevice,
   selectedDeviceName
 } from './agent-device-runtime.mjs';
-import { runDeviceReplay } from './run-device-replay.mjs';
+import { inspectDeviceApk, installDeviceApk } from './device-apk-install.mjs';
+import { matchingAndroidDevices, parseAgentDeviceList, runDeviceReplay } from './run-device-replay.mjs';
 
 const scriptPath = fileURLToPath(import.meta.url);
 const rootDir = path.resolve(path.dirname(scriptPath), '..');
@@ -108,20 +109,6 @@ function runAdb(args, { allowFailure = false } = {}) {
   return String(result.stdout || '');
 }
 
-function readFirstInstallTime(deviceId, phase, runAdbCommand = runAdb) {
-  let output;
-  try {
-    output = runAdbCommand(['-s', deviceId, 'shell', 'dumpsys', 'package', appPackage]);
-  } catch {
-    output = '';
-  }
-  const values = [...String(output).matchAll(/^[ \t]*firstInstallTime=([^\r\n]*)$/gm)].map((match) => match[1].trim());
-  if (values.length !== 1 || !values[0]) {
-    throw new Error(`BLOCKED_BY_ENV：覆盖安装${phase}无法读取 ${appPackage} 的 firstInstallTime，已停止 Smoke。`);
-  }
-  return values[0];
-}
-
 function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -174,11 +161,13 @@ export function withSmokeSession(
   action
 ) {
   const [, configuredDevice] = deviceSelectionArgs(selectedDevice);
+  const configuredSerial = /^emulator-\d+$/.test(configuredDevice) ? configuredDevice : null;
   let deviceName = configuredDevice;
-  if (/^emulator-\d+$/.test(configuredDevice)) {
+  let expectedSerial = configuredSerial;
+  if (configuredSerial) {
     let avdOutput = '';
     try {
-      avdOutput = runAdbCommand(['-s', configuredDevice, 'emu', 'avd', 'name']);
+      avdOutput = runAdbCommand(['-s', configuredSerial, 'emu', 'avd', 'name']);
     } catch {
       // The fail-closed error below intentionally omits raw ADB output.
     }
@@ -187,6 +176,17 @@ export function withSmokeSession(
       throw new Error(`BLOCKED_BY_ENV：无法将 Android emulator ID ${configuredDevice} 解析为 AVD 名，未启动 Smoke。`);
     }
     deviceName = avdName;
+  } else {
+    const inventory = runAgentDeviceCommand(['devices', '--platform', 'android', '--json'], {
+      capture: true,
+      cwd: rootDir,
+      echoCapture: false
+    });
+    const matches = matchingAndroidDevices(parseAgentDeviceList(inventory), configuredDevice);
+    if (matches.length !== 1) {
+      throw new Error(`BLOCKED_BY_ENV：无法唯一匹配 Android Smoke 设备 ${configuredDevice}，未启动 Smoke。`);
+    }
+    if (matches[0].booted) expectedSerial = matches[0].id;
   }
   const bootOutput = runAgentDeviceCommand(
     ['boot', '--session', smokeSession, '--platform', 'android', '--device', deviceName, '--json'],
@@ -195,7 +195,14 @@ export function withSmokeSession(
   /** @type {SmokeFailure} */
   let failure = { kind: 'none' };
   try {
-    return action(parseBootedAndroidDevice(bootOutput));
+    const device = parseBootedAndroidDevice(bootOutput);
+    if (expectedSerial && device.id !== expectedSerial) {
+      throw new Error(`BLOCKED_BY_ENV：启动回执序列与指定的 ${expectedSerial} 不一致，已停止 Smoke。`);
+    }
+    if (!expectedSerial && matchingAndroidDevices([device], configuredDevice).length === 0) {
+      throw new Error(`BLOCKED_BY_ENV：启动回执设备名与指定的 ${configuredDevice} 不一致，已停止 Smoke。`);
+    }
+    return action(device);
   } catch (error) {
     failure = { kind: 'failed', error };
     throw error;
@@ -217,39 +224,15 @@ export function runApkSanity({
   marker = `wz-apk-sanity-first-launch-${process.pid}-${Date.now()}`,
   runAdbCommand = runAdb,
   runAgentDeviceCommand = runAgentDevice,
+  inspectApk = inspectDeviceApk,
   verifySessionLog
 }) {
-  const firstInstallTimeBefore = readFirstInstallTime(device.id, '前', runAdbCommand);
-  /** @type {SmokeFailure} */
-  let installation = { kind: 'none' };
-  try {
-    runAgentDeviceCommand(
-      [
-        'install',
-        appPackage,
-        apkPath,
-        '--session',
-        smokeSession,
-        '--platform',
-        'android',
-        ...deviceSelectionArgs(device.name)
-      ],
-      { cwd: rootDir }
-    );
-  } catch (error) {
-    installation = { kind: 'failed', error };
-  }
-
-  const firstInstallTimeAfter = readFirstInstallTime(device.id, '后', runAdbCommand);
-  if (firstInstallTimeAfter !== firstInstallTimeBefore) {
-    throw new Error(`BLOCKED_BY_ENV：覆盖安装改变了 ${appPackage} 的 firstInstallTime，已在首次启动前停止 Smoke。`);
-  }
-  if (installation.kind === 'failed') {
-    throw new Error(
-      `BLOCKED_BY_ENV：覆盖安装失败；未卸载 App，也未清数据、Cookie 或登录态。${installation.error instanceof Error ? ` ${installation.error.message}` : ''}`,
-      { cause: installation.error }
-    );
-  }
+  installDeviceApk({
+    adb: (...args) => runAdbCommand(['-s', device.id, ...args]),
+    pkg: appPackage,
+    apk: apkPath,
+    inspectApk
+  });
 
   const logcatStart = runAdbCommand(['-s', device.id, 'shell', 'date', '+%s.%3N']).trim();
   if (!/^\d+\.\d+$/.test(logcatStart)) {
@@ -260,7 +243,7 @@ export function runApkSanity({
   const errors = [];
   try {
     runAgentDeviceCommand(
-      ['open', appPackage, '--session', smokeSession, '--platform', 'android', ...deviceSelectionArgs(device.name)],
+      ['open', appPackage, '--session', smokeSession, '--platform', 'android', '--serial', device.id],
       { cwd: rootDir }
     );
     runAgentDeviceCommand(['logs', 'clear', '--restart', '--session', smokeSession, '--platform', 'android'], {
@@ -324,7 +307,7 @@ async function main() {
     options: { 'replay-directory': { type: 'string' } }
   });
   const apkPath = resolveApkPath(positionals[0]);
-  const selectedDevice = selectedDeviceName();
+  const selectedDevice = selectedDeviceName(process.env.WZ_ANDROID_SMOKE_DEVICE || process.env.WZ_ANDROID_TEST_DEVICE);
   assertAgentDeviceVersion(rootDir);
   runAgentDevice(['doctor', '--platform', 'android'], { cwd: os.tmpdir() });
   const smokeDevice = withSmokeSession({ selectedDevice }, (smokeDevice) => {

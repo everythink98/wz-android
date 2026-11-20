@@ -237,7 +237,7 @@ Composer 键盘证据分层：`tests/native/ComposerWebViewInsetsTest.kt` 验证
 
 `WRITE-07` 最低证据按 owner 拆分：domain/source Vitest 固定动态校验与三站真实请求构造、正负成功判据；SQLite 与附件测试固定身份/revision/未知 attempt/文件归属；`tests/ui/topic-composer/` 固定切站、快照、提交前门禁、单次发布与失败保稿。隔离 `dev/composer-proof` 的 `topic-*` 场景必须挂载真实 `TopicComposerRoute`、controller、editor 和 SQLite，仅在 Fetcher 边界返回合成 HTTP 响应。每次生成独立合成身份，未匹配网络禁止透传；receipt 同时验证 source、单次 dispatch、durable attempt、当前稿与另两站稿及 route，切站/重启场景必须零写请求。YH 五类检查实际表单路径与重复字段数量，文件只用隔离目录的小型合成文件。原生输入与重启证据不能由 RNTL 代替，Mock proof 不能标作原站 `LIVE_PASS`。
 
-`tests/tooling/review-proof-checkpoint.test.ts` 是隔离备份/恢复的唯一 tooling owner。runner 在固定隔离 AVD 取得 OS 排他租约，安装后再次停止 App，备份 ReaderData、AsyncStorage、Composer journal 及各自 WAL/SHM 的九个固定文件；校验隔离 owner、安装身份、存在性、字节哈希、原文件权限及独立 SQLite 逻辑内容。业务失败、回放失败、超时或 App 中断仍由 runner 恢复，业务与恢复分别记录，双方通过才整体通过。旧 `running` 必须阻断新运行；只有 `restoring` 且当前文件匹配已记录的原始或待恢复哈希与权限配对、安装身份一致时才允许显式续接，缺少原权限记录的旧检查点拒绝续接。App 不以固定等待后自行还原作为完成证明。
+`tests/tooling/review-proof-checkpoint.test.ts` 是隔离备份/恢复的唯一 tooling owner。runner 在固定隔离 AVD 取得 OS 排他租约，先停止 App，在覆盖安装前备份 ReaderData、AsyncStorage、Composer journal、主题草稿库及各自的 WAL/SHM，共十二个固定文件。覆盖安装后再次核对身份并停止 App，校验隔离 owner、安装身份、存在性、字节哈希、原文件权限及独立 SQLite 逻辑内容。业务失败、回放失败、超时或 App 中断仍由 runner 恢复，业务与恢复分别记录，双方通过才整体通过。旧 `running` 必须阻断新运行；只有 `restoring` 且当前文件匹配已记录的原始或待恢复哈希与权限配对、安装身份一致时才允许显式续接，v2 检查点按原有九个文件续接，缺少原权限记录的旧检查点拒绝续接。App 不以固定等待后自行还原作为完成证明。
 
 无效导入必须是合法 JSON 的错误版本，回放观察生产代码实际发出的格式不兼容提示；proof 壳只把该短 Toast 留存为可观察文本，结束断言还要求该回调恰好一次。取消文件选择或漏掉回调不能通过。通知 proof 的计数称为「对账请求次数」，实际摘要读取与持久化仍归既有 runtime owner。
 

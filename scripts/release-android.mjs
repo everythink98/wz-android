@@ -3,8 +3,9 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import apkSigning from './apk-signing.cjs';
+import { aapt2FromApkSigner, findApkSignerJar, parseApkBadging } from './device-apk-signer.mjs';
 import { archiveDiagnosticSymbols } from './diagnostic-symbols.mjs';
 import {
   RELEASE_SIGNING_ENV_NAMES,
@@ -122,41 +123,29 @@ function runCapture(command, args, options = {}) {
   return `${result.stdout || ''}${result.stderr || ''}`;
 }
 
-function verifyReleaseApk(apkPath) {
+function verifyReleaseApk(apkPath, apkSignerJar, abi) {
   if (!existsSync(apkPath)) {
     console.error(`未找到 release APK：${apkPath}`);
     process.exit(1);
   }
-}
-
-function findApkSignerJar() {
-  const androidSdkDir = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
-  if (!androidSdkDir) {
-    return null;
-  }
-  const buildToolsDir = path.join(androidSdkDir, 'build-tools');
-  if (!existsSync(buildToolsDir)) {
-    return null;
-  }
-  return (
-    readdirSync(buildToolsDir, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => path.join(buildToolsDir, entry.name, 'lib', 'apksigner.jar'))
-      .filter((candidate) => existsSync(candidate))
-      .sort((left, right) =>
-        path
-          .basename(path.dirname(path.dirname(right)))
-          .localeCompare(path.basename(path.dirname(path.dirname(left))), undefined, { numeric: true })
-      )[0] || null
+  const metadata = parseApkBadging(
+    runCapture(aapt2FromApkSigner(apkSignerJar), ['dump', 'badging', apkPath], {
+      failureMessage: `无法读取 APK 身份：${path.basename(apkPath)}`
+    })
   );
+  if (
+    !metadata ||
+    metadata.package !== appConfig.expo.android.package ||
+    metadata.versionCode !== appConfig.expo.android.versionCode ||
+    metadata.versionName !== appConfig.expo.version ||
+    metadata.abis.length !== 1 ||
+    metadata.abis[0] !== abi
+  ) {
+    failReleasePreflight(new Error(`APK 包名、版本或 ABI 与发布配置不一致：${path.basename(apkPath)}`));
+  }
 }
 
-function verifyReleaseApkSignature(apkPath) {
-  const apkSignerJar = findApkSignerJar();
-  if (!apkSignerJar) {
-    console.error('未找到 apksigner，请确认 ANDROID_HOME 或 ANDROID_SDK_ROOT 指向 Android SDK。');
-    process.exit(1);
-  }
+function verifyReleaseApkSignature(apkPath, apkSignerJar) {
   const output = runCapture('java', ['-jar', apkSignerJar, 'verify', '--verbose', '--print-certs', apkPath]);
   const signerSha256 = singleApkSignerSha256(output);
   if (!signerSha256 || !/^[a-f0-9]{64}$/.test(signerSha256)) {
@@ -166,9 +155,8 @@ function verifyReleaseApkSignature(apkPath) {
   return signerSha256;
 }
 
-function signDevelopmentSmokeApk(inputPath, outputPath) {
-  const apkSignerJar = findApkSignerJar();
-  if (!apkSignerJar || !existsSync(developmentKeystorePath)) {
+function signDevelopmentSmokeApk(inputPath, outputPath, apkSignerJar) {
+  if (!existsSync(developmentKeystorePath)) {
     console.error('未找到 Android debug keystore 或 apksigner，无法生成开发签名 smoke APK。');
     process.exit(1);
   }
@@ -223,6 +211,8 @@ function writeReleaseManifest({
   gradleVersion,
   builtAbis
 }) {
+  const defaultReplayDirectory = path.join(rootDir, 'tests', 'device');
+  const replayDirectory = path.resolve(rootDir, releaseOptions['replay-directory'] || defaultReplayDirectory);
   const manifest = {
     apkName: releaseApkFileName,
     sha256,
@@ -237,7 +227,8 @@ function writeReleaseManifest({
     javaVersion,
     gradleVersion,
     builtAbis,
-    verificationScope: releaseOptions['skip-verify'] ? 'targeted' : 'full'
+    verificationScope:
+      releaseOptions['skip-verify'] || path.relative(defaultReplayDirectory, replayDirectory) ? 'targeted' : 'full'
   };
   writeFileSync(releaseManifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
   console.log(`release manifest: ${releaseManifestPath}`);
@@ -401,15 +392,20 @@ runReleaseBuildStages({
   run
 });
 
-verifyReleaseApk(releaseApkPath);
-const signerSha256 = verifyReleaseApkSignature(releaseApkPath);
+const apkSignerJar = findApkSignerJar();
+if (!apkSignerJar) {
+  console.error('未找到 apksigner，请确认 ANDROID_HOME 或 ANDROID_SDK_ROOT 指向 Android SDK。');
+  process.exit(1);
+}
+verifyReleaseApk(releaseApkPath, apkSignerJar, 'arm64-v8a');
+const signerSha256 = verifyReleaseApkSignature(releaseApkPath, apkSignerJar);
 verifyExpectedReleaseSigner(signerSha256);
-verifyReleaseApk(builtSmokeApkPath);
-const builtSmokeSignerSha256 = verifyReleaseApkSignature(builtSmokeApkPath);
+verifyReleaseApk(builtSmokeApkPath, apkSignerJar, smokeApkAbi);
+const builtSmokeSignerSha256 = verifyReleaseApkSignature(builtSmokeApkPath, apkSignerJar);
 verifyExpectedReleaseSigner(builtSmokeSignerSha256);
-signDevelopmentSmokeApk(builtSmokeApkPath, smokeApkPath);
-verifyReleaseApk(smokeApkPath);
-const smokeSignerSha256 = verifyReleaseApkSignature(smokeApkPath);
+signDevelopmentSmokeApk(builtSmokeApkPath, smokeApkPath, apkSignerJar);
+verifyReleaseApk(smokeApkPath, apkSignerJar, smokeApkAbi);
+const smokeSignerSha256 = verifyReleaseApkSignature(smokeApkPath, apkSignerJar);
 if (smokeSignerSha256 === expectedReleaseSignerSha256) {
   console.error('smoke APK 仍是正式签名，拒绝安装到开发模拟器。');
   process.exit(1);

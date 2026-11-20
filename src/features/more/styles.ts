@@ -1,5 +1,6 @@
 import { StyleSheet, StatusBar as NativeStatusBar } from 'react-native';
 import {
+  createReaderFontSizer,
   readerRadii,
   type ReaderStyleSettings,
   type ReaderTheme,
@@ -11,11 +12,12 @@ import { createLoginWebViewStyles } from '@/ui/navigation/loginWebViewStyles';
 
 export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const appFontFamily = fontFamilyValue(settings.fontFamily);
+  const fontSize = createReaderFontSizer(settings);
   return StyleSheet.create({
     buttonText: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: 13,
+      fontSize: fontSize(13),
       fontWeight: '600'
     },
     content: {
@@ -33,8 +35,8 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     errorText: {
       color: theme.danger,
       fontFamily: appFontFamily,
-      fontSize: 13,
-      lineHeight: 19
+      fontSize: fontSize(13),
+      lineHeight: fontSize(19)
     },
     flex: {
       flex: 1
@@ -49,13 +51,7 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       paddingVertical: 6
     },
     settingsSection: { marginTop: 16 },
-    settingsSectionLabel: {
-      color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 12,
-      fontWeight: '500',
-      paddingBottom: 6
-    },
+    utilityDivider: { backgroundColor: theme.line, height: StyleSheet.hairlineWidth, marginLeft: 38 },
     libraryShortcuts: {
       borderTopColor: theme.line,
       borderTopWidth: StyleSheet.hairlineWidth,
@@ -116,19 +112,19 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     menuLabel: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: 15,
+      fontSize: fontSize(15),
       fontWeight: '500'
     },
     meta: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: 12,
-      lineHeight: 17
+      fontSize: fontSize(12),
+      lineHeight: fontSize(17)
     },
     panelTitle: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: 15,
+      fontSize: fontSize(15),
       fontWeight: '600' as const
     },
     searchFilterActions: {
@@ -180,7 +176,30 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     },
     updatePanel: {
       gap: 12,
-      paddingVertical: 16
+      paddingVertical: 12
+    },
+    updateCard: {
+      backgroundColor: theme.surface2,
+      borderColor: alphaColor(theme.ink, theme.dark ? 0.1 : 0.06),
+      borderRadius: readerRadii.surface,
+      borderWidth: StyleSheet.hairlineWidth,
+      marginVertical: 8,
+      paddingBottom: 16,
+      paddingHorizontal: 16,
+      paddingTop: 12
+    },
+    updateHeaderRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 8,
+      justifyContent: 'space-between',
+      marginRight: -8
+    },
+    updateTitleRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8
     },
     updateHeader: {
       alignItems: 'center',
@@ -193,111 +212,157 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       flex: 1,
       flexDirection: 'row',
       gap: 10,
-      minHeight: 48,
+      minHeight: 44,
       minWidth: 0
     },
+    updateIconBadge: {
+      alignItems: 'center',
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.16 : 0.09),
+      borderRadius: 9,
+      height: 32,
+      justifyContent: 'center',
+      width: 32
+    },
+    updateVersionMeta: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: fontSize(12),
+      fontVariant: ['tabular-nums'],
+      lineHeight: fontSize(17)
+    },
     updateDetails: {
-      gap: 10,
-      marginLeft: 40
+      gap: 12
+    },
+    updateNotes: {
+      color: theme.ink,
+      fontFamily: appFontFamily,
+      fontSize: fontSize(13),
+      lineHeight: fontSize(20)
     },
     updateBadge: {
       alignSelf: 'flex-start',
       overflow: 'hidden',
-      color: theme.danger,
+      color: theme.dark ? theme.primary : theme.primaryStrong,
       fontFamily: appFontFamily,
-      fontSize: 11,
+      fontSize: fontSize(11),
       fontWeight: '600',
-      lineHeight: 16,
-      backgroundColor: alphaColor(theme.danger, theme.dark ? 0.16 : 0.07),
-      borderColor: alphaColor(theme.danger, theme.dark ? 0.38 : 0.2),
+      lineHeight: fontSize(15),
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.18 : 0.1),
       borderRadius: readerRadii.badge,
-      borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 7,
       paddingVertical: 2
     },
-    updateProgressBox: {
-      gap: 7,
-      backgroundColor: theme.surface2,
-      borderColor: theme.line,
+    updatePrimarySlot: {
+      width: '100%'
+    },
+    updateIntegratedBar: {
+      backgroundColor: theme.surface,
+      borderColor: alphaColor(theme.primary, theme.dark ? 0.28 : 0.2),
       borderRadius: readerRadii.control,
       borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 10,
-      paddingVertical: 9
+      justifyContent: 'center',
+      minHeight: 42,
+      overflow: 'hidden',
+      position: 'relative',
+      width: '100%'
     },
-    updateProgressHeader: {
+    updateBarDisabled: {
+      opacity: 0.6
+    },
+    updateIntegratedFill: {
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.24 : 0.13),
+      bottom: 0,
+      left: 0,
+      position: 'absolute',
+      top: 0
+    },
+    updateIntegratedContent: {
       alignItems: 'center',
       flexDirection: 'row',
+      gap: 10,
       justifyContent: 'space-between',
-      gap: 10
+      paddingHorizontal: 14,
+      paddingVertical: 8
     },
-    updateProgressTitle: {
-      flex: 1,
-      minWidth: 0,
-      color: theme.ink,
+    updateIntegratedLeft: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexShrink: 0,
+      gap: 7
+    },
+    updateIntegratedActionText: {
+      color: theme.dark ? theme.primary : theme.primaryStrong,
       fontFamily: appFontFamily,
-      fontSize: 12,
+      fontSize: fontSize(13),
       fontWeight: '600',
-      lineHeight: 17
+      includeFontPadding: false,
+      lineHeight: fontSize(18)
+    },
+    updateIntegratedRight: {
+      alignItems: 'center',
+      flex: 1,
+      flexDirection: 'row',
+      gap: 8,
+      justifyContent: 'flex-end',
+      minWidth: 0
+    },
+    updateSecondaryRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      justifyContent: 'space-between'
     },
     updateProgressPercent: {
       flexShrink: 0,
-      color: theme.primary,
+      color: theme.dark ? theme.primary : theme.primaryStrong,
       fontFamily: appFontFamily,
-      fontSize: 12,
+      fontSize: fontSize(12),
       fontWeight: '700',
-      lineHeight: 17
-    },
-    updateProgressTrack: {
-      width: '100%',
-      height: 6,
-      overflow: 'hidden',
-      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.12 : 0.08),
-      borderRadius: readerRadii.pill
-    },
-    updateProgressFill: {
-      height: '100%',
-      backgroundColor: theme.primary,
-      borderRadius: readerRadii.pill
+      lineHeight: fontSize(17),
+      fontVariant: ['tabular-nums']
     },
     updateProgressMeta: {
+      flexShrink: 1,
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: 11,
+      fontSize: fontSize(11),
       fontWeight: '500',
-      lineHeight: 15
+      lineHeight: fontSize(16),
+      fontVariant: ['tabular-nums']
+    },
+    backupActions: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 10
+    },
+    backupActionSlot: {
+      flex: 1,
+      minWidth: 140
     },
     appearanceSettings: {
-      gap: 20,
+      gap: 6,
       paddingTop: 4
-    },
-    appearanceSection: {
-      gap: 4
-    },
-    appearanceSectionTitle: {
-      color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 12,
-      fontWeight: '600',
-      lineHeight: 17
     },
     appearanceSettingRow: {
       alignItems: 'center',
       flexDirection: 'row',
       gap: 12,
-      minHeight: 48
+      minHeight: 48,
+      paddingTop: 6
     },
     appearanceSettingRowDivided: {
       borderTopColor: theme.line,
       borderTopWidth: StyleSheet.hairlineWidth
     },
     appearanceSettingLabel: {
-      flexBasis: 72,
+      flexBasis: 76,
       flexShrink: 0,
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: 14,
+      fontSize: fontSize(14),
       fontWeight: '500',
-      lineHeight: 20
+      lineHeight: fontSize(20)
     },
     appearanceSegmentedControl: {
       flex: 1,
@@ -324,7 +389,7 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     appearanceSegmentText: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: 12,
+      fontSize: fontSize(12),
       fontWeight: '500',
       includeFontPadding: false
     },
@@ -334,6 +399,7 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     },
     appearanceFontScaleBlock: {
       gap: 2,
+      paddingTop: 4,
       paddingBottom: 4
     },
     appearanceFontScaleHeader: {
@@ -345,9 +411,9 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     appearanceFontScaleValue: {
       color: theme.primary,
       fontFamily: appFontFamily,
-      fontSize: 13,
+      fontSize: fontSize(13),
       fontWeight: '600',
-      lineHeight: 18
+      lineHeight: fontSize(18)
     },
     appearanceSliderRow: {
       alignItems: 'center',
@@ -379,8 +445,8 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       flexDirection: 'row',
       gap: 10,
       marginHorizontal: 4,
-      minHeight: 56,
-      paddingVertical: 4
+      minHeight: 50,
+      paddingVertical: 2
     },
     contentSourceCopy: {
       flex: 1,

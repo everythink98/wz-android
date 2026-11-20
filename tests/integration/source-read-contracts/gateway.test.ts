@@ -124,6 +124,7 @@ describe('Android local sources', () => {
   it('keeps explicit direct NodeSeek account evidence on the fast path', async () => {
     const normalFetcher = vi.fn(async () =>
       html(`
+      <link rel="stylesheet" href="/site.css"><style>.unrelated-dialog { display: none }</style>
       <header>
         <a class="btn" href="/signIn.html">登录</a>
         <a class="btn" href="/register.html">注册</a>

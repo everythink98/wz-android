@@ -87,8 +87,8 @@ export function SiteLoginHost({
       visible={visible}
       title={site === 'nodeseek' ? 'NodeSeek 登录 / 验证' : '妖火登录'}
       subtitle={session.summaryLabel}
-      loading={!webViewBlockMessage && (loading || checking)}
-      loadingText={checking ? '正在确认登录状态…' : '正在打开登录页面…'}
+      loading={!webViewBlockMessage && loading && !checking}
+      loadingText="正在打开登录页面…"
       error={webViewBlockMessage || page.error}
       onClose={onClose}
       primaryAction={

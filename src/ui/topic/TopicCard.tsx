@@ -6,11 +6,11 @@ import type { Topic } from '@/domain/forum/models';
 import { forumAccessRequirementText, sourceLabel, topicListDisplayTimeText } from '@/domain/forum/presentation';
 import { highlightTextParts } from '@/ui/text/highlight';
 import {
+  createReaderFontSizer,
   readerRadii,
   type ReaderStyleSettings,
   sourceBadgeColorStyle,
   topicTagColorStyle,
-  topicTagTextColorStyle,
   alphaColor,
   fontFamilyValue,
   type ReaderTheme
@@ -26,6 +26,7 @@ const TOPIC_OPEN_GUARD_MS = 500;
 type TopicCardProps = {
   highlightQuery?: string;
   hideReplyCount?: boolean;
+  showSource?: boolean;
   renderTrailingAction?: (topic: Topic) => ReactNode;
   topic: Topic;
   readerState: TopicListItemState;
@@ -37,6 +38,7 @@ function topicCardPropsAreEqual(previous: TopicCardProps, next: TopicCardProps) 
   return (
     previous.highlightQuery === next.highlightQuery &&
     previous.hideReplyCount === next.hideReplyCount &&
+    (previous.showSource ?? true) === (next.showSource ?? true) &&
     previous.renderTrailingAction === next.renderTrailingAction &&
     previous.onOpenTopic === next.onOpenTopic &&
     previous.testID === next.testID &&
@@ -76,6 +78,7 @@ function HighlightedText({
 export function TopicCard({
   highlightQuery = '',
   hideReplyCount = false,
+  showSource = true,
   renderTrailingAction,
   topic,
   readerState,
@@ -96,35 +99,72 @@ export function TopicCard({
     .filter(Boolean)
     .join(' · ');
   const duplicateSourceText = topic.duplicateSources?.length ? `同链：${topic.duplicateSources.join('、')}` : '';
-  const visibleTopicTags = (topic.tags || []).slice(0, TOPIC_CARD_TAG_LIMIT);
-  const hiddenTopicTagCount = Math.max((topic.tags?.length || 0) - visibleTopicTags.length, 0);
+  const category = topic.category?.trim() || '';
+  const seenTagLabels = new Set([category.toLowerCase()]);
+  const distinctTags = (topic.tags || []).filter((tag) => {
+    const label = tag.trim().toLowerCase();
+    if (seenTagLabels.has(label)) return false;
+    seenTagLabels.add(label);
+    return Boolean(label);
+  });
+  const visibleTopicTags = distinctTags.slice(0, TOPIC_CARD_TAG_LIMIT);
+  const hiddenTopicTagCount = distinctTags.length - visibleTopicTags.length;
   const accessRequirementText = forumAccessRequirementText(topic.accessRequirement);
+  const time = topicListDisplayTimeText(topic);
+  const showMetadata = Boolean(
+    showSource || topic.isAiGenerated || category || accessRequirementText || distinctTags.length
+  );
+  const showReplyCount = !hideReplyCount && typeof topic.replyCount === 'number';
+  const showStats = Boolean(readerState.hasNewReplies || showReplyCount || topic.viewCount);
+  const trailingAction = renderTrailingAction?.(topic);
+  const footer = (
+    <View style={[styles.topicFooterRow, trailingAction ? styles.topicFooterWithAction : undefined]}>
+      <View style={styles.topicAuthorChip}>
+        <Avatar contentSource={topic.source} name={topic.author} uri={topic.authorAvatar} tiny />
+        <View style={styles.topicAuthorTextGroup}>
+          <View style={styles.topicByline}>
+            <Text style={styles.topicAuthorName} numberOfLines={1}>
+              {authorMeta}
+            </Text>
+            {time ? (
+              <Text style={styles.timeText} numberOfLines={1}>
+                {time}
+              </Text>
+            ) : null}
+          </View>
+          {duplicateSourceText ? (
+            <Text style={styles.topicDuplicateSources} numberOfLines={1}>
+              {duplicateSourceText}
+            </Text>
+          ) : null}
+        </View>
+      </View>
+      {showStats ? (
+        <View renderToHardwareTextureAndroid style={styles.topicStatGroup}>
+          {readerState.hasNewReplies ? <Text style={styles.topicStatText}>有新回复</Text> : null}
+          {showReplyCount ? (
+            <View style={styles.topicStatItem}>
+              <MessageCircle size={14} color={theme.muted} strokeWidth={1.9} accessible={false} />
+              <Text accessibilityLabel={`回复 ${topic.replyCount}`} style={styles.topicStatText}>
+                {topic.replyCount}
+              </Text>
+            </View>
+          ) : null}
+          {topic.viewCount ? (
+            <View style={styles.topicStatItem}>
+              <Eye size={14} color={theme.muted} strokeWidth={1.9} accessible={false} />
+              <Text accessibilityLabel={`浏览 ${topic.viewCount}`} style={styles.topicStatText}>
+                {topic.viewCount}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+    </View>
+  );
   return (
     <View style={styles.topicRowShell}>
       <Pressable testID={testID} accessibilityRole="button" style={styles.topicCardPressable} onPress={openTopicPress}>
-        <View style={styles.topicCardHead}>
-          <View style={styles.topicBadgeRow}>
-            <Text style={[styles.topicSourceBadge, sourceBadgeColorStyle(topic.source, theme)]} numberOfLines={1}>
-              {sourceLabel(topic.source)}
-            </Text>
-            {topic.isAiGenerated ? (
-              <Text style={styles.topicCategoryBadge} numberOfLines={1}>
-                ✦ AI
-              </Text>
-            ) : null}
-            {topic.category ? (
-              <Text style={styles.topicCategoryBadge} numberOfLines={1}>
-                {topic.category}
-              </Text>
-            ) : null}
-          </View>
-          <View style={styles.topicCardHeadMeta}>
-            <Text style={styles.timeText} numberOfLines={1}>
-              {topicListDisplayTimeText(topic)}
-            </Text>
-            {renderTrailingAction ? renderTrailingAction(topic) : null}
-          </View>
-        </View>
         <HighlightedText
           style={[styles.cardTitle, readerState.read && styles.cardTitleRead]}
           highlightStyle={styles.highlightText}
@@ -132,25 +172,38 @@ export function TopicCard({
           text={topic.title}
           query={highlightQuery}
         />
-        {accessRequirementText ? <Text style={styles.topicAccessBadge}>{accessRequirementText}</Text> : null}
-        {visibleTopicTags.length ? (
-          <View style={styles.topicTagRow}>
-            {visibleTopicTags.map((tag, index) => (
-              <View
-                key={getMappingKey(tag, index)}
-                style={[styles.topicTagPill, topicTagColorStyle(tag, theme, topic.tags)]}
-              >
-                <Text style={[styles.topicTagText, topicTagTextColorStyle(tag, theme, topic.tags)]} numberOfLines={1}>
-                  {tag}
-                </Text>
-              </View>
-            ))}
+        {showMetadata ? (
+          <View style={styles.topicMetadata}>
+            {showSource ? (
+              <Text style={[styles.topicSourceBadge, sourceBadgeColorStyle(topic.source, theme)]} numberOfLines={1}>
+                {sourceLabel(topic.source)}
+              </Text>
+            ) : null}
+            {topic.isAiGenerated ? (
+              <Text style={styles.topicCategoryBadge} numberOfLines={1}>
+                ✦ AI
+              </Text>
+            ) : null}
+            {category ? (
+              <Text style={styles.topicCategoryBadge} numberOfLines={1}>
+                {category}
+              </Text>
+            ) : null}
+            {accessRequirementText ? <Text style={styles.topicAccessBadge}>{accessRequirementText}</Text> : null}
+            {visibleTopicTags.map((tag, index) => {
+              const colors = topicTagColorStyle(tag, theme, topic.tags);
+              return (
+                <View key={getMappingKey(tag, index)} style={[styles.topicTagPill, colors]}>
+                  <Text style={[styles.topicTagText, { color: colors.color }]} numberOfLines={1}>
+                    {tag.trim()}
+                  </Text>
+                </View>
+              );
+            })}
             {hiddenTopicTagCount ? (
-              <View style={[styles.topicTagPill, styles.topicTagMorePill]}>
-                <Text style={styles.topicTagMoreText} numberOfLines={1}>
-                  +{hiddenTopicTagCount}
-                </Text>
-              </View>
+              <Text style={styles.topicTagMoreText} numberOfLines={1}>
+                +{hiddenTopicTagCount}
+              </Text>
             ) : null}
           </View>
         ) : null}
@@ -163,36 +216,14 @@ export function TopicCard({
             query={highlightQuery}
           />
         ) : null}
-        <View style={styles.topicFooterRow}>
-          <View style={styles.topicAuthorChip}>
-            <Avatar contentSource={topic.source} name={topic.author} uri={topic.authorAvatar} tiny />
-            <View style={styles.topicAuthorTextGroup}>
-              <Text style={styles.topicAuthorName} numberOfLines={1}>
-                {authorMeta}
-              </Text>
-              {duplicateSourceText ? (
-                <Text style={styles.topicDuplicateSources} numberOfLines={1}>
-                  {duplicateSourceText}
-                </Text>
-              ) : null}
-            </View>
+        {trailingAction ? (
+          <View style={styles.topicFooterActionRow}>
+            {footer}
+            {trailingAction}
           </View>
-          <View renderToHardwareTextureAndroid style={styles.topicStatGroup}>
-            {readerState.hasNewReplies ? <Text style={styles.topicStatText}>有新回复</Text> : null}
-            {!hideReplyCount && typeof topic.replyCount === 'number' ? (
-              <View style={styles.topicStatItem}>
-                <MessageCircle size={14} color={theme.muted} strokeWidth={1.9} />
-                <Text style={styles.topicStatText}>{topic.replyCount}</Text>
-              </View>
-            ) : null}
-            {topic.viewCount ? (
-              <View style={styles.topicStatItem}>
-                <Eye size={14} color={theme.muted} strokeWidth={1.9} />
-                <Text style={styles.topicStatText}>{topic.viewCount}</Text>
-              </View>
-            ) : null}
-          </View>
-        </View>
+        ) : (
+          footer
+        )}
       </Pressable>
     </View>
   );
@@ -202,72 +233,73 @@ export const MemoizedTopicCard = memo(TopicCard, topicCardPropsAreEqual);
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontFamily = fontFamilyValue(settings.fontFamily);
-  const listFontScale = Math.max(0.9, Math.min(settings.fontScale, 1.08) * 0.96);
+  const fontSize = createReaderFontSizer(settings);
   const densityPadding = settings.listDensity === 'compact' ? 11 : settings.listDensity === 'loose' ? 16 : 14;
+  const densityGap = settings.listDensity === 'compact' ? 6 : settings.listDensity === 'loose' ? 10 : 8;
   return StyleSheet.create({
     topicRowShell: { position: 'relative', overflow: 'hidden', width: '100%', backgroundColor: theme.surface },
     topicCardPressable: {
-      gap: 10,
+      gap: densityGap,
       paddingHorizontal: 16,
       paddingTop: densityPadding + 2,
-      paddingBottom: 14
+      paddingBottom: densityPadding
     },
-    topicCardHead: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
-    topicCardHeadMeta: { alignItems: 'center', flexDirection: 'row', flexShrink: 0, gap: 4 },
-    topicBadgeRow: { flex: 1, minWidth: 0, alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+    topicMetadata: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      columnGap: 8,
+      rowGap: 4
+    },
     topicSourceBadge: {
+      maxWidth: '100%',
       overflow: 'hidden',
       color: theme.ink,
       fontFamily,
-      fontSize: 11,
+      fontSize: fontSize(11),
       fontWeight: '600',
       includeFontPadding: false,
-      lineHeight: 16,
-      backgroundColor: 'transparent',
-      borderColor: theme.line,
-      borderRadius: readerRadii.badge,
-      borderWidth: 0,
-      paddingHorizontal: 0,
-      paddingVertical: 3,
-      textAlignVertical: 'center'
+      lineHeight: fontSize(16)
     },
     topicCategoryBadge: {
+      maxWidth: '100%',
       overflow: 'hidden',
       color: theme.muted,
       fontFamily,
-      fontSize: 11,
-      fontWeight: '400',
+      fontSize: fontSize(11),
+      fontWeight: '500',
       includeFontPadding: false,
-      lineHeight: 16,
-      backgroundColor: 'transparent',
-      borderColor: theme.line,
-      borderRadius: readerRadii.badge,
-      borderWidth: 0,
-      paddingHorizontal: 0,
-      paddingVertical: 3,
-      textAlignVertical: 'center'
+      lineHeight: fontSize(16)
     },
-    timeText: { flexShrink: 0, color: theme.muted, fontFamily, fontSize: 12 },
+    timeText: {
+      maxWidth: '100%',
+      color: theme.muted,
+      fontFamily,
+      fontSize: fontSize(12),
+      lineHeight: fontSize(17),
+      includeFontPadding: false,
+      fontVariant: ['tabular-nums']
+    },
     cardTitle: {
       color: theme.ink,
       fontFamily,
-      fontSize: Math.round(17 * listFontScale),
-      fontWeight: '500',
-      letterSpacing: 0,
-      lineHeight: Math.round(24 * listFontScale)
+      fontSize: fontSize(16),
+      fontWeight: '600',
+      includeFontPadding: false,
+      lineHeight: fontSize(23)
     },
     cardTitleRead: { color: theme.muted, fontWeight: '500' },
-    excerpt: { color: theme.muted, fontFamily, fontSize: 12, lineHeight: 18 },
+    excerpt: { color: theme.muted, fontFamily, fontSize: fontSize(13), lineHeight: fontSize(19) },
     highlightText: { color: theme.dark ? theme.primary : theme.primaryStrong, fontWeight: '700' },
     topicAccessBadge: {
-      alignSelf: 'flex-start',
+      maxWidth: '100%',
       overflow: 'hidden',
       color: theme.danger,
       fontFamily,
-      fontSize: 11,
+      fontSize: fontSize(11),
       fontWeight: '600',
       includeFontPadding: false,
-      lineHeight: 16,
+      lineHeight: fontSize(16),
       backgroundColor: alphaColor(theme.danger, theme.dark ? 0.16 : 0.08),
       borderColor: alphaColor(theme.danger, 0.34),
       borderRadius: readerRadii.badge,
@@ -279,65 +311,85 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     topicFooterRow: {
       alignItems: 'center',
       flexDirection: 'row',
+      flexWrap: 'wrap',
       justifyContent: 'space-between',
-      gap: 10,
-      marginTop: 4
+      columnGap: 10,
+      rowGap: 5
     },
-    topicAuthorChip: { flex: 1, minWidth: 0, alignItems: 'center', flexDirection: 'row', gap: 7 },
+    topicFooterWithAction: { flex: 1, minWidth: 0 },
+    topicFooterActionRow: { minHeight: 48, alignItems: 'center', flexDirection: 'row', gap: 8 },
+    topicAuthorChip: {
+      flexBasis: 128,
+      flexGrow: 1,
+      flexShrink: 1,
+      minWidth: 0,
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 7
+    },
     topicAuthorTextGroup: { flex: 1, minWidth: 0, gap: 2 },
+    topicByline: { alignItems: 'baseline', flexDirection: 'row', flexWrap: 'wrap', columnGap: 8, rowGap: 2 },
     topicAuthorName: {
       flexShrink: 1,
+      maxWidth: '100%',
       color: theme.muted,
       fontFamily,
-      fontSize: 13,
+      fontSize: fontSize(13),
+      lineHeight: fontSize(18),
       fontWeight: '500',
       includeFontPadding: false
     },
     topicDuplicateSources: {
       color: theme.muted,
       fontFamily,
-      fontSize: 12,
+      fontSize: fontSize(12),
+      lineHeight: fontSize(17),
       includeFontPadding: false
     },
-    topicStatGroup: { flexShrink: 0, alignItems: 'center', flexDirection: 'row', gap: 14 },
-    topicStatItem: { alignItems: 'center', flexDirection: 'row', gap: 4 },
+    topicStatGroup: {
+      maxWidth: '100%',
+      marginLeft: 'auto',
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      columnGap: 10,
+      rowGap: 4
+    },
+    topicStatItem: { maxWidth: '100%', alignItems: 'center', flexDirection: 'row', gap: 4 },
     topicStatText: {
+      flexShrink: 1,
       color: theme.muted,
       fontFamily,
-      fontSize: 13,
+      fontSize: fontSize(12),
       fontWeight: '400',
       includeFontPadding: false,
-      lineHeight: 16
+      lineHeight: fontSize(17),
+      fontVariant: ['tabular-nums']
     },
-    topicTagRow: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingTop: 2 },
     topicTagPill: {
+      maxWidth: '100%',
       alignItems: 'center',
-      backgroundColor: 'transparent',
-      borderColor: 'transparent',
       borderRadius: readerRadii.badge,
-      borderWidth: 0,
       justifyContent: 'center',
-      minHeight: 20,
       paddingHorizontal: 7,
-      paddingVertical: 3
+      paddingVertical: 2
     },
     topicTagText: {
       color: theme.muted,
       fontFamily,
-      fontSize: 11,
+      fontSize: fontSize(11),
       fontWeight: '500',
       includeFontPadding: false,
-      lineHeight: 14,
+      lineHeight: fontSize(16),
       textAlignVertical: 'center'
     },
-    topicTagMorePill: { backgroundColor: 'transparent', borderColor: 'transparent' },
     topicTagMoreText: {
       color: theme.muted,
       fontFamily,
-      fontSize: 12,
+      fontSize: fontSize(11),
       fontWeight: '600',
       includeFontPadding: false,
-      lineHeight: 16,
+      lineHeight: fontSize(16),
       textAlignVertical: 'center'
     }
   });

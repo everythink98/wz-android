@@ -1,10 +1,15 @@
 import { postedMessages } from '../composerHostMessages';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { createRef, useRef, useState, type ComponentProps, type Ref } from 'react';
+import { NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { createContext, createRef, useRef, useState, type ComponentProps, type Ref } from 'react';
 import { Dimensions, StatusBar as NativeStatusBar, StyleSheet, Text, TextInput } from 'react-native';
 import * as ReactNative from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { KeyboardState } from 'react-native-reanimated';
+import { navigationRef } from '@/app/appNavigation';
+import { useAppDeepLinkNavigation } from '@/app/useAppDeepLinkNavigation';
+import { TopicComposerRoute } from '@/features/topic-composer/TopicComposerRoute';
 import { TopicComposerScreen } from '@/features/topic-composer/TopicComposerScreen';
 import {
   emptyTopicDraft,
@@ -17,11 +22,28 @@ import { createSiteSessionViewModel, type SiteSessionViewModels } from '@/domain
 import type { StructuredReplyComposer, StructuredReplyComposerHandle } from '@/ui/composer/StructuredReplyComposer';
 import type { ComposerSnapshot } from '@/domain/forum/structuredComposer';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
+import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 import { createTheme } from '@/ui/theme/tokens';
 import { act, fireEvent, render, waitFor, within } from '../render';
+import { QueryTestWrapper } from '../QueryTestWrapper';
 
 type Controller = ComponentProps<typeof TopicComposerScreen>['controller'];
+const mockComposerAppActive = createContext(true);
+let mockRouteController: Controller;
+const mockRouteSessions = () => sessions;
+const ComposerStack = createNativeStackNavigator<RootStackParamList>();
+jest.mock('@/features/topic-composer/TopicComposerRouteRuntime', () => ({
+  useTopicComposerRouteRuntime: () => ({
+    enabledSources: ['linuxdo'],
+    sessions: mockRouteSessions(),
+    appActive: (require('react') as typeof import('react')).useContext(mockComposerAppActive),
+    openAccount: () => {}
+  })
+}));
+jest.mock('@/features/topic-composer/useTopicComposerController', () => ({
+  useTopicComposerController: () => mockRouteController
+}));
 const originalSetSelection = TextInput.prototype.setSelection;
 beforeAll(() => {
   TextInput.prototype.setSelection = jest.fn();
@@ -383,7 +405,7 @@ describe('Create topic screen', () => {
     expect(view.getByLabelText('切换发帖网站')).toBeTruthy();
     expect(view.getByLabelText('帖子标题')).toBeTruthy();
     expect(view.queryByTestId('topic-rich-editor')).toBeNull();
-    expect(view.getByText('正在准备正文…')).toBeTruthy();
+    expect(view.getByRole('status', { name: '准备正文中', busy: true })).toBeTruthy();
     await fireEvent.changeText(view.getByLabelText('帖子标题'), '页面进入后立即输入');
     await view.rerender(<Harness initialDraft={draft} editorEnabled />);
     expect(view.getByTestId('topic-rich-editor')).toBeTruthy();
@@ -415,6 +437,87 @@ describe('Create topic screen', () => {
     mockKeyboardStyles.clear();
     mockQueuedJS = null;
   });
+  it('keeps an in-progress file picker on the same route and retires the attachment panel on a warm topic link', async () => {
+    const draft = draftFor('linuxdo');
+    const attachment = {
+      id: 'proof',
+      uri: 'file:///draft/proof.pdf',
+      name: 'proof.pdf',
+      size: 82,
+      mimeType: 'application/pdf',
+      kind: 'attachment',
+      status: 'uploaded',
+      description: '',
+      markup: '[proof](https://example.test/proof.pdf)'
+    } as const;
+    draft.attachments = [attachment];
+    const picker = Promise.withResolvers<string | undefined>();
+    const pickAttachments = jest.fn<Controller['pickAttachments']>(() => picker.promise);
+    const removeAttachment = jest.fn<Controller['removeAttachment']>(async () => undefined);
+    mockRouteController = controllerFor(draft, { pickAttachments, removeAttachment });
+    const subscription = ReactNative.Linking.addEventListener('url', () => {});
+    const addEventListener = jest.fn<typeof ReactNative.Linking.addEventListener>(() => subscription);
+    const linking = { addEventListener, getInitialURL: async () => null };
+    function NativeStackHarness({ appActive }: { appActive: boolean }) {
+      const ready = useAppDeepLinkNavigation(linking);
+      return (
+        <SafeAreaProvider
+          initialMetrics={{
+            frame: { x: 0, y: 0, width: 400, height: 800 },
+            insets: { top: 24, left: 0, right: 0, bottom: 24 }
+          }}
+        >
+          <mockComposerAppActive.Provider value={appActive}>
+            <NavigationContainer ref={navigationRef} onReady={ready}>
+              <ComposerStack.Navigator screenOptions={{ headerShown: false, animation: 'none' }}>
+                <ComposerStack.Screen name="MainTabs">
+                  {({ navigation }) => (
+                    <ReactNative.Button
+                      title="从首页发布"
+                      onPress={() => navigation.push('TopicComposer', { kind: 'create', initialSource: 'linuxdo' })}
+                    />
+                  )}
+                </ComposerStack.Screen>
+                <ComposerStack.Screen name="TopicComposer" component={TopicComposerRoute} />
+                <ComposerStack.Screen name="Topic">
+                  {({ route }) => <Text>深链主题 {route.params.topic.id}</Text>}
+                </ComposerStack.Screen>
+              </ComposerStack.Navigator>
+            </NavigationContainer>
+          </mockComposerAppActive.Provider>
+        </SafeAreaProvider>
+      );
+    }
+    const view = await render(<NativeStackHarness appActive />, { wrapper: QueryTestWrapper });
+    await fireEvent.press(view.getByText('从首页发布'));
+    await openTopicMore(view);
+    await press(view.getByLabelText('附件 1'));
+    await press(view.getByLabelText('选择附件'));
+    expect(pickAttachments).toHaveBeenCalledWith('attachment');
+    await view.rerender(<NativeStackHarness appActive={false} />);
+    expect(navigationRef.getCurrentRoute()?.name).toBe('TopicComposer');
+    expect(view.getByLabelText('移出草稿 proof.pdf')).toBeTruthy();
+    await view.rerender(<NativeStackHarness appActive />);
+    await act(() => picker.resolve(undefined));
+
+    const oldRemoveButton = view.getByLabelText('移出草稿 proof.pdf');
+    const [[, onUrl]] = addEventListener.mock.calls;
+    await act(async () => {
+      onUrl({ url: 'https://linux.do/t/176543' });
+      await fireEvent.press(oldRemoveButton);
+    });
+    expect(navigationRef.getCurrentRoute()?.name).toBe('Topic');
+    expect(removeAttachment).not.toHaveBeenCalled();
+    expect(view.queryByLabelText('移出草稿 proof.pdf', { includeHiddenElements: true })).toBeNull();
+
+    await act(() => navigationRef.goBack());
+    expect(navigationRef.getCurrentRoute()?.name).toBe('TopicComposer');
+    expect(view.queryByLabelText('关闭发帖选项')).toBeNull();
+    await openTopicMore(view);
+    await press(view.getByLabelText('附件 1'));
+    expect(view.getByLabelText('移出草稿 proof.pdf')).toBeTruthy();
+  });
+
   it('places posting options before the title and body', async () => {
     const view = await render(<Harness initialDraft={draftFor('yaohuo')} />);
     const fields = view.getAllByLabelText(/^(日常交流|帖子标题|帖子正文)$/);
@@ -622,8 +725,10 @@ describe('Create topic screen', () => {
         expect(animatedHeight ?? StyleSheet.flatten(metadata().props.style).maxHeight).toBe(collapsed ? 0 : '42%');
         expect(metadata().props.accessibilityElementsHidden).toBe(collapsed);
         expect(Boolean(view.queryByLabelText('查看标题与标签'))).toBe(collapsed);
-        expect(view.getAllByRole('button', { name: '帖子设置' })).toHaveLength(1);
-        expect(view.getAllByRole('button', { name: '附件与草稿' })).toHaveLength(1);
+        for (const name of ['帖子设置', '附件与草稿']) {
+          const button = view.getByRole('button', { name });
+          if (collapsed) expect(StyleSheet.flatten(button.props.style).flexShrink).toBe(1);
+        }
       };
       await act(() => {
         mockKeyboardStreams.forEach((keyboard) => {
@@ -1144,6 +1249,7 @@ describe('Create topic screen', () => {
       );
       expect(view.queryByLabelText('帖子标题')).toBeNull();
       expect(view.getByTestId('draft-owner-overlay')).toBeTruthy();
+      expect(view.getByRole('status', { name: '恢复草稿中', busy: true })).toBeTruthy();
       expect(
         view.getByTestId('structured-composer-webview', { includeHiddenElements: true }).props.postMessageMock
       ).toBe(postMessage);

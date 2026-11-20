@@ -136,6 +136,7 @@ describe('AccountHost NodeImage authorization boundary', () => {
     expect(nodeImageWebViewProps.source).toEqual({ uri: 'https://www.nodeimage.com/' });
     expect(nodeImageWebViewProps.injectedJavaScript).toBe('verify-script');
     expect(nodeImageWebViewMounts).toBe(3);
+    expect(nodeImageModalProps.refreshAction).toBeUndefined();
     expect(nodeImageModalProps.actions).toBeUndefined();
 
     await view.rerender(<AccountHost {...baseProps} webViewBlockMessage="代理状态切换中" />);

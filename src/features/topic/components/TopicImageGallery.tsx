@@ -6,16 +6,13 @@ import { ChevronLeft, ChevronRight } from 'lucide-react-native';
 import type { CompiledForumContentRow } from '@/domain/forum/topicContentSplit';
 import { OriginalImageUpgradeBoundary } from '@/platform/media/originalImageLoading';
 import { IconButton } from '@/ui/controls/ButtonControls';
-import {
-  NavigationBackdropProvider,
-  NavigationBackdropTarget,
-  NavigationGlassGroup
-} from '@/ui/navigation/NavigationGlass';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { readerRadii, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
+import { fontFamilyValue, readerRadii, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
 import { TopicContentPresentationProvider } from '../rendering/TopicContentPresentation';
 import { useTopicImageGallery, useTopicSplitDisclosureScopeKey } from '../rendering/TopicSplitDisclosure';
 import { useTopicSelectionCancel } from '../selection/TopicSelectionSurface';
+
+const MAX_GALLERY_DOTS = 7;
 
 export function TopicImageGallery({
   contentWidth,
@@ -32,113 +29,130 @@ export function TopicImageGallery({
   const sources = useMemo(() => row.slides.map((html) => ({ html })), [row.slides]);
   const carousel = useRef<CarouselRef>(null);
   const cancelSelection = useTopicSelectionCancel();
+  const showDots = row.slides.length > 1 && row.slides.length <= MAX_GALLERY_DOTS;
+
   return (
-    <NavigationBackdropProvider>
-      <View style={styles.gallery} testID="topic-image-gallery">
-        <View style={[styles.viewport, { height, width: contentWidth }]}>
-          <NavigationBackdropTarget active={row.slides.length > 1} testID="gallery-glass-content">
-            <Carousel
-              key={`${scopeKey}\u0000${row.semanticId}`}
-              defaultIndex={current}
-              ref={carousel}
-              data={sources}
-              itemSize={contentWidth}
-              loop={row.slides.length > 1}
-              renderWindowSize={2}
-              animation={{ type: 'timing', duration: 250 }}
-              scrollEnabled={row.slides.length > 1}
-              style={{ height, width: contentWidth }}
-              testID="topic-image-gallery-carousel"
-              onConfigurePanGesture={(gesture) => {
-                gesture.activeOffsetX([-10, 10]).failOffsetY([-10, 10]).maxPointers(1);
-              }}
-              onScrollStart={cancelSelection ?? undefined}
-              onSnapToItem={select}
-              renderItem={({ item, index: slide }) => (
-                <View style={[styles.slide, { height }]}>
-                  <OriginalImageUpgradeBoundary enabled={slide === current}>
-                    <TopicContentPresentationProvider continuation="only" imageMaxHeight={height}>
-                      <RenderHTMLSource contentWidth={contentWidth} source={item} />
-                    </TopicContentPresentationProvider>
-                  </OriginalImageUpgradeBoundary>
-                </View>
-              )}
-            />
-          </NavigationBackdropTarget>
-          {row.slides.length > 1 ? (
-            <View pointerEvents="box-none" style={styles.navigation}>
-              <View style={styles.arrow}>
-                <NavigationGlassGroup round>
-                  <IconButton
-                    icon={ChevronLeft}
-                    iconSize={20}
-                    label="上一张图片"
-                    iconOnly
-                    ghost
-                    onPress={() => carousel.current?.prev()}
-                  />
-                </NavigationGlassGroup>
-              </View>
-              <View style={styles.arrow}>
-                <NavigationGlassGroup round>
-                  <IconButton
-                    icon={ChevronRight}
-                    iconSize={20}
-                    label="下一张图片"
-                    iconOnly
-                    ghost
-                    onPress={() => carousel.current?.next()}
-                  />
-                </NavigationGlassGroup>
-              </View>
+    <View style={styles.gallery} testID="topic-image-gallery">
+      <View style={[styles.viewport, { height, width: contentWidth }]}>
+        <Carousel
+          key={`${scopeKey}\u0000${row.semanticId}`}
+          defaultIndex={current}
+          ref={carousel}
+          data={sources}
+          itemSize={contentWidth}
+          loop={row.slides.length > 1}
+          renderWindowSize={2}
+          animation={{ type: 'timing', duration: 250 }}
+          scrollEnabled={row.slides.length > 1}
+          style={{ height, width: contentWidth }}
+          testID="topic-image-gallery-carousel"
+          onConfigurePanGesture={(gesture) => {
+            gesture.activeOffsetX([-10, 10]).failOffsetY([-10, 10]).maxPointers(1);
+          }}
+          onScrollStart={cancelSelection ?? undefined}
+          onSnapToItem={select}
+          renderItem={({ item, index: slide }) => (
+            <View style={[styles.slide, { height }]}>
+              <OriginalImageUpgradeBoundary enabled={slide === current}>
+                <TopicContentPresentationProvider continuation="only" imageMaxHeight={height}>
+                  <RenderHTMLSource contentWidth={contentWidth} source={item} />
+                </TopicContentPresentationProvider>
+              </OriginalImageUpgradeBoundary>
             </View>
-          ) : null}
-        </View>
-        {row.slides.length > 1 ? (
-          <View style={styles.controls}>
-            <Text accessibilityLiveRegion="polite" style={styles.counter}>
-              {current + 1} / {row.slides.length}
-            </Text>
-          </View>
-        ) : null}
+          )}
+        />
       </View>
-    </NavigationBackdropProvider>
+      {row.slides.length > 1 ? (
+        <View style={styles.controlsRow}>
+          <View style={styles.stepper}>
+            <IconButton
+              icon={ChevronLeft}
+              iconSize={17}
+              label="上一张图片"
+              iconOnly
+              ghost
+              onPress={() => carousel.current?.prev()}
+            />
+            <View style={styles.indicatorGroup}>
+              {showDots ? (
+                <View accessible={false} importantForAccessibility="no-hide-descendants" style={styles.dots}>
+                  {row.slides.map((_, dotIndex) => (
+                    <View key={dotIndex} style={[styles.dot, dotIndex === current && styles.dotActive]} />
+                  ))}
+                </View>
+              ) : null}
+              <Text accessibilityLiveRegion="polite" style={styles.counter}>
+                {current + 1} / {row.slides.length}
+              </Text>
+            </View>
+            <IconButton
+              icon={ChevronRight}
+              iconSize={17}
+              label="下一张图片"
+              iconOnly
+              ghost
+              onPress={() => carousel.current?.next()}
+            />
+          </View>
+        </View>
+      ) : null}
+    </View>
   );
 }
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
+  const fontFamily = fontFamilyValue(settings.fontFamily);
   return StyleSheet.create({
-    gallery: { marginBottom: 8, marginTop: 6 },
+    gallery: { gap: 8, marginBottom: 10, marginTop: 6 },
     viewport: {
-      backgroundColor: theme.surface,
+      backgroundColor: theme.surface2,
+      borderColor: theme.line,
       borderRadius: readerRadii.content,
+      borderWidth: StyleSheet.hairlineWidth,
       overflow: 'hidden'
     },
     slide: { alignItems: 'center', justifyContent: 'center' },
-    navigation: {
-      ...StyleSheet.absoluteFill,
+    controlsRow: {
+      alignItems: 'center',
+      justifyContent: 'center'
+    },
+    stepper: {
+      alignItems: 'center',
+      backgroundColor: theme.surface2,
+      borderColor: theme.line,
+      borderRadius: readerRadii.pill,
+      borderWidth: StyleSheet.hairlineWidth,
+      flexDirection: 'row',
+      gap: 2,
+      paddingHorizontal: 2
+    },
+    indicatorGroup: {
       alignItems: 'center',
       flexDirection: 'row',
-      justifyContent: 'space-between',
-      paddingHorizontal: 8
+      gap: 8,
+      paddingHorizontal: 6
     },
-    arrow: {
+    dots: {
       alignItems: 'center',
-      justifyContent: 'center',
-      width: 56,
-      height: 56
+      flexDirection: 'row',
+      gap: 4
     },
-    controls: {
-      alignItems: 'center',
-      justifyContent: 'center',
-      minHeight: 28,
-      paddingVertical: 6
+    dot: {
+      backgroundColor: theme.lineStrong,
+      borderRadius: readerRadii.pill,
+      height: 5,
+      width: 5
+    },
+    dotActive: {
+      backgroundColor: theme.primary,
+      width: 14
     },
     counter: {
       color: theme.muted,
+      fontFamily,
       fontSize: Math.round(12 * settings.fontScale),
       fontVariant: ['tabular-nums'],
-      fontWeight: '500',
+      fontWeight: '600',
       includeFontPadding: false
     }
   });

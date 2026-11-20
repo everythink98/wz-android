@@ -5,12 +5,33 @@ import { ACCESS_REQUIREMENT_NOTICE_PATTERN_SOURCE } from '@/domain/forum/accessR
 import { parseNodeSeekPageDocument } from './protocol';
 import { withHtmlDecodedInputBudget, withHtmlWorkBudget } from '../../../tests/helpers/htmlWorkBudget';
 import {
+  mergeRenderedNodeSeekTopic,
+  normalizePostData,
   normalizeRenderedNodeSeekPollRoot,
   parseRenderedNodeSeekTopicHtml,
   prepareNodeSeekForumContent
 } from './topicParser';
 
 describe('rendered nested reply rows', () => {
+  it('retains embedded creation and reply dates when HTML has no timestamps', () => {
+    const rendered = parseRenderedNodeSeekTopicHtml(
+      parseNodeSeekPageDocument(
+        '<h1>Topic</h1><div class="content-item"><article class="post-content">Body</article></div>'
+      ),
+      '12'
+    )!;
+    const embedded = normalizePostData(
+      { title: 'Topic', createdDate: '2025-02-01T00:00:00Z', updatedDate: '2025-02-02T00:00:00Z' },
+      '12',
+      'https://www.nodeseek.com/post-12-1'
+    );
+    expect(rendered.createdAt).toBe('');
+    expect(mergeRenderedNodeSeekTopic(rendered, embedded)).toMatchObject({
+      createdAt: '2025-02-01T00:00:00.000Z',
+      lastReplyAt: '2025-02-02T00:00:00.000Z'
+    });
+  });
+
   it('derives every overlapping reply row with bounded DOM work and keeps the local reply cursor', () => {
     const depth = 512;
     const html =

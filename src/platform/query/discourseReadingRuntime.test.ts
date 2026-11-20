@@ -307,16 +307,16 @@ describe('Discourse reading lifecycle', () => {
 
   it('preserves unsent reading against a rollback, then accepts a fresh confirmed rollback', async () => {
     const { runtime, advance } = setup();
-    runtime.observe({ topicId: '1', lastReadPostNumber: 100, highestPostNumber: 200 }, runtime.startRequest());
+    runtime.observe([{ topicId: '1', lastReadPostNumber: 100, highestPostNumber: 200 }], runtime.startRequest());
     const session = runtime.begin('1');
     session.visible([40]);
     session.active(true);
     await advance(2000);
-    runtime.observe({ topicId: '1', lastReadPostNumber: null }, runtime.startRequest());
+    runtime.observe([{ topicId: '1', lastReadPostNumber: null }], runtime.startRequest());
     expect(readingResumeAnchor(runtime.state()['1'])).toEqual({ floor: 40 });
     session.end();
     await advance(1000);
-    runtime.observe({ topicId: '1', lastReadPostNumber: null }, runtime.startRequest());
+    runtime.observe([{ topicId: '1', lastReadPostNumber: null }], runtime.startRequest());
     expect(readingResumeAnchor(runtime.state()['1'])).toBeUndefined();
     expect(runtime.state()['1'].visited).toBe(true);
     runtime.dispose();
@@ -403,18 +403,28 @@ describe('Discourse reading lifecycle', () => {
 
   it('keeps the last viewport after acknowledgement and ignores an older response', async () => {
     const { runtime, advance } = setup();
-    runtime.observe({ topicId: '1', lastReadPostNumber: 100, highestPostNumber: 200 }, runtime.startRequest());
+    runtime.observe([{ topicId: '1', lastReadPostNumber: 100, highestPostNumber: 200 }], runtime.startRequest());
     const old = runtime.startRequest();
     const session = runtime.begin('1');
     session.visible([40], { floor: 40, rowKey: 'reply:40', offset: 12 });
     session.active(true);
     await advance(2000);
     session.end();
-    runtime.observe({ topicId: '1', lastReadPostNumber: 20 }, old);
+    runtime.observe([{ topicId: '1', lastReadPostNumber: 20 }], old);
     expect(readingResumeAnchor(runtime.state()['1'])).toEqual({ floor: 40, rowKey: 'reply:40', offset: 12 });
     expect(runtime.state()['1'].server.lastReadPostNumber).toBe(100);
-    runtime.observe({ topicId: '1', lastReadPostNumber: 180 }, runtime.startRequest());
+    runtime.observe([{ topicId: '1', lastReadPostNumber: 180 }], runtime.startRequest());
     expect(readingResumeAnchor(runtime.state()['1'])).toEqual({ floor: 181 });
+    const newer = runtime.state()['1'];
+    runtime.observe(
+      [
+        { topicId: '1', lastReadPostNumber: 20 },
+        { topicId: '2', lastReadPostNumber: 7 }
+      ],
+      old
+    );
+    expect(runtime.state()['1']).toBe(newer);
+    expect(runtime.state()['2'].server.lastReadPostNumber).toBe(7);
     runtime.dispose();
   });
 

@@ -11,7 +11,12 @@ import {
   type UseQueryResult
 } from '@tanstack/react-query';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { isSessionSource, type DiscourseSource, type SessionSource } from '@/domain/forum/sourceCatalog';
+import {
+  isDiscourseSource,
+  isSessionSource,
+  type DiscourseSource,
+  type SessionSource
+} from '@/domain/forum/sourceCatalog';
 import { mergeTopics, type SearchSort } from '@/domain/forum/feed';
 import {
   buildDiscourseSearchQuery,
@@ -19,8 +24,14 @@ import {
   type SearchFilterState,
   type SourceSearchFilter
 } from '@/domain/forum/searchFilters';
-import { mergeLoadedSearchHistory, normalizeSearchHistory, sameSearchHistory } from './history';
+import {
+  normalizeSearchHistory,
+  normalizeSearchHistoryEntry,
+  sameSearchHistory,
+  searchHistoryFromRaw
+} from './history';
 import type { ReadGateway } from '@/sources/readGateway';
+import type { ForumReadPlan } from '@/domain/forum/readPlan';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import { sourceLabel } from '@/domain/forum/presentation';
@@ -35,7 +46,7 @@ import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import type { Category, FeedSource, Source } from '@/domain/forum/models';
 import {
   groupFromRemoteSearchResult,
-  hasNextSearchPage,
+  nextSearchPage,
   type RemoteSearchSourceResult,
   type SearchGroup
 } from './listItems';
@@ -57,11 +68,11 @@ import { RequestCanceledError } from '@/platform/network/request';
 import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 
 const SEARCH_HISTORY_STORAGE_KEY = 'reader-search-history';
-type SearchRunInput = Source | Partial<SearchRunOptions>;
 
 type RecentSearchHistoryOwner = {
   read: 'waiting' | 'retryable' | 'hydrated';
-  write: { phase: 'none' } | { phase: 'target'; entries: string[] };
+  pending?: string[];
+  stored: string[];
   removedKeys: Set<string>;
   writer: ReturnType<typeof createKeyedSerialRunner<null>>;
 };
@@ -153,17 +164,16 @@ function mergeSearchPages(pages: RemoteSearchSourceResult[]): SearchGroup | null
   };
 }
 
-function externalSearchUrlForPlan(source: Source, query: string, plan: ReturnType<ReadGateway['getReadPlan']>) {
-  return query.trim() && searchPlanUsesExternalBrowser(source, plan)
-    ? buildExternalForumSearchUrl(source, query)
+function externalSearchUrlForPlan(plan: ForumReadPlan, query: string) {
+  return query.trim() && searchPlanUsesExternalBrowser(plan)
+    ? buildExternalForumSearchUrl(plan.source, query)
     : undefined;
 }
 
 function searchPlanUsesExternalBrowser(
-  source: Source,
-  plan: ReturnType<ReadGateway['getReadPlan']>
-): source is ExternalForumSearchSource {
-  return plan.state === 'ready' && plan.lane === 'public' && isExternalForumSearchSource(source);
+  plan: ForumReadPlan
+): plan is ForumReadPlan & { source: ExternalForumSearchSource } {
+  return plan.state === 'ready' && plan.lane === 'public' && isExternalForumSearchSource(plan.source);
 }
 
 export function useSearchController({
@@ -205,7 +215,7 @@ export function useSearchController({
   const aggregateSources = enabledSearchSources;
   const recentSearchHistoryRef = useRef<RecentSearchHistoryOwner>({
     read: 'waiting',
-    write: { phase: 'none' },
+    stored: [],
     writer: createKeyedSerialRunner<null>('after-reaction'),
     removedKeys: new Set<string>()
   });
@@ -216,9 +226,17 @@ export function useSearchController({
   const [searchFilters, setSearchFilters] = useState<SearchFilterState>(DEFAULT_SEARCH_FILTERS);
   const [submittedSearch, setSubmittedSearch] = useState<SubmittedSearch | null>(null);
   const [linuxDoAiEnabled, setLinuxDoAiEnabled] = useState(false);
-  const [recentSearches, setRecentSearches] = useState<string[]>([]);
+  const [{ entries: recentSearches, writeFailed }, setRecentSearchHistory] = useState<{
+    entries: string[];
+    writeFailed: boolean;
+  }>({ entries: [], writeFailed: false });
   const [recentSearchWritePermission, setRecentSearchWritePermission] = useState<'protected' | 'writable'>('protected');
   const [recentSearchHistoryReadAttempt, setRecentSearchHistoryReadAttempt] = useState(0);
+  useEffect(() => {
+    if (!searchActive || !writeFailed) return;
+    notify('最近搜索保存失败，已恢复上次保存的记录。');
+    setRecentSearchHistory((current) => ({ ...current, writeFailed: false }));
+  }, [notify, searchActive, writeFailed]);
   const enabledSearchSourcesRef = useRef(enabledSearchSources);
   useCommitRefValue(enabledSearchSourcesRef, enabledSearchSources);
   const searchSourceIncluded = searchSource === 'all' || enabledSearchSources.includes(searchSource);
@@ -238,14 +256,14 @@ export function useSearchController({
     AsyncStorage.getItem(SEARCH_HISTORY_STORAGE_KEY)
       .then((raw) => {
         if (observation === 'retired') return;
-        const storedHistory = mergeLoadedSearchHistory([], raw);
+        const storedHistory = searchHistoryFromRaw(raw);
         const removedKeys = new Set(recentSearchHistoryRef.current.removedKeys);
         recentSearchHistoryRef.current.read = 'hydrated';
         recentSearchHistoryRef.current.removedKeys.clear();
-        recentSearchHistoryRef.current.write = { phase: 'target', entries: storedHistory };
-        setRecentSearches((current) => {
-          const merged = mergeLoadedSearchHistory(current, raw).filter((item) => !removedKeys.has(item.toLowerCase()));
-          return sameSearchHistory(current, merged) ? current : merged;
+        recentSearchHistoryRef.current.stored = storedHistory;
+        setRecentSearchHistory((current) => {
+          const merged = normalizeSearchHistory([...current.entries, ...storedHistory], removedKeys);
+          return sameSearchHistory(current.entries, merged) ? current : { ...current, entries: merged };
         });
         setRecentSearchWritePermission('writable');
       })
@@ -261,16 +279,23 @@ export function useSearchController({
 
   useEffect(() => {
     if (recentSearchWritePermission !== 'writable') return;
-    const target = recentSearchHistoryRef.current.write;
-    if (sameSearchHistory(target.phase === 'target' ? target.entries : null, recentSearches)) return;
+    const owner = recentSearchHistoryRef.current;
+    if (sameSearchHistory(owner.pending ?? owner.stored, recentSearches)) return;
     const next = recentSearches;
-    recentSearchHistoryRef.current.write = { phase: 'target', entries: next };
-    void recentSearchHistoryRef.current.writer
-      .run(null, () => AsyncStorage.setItem(SEARCH_HISTORY_STORAGE_KEY, JSON.stringify(next)))
+    owner.pending = next;
+    void owner.writer
+      .run(null, async () => {
+        await AsyncStorage.setItem(SEARCH_HISTORY_STORAGE_KEY, JSON.stringify(next));
+        owner.stored = next;
+        if (owner.pending === next) owner.pending = undefined;
+      })
       .catch(() => {
-        const target = recentSearchHistoryRef.current.write;
-        if (target.phase === 'target' && target.entries === next)
-          recentSearchHistoryRef.current.write = { phase: 'none' };
+        if (owner.pending !== next) return;
+        owner.pending = undefined;
+        const stored = owner.stored;
+        setRecentSearchHistory((current) =>
+          sameSearchHistory(current.entries, next) ? { entries: stored, writeFailed: true } : current
+        );
       });
   }, [recentSearches, recentSearchWritePermission]);
 
@@ -283,40 +308,44 @@ export function useSearchController({
 
   const addRecentSearch = useCallback(
     (query: string) => {
-      const clean = query.trim();
+      const { query: clean, key } = normalizeSearchHistoryEntry(query);
       if (!clean) return;
-      recentSearchHistoryRef.current.removedKeys.delete(clean.toLowerCase());
+      recentSearchHistoryRef.current.removedKeys.delete(key);
       retryRecentSearchHistoryRead();
-      setRecentSearches((current) =>
-        normalizeSearchHistory([clean, ...current.filter((item) => item.toLowerCase() !== clean.toLowerCase())])
-      );
+      setRecentSearchHistory((current) => ({
+        ...current,
+        entries: normalizeSearchHistory([clean, ...current.entries])
+      }));
     },
     [retryRecentSearchHistoryRead]
   );
 
   const removeRecentSearch = useCallback(
     (query: string) => {
+      const { key } = normalizeSearchHistoryEntry(query);
       if (recentSearchHistoryRef.current.read !== 'hydrated') {
-        recentSearchHistoryRef.current.removedKeys.add(query.toLowerCase());
+        recentSearchHistoryRef.current.removedKeys.add(key);
       }
       retryRecentSearchHistoryRead();
-      setRecentSearches((current) => current.filter((item) => item !== query));
+      setRecentSearchHistory((current) => ({
+        ...current,
+        entries: current.entries.filter((item) => normalizeSearchHistoryEntry(item).key !== key)
+      }));
     },
     [retryRecentSearchHistoryRead]
   );
 
   const runRemoteSearchSource = useCallback(
     async (
-      source: Source,
+      plan: ForumReadPlan,
       query: string,
       page: number,
       signal: AbortSignal,
       sort: SearchSort,
-      filter: SourceSearchFilter | undefined,
-      readPlanScope: string
+      filter: SourceSearchFilter | undefined
     ): Promise<RemoteSearchSourceResult> => {
+      const source = plan.source;
       const trace = beginDiagnosticTrace('search', page > 1 ? 'load-more' : 'run', { source, page });
-      const plan = readGateway.getReadPlan(source, 'search');
       const sourceStatusNotice =
         plan.state === 'ready' && plan.lane === 'public'
           ? undefined
@@ -335,7 +364,7 @@ export function useSearchController({
             filter: activeFilter,
             signal
           },
-          { readPlanScope, trace }
+          { plan, trace }
         );
         const parserSummary = sourceDiagnosticSummary(data);
         const sourceError =
@@ -348,6 +377,7 @@ export function useSearchController({
                 retryable: true
               }
             : undefined);
+        const nextPage = sourceError ? undefined : nextSearchPage(data, page);
         const group: SearchGroup = {
           source,
           label: sourceLabel(source),
@@ -355,9 +385,8 @@ export function useSearchController({
           authNotice: sourceError ? authNoticeForSourceError(sourceError) || undefined : sourceStatusNotice,
           error: sourceError?.message,
           errorKind: sourceError?.kind,
-          hasMore: !sourceError && hasNextSearchPage(data.hasMore, data.nextPage, page),
-          nextPage:
-            !sourceError && hasNextSearchPage(data.hasMore, data.nextPage, page) ? (data.nextPage ?? null) : null
+          hasMore: nextPage !== undefined,
+          nextPage: nextPage ?? null
         };
         const result: RemoteSearchSourceResult =
           sourceError?.kind === 'verification-required' && (source === 'nodeseek' || source === 'linuxdo')
@@ -399,7 +428,7 @@ export function useSearchController({
           }
           const currentPlan = readGateway.getReadPlan(source, 'search');
           if (
-            currentPlan.cacheScope !== readPlanScope ||
+            currentPlan.cacheScope !== plan.cacheScope ||
             reconciliation.status === 'anonymous' ||
             reconciliation.status === 'changed'
           ) {
@@ -461,15 +490,11 @@ export function useSearchController({
     ? remoteSearchSort(submittedSearch.source, submittedSearch.filters)
     : 'relevance';
   const singleSearchPlan = readGateway.getReadPlan(submittedSource, 'search');
-  const singleExternalSearchUrl = externalSearchUrlForPlan(
-    submittedSource,
-    submittedSearch?.query || '',
-    singleSearchPlan
-  );
+  const singleExternalSearchUrl = externalSearchUrlForPlan(singleSearchPlan, submittedSearch?.query || '');
   const singleSearchKey = useMemo(
     () =>
       forumQueryKeys.search({
-        source: submittedSource,
+        source: singleSearchPlan.source,
         lane: 'pages',
         query: submittedSearch?.query || '',
         readPlanScope: singleSearchPlan.cacheScope,
@@ -488,11 +513,9 @@ export function useSearchController({
   );
 
   const aggregatePlans = aggregateSources.map((source) => readGateway.getReadPlan(source, 'search'));
-  const externalSearchSources = aggregateSources.filter((source, index) =>
-    searchPlanUsesExternalBrowser(source, aggregatePlans[index])
-  );
-  const aggregateExternalSearchUrls = aggregateSources.map((source, index) =>
-    externalSearchUrlForPlan(source, submittedSearch?.query || '', aggregatePlans[index])
+  const externalSearchSources = aggregatePlans.filter(searchPlanUsesExternalBrowser).map((plan) => plan.source);
+  const aggregateExternalSearchUrls = aggregatePlans.map((plan) =>
+    externalSearchUrlForPlan(plan, submittedSearch?.query || '')
   );
   const aggregateExternalSearchKey = aggregateExternalSearchUrls.join('\u0000');
   const aggregateSorts = aggregateSources.map((source) => remoteSearchSort(source, DEFAULT_SEARCH_FILTERS));
@@ -520,6 +543,15 @@ export function useSearchController({
       scope: sessionEpochs
     });
   });
+  const searchReadScope = hashKey(submittedSearch?.source === 'all' ? aggregateKeys : singleSearchKey);
+  const activeSearchRead = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    activeSearchRead.current = searchActive ? searchReadScope : null;
+    return () => {
+      activeSearchRead.current = null;
+    };
+  }, [searchActive, searchReadScope]);
+  const searchReadIsCurrent = useCallback(() => activeSearchRead.current === searchReadScope, [searchReadScope]);
   const aggregateQueries = useQueries({
     queries: aggregateSources.map((source, index) => ({
       queryKey: aggregateKeys[index],
@@ -531,13 +563,12 @@ export function useSearchController({
       ),
       queryFn: async ({ signal }: { signal: AbortSignal }) => {
         const result = await runRemoteSearchSource(
-          source,
+          aggregatePlans[index],
           submittedSearch?.query || '',
           1,
           signal,
           aggregateSorts[index],
-          DEFAULT_SEARCH_FILTERS[source],
-          aggregatePlans[index].cacheScope
+          DEFAULT_SEARCH_FILTERS[source]
         );
         if (result.kind !== 'success') {
           throw new SearchPageError(1, result);
@@ -600,13 +631,12 @@ export function useSearchController({
     initialPageParam: 1,
     queryFn: async ({ pageParam, signal }) => {
       const result = await runRemoteSearchSource(
-        submittedSource,
+        singleSearchPlan,
         submittedSearch?.query || '',
         pageParam,
         signal,
         submittedSort,
-        submittedFilter,
-        singleSearchPlan.cacheScope
+        submittedFilter
       );
       if (result.kind !== 'success') {
         throw new SearchPageError(pageParam, result);
@@ -615,9 +645,7 @@ export function useSearchController({
     },
     getNextPageParam: (lastPage, _pages, lastPageParam) => {
       const group = groupFromRemoteSearchResult(lastPage);
-      return hasNextSearchPage(group.hasMore, group.nextPage, lastPageParam)
-        ? (group.nextPage ?? undefined)
-        : undefined;
+      return nextSearchPage(group, lastPageParam);
     }
   });
 
@@ -637,24 +665,22 @@ export function useSearchController({
           };
         }
         const query = aggregateQueries[index];
-        if (query.error instanceof SearchPageError) {
-          const failed = groupFromRemoteSearchResult(query.error.result);
+        if (query.error) {
+          const failed =
+            query.error instanceof SearchPageError
+              ? groupFromRemoteSearchResult(query.error.result)
+              : searchGroupForUnexpectedError(source, query.error);
           if (query.data) {
             return {
               ...groupFromRemoteSearchResult(query.data),
               authNotice: failed.authNotice,
               error: failed.error,
               errorKind: failed.errorKind,
+              retainedResults: { retryPage: null },
               loading: query.isFetching
             };
           }
           return { ...failed, loading: query.isFetching };
-        }
-        if (query.error) {
-          return {
-            ...searchGroupForUnexpectedError(source, query.error),
-            loading: query.isFetching
-          };
         }
         if (query.data) {
           return { ...groupFromRemoteSearchResult(query.data), loading: query.isFetching };
@@ -695,15 +721,18 @@ export function useSearchController({
     }
     let merged = mergedSinglePages;
     const error = singleSearchQuery.error;
-    if (merged && error instanceof SearchPageError) {
-      const failed = groupFromRemoteSearchResult(error.result);
+    if (merged && error) {
+      const failed =
+        error instanceof SearchPageError
+          ? groupFromRemoteSearchResult(error.result)
+          : searchGroupForUnexpectedError(submittedSource, error);
+      const retryPage = singleSearchQuery.isFetchNextPageError && error instanceof SearchPageError ? error.page : null;
       merged = {
         ...merged,
         error: failed.error,
         errorKind: failed.errorKind,
         authNotice: failed.authNotice || merged.authNotice,
-        hasMore: error.page > 1 ? true : merged.hasMore,
-        nextPage: error.page > 1 ? error.page : merged.nextPage
+        retainedResults: { retryPage }
       };
     }
     if (merged) {
@@ -726,6 +755,7 @@ export function useSearchController({
   }, [
     mergedSinglePages,
     singleSearchQuery.error,
+    singleSearchQuery.isFetchNextPageError,
     singleSearchQuery.isFetching,
     singleSearchQuery.isFetchingNextPage,
     submittedSearchSourceIncluded,
@@ -769,7 +799,7 @@ export function useSearchController({
         markDiagnosticStage(trace, 'guard', { source: 'linuxdo', state: 'started' });
         const result = await readGateway.searchSemanticTopics(
           { source: 'linuxdo', query: linuxDoAiFullQuery, signal },
-          { readPlanScope: linuxDoSemanticPlan.cacheScope, trace }
+          { plan: linuxDoSemanticPlan, trace }
         );
         if (!result) throw new Error('AI 搜索未返回结果');
         if (signal.aborted) {
@@ -838,10 +868,11 @@ export function useSearchController({
 
   const retrySearchSource = useCallback(
     (source: Source) => {
-      if (!searchActive || !enabledSearchSourcesRef.current.includes(source)) return;
+      if (!searchReadIsCurrent() || !enabledSearchSourcesRef.current.includes(source)) return;
+      const plan = readGateway.getReadPlan(source, 'search');
+      if (searchPlanUsesExternalBrowser(plan)) return;
       searchRecovery.newIntent();
       if (source === 'yaohuo') yaohuoLoginHandledRef.current = false;
-      const plan = readGateway.getReadPlan(source, 'search');
       if (
         plan.state === 'blocked' &&
         (plan.reason === 'identity-pending' || plan.reason === 'identity-unavailable') &&
@@ -867,7 +898,7 @@ export function useSearchController({
       aggregateSources,
       reconcileIdentityStatus,
       readGateway,
-      searchActive,
+      searchReadIsCurrent,
       singleSearchQuery.fetchNextPage,
       singleSearchQuery.isFetchNextPageError,
       singleSearchQuery.refetch,
@@ -880,7 +911,7 @@ export function useSearchController({
   const loadMoreSearchSource = useCallback(
     async (source: Source, page: number): Promise<LinuxDoReadResumeOutcome> => {
       if (
-        !searchActive ||
+        !searchReadIsCurrent() ||
         !enabledSearchSourcesRef.current.includes(source) ||
         submittedSearch?.source === 'all' ||
         source !== submittedSource
@@ -899,11 +930,12 @@ export function useSearchController({
           : group?.nextPage;
       if (retryPage !== page) return 'stale';
       const result = await singleSearchQuery.fetchNextPage({ cancelRefetch: false });
+      if (!searchReadIsCurrent()) return 'stale';
       return result.isError ? 'failed' : 'completed';
     },
     [
       queryClient,
-      searchActive,
+      searchReadIsCurrent,
       singleSearchKey,
       singleSearchQuery.fetchNextPage,
       submittedSearch?.source,
@@ -1024,14 +1056,8 @@ export function useSearchController({
   ]);
 
   const runSearch = useCallback(
-    async (options?: SearchRunInput): Promise<LinuxDoReadResumeOutcome> => {
-      if (!searchActive) return 'stale';
-      const runOptions = typeof options === 'string' ? { sourceOverride: options } : options || {};
-      if ('sourceOverride' in runOptions && runOptions.sourceOverride) {
-        if (!enabledSearchSourcesRef.current.includes(runOptions.sourceOverride as Source)) return 'stale';
-        retrySearchSource(runOptions.sourceOverride as Source);
-        return 'completed';
-      }
+    async (runOptions: Partial<SearchRunOptions> = {}): Promise<LinuxDoReadResumeOutcome> => {
+      if (!searchReadIsCurrent()) return 'stale';
       const query = (runOptions.query ?? searchQuery).trim();
       if (!query) {
         notify('请输入搜索词');
@@ -1058,19 +1084,19 @@ export function useSearchController({
             const aggregateSource = aggregateSources[index];
             if (
               aggregateSource &&
-              !externalSearchUrlForPlan(aggregateSource, query, readGateway.getReadPlan(aggregateSource, 'search'))
+              !externalSearchUrlForPlan(readGateway.getReadPlan(aggregateSource, 'search'), query)
             ) {
               void result.refetch({ cancelRefetch: false });
             }
           });
-        } else if (!externalSearchUrlForPlan(source, query, readGateway.getReadPlan(source, 'search'))) {
+        } else if (!externalSearchUrlForPlan(readGateway.getReadPlan(source, 'search'), query)) {
           void singleSearchQuery.refetch({ cancelRefetch: false });
         }
       } else {
         setSubmittedSearch(next);
       }
       if (source !== 'all') {
-        const externalSearchUrl = externalSearchUrlForPlan(source, query, readGateway.getReadPlan(source, 'search'));
+        const externalSearchUrl = externalSearchUrlForPlan(readGateway.getReadPlan(source, 'search'), query);
         if (externalSearchUrl) {
           try {
             await onOpenExternalSearch?.(externalSearchUrl);
@@ -1088,8 +1114,7 @@ export function useSearchController({
       notify,
       onOpenExternalSearch,
       readGateway,
-      retrySearchSource,
-      searchActive,
+      searchReadIsCurrent,
       searchFilters,
       searchQuery,
       searchSource,
@@ -1147,11 +1172,17 @@ export function useSearchController({
     [searchFilters, searchQuery, searchRecovery, submittedSearch]
   );
 
+  const candidateSource = searchSource !== 'all' && isDiscourseSource(searchSource) ? searchSource : 'linuxdo';
+  const tagReadPlan = readGateway.getReadPlan(candidateSource, 'search-tags');
+  const userReadPlan = readGateway.getReadPlan(candidateSource, 'search-users');
+  const searchCandidateReadPlanScopes = useMemo(
+    () => ({ tags: tagReadPlan.cacheScope, users: userReadPlan.cacheScope }),
+    [tagReadPlan.cacheScope, userReadPlan.cacheScope]
+  );
   const searchDiscourseTags = useCallback(
     async (options: Omit<Parameters<ReadGateway['searchTagOptions']>[0], 'source'> & { source?: DiscourseSource }) => {
       const source = options.source || 'linuxdo';
       if (!enabledSearchSourcesRef.current.includes(source)) return [];
-      const readPlan = readGateway.getReadPlan(source, 'search-tags');
       const { source: _source, ...request } = options;
       const trace = beginDiagnosticTrace('search', 'searchTagOptions', { source });
       markDiagnosticStage(trace, 'guard', {
@@ -1161,25 +1192,24 @@ export function useSearchController({
         selectedCount: options.selectedTags?.length || 0
       });
       return runSearchOptions(source, trace, options.signal, () =>
-        readGateway.searchTagOptions({ source, ...request }, { readPlanScope: readPlan.cacheScope, trace })
+        readGateway.searchTagOptions({ source, ...request }, { plan: tagReadPlan, trace })
       );
     },
-    [readGateway]
+    [readGateway, candidateSource, tagReadPlan.cacheScope]
   );
 
   const searchDiscourseUsers = useCallback(
     async (options: Omit<Parameters<ReadGateway['searchUserOptions']>[0], 'source'> & { source?: DiscourseSource }) => {
       const source = options.source || 'linuxdo';
       if (!enabledSearchSourcesRef.current.includes(source)) return [];
-      const readPlan = readGateway.getReadPlan(source, 'search-users');
       const { source: _source, ...request } = options;
       const trace = beginDiagnosticTrace('search', 'searchUserOptions', { source });
       markDiagnosticStage(trace, 'guard', { source, state: 'started', hasQuery: Boolean(options.term.trim()) });
       return runSearchOptions(source, trace, options.signal, () =>
-        readGateway.searchUserOptions({ source, ...request }, { readPlanScope: readPlan.cacheScope, trace })
+        readGateway.searchUserOptions({ source, ...request }, { plan: userReadPlan, trace })
       );
     },
-    [readGateway]
+    [readGateway, candidateSource, userReadPlan.cacheScope]
   );
 
   const toggleLinuxDoAiSearch = useCallback(() => {
@@ -1189,7 +1219,7 @@ export function useSearchController({
   }, [linuxDoAiState.status]);
   const retryLinuxDoAiSearch = useCallback(() => {
     if (
-      searchActive &&
+      searchReadIsCurrent() &&
       enabledSearchSourcesRef.current.includes('linuxdo') &&
       !linuxDoVerificationActive &&
       linuxDoSemanticPlan.state === 'ready' &&
@@ -1202,7 +1232,7 @@ export function useSearchController({
     linuxDoAiQuery.refetch,
     linuxDoSemanticPlan.state,
     linuxDoVerificationActive,
-    searchActive
+    searchReadIsCurrent
   ]);
   const abortSearchRequests = useCallback(() => {
     searchRecovery.observe(null);
@@ -1219,7 +1249,6 @@ export function useSearchController({
   useEffect(() => abortSearchRequests, [abortSearchRequests]);
 
   return {
-    abortSearchRequests,
     applySearchFilter,
     externalSearchSources,
     loadMoreSearchSource,
@@ -1236,11 +1265,14 @@ export function useSearchController({
           : submittedSearchSourceIncluded && !singleExternalSearchUrl && singleSearchQuery.isFetching,
     searchFilters,
     searchGroups,
+    searchCandidateReadPlanScopes,
+    searchCandidateRequestsEnabled: searchActive && tagReadPlan.state === 'ready' && userReadPlan.state === 'ready',
     searchDiscourseTags,
     searchDiscourseUsers,
     linuxDoAiState,
     linuxDoAiVisible,
     searchQuery,
+    searchReadScope,
     searchSource,
     submittedSearchQuery: submittedSearch?.query || '',
     setSearchQuery,

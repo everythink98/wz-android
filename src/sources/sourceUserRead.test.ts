@@ -42,6 +42,27 @@ import {
   mergeSourceDiagnosticSummaries
 } from '@/platform/diagnostics/sourceDiagnosticSummary';
 
+it('loads the page advertised by a LinuxDo member topic list and stops at a repeated page', async () => {
+  const profile: UserDetails = { source: 'linuxdo', id: 'alice', username: 'alice', url: 'https://linux.do/u/alice' };
+  const pages: string[] = [];
+  const fetcher = async (input: string) => {
+    const url = new URL(input);
+    const page = url.searchParams.get('page')!;
+    pages.push(page);
+    return Response.json({
+      topic_list: {
+        topics: [{ id: 40 + Number(page), title: 'Topic', slug: 'topic', posts_count: 1, created_at: '2026-01-01' }],
+        more_topics_url: '/topics/created-by/alice?page=3'
+      }
+    });
+  };
+  const first = await getUserTopics({ source: 'linuxdo', profile, fetcher });
+  expect(first).toMatchObject({ hasMoreTopics: true, nextTopicsCursor: '3' });
+  const last = await getUserTopics({ source: 'linuxdo', profile, cursor: first.nextTopicsCursor, fetcher });
+  expect(last).toMatchObject({ topics: [{ id: '43' }], hasMoreTopics: false, nextTopicsCursor: null });
+  expect(pages).toEqual(['0', '3']);
+});
+
 describe('Yaohuo activity scan resources', () => {
   const listUrl = 'https://www.yaohuo.me/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=7&type=pub';
   const row = (id: number) =>
@@ -84,6 +105,48 @@ describe('Yaohuo activity scan resources', () => {
     expect(fetcher.mock.calls.filter(([url]) => new URL(url).pathname === '/bbs/book_list.aspx')).toHaveLength(2);
     expect(sourceDiagnosticSummary(result)).toMatchObject({ hasRepeatedCursor: true });
     expect(result.nextTopicsCursor).toBe(listUrl + '&page=2');
+  });
+
+  it('ignores a different user’s topic paginator and preserves the current user’s topics', async () => {
+    const unrelated = listUrl.replace('key=7', 'key=8') + '&page=2';
+    const fetcher = vi.fn(async (input: string) => {
+      if (new URL(input).pathname === '/bbs/userinfo.aspx') return new Response(profile);
+      if (input === listUrl) return new Response(row(701) + `<a href="${unrelated}">下一页</a>`);
+      if (input === unrelated) return new Response(row(801));
+      throw new Error(`Unexpected fixture request: ${input}`);
+    });
+
+    const result = await getUserTopics({ source: 'yaohuo', profile: yaohuoCursorUser, fetcher });
+
+    expect(fetcher.mock.calls.map(([url]) => url)).not.toContain(unrelated);
+    expect(result).toMatchObject({ topics: [{ id: '701' }], hasMoreTopics: false, nextTopicsCursor: null });
+  });
+
+  it('rejects a reply page redirected to a different user', async () => {
+    const cursor = 'https://www.yaohuo.me/bbs/book_re_my.aspx?action=class&touserid=7&page=2';
+    const fetcher = vi.fn(async () => {
+      const response = new Response(
+        '<div>另一位火友 (8) #2 妖火回复内容。 2026-05-20 10:30 <a href="/bbs-66.html">查看</a></div>'
+      );
+      Object.defineProperty(response, 'url', { value: cursor.replace('touserid=7', 'touserid=8') });
+      return response;
+    });
+
+    await expect(getUserReplies({ source: 'yaohuo', profile: yaohuoCursorUser, cursor, fetcher })).rejects.toThrow(
+      '妖火活动页与当前用户不匹配'
+    );
+  });
+
+  it('advances the actual page when a mixed-case cursor only reports a total', async () => {
+    const cursor = listUrl + '&PAGE=10';
+    const fetcher = vi.fn(async (url: string) => {
+      expect(url).toBe(cursor);
+      return new Response(row(701) + '<input name="getTotal" value="500">');
+    });
+
+    const result = await getUserTopics({ source: 'yaohuo', profile: yaohuoCursorUser, cursor, fetcher });
+
+    expect(result).toMatchObject({ topics: [{ id: '701' }], nextTopicsCursor: listUrl + '&PAGE=11' });
   });
 });
 
@@ -165,7 +228,7 @@ describe('source user read', () => {
     }
   );
   it.each([false, true])(
-    'keeps the requested LinuxDo identity when its summary has no profile user (related users: %s)',
+    'reads the requested LinuxDo profile name when summary statistics omit its user (related users: %s)',
     async (withRelatedUsers) => {
       // Discourse UserSummarySerializer exposes summary stats; UserBadgeSerializer may sideload related users.
       const fetcher = vi.fn(async (input: string) => {
@@ -177,6 +240,7 @@ describe('source user read', () => {
               ? { users: [{ id: 99, username: 'other', name: 'Other', avatar_template: '/other.png', trust_level: 4 }] }
               : {})
           });
+        if (input.endsWith('/u/alice.json')) return Response.json({ user: { id: 7, username: 'alice', name: '青禾' } });
         if (input.includes('/topics/created-by/alice.json')) return Response.json({ topic_list: { topics: [] } });
         if (input.includes('/user_actions.json') && new URL(input).searchParams.get('username') === 'alice')
           return Response.json({ user_actions: [] });
@@ -186,7 +250,7 @@ describe('source user read', () => {
       expect(profile).toMatchObject({
         id: 'alice',
         username: 'alice',
-        displayName: 'alice',
+        displayName: '青禾',
         url: 'https://linux.do/u/alice',
         topicCount: 2,
         replyCount: 8
@@ -197,7 +261,7 @@ describe('source user read', () => {
       expect(sourceDiagnosticSummary(profile)).toMatchObject({ validCount: 1, isParseEmpty: false });
       await getUserTopics({ source: 'linuxdo', profile, fetcher });
       await getUserReplies({ source: 'linuxdo', profile, fetcher });
-      expect(fetcher).toHaveBeenCalledTimes(3);
+      expect(fetcher).toHaveBeenCalledTimes(4);
     }
   );
 
@@ -205,6 +269,23 @@ describe('source user read', () => {
     const profile = await getUserDetails({ source: 'linuxdo', id: 'alice', fetcher: async () => Response.json({}) });
     expect(sourceDiagnosticSummary(profile)).toMatchObject({ validCount: 0, isParseEmpty: true });
   });
+
+  it.each([false, true])(
+    'keeps linux.do stats and the requested account when profile enrichment is unavailable or mismatched (%s)',
+    async (unavailable) => {
+      const fetcher = async (input: string) => {
+        if (input.endsWith('/summary.json'))
+          return Response.json({
+            user_summary: { can_see_summary_stats: true, can_see_user_actions: true, post_count: 8 },
+            users: [{ id: 42, username: 'other', name: '其他人' }]
+          });
+        if (unavailable) throw new Error('offline');
+        return Response.json({ user: { id: 42, username: 'other', name: '其他人' } });
+      };
+      const profile = await getUserDetails({ source: 'linuxdo', id: '42', username: '42', fetcher });
+      expect(profile).toMatchObject({ username: '42', displayName: '42', replyCount: 8 });
+    }
+  );
 
   it('preserves each V2EX activity row without inventing floors from topic reply counts', async () => {
     const profile: UserDetails = {
@@ -516,7 +597,7 @@ describe('source user read', () => {
       source: 'linuxdo',
       id: '42',
       title: 'linux topic',
-      author: 'alice',
+      author: 'Alice',
       authorId: 'alice',
       authorAvatar: 'https://linux.do/user_avatar/linux.do/alice/96/1_2.png',
       authorUrl: 'https://linux.do/u/alice',
@@ -572,7 +653,7 @@ describe('source user read', () => {
       topicTitle: 'linux topic',
       topicUrl: 'https://linux.do/t/linux-topic/42',
       url: 'https://linux.do/t/linux-topic/42/3',
-      author: 'alice',
+      author: 'Alice',
       authorId: 'alice',
       authorAvatar: 'https://linux.do/user_avatar/linux.do/alice/96/1_2.png',
       authorUrl: 'https://linux.do/u/alice',
@@ -961,7 +1042,10 @@ describe('source user read', () => {
       nextTopicsCursor:
         'https://www.yaohuo.me/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=7&type=pub&page=2'
     });
-    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(fetcher.mock.calls.map(([url]) => new URL(url).pathname)).toEqual([
+      '/bbs/userinfo.aspx',
+      '/bbs/book_list.aspx'
+    ]);
   });
 
   it('keeps yaohuo user profile names out of activity text and reads the real post list', async () => {

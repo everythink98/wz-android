@@ -26,7 +26,6 @@ export type FeedRouteRuntimeValue = {
     ) => void | boolean | Promise<void | boolean>;
     showYaohuoLogin: (message?: string) => void;
   };
-  appActive: boolean;
   catalogCategories: Category[];
   notify: (message: string) => void;
   onInitialContentReady: () => void;
@@ -49,7 +48,9 @@ function useFeedRouteRuntime() {
   return runtime;
 }
 
-function FeedRouteSession({ runtime }: { runtime: FeedRouteRuntimeValue }) {
+export function FeedRoute() {
+  const runtime = useFeedRouteRuntime();
+  const feedLayoutKey = runtime.enabledSources.join('|');
   const active = useIsFocused();
   const navigation = useNavigation();
   const listRef = useRef<FlashListRef<Topic> | null>(null);
@@ -58,6 +59,7 @@ function FeedRouteSession({ runtime }: { runtime: FeedRouteRuntimeValue }) {
     active,
     enabledSources: runtime.enabledSources,
     enabledSourcesKey: runtime.enabledSourcesKey,
+    feedLayoutKey,
     catalogCategories: runtime.catalogCategories,
     sessionEpochs: runtime.account.sessionEpochs,
     linuxDoVerificationActive: runtime.account.linuxDoVerificationVisible,
@@ -95,7 +97,9 @@ function FeedRouteSession({ runtime }: { runtime: FeedRouteRuntimeValue }) {
 
   return (
     <FeedScreen
+      key={feedLayoutKey}
       active={active}
+      isRouteFocused={navigation.isFocused}
       onCreateTopic={createTopic}
       busy={controller.feedBusy}
       categories={controller.feedCategories}
@@ -109,6 +113,7 @@ function FeedRouteSession({ runtime }: { runtime: FeedRouteRuntimeValue }) {
       feedFilters={controller.feedFilters}
       enabledFeedSources={controller.enabledFeedSources}
       loadMoreFailureSignal={controller.activeFeedState.loadMoreFailureSignal}
+      loadMoreErrorMessage={controller.activeFeedState.loadMoreErrorMessage}
       loadingMore={controller.activeFeedState.loadingMore}
       topicStateIndex={runtime.topicStateIndex}
       readingFilter={controller.readingFilter}
@@ -125,11 +130,4 @@ function FeedRouteSession({ runtime }: { runtime: FeedRouteRuntimeValue }) {
       onRefresh={controller.refreshFeed}
     />
   );
-}
-
-export function FeedRoute() {
-  const runtime = useFeedRouteRuntime();
-  const sourceOrderKey = runtime.enabledSources.join('|');
-
-  return <FeedRouteSession key={sourceOrderKey} runtime={runtime} />;
 }

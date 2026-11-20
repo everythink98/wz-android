@@ -1,13 +1,6 @@
 import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
-import { memo, type RefObject, useCallback, useEffect, useState } from 'react';
-import {
-  KeyboardAvoidingView,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
-  Pressable,
-  Text,
-  View
-} from 'react-native';
+import { memo, type RefObject, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { ActivityIndicator, KeyboardAvoidingView, Pressable, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated from 'react-native-reanimated';
 import { useScrollActionVisibility } from '@/ui/hooks/useScrollActionVisibility';
@@ -27,7 +20,7 @@ import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { retryEmojiCatalog } from '@/sources/discourse/retryEmojiCatalog';
 import { forumQueryKeys } from '@/platform/query/serverState';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
-import { AuthNoticeBox, EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
+import { AuthNoticeBox, EmptyText } from '@/ui/controls/FeedbackStates';
 import { ScreenTopBar, ScreenTopBarActions, ScreenTopBarTitle } from '@/ui/controls/ScreenTopBar';
 import { NavigationBackdropProvider, NavigationBackdropTarget, NavigationGlass } from '@/ui/navigation/NavigationGlass';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
@@ -37,6 +30,7 @@ import { TopicContentList } from './components/TopicContentList';
 import { TopicMenu } from './components/TopicMenu';
 import { LinuxDoPostInteractionsProvider } from './components/LinuxDoPostInteractions';
 import { readableTopicError } from './model/topicError';
+import { isTopicAccessNotice } from './model/topicOpeningPresentation';
 import type { TopicActionsController } from './actions/useTopicActionsController';
 import type { useHtmlRenderingController } from './rendering/useHtmlRenderingController';
 import type { TopicListItem } from './model/topicListModel';
@@ -85,9 +79,8 @@ export const TopicScreen = memo(function TopicScreen({
     openReadingSettings: () => void;
     openTopic: (topic: Topic, location?: TopicLocationTarget) => void;
     openUser: (user: UserReference) => void;
-    onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
-    refreshReplies: () => void;
-    refreshTopic: () => void;
+    refreshReplies: () => void | Promise<unknown>;
+    refreshTopic: () => void | Promise<unknown>;
     share: () => void;
     toggleFavorite: () => void;
     verifyLinuxDo: () => void;
@@ -108,10 +101,13 @@ export const TopicScreen = memo(function TopicScreen({
   const { state, commands } = session;
   const { actionBusy, decisionFor } = actions;
   const { error: topicError, topic } = article;
+  const canRefreshReplies = !topic || !isTopicAccessNotice(topic);
   const selectedTopic = state.selectedTopic;
   const { styles, theme } = useReaderThemeStyles(createTopicStyles);
   const item = topicWithAuthorFallback(topic, selectedTopic) || selectedTopic;
   const itemSource = topic?.source;
+  const [refresh, setRefresh] = useState<{ section: 'topic' | 'replies' } | null>(null);
+  const refreshFlight = useRef<typeof refresh>(null);
   const [topicMenuOpen, setTopicMenuOpen] = useState(false);
   const [topBarHeight, setTopBarHeight] = useState(0);
   const [replyActionHeight, setReplyActionHeight] = useState(0);
@@ -149,13 +145,34 @@ export const TopicScreen = memo(function TopicScreen({
     setTopicMenuOpen(false);
     action();
   }, []);
-  const refreshWholeTopic = useCallback(() => {
-    chrome.refreshTopic();
-    if (discourseEmojiSource) {
-      void queryClient.cancelQueries({ queryKey: forumQueryKeys.emojiUrls(discourseEmojiSource), exact: true });
-      void refetchDiscourseEmojiUrls();
-    }
-  }, [chrome.refreshTopic, discourseEmojiSource, queryClient, refetchDiscourseEmojiUrls]);
+  useLayoutEffect(() => {
+    setRefresh(null);
+    return () => {
+      refreshFlight.current = null;
+    };
+  }, [active, html.mediaSessionIdentity, item?.id, item?.source, state.replyOrder]);
+  const refreshSection = useCallback(
+    async (section: 'topic' | 'replies') => {
+      if (!active || refreshFlight.current) return;
+      const flight = { section };
+      refreshFlight.current = flight;
+      setRefresh(flight);
+      try {
+        const request = section === 'topic' ? chrome.refreshTopic() : chrome.refreshReplies();
+        if (section === 'topic' && discourseEmojiSource) {
+          void queryClient.cancelQueries({ queryKey: forumQueryKeys.emojiUrls(discourseEmojiSource), exact: true });
+          void refetchDiscourseEmojiUrls();
+        }
+        await request;
+      } finally {
+        if (refreshFlight.current === flight) {
+          refreshFlight.current = null;
+          setRefresh(null);
+        }
+      }
+    },
+    [active, chrome.refreshTopic, chrome.refreshReplies, discourseEmojiSource, queryClient, refetchDiscourseEmojiUrls]
+  );
 
   if (!item) {
     return (
@@ -183,10 +200,10 @@ export const TopicScreen = memo(function TopicScreen({
       {item.source === 'nodeseek' && topicError.kind === 'verification-required' ? (
         <AppButton label="去验证" onPress={chrome.verifyNodeSeek} />
       ) : null}
-      <AppButton label="重试" onPress={refreshWholeTopic} />
+      <AppButton label="重试" loading={refresh?.section === 'topic'} onPress={() => void refreshSection('topic')} />
     </View>
   ) : null;
-  const headerState = topicError ? (
+  const headerError = topicError ? (
     topicAuthNotice ? (
       <AuthNoticeBox notice={topicAuthNotice}>{topicErrorActions}</AuthNoticeBox>
     ) : (
@@ -195,8 +212,6 @@ export const TopicScreen = memo(function TopicScreen({
         {topicErrorActions}
       </View>
     )
-  ) : !topic ? (
-    <LoadingState text="正在读取主题..." />
   ) : null;
 
   const content = (
@@ -208,6 +223,17 @@ export const TopicScreen = memo(function TopicScreen({
           {item.category ? ' · ' + item.category : ''}
         </ScreenTopBarTitle>
         <ScreenTopBarActions>
+          {topic && refresh ? (
+            <ActivityIndicator
+              accessible
+              accessibilityLabel={refresh.section === 'topic' ? '正在刷新全文' : '正在刷新评论'}
+              accessibilityState={{ busy: true }}
+              accessibilityLiveRegion="polite"
+              role="status"
+              size={18}
+              color={theme.primary}
+            />
+          ) : null}
           <IconButton
             iconOnly
             ghost
@@ -244,14 +270,13 @@ export const TopicScreen = memo(function TopicScreen({
             commentSearchFocused={commentSearchFocused}
             currentNodeSeekUser={currentNodeSeekUser}
             discourseEmojiUrls={discourseEmojiUrls}
-            headerState={headerState}
+            headerError={headerError}
             html={html}
             nodeSeekUserId={nodeSeekUserId}
             onImagePreviewDescriptors={onImagePreviewDescriptors}
             onCommentSearchFocusChange={setCommentSearchFocused}
             onOpenTopic={chrome.openTopic}
             onOpenUser={chrome.openUser}
-            onScroll={chrome.onScroll}
             onScrollProgress={canWrite ? updateReplyActionForScroll : undefined}
             read={read}
             session={session}
@@ -291,8 +316,9 @@ export const TopicScreen = memo(function TopicScreen({
         onOpenOpening={() => chrome.openTopic(item, { kind: 'opening' })}
         onOpenOriginal={chrome.openOriginal}
         onOpenReadingSettings={chrome.openReadingSettings}
-        onRefreshTopic={chrome.refreshReplies}
-        onRefreshWholeTopic={refreshWholeTopic}
+        refreshing={refresh !== null}
+        onRefreshTopic={canRefreshReplies ? () => void refreshSection('replies') : undefined}
+        onRefreshWholeTopic={() => void refreshSection('topic')}
         onRequestClose={() => setTopicMenuOpen(false)}
         onShareTopic={chrome.share}
         runTopicMenuAction={runTopicMenuAction}

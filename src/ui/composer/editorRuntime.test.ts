@@ -890,6 +890,31 @@ describe('Composer editor runtime codec', () => {
     expect(host.querySelector('[role="dialog"]')).toBeNull();
   });
 
+  it('updates undo and redo while the topic tools stay open', async () => {
+    const { host, toolbarAction } = await mountRuntime({ intentKind: 'create-topic', markdown: 'draft' });
+    const editor = host.querySelector<HTMLElement & { editor: Editor }>('.composer-document')!.editor;
+    await act(async () => editor.commands.insertContent('added'));
+    const edited = editor.getMarkdown();
+    expect(edited).not.toBe('draft');
+
+    await toolbarAction('more');
+    const buttons = [...host.querySelectorAll<HTMLButtonElement>('[aria-label="更多编辑工具"] button')];
+    const undo = buttons.find((button) => button.textContent === '撤销')!;
+    const redo = buttons.find((button) => button.textContent === '重做')!;
+    expect(undo.disabled).toBe(false);
+    expect(redo.disabled).toBe(true);
+
+    await act(async () => undo.click());
+    expect(editor.getMarkdown()).toBe('draft');
+    expect(redo.disabled).toBe(false);
+    expect(undo.disabled).toBe(true);
+
+    await act(async () => redo.click());
+    expect(editor.getMarkdown()).toBe(edited);
+    expect(redo.disabled).toBe(true);
+    expect(undo.disabled).toBe(false);
+  });
+
   it.each(
     (['nodeseek', 'linuxdo'] as const).flatMap((site) => (['rich', 'source'] as const).map((mode) => ({ site, mode })))
   )(

@@ -130,6 +130,26 @@ export const searchTimeRangeItems: { value: SearchTimeRange; label: string }[] =
   { value: 'year', label: '1年' }
 ];
 
+export const discourseSearchStatusItems: { value: DiscourseSearchStatus; label: string }[] = [
+  { value: '', label: '不限状态' },
+  { value: 'open', label: '开放' },
+  { value: 'closed', label: '已关闭' },
+  { value: 'public', label: '公开' },
+  { value: 'archived', label: '已归档' },
+  { value: 'noreplies', label: '无回复' },
+  { value: 'single_user', label: '单一用户' },
+  { value: 'solved', label: '已解决' },
+  { value: 'unsolved', label: '未解决' }
+];
+
+export const discourseVisitedItems: { value: DiscourseVisitedFilter; label: string }[] = [
+  { value: 'seen', label: '我读过' },
+  { value: 'bookmarks', label: '我已添加为书签' },
+  { value: 'likes', label: '我赞过' },
+  { value: 'posted', label: '我发过帖' },
+  { value: 'created', label: '我创建' }
+];
+
 const TIME_RANGE_DAYS: Partial<Record<SearchTimeRange, number>> = {
   day: 1,
   week: 7,
@@ -149,10 +169,6 @@ export function defaultSearchFilterForSource<T extends Source>(source: T): Searc
       ? { ...filter, tags: [...filter.tags], visited: [...filter.visited] }
       : { ...filter }
   ) as SearchFilterState[T];
-}
-
-export function searchFilterForSource(filters: SearchFilterState, source: Source): SourceSearchFilter {
-  return filters[source];
 }
 
 function searchTimeRangeLabel(value: SearchTimeRange) {
@@ -199,21 +215,31 @@ function validRangeValue(value: number | null) {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
 }
 
-export function discourseSearchFilterError(filter: DiscourseSearchFilter) {
+const discourseRangeFields = ['minPosts', 'maxPosts', 'minViews', 'maxViews'] as const;
+
+export type DiscourseSearchFilterError = Readonly<{
+  field: 'date' | (typeof discourseRangeFields)[number];
+  message: string;
+}>;
+
+export function discourseSearchFilterError(filter: DiscourseSearchFilter): DiscourseSearchFilterError | null {
   if (filter.date.trim() && !validSearchDate(filter.date)) {
-    return '请选择有效日期';
+    return { field: 'date', message: '请选择有效日期' };
   }
-  const ranges = [filter.minPosts, filter.maxPosts, filter.minViews, filter.maxViews];
-  if (ranges.some((value) => value !== null && validRangeValue(value) === null)) {
-    return '帖子数和浏览量必须是非负整数';
+  const invalidField = discourseRangeFields.find((field) => {
+    const value = filter[field];
+    return value !== null && validRangeValue(value) === null;
+  });
+  if (invalidField) {
+    return { field: invalidField, message: '帖子数和浏览量必须是非负整数' };
   }
   if (filter.minPosts !== null && filter.maxPosts !== null && filter.minPosts > filter.maxPosts) {
-    return '帖子数最小值不能大于最大值';
+    return { field: 'maxPosts', message: '帖子数最小值不能大于最大值' };
   }
   if (filter.minViews !== null && filter.maxViews !== null && filter.minViews > filter.maxViews) {
-    return '浏览量最小值不能大于最大值';
+    return { field: 'maxViews', message: '浏览量最小值不能大于最大值' };
   }
-  return '';
+  return null;
 }
 
 export function buildDiscourseSearchQuery(query: string, filter: DiscourseSearchFilter, categories: Category[]) {
@@ -268,7 +294,12 @@ export function buildDiscourseSearchQuery(query: string, filter: DiscourseSearch
   return parts.filter(Boolean).join(' ');
 }
 
-export function searchFilterSummary(source: Source, filter: SourceSearchFilter, categories: Category[]) {
+export function searchFilterSummary(
+  source: Source,
+  filter: SourceSearchFilter,
+  categories: Category[],
+  authorDisplayName?: string
+) {
   const parts: string[] = [];
   if (source === 'v2ex' && filter.source === 'v2ex') {
     if (filter.sort === 'relevance') {
@@ -298,14 +329,13 @@ export function searchFilterSummary(source: Source, filter: SourceSearchFilter, 
     if (tags.length) {
       parts.push(tags.join(filter.tagMatch === 'all' ? ' + ' : '、'));
     }
-    if (filter.visited.length) {
-      parts.push(`${filter.visited.length}项回访`);
-    }
-    if (filter.status) {
-      parts.push(`状态 ${filter.status}`);
-    }
+    parts.push(
+      ...discourseVisitedItems.filter((item) => filter.visited.includes(item.value)).map((item) => item.label)
+    );
+    const statusLabel = discourseSearchStatusItems.find((item) => item.value && item.value === filter.status)?.label;
+    if (statusLabel) parts.push(statusLabel);
     if (filter.username.trim()) {
-      parts.push(filter.username.trim().replace(/^@+/, ''));
+      parts.push(authorDisplayName || filter.username.trim().replace(/^@+/, ''));
     }
     if (validSearchDate(filter.date)) {
       parts.push(`${filter.date}${filter.dateRelation === 'before' ? '前' : '后'}`);

@@ -28,6 +28,8 @@ export const REVIEW_CHECK_NAMES = [
     'pending-poll-materialization'
   ].map((sample) => `content-hermes-${sample}`),
   'feed-hermes-unique-candidate-quota-and-buffer',
+  'sources-receipts-search-pagination-dates',
+  'source-pagination-and-publication-dates',
   ...['nodeseek', 'linuxdo', 'v2ex', 'yaohuo'].flatMap((source) =>
     ['topics', 'replies'].map((kind) => `user-${source}-${kind}-failure-retry-refresh`)
   ),
@@ -36,9 +38,11 @@ export const REVIEW_CHECK_NAMES = [
   'feed-native-host-cold-success',
   'feed-native-host-cold-failure',
   ...['cold', 'cached'].map((mode) => `reading-native-${mode}`),
+  'identity-legacy-confirmation-deadline',
   ...['cancel-reopen', 'inactive', 'scope-change', 'unmount'].map((sample) => `verification-core-${sample}`),
   ...['identity', 'epoch', 'source', 'surface'].map((sample) => `write-csrf-${sample}`),
   'write-native-proxy-preparation',
+  'write-retained-editor-reward-receipt',
   'write-confirmed-response-after-invalidation',
   ...[
     'storage-retry',

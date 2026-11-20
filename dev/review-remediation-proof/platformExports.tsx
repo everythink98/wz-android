@@ -1,11 +1,10 @@
 import { useMemo, useState } from 'react';
 import { Button, Text, View } from 'react-native';
 import { Directory, File, Paths } from 'expo-file-system';
-import * as DocumentPicker from 'expo-document-picker';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { exportReaderBackupJson, MAX_BACKUP_JSON_BYTES, parseReaderBackupJson } from '@/domain/reader/readerBackup';
 import { saveBackupDocument } from '@/platform/storage/backupExport';
-import { readBackupFileText } from '@/platform/storage/backupImportFile';
+import { pickBackupFileText } from '@/platform/storage/backupImportFile';
 import { exportDiagnosticLog } from '@/platform/diagnostics/diagnosticFileStore';
 import { saveImageUriToLibrary } from '@/platform/media/imageSave';
 import { diagnosticBuildContext } from '@/platform/diagnostics/nativeDiagnosticJournal';
@@ -69,19 +68,10 @@ export function PlatformExportsProof({ token }: { token: string }) {
         title="Platform import backup"
         onPress={() =>
           run('import', async () => {
-            const result = await DocumentPicker.getDocumentAsync({
-              type: 'application/json',
-              copyToCacheDirectory: true
-            });
-            if (result.canceled) return 'canceled';
-            const file = new File(result.assets[0].uri);
-            try {
-              const actual = await readBackupFileText(result.assets[0]);
-              parseReaderBackupJson(actual);
-              if (actual !== json) throw new Error('Saved backup bytes changed');
-            } finally {
-              if (file.exists) file.delete();
-            }
+            const actual = await pickBackupFileText();
+            if (actual === null) return 'canceled';
+            parseReaderBackupJson(actual);
+            if (actual !== json) throw new Error('Saved backup bytes changed');
             return 'passed';
           })
         }

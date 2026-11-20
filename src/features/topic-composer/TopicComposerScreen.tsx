@@ -5,7 +5,7 @@ import {
 } from '@/ui/hooks/useComposerKeyboardSource';
 import { AppSwitch as Switch, AppTextInput } from '@/ui/controls/InputControls';
 import { ActivityIndicator } from 'react-native-paper';
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Image,
   Keyboard,
@@ -56,19 +56,15 @@ import { createTopicComposerPanels, type TopicComposerPanel, type TopicPanelRequ
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import { siteSessionIdentityKey } from '@/domain/session/siteSessionState';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
+import { LoadingState } from '@/ui/controls/FeedbackStates';
 import { ModalSheetFrame, ModalSheetHeader } from '@/ui/controls/ModalSheetFrame';
+import { TOUCH_HIT_SLOP } from '@/ui/controls/touchTarget';
 import { NavigationBackdropProvider, NavigationBackdropTarget, NavigationGlass } from '@/ui/navigation/NavigationGlass';
 import { StructuredReplyComposer } from '@/ui/composer/StructuredReplyComposer';
 import { YaohuoReplyComposer } from '@/ui/composer/YaohuoReplyComposer';
 import { ComposerKeyboardHost, type ComposerKeyboardHostHandle } from '@/ui/composer/ComposerKeyboardHost';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import {
-  alphaColor,
-  readerRadii,
-  type ReaderStyleSettings,
-  fontFamilyValue,
-  type ReaderTheme
-} from '@/ui/theme/tokens';
+import { readerRadii, type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { useKeyboardHandoff } from '@/ui/hooks/useKeyboardHandoff';
@@ -142,7 +138,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       flexDirection: 'row',
       alignItems: 'center',
       paddingHorizontal: 12,
-      paddingVertical: 8,
+      paddingVertical: 6,
       gap: 8,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: theme.line
@@ -150,22 +146,23 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     settingsControl: {
       flex: 1,
       minWidth: 0,
-      minHeight: 52,
+      minHeight: 44,
       paddingHorizontal: 10,
-      paddingVertical: 6,
+      paddingVertical: 4,
       flexDirection: 'row',
       alignItems: 'center',
       gap: 6,
       borderRadius: readerRadii.control,
-      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.05 : 0.025),
-      borderColor: alphaColor(theme.primary, theme.dark ? 0.2 : 0.12),
-      borderTopColor: alphaColor(theme.surface, 0.8),
+      backgroundColor: theme.surface2,
+      borderColor: theme.line,
       borderWidth: StyleSheet.hairlineWidth
     },
-    settingsLabel: { fontWeight: '500', fontSize: Math.round(13 * settings.fontScale) },
-    yaohuoMetadataBar: { paddingVertical: 4, gap: 16 },
-    yaohuoSettingsControl: { backgroundColor: 'transparent', minHeight: 48, paddingHorizontal: 4, paddingVertical: 4 },
-    yaohuoAttachmentLabel: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    settingsControlCompact: {
+      flex: 0,
+      flexShrink: 1
+    },
+    settingsLabel: { flexShrink: 1, fontWeight: '500', fontSize: Math.round(13 * settings.fontScale) },
+    attachmentLabelRow: { flexDirection: 'row', flexShrink: 1, alignItems: 'center', gap: 6 },
     attachmentCount: {
       color: theme.primary,
       fontFamily: font,
@@ -199,13 +196,13 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     field: { gap: 6, marginBottom: 12 },
     editor: { flex: 1, minHeight: 120 },
     metadataSummary: {
-      maxWidth: '24%',
-      minWidth: 0,
-      minHeight: 48,
+      flex: 1,
+      minWidth: 80,
+      minHeight: 44,
       paddingHorizontal: 8,
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'center',
+      justifyContent: 'flex-start',
       borderRadius: readerRadii.control,
       gap: 4
     },
@@ -218,13 +215,16 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     },
     center: { flex: 1, padding: 24, justifyContent: 'center', alignItems: 'center', gap: 16 },
     metadataControl: {
-      minHeight: 48,
-      paddingHorizontal: 8,
+      minHeight: 38,
+      paddingHorizontal: 10,
       flexDirection: 'row',
       alignItems: 'center',
       gap: 4,
       maxWidth: 240,
-      borderRadius: readerRadii.control
+      backgroundColor: theme.surface2,
+      borderColor: theme.line,
+      borderRadius: readerRadii.control,
+      borderWidth: StyleSheet.hairlineWidth
     },
     tools: { flexDirection: 'row', alignItems: 'center', gap: 4 },
     saveLine: { minHeight: 24, flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
@@ -425,6 +425,7 @@ function TopicComposerKeyboardObserver({
 
 export function TopicComposerScreen({
   active = true,
+  routeFocus,
   editorEnabled = true,
   controller: c,
   sessions,
@@ -434,6 +435,7 @@ export function TopicComposerScreen({
   onManageSources
 }: {
   active?: boolean;
+  routeFocus?: { isFocused: () => boolean; addListener: (name: 'blur', callback: () => void) => () => void };
   editorEnabled?: boolean;
   controller: Controller;
   sessions: SiteSessionViewModels;
@@ -479,8 +481,9 @@ export function TopicComposerScreen({
   }));
   const metadataCollapsed = !titleEditing && (keyboardShown || editorPanelOpen || editorFocusPending);
   const [panelFlow] = useState(createTopicComposerPanels);
-  const [panel, setPanelView] = useState(panelFlow.panel);
-  const publishPanels = useCallback(() => setPanelView(panelFlow.panel), [panelFlow]);
+  const [presentation, setPanelView] = useState(panelFlow.presentation);
+  const { panel } = presentation;
+  const publishPanels = useCallback(() => setPanelView(panelFlow.presentation), [panelFlow]);
   const presentPanel = useCallback(
     (next: TopicComposerPanel) => {
       panelFlow.show(next);
@@ -488,8 +491,9 @@ export function TopicComposerScreen({
     },
     [panelFlow, publishPanels]
   );
+  useLayoutEffect(() => routeFocus?.addListener('blur', () => presentPanel(null)), [presentPanel, routeFocus]);
   useEffect(() => () => panelFlow.cancel(), [panelFlow]);
-  const panelOwner = useCommittedRef({ active, panel, busy: c.busy, draftId: c.draft?.id });
+  const panelOwner = useCommittedRef({ active, busy: c.busy, draftId: c.draft?.id });
   const settleKeyboard = useKeyboardHandoff(pickerReady, active && panel === null, keyboardHost);
   const awaitModalKeyboardSettled = useKeyboardHandoff(modalPickerReady, active && panel !== null, modalKeyboardHost);
   const [preview, setPreview] = useState(false);
@@ -606,16 +610,22 @@ export function TopicComposerScreen({
                 : '普通帖'
           : '';
   const unresolved = c.attempt?.status === 'sending' || c.attempt?.status === 'unknown';
-  const currentPanelRequest = (request: TopicPanelRequest) =>
-    panelFlow.owns(request) && panelOwner.current.draftId === request.draftId;
+  const hasPanelAccess = () =>
+    (!routeFocus || routeFocus.isFocused()) &&
+    panelFlow.presentation === presentation &&
+    panelOwner.current.draftId === draft?.id;
+  function panelAction<Args extends unknown[]>(action: (...args: Args) => unknown) {
+    return (...args: Args) => {
+      if (hasPanelAccess()) action(...args);
+    };
+  }
+  const changePanelDraft = panelAction(c.change);
+  const currentPanelRequest = (request: TopicPanelRequest) => hasPanelAccess() && panelFlow.owns(request);
   const currentPanelAccess = (request: TopicPanelRequest) =>
-    currentPanelRequest(request) &&
-    panelOwner.current.active &&
-    !panelOwner.current.busy &&
-    panelOwner.current.panel === request.from;
+    currentPanelRequest(request) && panelOwner.current.active && !panelOwner.current.busy;
   const openPanel = async (next: TopicComposerPanel) => {
-    if (c.busy) return;
-    const request = panelFlow.opening(panel, c.draft?.id, next);
+    if (!hasPanelAccess() || c.busy) return;
+    const request = panelFlow.opening(next);
     if (!request) return;
     setInsertionError('');
     try {
@@ -632,7 +642,8 @@ export function TopicComposerScreen({
     }
   };
   const pickPanelAttachment = async (kind: 'attachment' | 'yaohuo-file') => {
-    const request = panelFlow.working('pick', panel, c.draft?.id);
+    if (!hasPanelAccess()) return;
+    const request = panelFlow.working('pick');
     if (!request) return;
     setInsertionError('');
     try {
@@ -648,7 +659,7 @@ export function TopicComposerScreen({
   };
 
   const updateYaohuo = (update: (value: Extract<TopicDraft, { source: 'yaohuo' }>) => TopicDraft) =>
-    c.change((value) => (value.source === 'yaohuo' ? update(value) : value));
+    changePanelDraft((value) => (value.source === 'yaohuo' ? update(value) : value));
   const giftKind = draft?.source === 'yaohuo' && draft.kind === 'gift' ? 'gift' : 'poll';
   useEffect(() => {
     setPreview(false);
@@ -666,7 +677,7 @@ export function TopicComposerScreen({
     }
   }, [c.uploading, panelFlow, publishPanels]);
   useEffect(() => {
-    if (editorObscured) return;
+    if (editorObscured || (routeFocus && !routeFocus.isFocused())) return;
     if (c.errors.title) titleRef.current?.focus();
     else if (c.errors.categoryId) presentPanel('categories');
     else if (c.errors.tags) presentPanel('tags');
@@ -676,10 +687,10 @@ export function TopicComposerScreen({
       setBodyFocusSignal((value) => value + 1);
     } else if (c.errors.rank || c.errors.reward || c.errors.gift || c.errors.poll || c.errors.resources)
       presentPanel('options');
-  }, [attachmentErrorPanel, c.errors, draft?.source, editorObscured, presentPanel]);
+  }, [attachmentErrorPanel, c.errors, draft?.source, editorObscured, presentPanel, routeFocus]);
   const insertAndClose = async (markup: string) => {
-    if (c.busy || preview) return;
-    const request = panelFlow.working('insert', panel, c.draft?.id);
+    if (!hasPanelAccess() || c.busy || preview) return;
+    const request = panelFlow.working('insert');
     if (!request) return;
     setInsertionError('');
     try {
@@ -692,7 +703,8 @@ export function TopicComposerScreen({
     }
   };
   const rebaseAndClose = async () => {
-    const request = panelFlow.working('rebase', panel, c.draft?.id);
+    if (!hasPanelAccess()) return;
+    const request = panelFlow.working('rebase');
     if (!request) return;
     try {
       await c.rebaseEdit();
@@ -786,8 +798,10 @@ export function TopicComposerScreen({
               </Pressable>
               <AppButton
                 backdrop={<NavigationGlass accent />}
-                label={c.editing ? (c.busy ? '保存中…' : '保存修改') : c.busy ? '发布中…' : '发布'}
+                minWidth={c.editing ? 84 : 68}
+                label={c.editing ? (c.busy ? '保存中' : '保存修改') : c.busy ? '发布中' : '发布'}
                 accessibilityLabel={c.editing ? '保存修改' : '发布'}
+                loading={c.busy}
                 variant="primary"
                 disabled={
                   !draft ||
@@ -810,22 +824,21 @@ export function TopicComposerScreen({
             </View>
             <NavigationBackdropTarget active={active} testID="composer-glass-content" topInset={topBarHeight}>
               {c.error ? (
-                <View style={styles.banner}>
-                  <Text accessibilityRole="alert" style={styles.error}>
+                <View style={[styles.banner, styles.spread]}>
+                  <Text accessibilityRole="alert" style={[styles.error, styles.flex]}>
                     {c.error}
                   </Text>
-                </View>
-              ) : null}
-              {c.editing && c.error && !c.busy ? (
-                <View style={styles.banner}>
-                  <AppButton
-                    label="核对原站最新内容"
-                    onPress={() => {
-                      void c.reviewLatest().then((value) => {
-                        if (value) openPanel('latest');
-                      });
-                    }}
-                  />
+                  {c.editing && !c.busy ? (
+                    <AppButton
+                      compact
+                      label="核对原站最新内容"
+                      onPress={() => {
+                        void c.reviewLatest().then((value) => {
+                          if (value) openPanel('latest');
+                        });
+                      }}
+                    />
+                  ) : null}
                 </View>
               ) : null}
               {unresolved && !c.busy ? (
@@ -849,8 +862,7 @@ export function TopicComposerScreen({
               ) : null}
               {c.loading && !draft ? (
                 <View style={styles.center}>
-                  <ActivityIndicator color={theme.primary} />
-                  <Text style={styles.muted}>正在恢复草稿…</Text>
+                  <LoadingState compact text="恢复草稿中" />
                 </View>
               ) : !c.enabled && !draft ? (
                 <View style={styles.center}>
@@ -947,7 +959,7 @@ export function TopicComposerScreen({
                               if (allowed('tags')) openPanel('tags');
                             }}
                           >
-                            <Text numberOfLines={1} style={styles.muted}>
+                            <Text numberOfLines={1} style={draft.tags.length ? styles.text : styles.muted}>
                               {rulesLoading
                                 ? '加载标签…'
                                 : draft.tags.length
@@ -1003,76 +1015,74 @@ export function TopicComposerScreen({
                         </View>
                       ) : null}
                     </ScrollView>
-                    <View style={[styles.metadataBar, draft.source === 'yaohuo' && styles.yaohuoMetadataBar]}>
+                    <View style={styles.metadataBar}>
                       {metadataCollapsed ? (
                         <Pressable
                           accessibilityRole="button"
                           accessibilityLabel="查看标题与标签"
                           accessibilityHint={draft.title || '查看标题、版块和标签'}
+                          hitSlop={TOUCH_HIT_SLOP}
                           style={styles.metadataSummary}
                           onPress={() => {
                             setTitleEditing(true);
                             requestAnimationFrame(() => titleRef.current?.focus());
                           }}
                         >
-                          <Text style={styles.muted}>标题</Text>
+                          <Text
+                            numberOfLines={1}
+                            style={[draft.title.trim() ? styles.text : styles.muted, styles.flex]}
+                          >
+                            {draft.title.trim() || '标题'}
+                          </Text>
                           <ChevronDown size={14} color={theme.muted} />
                         </Pressable>
                       ) : null}
                       {!c.editing || draft.source === 'nodeseek' || allowed('additionalReward') ? (
                         <Pressable
+                          testID="composer-settings-trigger"
                           accessibilityRole="button"
                           accessibilityLabel="帖子设置"
                           accessibilityHint={settingsSummary}
                           accessibilityState={{ disabled: c.busy || !context, busy: rulesLoading }}
                           disabled={c.busy || !context}
+                          hitSlop={TOUCH_HIT_SLOP}
                           style={[
                             styles.settingsControl,
-                            draft.source === 'yaohuo' && styles.yaohuoSettingsControl,
+                            metadataCollapsed && styles.settingsControlCompact,
                             (c.busy || !context) && styles.disabled
                           ]}
                           onPress={() => openPanel('options')}
                         >
-                          <View style={styles.flex}>
-                            {draft.source !== 'yaohuo' ? (
-                              <Text style={[styles.text, styles.settingsLabel]}>帖子设置</Text>
-                            ) : null}
-                            <Text
-                              numberOfLines={1}
-                              style={draft.source === 'yaohuo' ? [styles.text, styles.settingsLabel] : styles.muted}
-                            >
-                              {rulesLoading ? '加载规则…' : settingsSummary}
-                            </Text>
-                          </View>
+                          <Text
+                            numberOfLines={1}
+                            style={[styles.text, styles.settingsLabel, !metadataCollapsed && styles.flex]}
+                          >
+                            {rulesLoading ? '读取规则中' : settingsSummary}
+                          </Text>
                           <ChevronRight size={16} color={theme.muted} />
                         </Pressable>
                       ) : null}
                       <Pressable
+                        testID="composer-more-trigger"
                         accessibilityRole="button"
                         accessibilityLabel="附件与草稿"
                         accessibilityState={{ disabled: c.busy }}
                         disabled={c.busy}
                         accessibilityHint="管理图片、附件和本机草稿"
+                        hitSlop={TOUCH_HIT_SLOP}
                         style={[
                           styles.settingsControl,
-                          draft.source === 'yaohuo' && styles.yaohuoSettingsControl,
+                          metadataCollapsed && styles.settingsControlCompact,
                           c.busy && styles.disabled
                         ]}
                         onPress={() => openPanel('more')}
                       >
-                        <View style={styles.flex}>
-                          <View style={draft.source === 'yaohuo' && styles.yaohuoAttachmentLabel}>
-                            <Text style={[styles.text, styles.settingsLabel]}>附件与草稿</Text>
-                            {draft.source === 'yaohuo' && draft.attachments.length ? (
-                              <Text style={styles.attachmentCount}>{draft.attachments.length}</Text>
-                            ) : null}
-                          </View>
-                          {draft.source !== 'yaohuo' ? (
-                            <Text numberOfLines={1} style={styles.muted}>
-                              {draft.attachments.length
-                                ? draft.attachments.length + ' 个附件 · 管理'
-                                : '上传与草稿管理'}
-                            </Text>
+                        <View style={[styles.attachmentLabelRow, !metadataCollapsed && styles.flex]}>
+                          <Text numberOfLines={1} style={[styles.text, styles.settingsLabel]}>
+                            附件与草稿
+                          </Text>
+                          {draft.attachments.length ? (
+                            <Text style={styles.attachmentCount}>{draft.attachments.length}</Text>
                           ) : null}
                         </View>
                         <ChevronRight size={16} color={theme.muted} />
@@ -1106,9 +1116,8 @@ export function TopicComposerScreen({
                     ) : null}
                     <View style={styles.editor}>
                       {!editorEnabled && draft.source !== 'yaohuo' ? (
-                        <View style={styles.center} accessibilityLiveRegion="polite">
-                          <ActivityIndicator color={theme.primary} />
-                          <Text style={styles.muted}>正在准备正文…</Text>
+                        <View style={styles.center}>
+                          <LoadingState compact text="准备正文中" />
                         </View>
                       ) : draft.source === 'yaohuo' ? (
                         <YaohuoReplyComposer
@@ -1175,10 +1184,7 @@ export function TopicComposerScreen({
                   {editorObscured ? (
                     <View testID="draft-owner-overlay" style={[StyleSheet.absoluteFill, styles.root, styles.center]}>
                       {c.enabled && c.loading ? (
-                        <>
-                          <ActivityIndicator color={theme.primary} />
-                          <Text style={styles.muted}>正在恢复草稿…</Text>
-                        </>
+                        <LoadingState compact text="恢复草稿中" />
                       ) : c.enabled ? (
                         <>
                           <Text style={styles.error}>尚未完成草稿保存与切换，原草稿仍保留。</Text>
@@ -1197,14 +1203,17 @@ export function TopicComposerScreen({
             </NavigationBackdropTarget>
             <ModalSheetFrame
               keyboardHostRef={modalKeyboardHost}
-              visible={Boolean(panel) && (!editorObscured || panel === 'sites')}
+              visible={
+                Boolean(panel) && (!routeFocus || routeFocus.isFocused()) && (!editorObscured || panel === 'sites')
+              }
               backdropLabel="收起发帖面板"
-              onRequestClose={() => presentPanel(null)}
+              onRequestClose={panelAction(() => presentPanel(null))}
             >
               <ModalSheetHeader
                 title={panel ? panelTitle[panel] : ''}
+                subtitle={panel === 'more' && draft ? `${c.saveStatus} · ${draft.body.length} 字符` : undefined}
                 closeLabel="关闭发帖选项"
-                onClose={() => presentPanel(null)}
+                onClose={panelAction(() => presentPanel(null))}
               />
               {c.error ? (
                 <Text accessibilityRole="alert" style={styles.error}>
@@ -1216,12 +1225,15 @@ export function TopicComposerScreen({
                   mode={panel}
                   controller={c}
                   query={panel === 'categories' ? categoryQuery : tagQuery}
-                  onQueryChange={panel === 'categories' ? setCategoryQuery : setTagQuery}
+                  onQueryChange={panelAction(panel === 'categories' ? setCategoryQuery : setTagQuery)}
                   error={panel === 'categories' ? categoryError : tagsError}
                   hint={panel === 'tags' ? tagsHint : undefined}
                   tagSearch={tagSearch}
+                  onChangeDraft={changePanelDraft}
+                  onChangeCategory={panelAction(c.changeCategory)}
+                  onRetryTags={panelAction(tagSearch.retry)}
                   onSelectCategory={() => openPanel('categories')}
-                  onClose={() => presentPanel(null)}
+                  onClose={panelAction(() => presentPanel(null))}
                 />
               ) : (
                 <ScrollView
@@ -1264,7 +1276,7 @@ export function TopicComposerScreen({
                       disabled={c.busy}
                       value={draft.additionalReward || ''}
                       error={c.errors.additionalReward}
-                      onChange={(additionalReward) => c.change((value) => ({ ...value, additionalReward }))}
+                      onChange={(additionalReward) => changePanelDraft((value) => ({ ...value, additionalReward }))}
                     />
                   ) : null}
                   {panel === 'sites'
@@ -1276,10 +1288,10 @@ export function TopicComposerScreen({
                           accessibilityState={{ selected: site === c.source, disabled: c.busy }}
                           disabled={c.busy}
                           style={[styles.option, styles.optionRow, site === c.source && styles.selected]}
-                          onPress={() => {
+                          onPress={panelAction(() => {
                             presentPanel(null);
                             void c.switchSource(site);
-                          }}
+                          })}
                         >
                           <View style={styles.optionText}>
                             <Text style={[styles.text, site === c.source && styles.selectedText]}>
@@ -1312,9 +1324,6 @@ export function TopicComposerScreen({
                           <Text style={styles.text}>{mediaLabel}</Text>
                         </Pressable>
                       ) : null}
-                      <Text style={styles.muted}>
-                        {c.saveStatus} · {draft.body.length} 字符
-                      </Text>
                       <Pressable
                         accessibilityRole="button"
                         accessibilityLabel="图片上传记录"
@@ -1324,30 +1333,20 @@ export function TopicComposerScreen({
                         onPress={() => openPanel('images')}
                       >
                         <ImagePlus size={20} color={theme.ink} />
-                        <View style={styles.optionText}>
-                          <Text style={styles.text}>
-                            图片上传记录{imageAttachments.length ? ` · ${imageAttachments.length}` : ''}
-                          </Text>
-                          <Text style={styles.muted}>核对上传、重试或再次插入正文</Text>
-                        </View>
-                      </Pressable>
-                      <View style={styles.section}>
-                        <Text style={styles.muted}>
-                          {c.editing
-                            ? '编辑草稿按网站、账号和帖子分别保存。返回时保留当前内容。'
-                            : '草稿按网站和账号分别保存。返回或切换网站时保留当前内容。'}
+                        <Text style={styles.text}>
+                          图片上传记录{imageAttachments.length ? ` · ${imageAttachments.length}` : ''}
                         </Text>
-                      </View>
+                      </Pressable>
                       <Pressable
                         accessibilityRole="button"
                         accessibilityLabel="丢弃草稿"
                         accessibilityState={{ disabled: c.busy || c.uploading }}
                         disabled={c.busy || c.uploading}
                         style={[styles.option, styles.optionRow]}
-                        onPress={() => {
+                        onPress={panelAction(() => {
                           presentPanel(null);
                           void c.discard();
-                        }}
+                        })}
                       >
                         <Trash2 size={20} color={theme.danger} />
                         <Text style={[styles.text, { color: theme.danger }]}>丢弃当前草稿</Text>
@@ -1367,7 +1366,7 @@ export function TopicComposerScreen({
                           disabled={c.busy}
                           style={[styles.option, styles.optionRow, draft.rank === rank && styles.selected]}
                           onPress={() =>
-                            c.change((value) => (value.source === 'nodeseek' ? { ...value, rank } : value))
+                            changePanelDraft((value) => (value.source === 'nodeseek' ? { ...value, rank } : value))
                           }
                         >
                           <Text style={[styles.text, styles.flex, draft.rank === rank && styles.selectedText]}>
@@ -1397,13 +1396,12 @@ export function TopicComposerScreen({
                           value={draft.postVoting}
 
                           onValueChange={(postVoting) =>
-                            c.change((value) => (value.source === 'linuxdo' ? { ...value, postVoting } : value))
+                            changePanelDraft((value) => (value.source === 'linuxdo' ? { ...value, postVoting } : value))
                           }
                         />
                       </View>
                       {category?.onlyPostVoting ? <Text style={styles.muted}>此版块要求使用问答主题</Text> : null}
                       {!context.postVotingEnabled ? <Text style={styles.muted}>当前站点未开放问答主题</Text> : null}
-                      <Text style={styles.muted}>正文中的投票可通过编辑器工具栏插入。</Text>
                       {category?.template && draft.body !== category.template ? (
                         <AppButton
                           label="插入版块模板"
@@ -1535,7 +1533,7 @@ export function TopicComposerScreen({
                             <AppButton
                               label="管理文件"
                               disabled={c.busy || c.uploading}
-                              onPress={() => presentPanel('attachments')}
+                              onPress={panelAction(() => presentPanel('attachments'))}
                             />
                           </>
                         ) : null}
@@ -1636,13 +1634,6 @@ export function TopicComposerScreen({
                           ) : null}
                         </View>
                       ) : null}
-                      <Text style={styles.muted}>
-                        {panel === 'images'
-                          ? '从正文工具栏插入图片；这里保留上传记录。'
-                          : draft.source === 'linuxdo'
-                            ? '文件上传到 linux.do，以链接插入正文。'
-                            : '选择 1–9 个随帖文件，发布时上传。'}
-                      </Text>
                       {!context && panel === 'attachments' ? (
                         <Text style={styles.muted}>读取原站规则后即可选择文件。已保存的内容会继续保留。</Text>
                       ) : null}
@@ -1710,9 +1701,9 @@ export function TopicComposerScreen({
                                   accessibilityState={{ disabled: c.busy, expanded: descriptionFileId === file.id }}
                                   style={[styles.attachmentAction, c.busy && styles.disabled]}
                                   disabled={c.busy}
-                                  onPress={() =>
+                                  onPress={panelAction(() =>
                                     setDescriptionFileId((current) => (current === file.id ? null : file.id))
-                                  }
+                                  )}
                                 >
                                   <Pencil size={20} color={theme.muted} />
                                 </Pressable>
@@ -1727,7 +1718,7 @@ export function TopicComposerScreen({
                                     (c.busy || c.uploading || preview) && styles.disabled
                                   ]}
                                   disabled={c.busy || c.uploading || preview}
-                                  onPress={() => void c.uploadFiles([file])}
+                                  onPress={panelAction(() => c.uploadFiles([file]))}
                                 >
                                   {file.status === 'queued' ? (
                                     <Upload size={20} color={theme.primary} />
@@ -1754,7 +1745,7 @@ export function TopicComposerScreen({
                                 accessibilityState={{ disabled: c.busy || c.uploading }}
                                 style={[styles.attachmentAction, (c.busy || c.uploading) && styles.disabled]}
                                 disabled={c.busy || c.uploading}
-                                onPress={() => void c.removeAttachment(file)}
+                                onPress={panelAction(() => c.removeAttachment(file))}
                               >
                                 <X size={20} color={theme.muted} />
                               </Pressable>
@@ -1772,7 +1763,7 @@ export function TopicComposerScreen({
                                 multiline
                                 value={file.description}
                                 onChangeText={(description) =>
-                                  c.change((value) => ({
+                                  changePanelDraft((value) => ({
                                     ...value,
                                     attachments: value.attachments.map((item) =>
                                       item.id === file.id ? { ...item, description } : item

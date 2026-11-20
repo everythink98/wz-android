@@ -1,4 +1,3 @@
-import { ActivityIndicator } from 'react-native-paper';
 import type { MoreScreenStyles } from '../styles';
 import { useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
@@ -7,6 +6,7 @@ import type { LinuxDoLevelProfile } from '@/sources/readGateway';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
 import { type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
+import { LoadingState } from '@/ui/controls/FeedbackStates';
 
 const LINUXDO_LEVEL_TABS = [
   { value: 'progress', label: '等级要求' },
@@ -31,11 +31,11 @@ export function LinuxDoLevelPanel({
   busy,
   error,
   loginButtonLabel = '打开 linux.do 登录 / 验证',
-  loginMessage = '需要先保存 linux.do 登录 Cookie，等级数据只从手机本机读取。',
+  loginMessage = '登录后查看等级进度',
   profile,
   siteSession,
   styles,
-  theme,
+  theme: _theme,
   onOpenLogin,
   onRefresh
 }: {
@@ -75,12 +75,19 @@ export function LinuxDoLevelPanel({
         <>
           <View style={styles.levelSummary}>
             <View style={styles.levelSummaryHeader}>
-              <View style={styles.levelTitleBlock}>
-                <Text style={styles.levelEyebrow}>{profile.username}</Text>
+              <View style={styles.levelMetaRow}>
                 <Text style={styles.levelTitle}>
                   LV {profile.currentLevel}
                   {profile.targetLevel !== null ? ` → LV ${profile.targetLevel}` : ''}
                 </Text>
+                <Text style={styles.levelBadge}>
+                  {profile.estimate ? '本机估算' : profile.source === 'connect' ? '官方要求' : '本机数据'}
+                </Text>
+                {profile.totalCount ? (
+                  <Text style={styles.meta}>
+                    通过 {profile.achievedCount} / {profile.totalCount} 项
+                  </Text>
+                ) : null}
               </View>
               <View style={styles.levelRefreshSlot}>
                 <IconButton
@@ -95,20 +102,6 @@ export function LinuxDoLevelPanel({
                 />
               </View>
             </View>
-            <View style={styles.levelMetaRow}>
-              <Text style={styles.levelBadge}>
-                {profile.estimate ? '本机估算' : profile.source === 'connect' ? '官方要求' : '本机数据'}
-              </Text>
-              {profile.totalCount ? (
-                <Text style={styles.meta}>
-                  通过 {profile.achievedCount} / {profile.totalCount} 项
-                </Text>
-              ) : null}
-            </View>
-            <Text style={styles.meta}>{profile.note}</Text>
-            <Text style={styles.meta}>
-              上次读取 {new Date(profile.fetchedAt).toLocaleString('zh-CN', { hour12: false })}
-            </Text>
           </View>
           <View style={styles.levelTabRail}>
             {LINUXDO_LEVEL_TABS.map((item) => (
@@ -258,10 +251,11 @@ export function LinuxDoLevelPanel({
                           ]}
                         />
                       </View>
-                      <View style={styles.levelRequirementFooter}>
-                        <Text style={styles.meta}>{Math.round(item.ratio * 100)}%</Text>
-                        {changeText ? <Text style={[styles.levelChangeText, changeStyle]}>{changeText}</Text> : null}
-                      </View>
+                      {changeText ? (
+                        <View style={styles.levelRequirementFooter}>
+                          <Text style={[styles.levelChangeText, changeStyle]}>{changeText}</Text>
+                        </View>
+                      ) : null}
                     </View>
                   );
                 })
@@ -282,10 +276,11 @@ export function LinuxDoLevelPanel({
             </View>
           )}
         </>
+      ) : busy ? (
+        <LoadingState compact text="加载中" animating={active} />
       ) : (
         <View style={styles.levelEmptyState}>
-          {busy ? <ActivityIndicator animating={active} color={theme.primary} size="small" /> : null}
-          <Text style={styles.meta}>{busy ? '正在读取当前账号统计。' : '暂无等级资料。'}</Text>
+          <Text style={styles.meta}>暂无等级资料</Text>
         </View>
       )}
     </View>

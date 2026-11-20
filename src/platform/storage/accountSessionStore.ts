@@ -17,6 +17,10 @@ function storageKey(site: SessionSite) {
   return `${STORAGE_KEY_PREFIX}${site}`;
 }
 
+function readStoredAccountKey(key: string) {
+  return AsyncStorage.getItem(key).catch(() => AsyncStorage.getItem(key));
+}
+
 function requiredString(value: unknown) {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
@@ -87,7 +91,7 @@ export function loadAccountSessionSnapshot(site: SessionSite) {
     const trace = beginDiagnosticTrace('session', 'load', { source: site, store: 'account-session' });
     let parsing = false;
     try {
-      const raw = await AsyncStorage.getItem(storageKey(site));
+      const raw = await readStoredAccountKey(storageKey(site));
       parsing = true;
       const snapshot = raw ? snapshotFromStored(JSON.parse(raw), site) : null;
       finishDiagnosticTrace(trace, raw && !snapshot ? 'partial' : 'success', {
@@ -101,8 +105,9 @@ export function loadAccountSessionSnapshot(site: SessionSite) {
       finishDiagnosticTrace(trace, 'failure', {
         source: site,
         reason: parsing ? 'invalid_response' : 'storage_error',
-        state: 'fallback'
+        state: parsing ? 'fallback' : 'failed'
       });
+      if (!parsing) throw new Error('本机账号记录读取失败。');
       return null;
     }
   });
@@ -169,12 +174,12 @@ export function loadAccountSessionMigrationCompleted() {
   return operations.run(MIGRATION_STORAGE_KEY, async () => {
     const trace = beginDiagnosticTrace('session', 'load', { store: 'account-session-migration' });
     try {
-      const completed = (await AsyncStorage.getItem(MIGRATION_STORAGE_KEY)) === '1';
+      const completed = (await readStoredAccountKey(MIGRATION_STORAGE_KEY)) === '1';
       finishDiagnosticTrace(trace, 'success', { state: completed ? 'complete' : 'missing' });
       return completed;
     } catch {
       finishDiagnosticTrace(trace, 'failure', { reason: 'storage_error' });
-      return false;
+      throw new Error('本机账号迁移标记读取失败。');
     }
   });
 }

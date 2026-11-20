@@ -1,8 +1,15 @@
 import { StyleSheet, StatusBar as NativeStatusBar } from 'react-native';
-import { readerRadii, type ReaderStyleSettings, type ReaderTheme, fontFamilyValue } from '@/ui/theme/tokens';
+import {
+  createReaderFontSizer,
+  readerRadii,
+  type ReaderStyleSettings,
+  type ReaderTheme,
+  fontFamilyValue
+} from '@/ui/theme/tokens';
 
 export function createFeedStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const appFontFamily = fontFamilyValue(settings.fontFamily);
+  const fontSize = createReaderFontSizer(settings);
   return StyleSheet.create({
     actions: {
       alignItems: 'center',
@@ -12,7 +19,7 @@ export function createFeedStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     },
     content: {
       flex: 1,
-      backgroundColor: theme.dark ? theme.surface : '#FFFFFF'
+      backgroundColor: theme.surface
     },
     errorBox: {
       gap: 8,
@@ -58,7 +65,7 @@ export function createFeedStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       borderBottomColor: theme.line,
       borderBottomWidth: 0
     },
-    feedSourceRail: { paddingRight: 18 },
+    feedSourceRail: { paddingRight: 0 },
     feedSourceTab: { width: 'auto', minHeight: 48, padding: 0, paddingBottom: 6, justifyContent: 'center' },
     feedSourceLabel: {
       margin: 0,
@@ -86,36 +93,33 @@ export function createFeedStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       minHeight: 36,
       alignItems: 'center',
       flexDirection: 'row',
-      gap: 8
+      gap: 12
     },
     feedCategoryRailSlot: {
       flex: 1,
       minWidth: 0
     },
     linuxDoFilterButton: {
-      minWidth: 62,
-      maxWidth: 96,
+      minWidth: 48,
+      maxWidth: '44%',
       minHeight: 34,
       alignItems: 'center',
       flexDirection: 'row',
       flexShrink: 0,
-      justifyContent: 'center',
-      gap: 2,
-      backgroundColor: 'transparent',
-      borderColor: 'transparent',
-      borderRadius: readerRadii.control,
-      borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 6,
+      justifyContent: 'flex-end',
+      gap: 5,
+      paddingLeft: 6,
+      paddingRight: 0,
       paddingVertical: 3
     },
     linuxDoFilterButtonText: {
       flexShrink: 1,
       color: theme.primary,
       fontFamily: appFontFamily,
-      fontSize: 12,
+      fontSize: fontSize(12),
       fontWeight: '500',
       includeFontPadding: false,
-      lineHeight: 16
+      lineHeight: fontSize(17)
     },
     linuxDoFilterMenu: {
       position: 'absolute',
@@ -132,8 +136,8 @@ export function createFeedStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     linuxDoFilterMenuSectionText: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: 10,
-      fontWeight: '700',
+      fontSize: fontSize(11),
+      fontWeight: '600',
       letterSpacing: 0,
       paddingHorizontal: 12,
       paddingTop: 6,
@@ -152,6 +156,18 @@ export function createFeedStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       width: '100%',
       height: StyleSheet.hairlineWidth,
       backgroundColor: theme.dark ? '#2B2D30' : '#ECEEF0'
+    },
+    feedListFooter: {
+      alignItems: 'center',
+      paddingHorizontal: 16,
+      paddingVertical: 14
+    },
+    pageErrorText: {
+      color: theme.danger,
+      fontFamily: appFontFamily,
+      fontSize: fontSize(13),
+      lineHeight: fontSize(19),
+      textAlign: 'center'
     },
     endOfListText: {
       color: theme.muted,

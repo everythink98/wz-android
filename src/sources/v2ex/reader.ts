@@ -1,8 +1,15 @@
 import { normalizeTopicId } from '@/domain/forum/numericValues';
 import { mergeTopics } from '@/domain/forum/feed';
-import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
+import {
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  fetchWithTimeout,
+  RequestCanceledError,
+  withAbortableTimeout,
+  type Fetcher
+} from '@/platform/network/request';
 import type {
   CategoriesResponse,
+  Category,
   FeedResponse,
   Reply,
   RepliesResponse,
@@ -48,8 +55,12 @@ const V2EX_FEED_CURSOR_LIMIT = 200;
 const V2EX_LINKED_REPLY_PAGE_LIMIT = 100;
 const V2EX_REPLY_PAGE_SIZE = 100;
 const V2EX_HTML_TIMEZONE = '+08:00';
+const V2EX_RELATIVE_TIME =
+  /\b(?:\d{1,4}\s*(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?|[smhdw])\s+ago|just now|yesterday)\b|(?:\d{1,4}\s*(?:年|个月|周|天|小时|分钟|秒)\s*){1,3}前|刚刚|刚才|昨天|前天/i;
 type V2exFeedScan =
   { kind: 'reading'; page: number; items: Topic[] } | { kind: 'ready'; items: Topic[]; remoteHasMore: boolean };
+type V2exRecentPosition = { page: number; firstId?: string };
+type V2exFeedCursor = { seenIds: Set<string>; recent?: V2exRecentPosition };
 
 export interface V2exOptions {
   cursor?: string | null;
@@ -131,8 +142,8 @@ function normalizeApiTopic(raw: unknown): Topic | null {
   }
   const node = isRecord(raw.node) ? raw.node : {};
   const member = isRecord(raw.member) ? raw.member : {};
-  const createdAt = toIsoString(raw.created) || new Date().toISOString();
-  const lastReplyAt = v2exLastReplyAt(raw, createdAt);
+  const createdAt = toIsoString(raw.created);
+  const lastReplyAt = v2exLastReplyAt(raw, createdAt) || undefined;
   const accessRequirement = accessRequirementFromObject(raw);
   const authorLevelLabel = v2exMemberLevelLabel(member);
   return {
@@ -175,7 +186,10 @@ export function normalizeHtmlTopic(
   const memberHref = memberLink?.getAttribute('href') || '';
   const memberName = elementText(memberLink);
   const avatar = element.querySelector('img.avatar')?.getAttribute('src');
-  const timestamp = element.querySelector('span[title]')?.getAttribute('title');
+  const info = element.querySelector('.topic_info');
+  const timeElement = info?.querySelector('time, span[title]') || element.querySelector('time[datetime], span[title]');
+  const visibleTime = timeElement?.rawTagName === 'time' ? elementText(timeElement) : '';
+  const timestamp = timeElement?.getAttribute('datetime') || timeElement?.getAttribute('title');
   const replyBadge =
     element.querySelector(
       `td[align="right"] a[href*="/t/${id}#reply"].count_livid,td[align="right"] a[href*="/t/${id}#reply"].count_orange`
@@ -183,7 +197,9 @@ export function normalizeHtmlTopic(
     element.querySelector('td[align="right"] .count_livid,td[align="right"] .count_orange') ||
     element.querySelector('.count_livid');
   const countText = replyBadge?.text || href.match(/#reply(\d+)/)?.[1] || '';
-  const createdAt = toV2exHtmlIsoString(timestamp) || new Date().toISOString();
+  const createdAt =
+    toV2exHtmlIsoString(timestamp) || (/^\d{4}[-/]/.test(visibleTime) ? toV2exHtmlIsoString(visibleTime) : '');
+  const displayTimeText = !createdAt && (visibleTime || elementText(info).match(V2EX_RELATIVE_TIME)?.[0]);
   const accessRequirement = accessRequirementFromText(elementText(element).replace(title, ' '));
   return {
     source: 'v2ex',
@@ -197,7 +213,8 @@ export function normalizeHtmlTopic(
     category: elementText(nodeLink) || categoryId,
     url: `${BASE_URL}/t/${id}`,
     createdAt,
-    lastReplyAt: createdAt,
+    lastReplyAt: createdAt || undefined,
+    ...(displayTimeText ? { displayTimeText } : {}),
     replyCount: Number.parseInt(String(countText || '0'), 10) || 0,
     excerpt: '',
     ...(accessRequirement ? { accessRequirement } : {})
@@ -598,26 +615,33 @@ function appendV2exSupplementHtml(contentHtml: string, supplementHtml: string) {
   return [contentHtml, supplementHtml].filter((part) => String(part || '').trim()).join('\n');
 }
 
-function decodeV2exFeedSeenIds(cursor?: string | null) {
-  if (!cursor) {
-    return new Set<string>();
-  }
+function decodeV2exFeedCursor(cursor?: string | null): V2exFeedCursor {
+  if (!cursor) return { seenIds: new Set() };
   try {
-    const parsed = JSON.parse(decodeURIComponent(cursor)) as { seenIds?: unknown };
-    return new Set(
+    const parsed: unknown = JSON.parse(decodeURIComponent(cursor));
+    if (!isRecord(parsed)) return { seenIds: new Set() };
+    const seenIds = new Set<string>(
       Array.isArray(parsed.seenIds) ? parsed.seenIds.map((item) => String(item || '').trim()).filter(Boolean) : []
     );
+    const recent = isRecord(parsed.recent) ? parsed.recent : {};
+    return {
+      seenIds,
+      recent:
+        typeof recent.page === 'number' && Number.isSafeInteger(recent.page) && recent.page > 0
+          ? { page: recent.page, firstId: typeof recent.firstId === 'string' ? recent.firstId : undefined }
+          : undefined
+    };
   } catch {
-    return new Set<string>();
+    return { seenIds: new Set() };
   }
 }
 
-function encodeV2exFeedSeenIds(previous: Set<string>, items: Topic[]) {
+function encodeV2exFeedCursor(previous: Set<string>, items: Topic[], recent?: V2exRecentPosition) {
   const seenIds = new Set(previous);
   for (const item of items) {
     seenIds.add(item.id);
   }
-  return encodeURIComponent(JSON.stringify({ seenIds: Array.from(seenIds).slice(-V2EX_FEED_CURSOR_LIMIT) }));
+  return encodeURIComponent(JSON.stringify({ recent, seenIds: Array.from(seenIds).slice(-V2EX_FEED_CURSOR_LIMIT) }));
 }
 
 function v2exHtmlWindowStart(options: { page: number; limit: number; category?: string }) {
@@ -672,11 +696,15 @@ export async function fetchJson<T>(url: string, options: V2exOptions = {}) {
     },
     options
   );
-  const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }
-  return data as T;
+  const body = await response.text();
+  try {
+    return JSON.parse(body) as T;
+  } catch {
+    throw Object.assign(new Error('V2EX 返回内容无法解析，请重试'), { reason: 'parse_empty' });
+  }
 }
 
 export async function fetchText(url: string, options: V2exOptions = {}) {
@@ -704,31 +732,63 @@ async function fetchHtmlWindow(
     page: number;
     limit: number;
     category?: string;
-    seenIds?: Set<string>;
+    continuation?: V2exFeedCursor;
   }
-) {
+): Promise<{ items: Topic[]; hasMore: boolean; nextPage: number | null; recent?: V2exRecentPosition } | null> {
   const path = safeNodePath(options.category);
   if (!path) {
     return null;
   }
-  if (!options.category && options.seenIds?.size) {
-    let scan: V2exFeedScan =
-      0 < options.limit ? { kind: 'reading', page: 1, items: [] } : { kind: 'ready', items: [], remoteHasMore: false };
-    while (scan.kind === 'reading') {
-      const html = await fetchText(`${BASE_URL}${path}?p=${scan.page}`, options);
-      const pageResult = parseV2exListPage(html, scan.page, path, options.category);
-      const items: Topic[] = mergeTopics(
-        scan.items,
-        pageResult.items.filter((item) => !options.seenIds?.has(item.id))
-      );
-      scan =
-        pageResult.hasMore && pageResult.items.length > 0 && items.length < options.limit
-          ? { kind: 'reading', page: scan.page + 1, items }
-          : { kind: 'ready', items, remoteHasMore: pageResult.hasMore };
-    }
-    const items = scan.items.slice(0, options.limit);
-    const hasMore = items.length === options.limit && (scan.items.length > options.limit || scan.remoteHasMore);
-    return { items, hasMore, nextPage: hasMore ? options.page + 1 : null };
+  const cursor = options.continuation;
+  if (!options.category && cursor && (cursor.recent || cursor.seenIds.size)) {
+    if (options.limit <= 0) return { items: [], hasMore: false, nextPage: null };
+    return withAbortableTimeout(
+      async (signal) => {
+        let items: Topic[] = [];
+        const scannedWindows = new Map<string, number>();
+        // Older full cursors have already discarded earlier IDs. Find their first overlap once.
+        let seekOverlap = !cursor.recent && options.page > 2 && cursor.seenIds.size === V2EX_FEED_CURSOR_LIMIT;
+        const estimatedPage = Math.floor(v2exHtmlWindowStart(options) / HTML_LIST_PAGE_SIZE) + 1;
+        for (let page = cursor.recent?.page ?? 1; ; page++) {
+          if (signal.aborted) throw new RequestCanceledError();
+          const html = await fetchText(`${BASE_URL}${path}?p=${page}`, { ...options, signal });
+          const upstream = parseV2exListPage(html, page, path);
+          let start = 0;
+          if (seekOverlap) {
+            const overlap = upstream.items.findIndex((item) => cursor.seenIds.has(item.id));
+            seekOverlap = overlap < 0 && upstream.items.length > 0 && upstream.hasMore && page < estimatedPage;
+            start = Math.max(0, overlap);
+          } else if (page === cursor.recent?.page && cursor.recent.firstId) {
+            start = Math.max(
+              0,
+              upstream.items.findIndex((item) => item.id === cursor.recent?.firstId)
+            );
+          }
+          if (!seekOverlap) {
+            items = mergeTopics(
+              items,
+              upstream.items.slice(start).filter((item) => !cursor.seenIds.has(item.id))
+            );
+          }
+          const firstUnreturned = items[options.limit];
+          if (firstUnreturned)
+            return {
+              items: items.slice(0, options.limit),
+              hasMore: true,
+              nextPage: options.page + 1,
+              recent: { page, firstId: firstUnreturned.id }
+            };
+          if (!upstream.hasMore || !upstream.items.length) return { items, hasMore: false, nextPage: null };
+          if (items.length === options.limit)
+            return { items, hasMore: true, nextPage: options.page + 1, recent: { page: page + 1 } };
+
+          const window = upstream.items.map((item) => item.id).join(',');
+          if (scannedWindows.get(window) === items.length) throw new Error('V2EX 返回重复的列表，请重试。');
+          scannedWindows.set(window, items.length);
+        }
+      },
+      { signal: options.signal, timeoutMs: options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS }
+    );
   }
   const start = v2exHtmlWindowStart(options);
   const firstHtmlPage = Math.floor(start / HTML_LIST_PAGE_SIZE) + 1;
@@ -763,7 +823,7 @@ export async function getV2exFeed(
   const page = options.page || 1;
   const limit = options.limit || 30;
   const feedFilter = options.category ? 'all' : options.feedFilter || 'all';
-  const seenIds = decodeV2exFeedSeenIds(options.cursor);
+  const continuation = decodeV2exFeedCursor(options.cursor);
   if (!options.category && feedFilter === 'hot') {
     const html = await fetchText(`${BASE_URL}/?tab=hot`, options);
     const items = parseV2exAllTabPage(html, limit).items;
@@ -780,20 +840,39 @@ export async function getV2exFeed(
     );
   }
   if (!options.category && feedFilter === 'latest') {
-    const html = await fetchText(`${BASE_URL}/recent?p=${page}`, options);
-    const pageResult = parseV2exListPage(html, page, '/recent');
+    const remotePage = continuation.recent?.page ?? page;
+    const html = await fetchText(`${BASE_URL}/recent?p=${remotePage}`, options);
+    const pageResult = parseV2exListPage(html, remotePage, '/recent');
+    const firstId = continuation.recent?.firstId;
+    const start = firstId
+      ? Math.max(
+          0,
+          pageResult.items.findIndex((item) => item.id === firstId)
+        )
+      : 0;
+    const candidates = mergeTopics([], pageResult.items.slice(start)).filter(
+      (item) => !continuation.seenIds.has(item.id)
+    );
+    const items = candidates.slice(0, limit);
+    const overflow = candidates[limit];
+    const next = overflow
+      ? { page: remotePage, firstId: overflow.id }
+      : pageResult.hasMore
+        ? { page: remotePage + 1 }
+        : undefined;
     const result = {
-      items: pageResult.items.slice(0, limit),
+      items,
       errors: {},
-      hasMore: pageResult.hasMore,
-      nextPage: pageResult.hasMore ? page + 1 : null
+      hasMore: Boolean(next),
+      nextPage: next ? page + 1 : null,
+      nextCursor: next ? encodeV2exFeedCursor(continuation.seenIds, items, next) : null
     };
-    const candidateCount = (html.match(/class=["'][^"']*\bitem\b/gi) || []).length;
+    const candidateCount = Math.max(pageResult.items.length, (html.match(/class=["'][^"']*\bitem\b/gi) || []).length);
     return annotateSourceDiagnosticSummary(result, {
       parserVariant: 'html-latest-feed',
       candidateCount,
       validCount: result.items.length,
-      droppedCount: Math.max(0, candidateCount - result.items.length),
+      droppedCount: candidateCount - pageResult.items.length,
       isExpectedEmpty: page > 1 && candidateCount === 0,
       isParseEmpty: page === 1 && candidateCount === 0,
       hasRepeatedCursor: result.nextPage === page
@@ -804,7 +883,7 @@ export async function getV2exFeed(
     const result = parseV2exAllTabPage(html, limit);
     const response = {
       ...result,
-      nextCursor: result.hasMore ? encodeV2exFeedSeenIds(seenIds, result.items) : null,
+      nextCursor: result.hasMore ? encodeV2exFeedCursor(continuation.seenIds, result.items, { page: 1 }) : null,
       errors: {}
     };
     const candidateCount = (html.match(/class=["'][^"']*\bitem\b/gi) || []).length;
@@ -818,12 +897,12 @@ export async function getV2exFeed(
     });
   }
   if (options.category || page > 1) {
-    const htmlResult = await fetchHtmlWindow({ ...options, page, limit, seenIds });
+    const htmlResult = await fetchHtmlWindow({ ...options, page, limit, continuation });
     if (htmlResult) {
+      const { recent, ...window } = htmlResult;
       const result = {
-        ...htmlResult,
-        nextPage: htmlResult.hasMore ? htmlResult.nextPage : null,
-        nextCursor: htmlResult.hasMore ? encodeV2exFeedSeenIds(seenIds, htmlResult.items) : null,
+        ...window,
+        nextCursor: window.hasMore ? encodeV2exFeedCursor(continuation.seenIds, window.items, recent) : null,
         errors: {}
       };
       return annotateSourceDiagnosticSummary(result, {
@@ -883,33 +962,43 @@ export async function getV2exFeed(
   });
 }
 
-export async function getV2exCategories(options: V2exOptions = {}): Promise<CategoriesResponse> {
-  const data = await loadLatest(options);
-  const seen = new Set<string>();
-  const items = data
-    .map((topic) => {
-      if (!isRecord(topic) || !isRecord(topic.node)) {
-        return null;
-      }
-      const id = String(topic.node.name || topic.node.title || '').trim();
-      const name = String(topic.node.title || topic.node.name || '').trim();
-      return id && name ? { source: 'v2ex' as const, id, name } : null;
-    })
-    .filter((item): item is { source: 'v2ex'; id: string; name: string } => {
-      if (!item || seen.has(item.id)) {
-        return false;
-      }
-      seen.add(item.id);
-      return true;
+export async function getV2exCategories({
+  v2exNodeDirectory,
+  ...options
+}: V2exOptions & { v2exNodeDirectory?: boolean } = {}): Promise<CategoriesResponse> {
+  const data = v2exNodeDirectory
+    ? await fetchJson<unknown>(`${BASE_URL}/api/nodes/all.json`, options)
+    : await loadLatest(options);
+  const nodes = new Map<string, Category>();
+  const rows = Array.isArray(data) ? data : [];
+  for (const row of rows) {
+    if (!isRecord(row)) continue;
+    const node = v2exNodeDirectory ? row : row.node;
+    if (!isRecord(node)) continue;
+    const id = typeof node.name === 'string' ? node.name.trim() : '';
+    const name = typeof node.title === 'string' ? node.title.trim() : '';
+    const key = id || (!v2exNodeDirectory && name);
+    if (!key || nodes.has(key) || (v2exNodeDirectory && !safeNodePath(key))) continue;
+    nodes.set(key, {
+      source: 'v2ex',
+      id: key,
+      name: name || key,
+      ...(v2exNodeDirectory && { topicCount: parsePositiveInteger(node.topics) })
     });
+  }
+  const items = [...nodes.values()];
+  if (v2exNodeDirectory) {
+    if (!items.length) throw new Error('无法读取 V2EX 节点目录');
+    items.sort((a, b) => (b.topicCount ?? 0) - (a.topicCount ?? 0));
+  }
   return annotateSourceDiagnosticSummary(
     { items, errors: {} },
     {
       parserVariant: 'api-categories',
-      candidateCount: data.length,
+      candidateCount: rows.length,
       validCount: items.length,
-      droppedCount: Math.max(0, data.length - items.length),
-      isParseEmpty: data.length === 0
+      droppedCount: rows.length - items.length,
+      isParseEmpty: rows.length === 0
     }
   );
 }

@@ -75,7 +75,8 @@ export function toIsoString(value: unknown, defaultTimezone = '') {
         );
     time = Date.parse(normalized);
   }
-  return Number.isFinite(time) ? new Date(time).toISOString() : '';
+  const date = new Date(time);
+  return Number.isNaN(date.getTime()) ? '' : date.toISOString();
 }
 
 export function decodeHtml(value: unknown) {
@@ -258,16 +259,21 @@ export function parsePositiveInteger(value: unknown) {
   return match ? Number(match[0]) : 0;
 }
 
+function topicSortTime(value: string) {
+  const time = Date.parse(value);
+  return Number.isNaN(time) ? Number.NEGATIVE_INFINITY : time;
+}
+
 export function sortTopicsByTime<T extends { lastReplyAt?: string; createdAt: string }>(items: T[]) {
   return items
-    .map((item) => ({ item, time: Date.parse(item.lastReplyAt || item.createdAt || '') }))
+    .map((item) => ({ item, time: topicSortTime(item.lastReplyAt || item.createdAt) }))
     .sort((left, right) => right.time - left.time)
     .map(({ item }) => item);
 }
 
 export function sortTopicsByCreatedAt<T extends { createdAt: string }>(items: T[]) {
   return items
-    .map((item) => ({ item, time: Date.parse(item.createdAt || '') }))
+    .map((item) => ({ item, time: topicSortTime(item.createdAt) }))
     .sort((left, right) => right.time - left.time)
     .map(({ item }) => item);
 }

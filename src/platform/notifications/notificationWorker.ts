@@ -21,6 +21,7 @@ import { createNotificationWorkerDeadline } from './notificationWorkerDeadline';
 import { createNotificationDeliveryAttempt } from './notificationDeliveryAttempt';
 import {
   advanceNotificationDelivery,
+  type NotificationContentDisableGuard,
   type NotificationDeliveryCommit,
   type NotificationState
 } from './notificationStore';
@@ -81,7 +82,7 @@ export interface NotificationWorkerDependencies<Access extends NotificationWorke
       fields: { lastSuccessAt: string },
       delivery?: NotificationDeliveryCommit
     ): Promise<{ committed: boolean; newIds: string[]; rollback(): Promise<unknown> }>;
-    clearForContentDisable(source: NotificationSource): Promise<unknown>;
+    clearForContentDisable(source: NotificationSource, guard: NotificationContentDisableGuard): Promise<unknown>;
   };
   system: {
     permissionGranted(): Promise<boolean>;
@@ -94,6 +95,7 @@ export interface NotificationWorkerDependencies<Access extends NotificationWorke
     dismissDigest(source: NotificationSource, identifier: string): Promise<void>;
   };
   deadlineMs?: number;
+  deadline?: ReturnType<typeof createNotificationWorkerDeadline>;
   flow?: 'foreground' | 'background';
   parentTrace?: DiagnosticTrace;
   // Foreground scheduling stays occupied until native cleanup and commits release their identity lanes.
@@ -162,7 +164,7 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
     );
     return result;
   };
-  const deadline = createNotificationWorkerDeadline(dependencies.deadlineMs ?? 50_000);
+  const deadline = dependencies.deadline ?? createNotificationWorkerDeadline(dependencies.deadlineMs);
   const deadlineError = deadline.error;
   const beforeDeadline = deadline.before;
   const sourceAllowed = (source: NotificationSource) =>
@@ -421,7 +423,10 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
                 (error as { reason?: unknown }).reason === 'source-disabled'
               ) {
                 await step('rollback', 'clear-disabled-source', () =>
-                  dependencies.store.clearForContentDisable(source)
+                  dependencies.store.clearForContentDisable(source, {
+                    identityKey: capturedIdentityKey,
+                    sourceStillDisabled: async () => !(await sourceAllowed(source))
+                  })
                 ).catch(() => undefined);
               }
               throw error;
@@ -473,6 +478,6 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
     finishDiagnosticTrace(roundTrace, 'failure', { state: roundState, reason: normalizeDiagnosticReason(error) });
     throw error;
   } finally {
-    deadline.release();
+    if (!dependencies.deadline) deadline.release();
   }
 }

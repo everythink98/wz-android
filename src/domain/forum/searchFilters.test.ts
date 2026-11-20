@@ -141,40 +141,40 @@ describe('Android search site filters', () => {
         ...DEFAULT_SEARCH_FILTERS.linuxdo,
         date: '2026-02-30'
       })
-    ).toBe('请选择有效日期');
+    ).toEqual({ field: 'date', message: '请选择有效日期' });
     expect(
       discourseSearchFilterError({
         ...DEFAULT_SEARCH_FILTERS.linuxdo,
         minPosts: 20,
         maxPosts: 2
       })
-    ).toBe('帖子数最小值不能大于最大值');
+    ).toEqual({ field: 'maxPosts', message: '帖子数最小值不能大于最大值' });
     expect(
       discourseSearchFilterError({
         ...DEFAULT_SEARCH_FILTERS.linuxdo,
         minViews: 100,
         maxViews: 1000
       })
-    ).toBe('');
+    ).toBeNull();
     expect(
       discourseSearchFilterError({
         ...DEFAULT_SEARCH_FILTERS.linuxdo,
         minViews: -1
       })
-    ).toBe('帖子数和浏览量必须是非负整数');
+    ).toEqual({ field: 'minViews', message: '帖子数和浏览量必须是非负整数' });
     expect(
       discourseSearchFilterError({
         ...DEFAULT_SEARCH_FILTERS.linuxdo,
         maxPosts: 1.5
       })
-    ).toBe('帖子数和浏览量必须是非负整数');
+    ).toEqual({ field: 'maxPosts', message: '帖子数和浏览量必须是非负整数' });
     expect(
       discourseSearchFilterError({
         ...DEFAULT_SEARCH_FILTERS.linuxdo,
         minViews: 1000,
         maxViews: 100
       })
-    ).toBe('浏览量最小值不能大于最大值');
+    ).toEqual({ field: 'maxViews', message: '浏览量最小值不能大于最大值' });
   });
 
   it('builds the standard Discourse advanced filters confirmed by the linux.do search UI', () => {

@@ -117,7 +117,7 @@ export async function presentSourceNotification(
   return notificationDigestNativeModule().present(identifier, digest.title, digest.body, source);
 }
 
-export function dismissSourceNotificationExact(identifier: string) {
+export async function dismissSourceNotificationExact(identifier: string) {
   return notificationDigestNativeModule().dismiss(identifier);
 }
 
@@ -137,8 +137,7 @@ export async function reconcileSourceNotificationSlots(
 
 export async function dismissSourceNotification(source: NotificationSource, identifier?: string, identityKey?: string) {
   const trace = beginDiagnosticTrace('source', 'notification-cleanup', { source });
-  let errorCount = 0;
-  await Promise.all(
+  const settled = await Promise.allSettled(
     [
       ...new Set(
         [
@@ -147,12 +146,20 @@ export async function dismissSourceNotification(source: NotificationSource, iden
           `wz-message-${source}`
         ].filter((value): value is string => Boolean(value))
       )
-    ].map((value) =>
-      Notifications.dismissNotificationAsync(value).catch((error) => {
-        errorCount += 1;
-        markDiagnosticStage(trace, 'apply', { source, result: 'failure', reason: normalizeDiagnosticReason(error) });
-      })
-    )
+    ].map(dismissSourceNotificationExact)
   );
-  finishDiagnosticTrace(trace, errorCount ? 'partial' : 'success', { source, errorCount });
+  const failures = settled.filter((result) => result.status === 'rejected');
+  for (const failure of failures) {
+    markDiagnosticStage(trace, 'apply', {
+      source,
+      result: 'failure',
+      reason: normalizeDiagnosticReason(failure.reason)
+    });
+  }
+  finishDiagnosticTrace(trace, failures.length ? 'partial' : 'success', { source, errorCount: failures.length });
+  if (failures.length)
+    throw new AggregateError(
+      failures.map((failure) => failure.reason),
+      '无法撤销消息通知'
+    );
 }

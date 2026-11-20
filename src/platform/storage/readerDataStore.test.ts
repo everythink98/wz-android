@@ -2,7 +2,7 @@
 import { sqliteParameters } from '../../../tests/helpers/sqliteParameters';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createEmptyReaderData, MAX_HISTORY_RECORDS, topicKey, type ReaderData } from '@/domain/reader/readerData';
@@ -107,6 +107,57 @@ const inspect = <T>(sql: string): T => {
     db.close();
   }
 };
+const changeStoredValue = (sql: string, value: string) => {
+  const db = new DatabaseSync(join(harness.directory, 'reader-data.db'));
+  try {
+    db.prepare(sql).run(value);
+  } finally {
+    db.close();
+  }
+};
+
+it('keeps source edits scoped to their named sites after a previous settings transaction rolls back', async () => {
+  const store = await reopen();
+  await store.loadReaderState();
+  harness.fail.push('UPDATE reader_meta');
+  const results = await Promise.allSettled([
+    store.commitReaderCommand({
+      type: 'settings',
+      patch: { kind: 'set-source-enabled', source: 'v2ex', enabled: false }
+    }),
+    store.commitReaderCommand({
+      type: 'settings',
+      patch: { kind: 'set-source-enabled', source: 'linuxdo', enabled: false }
+    }),
+    store.commitReaderCommand({ type: 'settings', patch: { kind: 'move-source', source: 'linuxdo', offset: -1 } }),
+    store.commitReaderCommand({
+      type: 'settings',
+      patch: {
+        kind: 'drop-source',
+        source: 'v2ex',
+        target: 'yaohuo',
+        fromOrder: ['linuxdo', 'v2ex', 'nodeseek', 'yaohuo']
+      }
+    }),
+    store.commitReaderCommand({
+      type: 'settings',
+      patch: {
+        kind: 'drop-source',
+        source: 'v2ex',
+        target: 'nodeseek',
+        fromOrder: ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo']
+      }
+    })
+  ]);
+
+  expect(results.map(({ status }) => status)).toEqual(['rejected', 'fulfilled', 'fulfilled', 'fulfilled', 'fulfilled']);
+  expect((await (await reopen()).loadReaderSettings()).contentSources).toEqual([
+    { source: 'linuxdo', enabled: false },
+    { source: 'nodeseek', enabled: true },
+    { source: 'yaohuo', enabled: true },
+    { source: 'v2ex', enabled: true }
+  ]);
+});
 
 beforeEach(() => {
   vi.resetModules();
@@ -126,6 +177,28 @@ afterEach(() => {
 });
 
 describe('reader data storage authority', () => {
+  it.each(['regular', 'recovery'] as const)('normalizes each imported avatar once during %s import', async (mode) => {
+    const store = await reopen();
+    if (mode === 'regular') await store.loadReaderState();
+    const data = createEmptyReaderData();
+    for (let i = 1; i <= 64; i++) {
+      const item = { ...topic, id: String(i), authorAvatar: 'https://cdn.example.com/avatar.png?private=discard' };
+      data.history[topicKey(item)] = { topic: item, savedAt: at };
+    }
+    const normalized = vi.spyOn(URL.prototype, 'username', 'set');
+    try {
+      const state = await store.importReaderDataBackup(JSON.stringify(data), mode === 'recovery');
+      expect(state.counts.history).toBe(64);
+      const row = inspect<{ value: string }>(
+        "SELECT value FROM reader_records WHERE kind='history' AND key='nodeseek:1'"
+      );
+      expect(JSON.parse(row.value).topic.authorAvatar).toBe('https://cdn.example.com/avatar.png');
+      expect(normalized).toHaveBeenCalledTimes(64);
+    } finally {
+      normalized.mockRestore();
+    }
+  });
+
   it.each(['exported', 'empty'] as const)(
     'retains untimed source topics after merging an %s backup and reopening',
     async (backup) => {
@@ -247,6 +320,59 @@ describe('reader data storage authority', () => {
     }
   );
 
+  it('releases startup and queued reads when the legacy payload read stalls', async () => {
+    vi.useFakeTimers();
+    const data = createEmptyReaderData();
+    data.history[topicKey(topic)] = { topic, savedAt: at };
+    seed(data);
+    const storage = (await import('@react-native-async-storage/async-storage')).default;
+    const pending = Promise.withResolvers<string>();
+    vi.mocked(storage.getItem).mockImplementationOnce(() => pending.promise);
+    const store = await reopen();
+    const loadingFailed = vi.fn();
+    const settingsLoaded = vi.fn();
+    const loading = store.loadReaderState().catch(loadingFailed);
+    const queued = store.loadReaderSettings().then(settingsLoaded);
+    try {
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(loadingFailed).toHaveBeenCalledWith(expect.objectContaining({ message: '旧资料存储读取超时' }));
+      expect(settingsLoaded).toHaveBeenCalledWith(data.settings);
+    } finally {
+      pending.resolve(JSON.stringify(data));
+      await Promise.all([loading, queued]);
+    }
+    expect(harness.legacy.size).toBe(2);
+    expect((await store.loadReaderState()).counts.history).toBe(1);
+  });
+
+  it('merges readable legacy records and settings when importing after a temporary migration fault', async () => {
+    const local = createEmptyReaderData();
+    local.history[topicKey(topic)] = { topic, savedAt: at };
+    local.settings.fontScale = 1.3;
+    seed(local);
+    const storage = (await import('@react-native-async-storage/async-storage')).default;
+    vi.mocked(storage.getItem)
+      .mockResolvedValueOnce(JSON.stringify(local))
+      .mockRejectedValueOnce(new Error('settings unavailable'));
+    const store = await reopen();
+    await expect(store.loadReaderState()).rejects.toThrow('settings unavailable');
+    const imported = { ...topic, id: '2' };
+    const backup = JSON.stringify({
+      version: 2,
+      favorites: { [topicKey(imported)]: { topic: imported, savedAt: at } }
+    });
+    vi.mocked(storage.getItem).mockRejectedValueOnce(new Error('payload temporarily unavailable'));
+    await expect(store.importReaderDataBackup(backup, true)).rejects.toThrow('payload temporarily unavailable');
+    expect(harness.legacy.size).toBe(2);
+    await expect(store.importReaderDataBackup(backup, true)).resolves.toMatchObject({
+      history: { [topicKey(topic)]: true },
+      favorites: { [topicKey(imported)]: true },
+      settings: { fontScale: 1.3 }
+    });
+    expect(harness.legacy.size).toBe(0);
+    expect((await (await reopen()).loadReaderState()).counts).toEqual({ favorites: 1, history: 1, followedUsers: 0 });
+  });
+
   it('preserves legacy keys when the main data read fails and retries without a committed marker', async () => {
     const data = createEmptyReaderData();
     data.settings.fontScale = 1.2;
@@ -307,7 +433,13 @@ describe('reader data storage authority', () => {
       const incoming = createEmptyReaderData();
       if (collection === 'followedUsers')
         incoming.followedUsers[topicKey(topic)] = {
-          user: { source: topic.source, id: topic.id, username: 'alice', url: '', topics: [] },
+          user: {
+            source: topic.source,
+            id: topic.id,
+            username: 'alice',
+            url: 'https://www.nodeseek.com/space/1',
+            topics: []
+          },
           followedAt: '2026-06-01T00:00:00Z'
         };
       else incoming[collection][topicKey(topic)] = { topic, savedAt: '2026-06-01T00:00:00Z' };
@@ -519,6 +651,156 @@ describe('reader data storage authority', () => {
     await expect(store.loadReaderState()).resolves.toMatchObject({ counts: { history: 1 } });
   });
 
+  it.each(['null', '[]', '"not settings"'])(
+    'rejects committed settings encoded as %s during startup',
+    async (value) => {
+      await (await reopen()).loadReaderState();
+      changeStoredValue('UPDATE reader_meta SET settings=? WHERE id=1', value);
+
+      const restarted = await reopen();
+      await expect(restarted.loadReaderSettings()).rejects.toThrow('本机资料设置格式无效');
+      await expect(restarted.loadReaderState()).rejects.toThrow('本机资料设置格式无效');
+      expect(inspect('SELECT settings FROM reader_meta')).toEqual({ settings: value });
+    }
+  );
+
+  it('restores omitted fields from the reader defaults for an older SQLite settings object', async () => {
+    await (await reopen()).loadReaderState();
+    changeStoredValue('UPDATE reader_meta SET settings=? WHERE id=1', '{"fontScale":1.3}');
+
+    const expected = { ...createEmptyReaderData().settings, fontScale: 1.3 };
+    const restarted = await reopen();
+    await expect(restarted.loadReaderSettings()).resolves.toEqual(expected);
+    await expect(restarted.loadReaderState()).resolves.toMatchObject({ settings: expected });
+  });
+
+  it.each(['invalid JSON', '{"topic":{},"savedAt":"2026-09-10T00:00:00.000Z"}'])(
+    'keeps the legacy copy while pending migration verification finds an invalid committed history payload %s',
+    async (value) => {
+      const original = createEmptyReaderData();
+      original.history[topicKey(topic)] = { topic, savedAt: at };
+      seed(original);
+      harness.fail = ['BEGIN DEFERRED'];
+      await expect((await reopen()).loadReaderState()).rejects.toThrow('injected');
+      expect(inspect('SELECT status FROM reader_meta')).toEqual({ status: 'cleanup_pending' });
+      changeStoredValue("UPDATE reader_records SET value=? WHERE kind='history'", value);
+
+      const restarted = await reopen();
+      await expect(restarted.loadReaderState()).rejects.toThrow();
+      expect(harness.legacy.get('reader-data')).toBe(JSON.stringify(original));
+      expect(harness.legacy.get('reader-settings')).toBe(JSON.stringify(original.settings));
+      expect(inspect('SELECT status FROM reader_meta')).toEqual({ status: 'cleanup_pending' });
+    }
+  );
+
+  it.each(['cold records', 'cold settings', 'ordinary records'] as const)(
+    'keeps committed data and any legacy copy when %s finds invalid stored history',
+    async (mode) => {
+      const original = createEmptyReaderData();
+      original.history[topicKey(topic)] = { topic, savedAt: at };
+      seed(original);
+      const cold = mode !== 'ordinary records';
+      if (cold) {
+        harness.fail = ['BEGIN DEFERRED'];
+        await expect((await reopen()).loadReaderState()).rejects.toThrow('injected');
+      } else {
+        await (await reopen()).loadReaderState();
+      }
+      const invalid = '{"topic":{},"savedAt":"2026-09-10T00:00:00.000Z"}';
+      changeStoredValue("UPDATE reader_records SET value=? WHERE kind='history'", invalid);
+
+      const restarted = await reopen();
+      if (cold) await expect(restarted.loadReaderState()).rejects.toThrow('完整迁移');
+      const incoming = createEmptyReaderData();
+      incoming.settings.fontScale = 1.3;
+      const backup = mode === 'cold settings' ? { version: 2, settings: { fontScale: 1.3 } } : incoming;
+
+      await expect(restarted.importReaderDataBackup(JSON.stringify(backup), cold)).rejects.toThrow('完整迁移');
+      expect(
+        inspect("SELECT status, settings, value FROM reader_meta JOIN reader_records WHERE kind='history'")
+      ).toEqual({
+        status: cold ? 'cleanup_pending' : 'ready',
+        settings: JSON.stringify(original.settings),
+        value: invalid
+      });
+      expect(harness.legacy.get('reader-data')).toBe(cold ? JSON.stringify(original) : undefined);
+      expect(harness.legacy.get('reader-settings')).toBe(cold ? JSON.stringify(original.settings) : undefined);
+    }
+  );
+
+  it('rejects a full export if stored records cannot be represented faithfully', async () => {
+    const original = createEmptyReaderData();
+    original.history[topicKey(topic)] = { topic, savedAt: at };
+    seed(original);
+    await (await reopen()).loadReaderState();
+    const invalid = '{"topic":{},"savedAt":"2026-09-10T00:00:00.000Z"}';
+    changeStoredValue("UPDATE reader_records SET value=? WHERE kind='history'", invalid);
+    const ready = await reopen();
+    await expect(ready.loadReaderState()).resolves.toMatchObject({ counts: { history: 1 } });
+
+    await expect(ready.exportReaderDataBackup()).rejects.toThrow('完整迁移');
+    expect(inspect("SELECT value FROM reader_records WHERE kind='history'")).toEqual({ value: invalid });
+  });
+
+  it.each(['history', 'favorites', 'followedUsers'] as const)(
+    'rejects an invalid stored %s record as a Library read error',
+    async (collection) => {
+      const original = createEmptyReaderData();
+      const key = topicKey(topic);
+      original.history[key] = { topic, savedAt: at };
+      original.favorites[key] = { topic, savedAt: at };
+      original.followedUsers[key] = {
+        user: {
+          source: 'nodeseek',
+          id: topic.id,
+          username: 'alice',
+          url: 'https://www.nodeseek.com/space/1',
+          topics: []
+        },
+        followedAt: at
+      };
+      seed(original);
+      await (await reopen()).loadReaderState();
+      changeStoredValue(`UPDATE reader_records SET value=? WHERE kind='${collection}'`, 'null');
+      const ready = await reopen();
+      await expect(ready.loadReaderState()).resolves.toMatchObject({ counts: { [collection]: 1 } });
+
+      await expect(
+        ready.queryReaderPage({ collection, sources: ['nodeseek'], source: 'all', category: 'all' })
+      ).rejects.toThrow('完整迁移');
+      expect(inspect(`SELECT value FROM reader_records WHERE kind='${collection}'`)).toEqual({ value: 'null' });
+    }
+  );
+
+  it('isolates malformed rows from another source and the healthy preceding page', async () => {
+    const original = createEmptyReaderData();
+    for (let id = 1; id <= 51; id++) {
+      const item = { ...topic, id: String(id) };
+      original.history[topicKey(item)] = { topic: item, savedAt: at };
+    }
+    const other = { ...topic, source: 'v2ex' as const, url: 'https://www.v2ex.com/t/1' };
+    original.history[topicKey(other)] = { topic: other, savedAt: at };
+    seed(original);
+    const ready = await reopen();
+    await ready.loadReaderState();
+    const change = "UPDATE reader_records SET value=? WHERE kind='history' AND key='nodeseek:51'";
+    changeStoredValue(change, '{}');
+    const request = { collection: 'history', sources: ['nodeseek'], source: 'all', category: 'all' } as const;
+
+    const first = await ready.queryReaderPage(request);
+    expect(first.records).toHaveLength(50);
+    expect(first.next).toBeDefined();
+    await expect(ready.queryReaderPage({ ...request, sources: ['v2ex'] })).resolves.toEqual({
+      records: [original.history[topicKey(other)]]
+    });
+    const next = { ...request, after: first.next };
+    await expect(ready.queryReaderPage(next)).rejects.toThrow('完整迁移');
+    expect(inspect("SELECT value FROM reader_records WHERE key='nodeseek:51'")).toEqual({ value: '{}' });
+
+    changeStoredValue(change, JSON.stringify(original.history['nodeseek:51']));
+    await expect(ready.queryReaderPage(next)).resolves.toEqual({ records: [original.history['nodeseek:51']] });
+  });
+
   it('rejects an unsupported record instead of dropping it and announcing migration success', async () => {
     const data = createEmptyReaderData();
     data.history['wrong-key'] = { topic, savedAt: at };
@@ -560,6 +842,24 @@ describe('reader data storage authority', () => {
     expect(harness.legacy.size).toBe(0);
   });
 
+  it('rechecks live settings on one cold connection per background round and closes it on failure', async () => {
+    const data = createEmptyReaderData();
+    seed(data);
+    const store = await reopen();
+    await expect(
+      store.withReaderSettings(async (read) => {
+        expect((await read()).fontScale).toBe(data.settings.fontScale);
+        data.settings.fontScale = 1.2;
+        seed(data);
+        expect((await read()).fontScale).toBe(1.2);
+        throw new Error('background round failed');
+      })
+    ).rejects.toThrow('background round failed');
+    expect(harness.queries.filter((sql) => sql === 'PRAGMA user_version')).toHaveLength(1);
+    expect(harness.connections).toHaveLength(0);
+    expect(harness.legacy.size).toBe(2);
+  });
+
   it('keeps cold settings reads temporary and shares the initialized owner with queued readers', async () => {
     const data = createEmptyReaderData();
     data.settings.fontScale = 1.2;
@@ -582,6 +882,21 @@ describe('reader data storage authority', () => {
     expect(page.records).toMatchObject([{ topic }]);
     expect(harness.connections).toHaveLength(1);
     expect(harness.legacy.size).toBe(0);
+  });
+
+  it('allows foreground settings writes during a background round and preserves the foreground connection', async () => {
+    const store = await reopen();
+    await store.withReaderSettings(async (read) => {
+      await read();
+      await store.commitReaderCommand({ type: 'settings', patch: { fontScale: 1.2 } });
+      expect((await read()).fontScale).toBe(1.2);
+    });
+    expect(harness.connections).toHaveLength(1);
+    const checks = () => harness.queries.filter((sql) => sql === 'PRAGMA user_version').length;
+    const before = checks();
+    await store.withReaderSettings(async (read) => expect((await read()).fontScale).toBe(1.2));
+    expect(checks()).toBe(before);
+    expect(harness.connections).toHaveLength(1);
   });
 
   it.each(['settings', 'history'] as const)(
@@ -626,6 +941,55 @@ describe('reader data storage authority', () => {
     }
   );
 
+  it.each(['backup export', 'library page'] as const)(
+    'publishes a store freeze from a %s and keeps committed data for the next process',
+    async (entry) => {
+      const data = createEmptyReaderData();
+      data.settings.fontScale = 1.25;
+      data.history[topicKey(topic)] = { topic: { ...topic, replyWatermark: 5 }, savedAt: at };
+      seed(data);
+      const store = await reopen();
+      await store.loadReaderState();
+      const read = () =>
+        entry === 'backup export'
+          ? store.exportReaderDataBackup()
+          : store.queryReaderPage({ collection: 'history', source: 'all', sources: ['nodeseek'], category: 'all' });
+      const listener = vi.fn();
+      const unsubscribed = vi.fn();
+      const unsubscribe = store.subscribeReaderStorageFreeze(listener);
+      store.subscribeReaderStorageFreeze(unsubscribed)();
+
+      harness.fail = ['COMMIT'];
+      await expect(read()).rejects.toThrow('injected storage failure');
+      expect(listener).not.toHaveBeenCalled();
+      await expect(read()).resolves.toBeDefined();
+
+      harness.fail = ['COMMIT', 'ROLLBACK'];
+      await expect(read()).rejects.toBeInstanceOf(AggregateError);
+      expect(listener).toHaveBeenCalledTimes(1);
+      expect(unsubscribed).not.toHaveBeenCalled();
+      const late = vi.fn();
+      store.subscribeReaderStorageFreeze(late)();
+      expect(late).toHaveBeenCalledTimes(1);
+      unsubscribe();
+
+      const queries = [...harness.queries];
+      await expect(store.importReaderDataBackup(JSON.stringify(data), true)).rejects.toThrow('事务状态不明');
+      await expect(store.commitReaderCommand({ type: 'settings', patch: { fontScale: 1.5 } })).rejects.toThrow(
+        '事务状态不明'
+      );
+      expect(harness.queries).toEqual(queries);
+
+      for (const connection of harness.connections) connection.close();
+      harness.connections = [];
+      const next = await reopen();
+      const nextListener = vi.fn();
+      next.subscribeReaderStorageFreeze(nextListener)();
+      expect(nextListener).not.toHaveBeenCalled();
+      expect(JSON.parse(await next.exportReaderDataBackup())).toEqual(data);
+    }
+  );
+
   it.each(['migration', 'cleanup'] as const)(
     'stops direct reads and recovery SQL when %s freezes the first database lifecycle',
     async (phase) => {
@@ -665,7 +1029,7 @@ describe('reader data storage authority', () => {
     expect(harness.queries.filter((sql) => /SELECT .*value.*FROM reader_records/i.test(sql))).toEqual([]);
   });
 
-  it('uses maintained totals for the unfiltered page without scanning records to count twice', async () => {
+  it('reads the unfiltered first page in a single query without counting records', async () => {
     const store = await reopen();
     await store.loadReaderState();
     await store.commitReaderCommand({ type: 'visit', topic, at });
@@ -676,8 +1040,8 @@ describe('reader data storage authority', () => {
       source: 'all',
       category: 'all'
     });
-    expect(page).toMatchObject({ total: 1, visibleTotal: 1 });
-    expect(harness.queries.some((sql) => /COUNT\(/.test(sql))).toBe(false);
+    expect(page.records).toMatchObject([{ topic: { id: topic.id } }]);
+    expect(harness.queries.filter((sql) => /^SELECT/i.test(sql))).toHaveLength(1);
   });
 
   it('seeks both cursor ranges in the existing index and preserves deleted-boundary paging', async () => {
@@ -712,14 +1076,12 @@ describe('reader data storage authority', () => {
     expect(next.records.map((record) => 'topic' in record && record.topic.id)).toEqual(
       Array.from({ length: 51 }, (_, index) => String(index + 50)).filter((id) => id !== '51')
     );
-    expect(next.total).toBe(149);
-    expect(next.visibleTotal).toBe(149);
     const plan = harness.pagePlans.flat();
     expect(plan.some((detail) => detail.includes('reader_order') && detail.includes('time=? AND ordinal>?'))).toBe(
       true
     );
     expect(plan.some((detail) => detail.includes('reader_order') && detail.includes('time<?'))).toBe(true);
-    expect(harness.queries).toHaveLength(4); // BEGIN, counts, page, COMMIT; no extra read bridge.
+    expect(harness.queries).toHaveLength(3); // BEGIN, page, COMMIT.
   });
 
   it('updates history and existing favorite summary atomically while preserving favorite time', async () => {
@@ -1097,10 +1459,11 @@ describe('reader data storage authority', () => {
       category: '日常'
     };
     const one = await store.queryReaderPage(request);
+    harness.queries = [];
     const two = await store.queryReaderPage({ ...request, after: one.next });
     const three = await store.queryReaderPage({ ...request, after: two.next });
+    expect(harness.queries.filter((sql) => /COUNT\s*\(|FROM reader_counts/i.test(sql))).toEqual([]);
     expect([one.records.length, two.records.length, three.records.length]).toEqual([50, 50, 23]);
-    expect(one.total).toBe(123);
     expect(three.next).toBeUndefined();
     const records = [...one.records, ...two.records, ...three.records];
     expect(records.map((record) => ('topic' in record ? record.topic.id : ''))).toEqual(
@@ -1108,7 +1471,7 @@ describe('reader data storage authority', () => {
     );
   });
 
-  it('retains over-cap migrated history and shrinks the effective limit only after explicit deletions', async () => {
+  it('restores exported over-cap history to a fresh database and shrinks only after explicit deletions', async () => {
     const data = createEmptyReaderData();
     for (let i = 0; i < 5002; i++)
       data.history[`nodeseek:${i}`] = {
@@ -1118,12 +1481,55 @@ describe('reader data storage authority', () => {
     seed(data);
     const store = await reopen();
     expect((await store.loadReaderState()).counts.history).toBe(5002);
-    expect(Object.keys(JSON.parse(await store.exportReaderDataBackup()).history)).toHaveLength(5002);
-    await store.commitReaderCommand({ type: 'visit', topic: { ...topic, id: 'new' }, at });
-    expect((await store.loadReaderState()).counts.history).toBe(5002);
-    await store.commitReaderCommand({ type: 'delete', collection: 'history', keys: ['nodeseek:1', 'nodeseek:2'], at });
-    await store.commitReaderCommand({ type: 'visit', topic: { ...topic, id: 'another' }, at });
-    expect((await store.loadReaderState()).counts.history).toBe(5000);
+    const exported = await store.exportReaderDataBackup();
+    const sourceDirectory = harness.directory;
+    harness.directory = join(sourceDirectory, 'fresh-install');
+    mkdirSync(harness.directory);
+    try {
+      const fresh = await reopen();
+      expect((await fresh.loadReaderState()).counts.history).toBe(0);
+      expect((await fresh.importReaderDataBackup(exported)).counts.history).toBe(5002);
+      expect(JSON.parse(await fresh.exportReaderDataBackup()).history).toEqual(JSON.parse(exported).history);
+      await fresh.commitReaderCommand({ type: 'visit', topic: { ...topic, id: 'new' }, at });
+      expect((await fresh.loadReaderState()).counts.history).toBe(5002);
+      await fresh.commitReaderCommand({
+        type: 'delete',
+        collection: 'history',
+        keys: ['nodeseek:1', 'nodeseek:2'],
+        at
+      });
+      await fresh.commitReaderCommand({ type: 'visit', topic: { ...topic, id: 'another' }, at });
+      expect((await fresh.loadReaderState()).counts.history).toBe(5000);
+    } finally {
+      harness.directory = sourceDirectory;
+    }
+  });
+
+  it('imports partial settings without reading or replacing record payloads', async () => {
+    const data = createEmptyReaderData();
+    data.settings.listDensity = 'compact';
+    data.history[topicKey(topic)] = { topic, savedAt: at, visitCount: 3 };
+    data.deletedRecords.favorites['nodeseek:7'] = at;
+    seed(data);
+    const store = await reopen();
+    await store.loadReaderState();
+    harness.queries = [];
+    const result = await store.importReaderDataBackup(
+      JSON.stringify({
+        version: 2,
+        settings: { theme: 'dark', listDensity: 'invalid' }
+      })
+    );
+    expect(result.settings).toMatchObject({ theme: 'dark', listDensity: 'compact' });
+    expect(
+      harness.queries.filter((sql) =>
+        /SELECT kind, key, value|(?:INSERT INTO|DELETE FROM|UPDATE) reader_(?:records|deleted)\b/i.test(sql)
+      )
+    ).toEqual([]);
+    const persisted = JSON.parse(await (await reopen()).exportReaderDataBackup());
+    expect(persisted.history[topicKey(topic)].visitCount).toBe(3);
+    expect(persisted.deletedRecords.favorites['nodeseek:7']).toBe(at);
+    expect(persisted.settings).toEqual(result.settings);
   });
 
   it('maintains exact UTF-8 JSON bytes through a deterministic random operation sequence', async () => {

@@ -54,7 +54,7 @@ export function ForumContentAudio({
       <Pressable
         accessibilityLabel={buttonLabel}
         accessibilityRole="button"
-        accessibilityState={{ disabled: loading }}
+        accessibilityState={{ disabled: loading, busy: loading }}
         disabled={loading}
         onPress={failed ? onRetry : playWhenReady ? onPause : onPlay}
         style={styles.playButton}
@@ -79,41 +79,48 @@ export function ForumContentAudio({
         </View>
       </Pressable>
       <View style={styles.body}>
-        <View style={styles.header}>
-          <Text style={[styles.title, { color: failed ? theme.danger : theme.ink }]}>
-            {failed ? error || '音频加载失败' : '音频'}
-          </Text>
-          <Text style={[styles.time, { color: theme.muted }]}>
-            {formatMediaTime(displayedPosition)} / {safeDuration > 0 ? formatMediaTime(safeDuration) : '--:--'}
-          </Text>
+        {failed ? (
+          <View style={styles.header}>
+            <Text style={[styles.title, { color: theme.danger }]}>{error || '音频加载失败'}</Text>
+            <Text style={[styles.time, { color: theme.muted }]}>
+              {formatMediaTime(displayedPosition)} / {safeDuration > 0 ? formatMediaTime(safeDuration) : '--:--'}
+            </Text>
+          </View>
+        ) : null}
+        <View style={styles.sliderRow}>
+          <Slider
+            accessibilityLabel="音频进度"
+            accessibilityRole="adjustable"
+            accessibilityState={{ disabled: sliderDisabled }}
+            accessibilityValue={{
+              max: Math.round(safeDuration),
+              min: 0,
+              now: Math.round(displayedPosition),
+              text: `${formatMediaTime(displayedPosition)} / ${safeDuration > 0 ? formatMediaTime(safeDuration) : '--:--'}`
+            }}
+            disabled={sliderDisabled}
+            maximumTrackTintColor={theme.lineStrong}
+            maximumValue={Math.max(1, safeDuration)}
+            minimumTrackTintColor={theme.primary}
+            minimumValue={0}
+            step={0}
+            style={styles.slider}
+            testID="forum-content-audio-progress"
+            thumbTintColor={sliderDisabled ? theme.muted : theme.primaryStrong}
+            value={displayedPosition}
+            onSlidingStart={(value) => setDragPosition(value)}
+            onValueChange={setDragPosition}
+            onSlidingComplete={(value) => {
+              onSeek(value);
+              setDragPosition(null);
+            }}
+          />
+          {!failed ? (
+            <Text style={[styles.time, { color: theme.muted }]}>
+              {formatMediaTime(displayedPosition)} / {safeDuration > 0 ? formatMediaTime(safeDuration) : '--:--'}
+            </Text>
+          ) : null}
         </View>
-        <Slider
-          accessibilityLabel="音频进度"
-          accessibilityRole="adjustable"
-          accessibilityState={{ disabled: sliderDisabled }}
-          accessibilityValue={{
-            max: Math.round(safeDuration),
-            min: 0,
-            now: Math.round(displayedPosition),
-            text: `${formatMediaTime(displayedPosition)} / ${safeDuration > 0 ? formatMediaTime(safeDuration) : '--:--'}`
-          }}
-          disabled={sliderDisabled}
-          maximumTrackTintColor={theme.lineStrong}
-          maximumValue={Math.max(1, safeDuration)}
-          minimumTrackTintColor={theme.primary}
-          minimumValue={0}
-          step={0}
-          style={styles.slider}
-          testID="forum-content-audio-progress"
-          thumbTintColor={sliderDisabled ? theme.muted : theme.primaryStrong}
-          value={displayedPosition}
-          onSlidingStart={(value) => setDragPosition(value)}
-          onValueChange={setDragPosition}
-          onSlidingComplete={(value) => {
-            onSeek(value);
-            setDragPosition(null);
-          }}
-        />
       </View>
     </View>
   );
@@ -134,10 +141,10 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 12,
     marginTop: 8,
-    minHeight: 82,
+    minHeight: 60,
     overflow: 'hidden',
     paddingHorizontal: 10,
-    paddingVertical: 8
+    paddingVertical: 6
   },
   playButton: {
     alignItems: 'center',
@@ -156,7 +163,7 @@ const styles = StyleSheet.create({
   body: {
     flex: 1,
     justifyContent: 'center',
-    minHeight: 52,
+    minHeight: 48,
     minWidth: 0
   },
   header: {
@@ -164,6 +171,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
     justifyContent: 'space-between'
+  },
+  sliderRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    minWidth: 0
   },
   title: {
     flexShrink: 1,
@@ -177,7 +190,9 @@ const styles = StyleSheet.create({
     lineHeight: 17
   },
   slider: {
+    flex: 1,
     height: 48,
-    marginHorizontal: -4
+    marginHorizontal: -4,
+    minWidth: 0
   }
 });

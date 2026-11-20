@@ -1,6 +1,6 @@
 import { jsonResponse } from '../../helpers/jsonResponse';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getFeed } from '@/sources/feedRead';
+import { getCategories, getFeed } from '@/sources/feedRead';
 import { searchTopics } from '@/sources/searchRead';
 import { getReplies, getTopic } from '@/sources/sourceRead';
 import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
@@ -19,6 +19,29 @@ import { html, routeFetcher } from './fixtures';
 describe('Android local sources', () => {
   afterEach(() => {
     setDiagnosticWriter(null);
+  });
+
+  it('reads the full V2EX node directory for search and keeps feed categories limited to recent topics', async () => {
+    const fetcher = routeFetcher([
+      ['/api/topics/latest.json', jsonResponse([{ node: { name: 'qna', title: '问与答' } }])],
+      [
+        '/api/nodes/all.json',
+        jsonResponse([
+          { name: 'rust', title: 'Rust 编程语言', topics: 200 },
+          { name: 'qna', title: '问与答', topics: 10000 },
+          { name: 'rust', title: '重复节点' },
+          { name: '', title: '缺少节点名' },
+          { name: 'bad/path', title: '错误节点' }
+        ])
+      ]
+    ]);
+    const recent = await getCategories({ source: 'v2ex', fetcher });
+    expect(recent.items.map(({ id }) => id)).toEqual(['qna']);
+    const directory = await getCategories({ source: 'v2ex', v2exNodeDirectory: true, fetcher });
+    expect(directory.items.map(({ id, name }) => [id, name])).toEqual([
+      ['qna', '问与答'],
+      ['rust', 'Rust 编程语言']
+    ]);
   });
 
   it('reads V2EX Pro labels from the topic API and origin reply badges', async () => {
@@ -1904,6 +1927,63 @@ describe('Android local sources', () => {
     const search = await searchTopics({ source: 'v2ex', query: 'gpt', fetcher });
 
     expect(search.items[0]).toMatchObject({ source: 'v2ex', id: '934576', title: 'GPT search result' });
+  });
+
+  it.each([
+    '<html>Maintenance</html>',
+    '{"error":"temporarily unavailable","hits":[]}',
+    '{"success":false,"data":[]}',
+    '{"hits":{"total":0}}'
+  ])('reports malformed SOV2EX responses as a search failure: %s', async (body) => {
+    await expect(
+      searchTopics({ source: 'v2ex', query: 'topic', fetcher: async () => new Response(body) })
+    ).rejects.toMatchObject({ reason: 'parse_empty' });
+  });
+
+  it.each([{ payload: [] }, { payload: { hits: [] } }, { payload: { hits: { hits: [] } } }, { payload: { data: [] } }])(
+    'accepts an explicitly empty SOV2EX hits collection: $payload',
+    async ({ payload }) => {
+      await expect(
+        searchTopics({ source: 'v2ex', query: 'topic', fetcher: async () => jsonResponse(payload) })
+      ).resolves.toMatchObject({ items: [], errors: {}, hasMore: false });
+    }
+  );
+
+  it('leaves V2EX search and feed topic dates unknown when no timestamp was supplied', async () => {
+    const search = await searchTopics({
+      source: 'v2ex',
+      query: 'topic',
+      fetcher: async () => jsonResponse({ hits: [{ id: 12, title: 'Topic' }] })
+    });
+    const feed = await getFeed({
+      source: 'v2ex',
+      fetcher: async () =>
+        new Response(
+          '<div class="cell item"><a class="topic-link" href="/t/12">Topic</a><span class="topic_info">2 days ago</span></div>'
+        )
+    });
+    for (const topic of [search.items[0], feed.items[0]]) {
+      expect(topic.createdAt).toBe('');
+      expect(topic.lastReplyAt).toBeUndefined();
+    }
+    expect(feed.items[0].displayTimeText).toBe('2 days ago');
+    const dated = await getFeed({
+      source: 'v2ex',
+      fetcher: async () =>
+        html(
+          '<div class="cell item"><a class="topic-link" href="/t/13">Topic</a><span class="topic_info"><time>2025-02-01T00:00:00Z</time></span></div>'
+        )
+    });
+    expect(dated.items[0].createdAt).toBe('2025-02-01T00:00:00.000Z');
+    const detail = await getTopic({
+      source: 'v2ex',
+      id: '12',
+      fetcher: async (url) =>
+        new URL(url).pathname === '/api/topics/show.json'
+          ? jsonResponse([{ id: 12, title: 'Topic', last_touched: 1780000200 }])
+          : html('<title>Topic</title>')
+    });
+    expect(detail).toMatchObject({ createdAt: '', lastReplyAt: '2026-05-28T20:30:00.000Z' });
   });
 
   it('passes V2EX search pages through SOV2EX offsets', async () => {

@@ -13,7 +13,8 @@ import {
   commitReaderCommand,
   exportReaderDataBackup,
   importReaderDataBackup,
-  loadReaderState
+  loadReaderState,
+  subscribeReaderStorageFreeze
 } from '@/platform/storage/readerDataStore';
 import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
@@ -56,8 +57,12 @@ export function useReaderRuntime({ notify }: { notify: (message: string) => void
   }, [commands, publish]);
   useLayoutEffect(() => {
     const lifetime = commands.attached();
-    return () => lifetime.abort();
-  }, [commands]);
+    const unsubscribe = subscribeReaderStorageFreeze(requireRecovery);
+    return () => {
+      unsubscribe();
+      lifetime.abort();
+    };
+  }, [commands, requireRecovery]);
 
   const commitReaderData = useCallback(
     (command: ReaderCommand) => {
@@ -85,7 +90,6 @@ export function useReaderRuntime({ notify }: { notify: (message: string) => void
             finishDiagnosticTrace(trace, 'success');
           },
           (error) => {
-            if (error instanceof AggregateError) requireRecovery();
             finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
             if (commands.current(operation.owner)) notifyRef.current(errorMessage(error));
           }
@@ -96,27 +100,19 @@ export function useReaderRuntime({ notify }: { notify: (message: string) => void
         });
       void result;
     },
-    [commands, notifyRef, publish, queryClient, requireRecovery]
+    [commands, notifyRef, publish, queryClient]
   );
 
   const importBackup = useCallback(
     async (json: string) => {
       if (commands.status === 'loading') throw new Error('本机资料尚未加载完成，请稍后再试。');
-      const result = importReaderDataBackup(json, commands.status === 'recovery')
-        .then((state) => {
-          // Import invalidates all loaded collections, even when membership is equal.
-          commands.imported(state);
-          void queryClient.invalidateQueries({ queryKey: ['reader-library'] });
-          publish();
-        })
-        .catch((error) => {
-          if (error instanceof AggregateError) requireRecovery();
-          throw error;
-        });
-
-      return result;
+      const state = await importReaderDataBackup(json, commands.status === 'recovery');
+      // Import invalidates all loaded collections, even when membership is equal.
+      commands.restored(state, 'ready');
+      void queryClient.invalidateQueries({ queryKey: ['reader-library'] });
+      publish();
     },
-    [commands, publish, queryClient, requireRecovery]
+    [commands, publish, queryClient]
   );
 
   const exportBackup = useCallback(() => {

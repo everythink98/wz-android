@@ -1,24 +1,27 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Alert, AppState, Image } from 'react-native';
-import * as DocumentPicker from 'expo-document-picker';
+import { withPickedAttachmentCopies } from '@/platform/media/pickedAttachmentCopies';
 import type { Topic } from '@/domain/forum/models';
 import {
   applyTopicCategory,
+  applyTopicEditReceipt,
+  normalizedTopicEditInput,
   topicSubmissionWithReceipt,
   emptyTopicDraft,
   validateTopicDraft,
   type CreateTopicResult,
+  type TopicEditResult,
   type TopicCreationSource,
   type TopicDraft,
   type TopicDraftAttachment,
   type TopicSubmissionAttempt,
+  type TopicSubmissionReceipt,
   hasTopicEditChanges,
   topicDraftTarget,
   topicEditChanges,
   validateTopicEdit,
-  type TopicComposerIntent,
-  type TopicEditResult,
-  type TopicEditableFields
+  yaohuoFileBytePolicy,
+  type TopicComposerIntent
 } from '@/domain/forum/topicComposer';
 import type { ComposerSnapshot } from '@/domain/forum/structuredComposer';
 import { editLinuxDoTopic } from '@/sources/linuxdo/topicEditing';
@@ -40,7 +43,11 @@ import {
   saveLastTopicCreationSource,
   settleTopicSubmissionAttempt
 } from '@/platform/persistence/topicDrafts';
-import { persistTopicDraftAttachment, removeTopicDraftAttachmentFile } from '@/platform/media/topicDraftAttachments';
+import {
+  knownTopicDraftAttachmentSize,
+  persistTopicDraftAttachment,
+  removeTopicDraftAttachmentFile
+} from '@/platform/media/topicDraftAttachments';
 import { createNodeSeekTopic, loadNodeSeekTopicCreationContext } from '@/sources/nodeseek/topicCreation';
 import { createLinuxDoTopic, searchLinuxDoTopicTags } from '@/sources/linuxdo/topicCreation';
 import { createYaohuoTopic, loadYaohuoTopicCreationContext } from '@/sources/yaohuo/topicCreation';
@@ -48,16 +55,16 @@ import { materializePendingNodeSeekPolls } from '@/sources/nodeseek/pendingPolls
 import { buildNodeSeekPollCreateRequest } from '@/sources/nodeseek/actionRequest';
 import { runNodeSeekAction } from '@/sources/nodeseek/actionClient';
 import { currentNodeImageApiKeyGeneration } from '@/sources/nodeimage/credentials';
-import { fetchLinuxDoTemplates } from '@/sources/linuxdo/templates';
+import { fetchLinuxDoTemplates, recordLinuxDoTemplateUse } from '@/sources/linuxdo/templates';
 import { resolveLinuxDoUpload } from '@/sources/linuxdo/uploadUrls';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 import { forumResponseAccountFailure } from '@/sources/sessionFailure';
-import { normalizeReplyImageAsset } from '@/sources/imageUpload';
+import { MAX_REPLY_IMAGE_UPLOAD_BYTES, normalizeReplyImageAsset } from '@/sources/imageUpload';
 import type { StructuredReplyComposerHandle } from '@/ui/composer/StructuredReplyComposer';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import type { TopicComposerRouteRuntimeValue } from './TopicComposerRouteRuntime';
 import { uploadTopicAttachment, validateTopicAttachment } from './topicCreationActions';
-import { useTopicDraftPersistence } from './useTopicDraftPersistence';
+import { TopicDraftConflictError, useTopicDraftPersistence } from './useTopicDraftPersistence';
 import { useTopicComposerOperation } from './useTopicComposerOperation';
 import { useTopicDraftHydration } from './useTopicDraftHydration';
 import { useTopicDraftContext } from './useTopicDraftContext';
@@ -77,13 +84,13 @@ function getUploadJob(work: AttachmentWork) {
 }
 
 const SOURCES: TopicCreationSource[] = ['nodeseek', 'linuxdo', 'yaohuo'];
-function confirm(title: string, message: string, label = '确定') {
+function confirm(title: string, message: string, label = '确定', cancelLabel = '取消') {
   return new Promise<boolean>((resolve) =>
     Alert.alert(
       title,
       message,
       [
-        { text: '取消', style: 'cancel', onPress: () => resolve(false) },
+        { text: cancelLabel, style: 'cancel', onPress: () => resolve(false) },
         { text: label, onPress: () => resolve(true) }
       ],
       { cancelable: true, onDismiss: () => resolve(false) }
@@ -94,10 +101,47 @@ function identifier() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
+async function readReconciledAttempt(attempt: TopicSubmissionAttempt) {
+  const stored = await readTopicSubmissionAttempt(attempt.source, attempt.identityKey, attempt.target);
+  if (stored?.id === attempt.id && stored.draftId === attempt.draftId && stored.revision === attempt.revision)
+    return stored;
+  return topicSubmissionWithReceipt(attempt, {
+    status: 'unknown',
+    message: '本机提交记录已变化，请先到原站核对，勿重复提交'
+  });
+}
+
+async function receiptAfterFailure(
+  attempt: TopicSubmissionAttempt,
+  mayHaveSent: boolean,
+  cause: unknown,
+  result?: TopicSubmissionReceipt
+) {
+  if (result)
+    return topicSubmissionWithReceipt(attempt, {
+      status: 'unknown',
+      message: '原站已返回结果，但本机记录保存失败，请先到原站核对，勿重复提交',
+      ...('confirmed' in result && result.confirmed ? { confirmed: result.confirmed } : {})
+    });
+  const failure = mayHaveSent
+    ? { status: 'unknown' as const, message: '提交结果未知，请先到原站核对，勿重复提交' }
+    : { status: 'rejected' as const, message: errorMessage(cause) };
+  try {
+    await settleTopicSubmissionAttempt(attempt, failure);
+    return await readReconciledAttempt(attempt);
+  } catch {
+    return topicSubmissionWithReceipt(attempt, {
+      status: 'unknown',
+      message: '本机记录保存失败，请先到原站核对，勿重复提交'
+    });
+  }
+}
+
 export function useTopicComposerController({
   runtime,
   intent,
   active,
+  isRouteFocused,
   onPosted,
   onAccepted,
   onEdited
@@ -105,6 +149,7 @@ export function useTopicComposerController({
   runtime: TopicComposerRouteRuntimeValue;
   intent: TopicComposerIntent;
   active: boolean;
+  isRouteFocused?: () => boolean;
   onPosted: (topic: Topic) => void;
   onAccepted: () => void;
   onEdited?: (source: TopicCreationSource, topicId: string) => void;
@@ -114,11 +159,31 @@ export function useTopicComposerController({
   const target = editTopicId ? `edit:${editTopicId}` : 'create';
   const runtimeRef = useCommittedRef(runtime);
   const activeRef = useCommittedRef(active);
+  const confirmationFocusOwner = useRef<object | null>(null);
+  useLayoutEffect(() => {
+    if (!active) return;
+    confirmationFocusOwner.current = {};
+    return () => {
+      confirmationFocusOwner.current = null;
+    };
+  }, [active]);
+  const captureConfirmationFocus = useCallback(() => {
+    const owner = confirmationFocusOwner.current;
+    return () => owner !== null && confirmationFocusOwner.current === owner && (!isRouteFocused || isRouteFocused());
+  }, [isRouteFocused]);
+  const confirmOnCurrentRoute = useCallback(
+    async (...args: Parameters<typeof confirm>) => {
+      const ownsFocus = captureConfirmationFocus();
+      return ownsFocus() && (await confirm(...args)) && ownsFocus();
+    },
+    [captureConfirmationFocus]
+  );
   const editorRef = useRef<StructuredReplyComposerHandle>(null);
   const [source, setSource] = useState<TopicCreationSource | null>(initialSource || null);
   const sourceRef = useCommittedRef(source);
   const [draft, setDraft] = useState<TopicDraft | null>(null);
   const draftRef = useRef<TopicDraft | null>(null);
+  const completedSubmission = useRef<TopicSubmissionAttempt | null>(null);
 
   const [uploading, setUploading] = useState(false);
   const attachmentWork = useRef<AttachmentWork>({ kind: 'idle' });
@@ -130,15 +195,28 @@ export function useTopicComposerController({
   const [draftSites, setDraftSites] = useState<Partial<Record<TopicCreationSource, boolean>>>({});
 
   const mounted = useRef(true);
+  const showReconciledAttempt = useCallback(
+    (receipt: TopicSubmissionAttempt) => {
+      if (
+        !mounted.current ||
+        draftRef.current?.id !== receipt.draftId ||
+        siteSessionIdentityKey(runtimeRef.current.sessions[receipt.source]) !== receipt.identityKey
+      )
+        return;
+      const completed = receipt.status === 'saved' || receipt.status === 'posted' || receipt.status === 'enqueued';
+      if (completed) completedSubmission.current = receipt;
+      setAttempt(receipt);
+      setError(completed ? '' : receipt.result?.message || '');
+    },
+    [runtimeRef]
+  );
   const {
     busy,
     isIdle: operationIdle,
     isSubmitting: operationSubmitting,
-    travel: beginTravel,
-    create: beginCreate,
-    edit: beginEdit,
+    begin: beginOperation,
     release: releaseOperation
-  } = useTopicComposerOperation(() => mounted.current);
+  } = useTopicComposerOperation(mounted);
   const {
     saveStatus,
     persist,
@@ -154,6 +232,8 @@ export function useTopicComposerController({
   } = useTopicDraftPersistence({
     getDraft: () => draftRef.current,
     isMounted: () => mounted.current,
+    completedSubmissionId: (value) =>
+      completedSubmission.current?.draftId === value.id ? completedSubmission.current.id : undefined,
     onSaved: (site) => setDraftSites((previous) => ({ ...previous, [site]: true }))
   });
 
@@ -165,6 +245,7 @@ export function useTopicComposerController({
       attempt?.status === 'saved' &&
       draft?.edit &&
       attempt.draftId === draft.id &&
+      attempt.revision === draft.revision &&
       active &&
       runtime.appActive &&
       enabled &&
@@ -241,7 +322,12 @@ export function useTopicComposerController({
         revision: current.revision + 1,
         updatedAt: Date.now()
       };
-      installDraft(next);
+      const saved = completedSubmission.current;
+      installDraft(
+        saved && saved.draftId === current.id && saved.revision === current.revision
+          ? applyTopicEditReceipt(next, saved)
+          : next
+      );
       markDraftEdited();
       if (contentChanged)
         setErrors((previous) =>
@@ -577,8 +663,8 @@ export function useTopicComposerController({
   }, []);
   const switchSource = useCallback(
     async (next: TopicCreationSource) => {
-      if (editTopicId || !operationIdle() || next === source) return;
-      const run = beginTravel();
+      if (editTopicId || next === source) return;
+      const run = beginOperation('travel');
       if (!run) return;
       try {
         if (!(await waitForUploads())) return;
@@ -590,40 +676,41 @@ export function useTopicComposerController({
         releaseOperation(run);
       }
     },
-    [flush, source, waitForUploads, editTopicId, operationIdle, beginTravel, releaseOperation]
+    [flush, source, waitForUploads, editTopicId, beginOperation, releaseOperation]
   );
   const leave = useCallback(async () => {
-    if (!operationIdle()) {
+    const run = beginOperation('travel');
+    if (!run) {
       setError('正在保存或发布，请等待结果');
       return false;
     }
-    const run = beginTravel();
-    if (!run) return false;
     try {
       if (!(await waitForUploads())) return false;
       await flush();
       return true;
     } catch (cause) {
       setError(errorMessage(cause));
+      if (cause instanceof TopicDraftConflictError) {
+        const conflictedDraft = draftRef.current;
+        const discardLocal = await confirm(
+          '其他页面已更新草稿',
+          '本页修改尚未保存。返回将放弃本页修改，保留其他页面保存的草稿。',
+          '放弃本页修改并返回',
+          '继续编辑'
+        );
+        return discardLocal && draftRef.current === conflictedDraft;
+      }
       return false;
     } finally {
       releaseOperation(run);
     }
-  }, [flush, waitForUploads, operationIdle, beginTravel, releaseOperation]);
+  }, [flush, waitForUploads, beginOperation, releaseOperation]);
 
   const applyConfirmedEdit = useCallback(
-    async (value: TopicDraft, confirmed?: Partial<TopicEditableFields>, sentRevision = value.revision) => {
+    async (value: TopicDraft, receipt: TopicSubmissionAttempt) => {
       if (draftRef.current?.id === value.id) value = draftRef.current;
-      if (!value.edit || !confirmed || !Object.keys(confirmed).length) return value;
-      const original = { ...value.edit.original, ...confirmed };
-      if (JSON.stringify(original) === JSON.stringify(value.edit.original)) return value;
-      const updated = {
-        ...value,
-        ...(value.revision === sentRevision ? confirmed : {}),
-        edit: { ...value.edit, original },
-        revision: value.revision + 1,
-        updatedAt: Date.now()
-      } as TopicDraft;
+      const updated = applyTopicEditReceipt(value, receipt);
+      if (updated === value) return value;
       // Install before awaiting disk so late editor snapshots build on this revision.
       if (draftRef.current?.id === value.id) installDraft(updated);
       await persist(updated);
@@ -632,78 +719,156 @@ export function useTopicComposerController({
     [persist, installDraft]
   );
 
-  const submitEdit = useCallback(async () => {
+  const submit = useCallback(async () => {
+    if (getUploadJob(attachmentWork.current) || loading) return;
     if (
-      !operationIdle() ||
-      getUploadJob(attachmentWork.current) ||
-      loading ||
-      !editContext ||
-      (attempt?.status === 'saved' && attempt.draftId === draftRef.current?.id)
+      editTopicId &&
+      (!editContext ||
+        (attempt?.status === 'saved' &&
+          attempt.draftId === draftRef.current?.id &&
+          attempt.revision === draftRef.current.revision))
     )
       return;
-    const run = beginEdit();
+    const run = beginOperation('submitting');
     if (!run) return;
     setError('');
-    let value: TopicDraft | null = null;
-    const dispatchState = run.dispatchState;
+    const dispatchState: RequestDispatchState = { mayHaveSent: false };
+    let owner = editTopicId ? null : draftRef.current;
+    let recorded: TopicSubmissionAttempt | undefined;
+    let received: TopicSubmissionReceipt | undefined;
     try {
-      value = await flush();
-      if (!value?.edit) return;
-      if (!hasTopicEditChanges(value)) {
-        runtimeRef.current.notify('没有需要保存的修改');
-        return;
+      let value = await flush();
+      let editing = editTopicId ? editContext : null;
+      if (editing) {
+        owner = value;
+        if (!value?.edit) return;
+        const previous = await readTopicSubmissionAttempt(value.source, value.identityKey, topicDraftTarget(value));
+        assertOwner(value);
+        if (
+          previous?.draftId === value.id &&
+          previous.status === 'saved' &&
+          previous.revision === draftRef.current?.revision
+        ) {
+          setAttempt(previous);
+          return;
+        }
+        if (previous && previous.status !== 'sending' && previous.status !== 'unknown')
+          value = await applyConfirmedEdit(value, previous);
+        if (!value.edit) return;
+        if (!hasTopicEditChanges(value)) {
+          runtimeRef.current.notify('没有需要保存的修改');
+          return;
+        }
+        if (previous?.status === 'unknown' || previous?.status === 'sending') {
+          setAttempt(previous);
+          throw new Error('请先核对上次保存结果');
+        }
       }
-      if (attempt?.status === 'unknown' || attempt?.status === 'sending') throw new Error('请先核对上次保存结果');
-      const validation = validateTopicEdit(value, editContext);
+      const rules = editing?.rules ?? context;
+      if (!value || !rules || (!editing && rules.source !== value.source))
+        throw new Error('请先加载当前站点的发帖设置');
+      const validation = editing ? validateTopicEdit(value, editing) : validateTopicDraft(value, rules);
       const issue = snapshotIssue(value.id);
       if (issue) validation.body = issue;
       setErrors(validation);
       if (Object.keys(validation).length) return;
+
       const access = await requestAccess(value, dispatchState);
       const sentDraft = value;
       const assertCurrent = () => {
         assertOwner(sentDraft, access.ticket);
-        if (draftRef.current?.revision !== sentDraft.revision) throw new Error('草稿已更新，请确认后重试');
+        if (draftRef.current?.revision !== sentDraft.revision)
+          throw new Error(editTopicId ? '草稿已更新，请确认后重试' : '草稿已更新，请确认最新内容后重新发布');
       };
-      if (
-        value.source === 'nodeseek' &&
-        value.rank === 255 &&
-        value.edit.original.rank !== 255 &&
-        !(await confirm('改为私有帖子', '原站将收取 10 鸡腿。', '确认保存'))
-      )
-        return;
-      if (
-        value.additionalReward &&
-        !(await confirm('确认追加悬赏', `本次将追加 ${value.additionalReward} 妖晶。`, '确认保存'))
-      )
-        return;
-      assertCurrent();
-      const fresh =
-        value.source === 'linuxdo'
-          ? await readEditContext(value.source, value.identityKey, value.edit.topicId)
-          : editContext;
+      if (editing) {
+        if (
+          value.source === 'nodeseek' &&
+          value.rank === 255 &&
+          value.edit?.original.rank !== 255 &&
+          !(await confirmOnCurrentRoute('改为私有帖子', '原站将收取 10 鸡腿。', '确认保存'))
+        )
+          return;
+        if (
+          value.additionalReward &&
+          !(await confirmOnCurrentRoute('确认追加悬赏', `本次将追加 ${value.additionalReward} 妖晶。`, '确认保存'))
+        )
+          return;
+        if (value.source === 'linuxdo' && value.edit) {
+          assertCurrent();
+          editing = await readEditContext(value.source, value.identityKey, value.edit.topicId);
+        }
+      } else {
+        if (value.source === 'linuxdo') {
+          const latestTags = await searchLinuxDoTopicTags({
+            ...access,
+            categoryId: value.categoryId,
+            selectedTags: value.tags,
+            query: ''
+          });
+          assertCurrent();
+          if (latestTags.forbidden || latestTags.forbiddenMessage) {
+            setErrors({ tags: latestTags.forbiddenMessage || `此标签不可使用：${latestTags.forbidden}` });
+            return;
+          }
+          if (latestTags.requiredGroup) {
+            setErrors({
+              tags: `请从${latestTags.requiredGroup.name || '要求的标签组'}选择至少 ${latestTags.requiredGroup.minCount} 个标签`
+            });
+            return;
+          }
+        }
+        if (
+          value.source === 'nodeseek' &&
+          value.categoryId === 'inside' &&
+          !(await confirmOnCurrentRoute(
+            '发布到内版',
+            `本次发布将收取 ${rules.source === 'nodeseek' ? rules.insideFee : 5} 鸡腿。`,
+            '确认发布'
+          ))
+        )
+          return;
+        if (value.source === 'yaohuo') {
+          const amount =
+            value.kind === 'gift'
+              ? value.gift.total
+              : value.kind === 'poll' && value.poll.giftEnabled
+                ? value.poll.total
+                : value.kind === 'normal'
+                  ? value.reward
+                  : '';
+          if (
+            amount &&
+            !(await confirmOnCurrentRoute('确认发布金额', `本帖包含 ${amount} 妖晶的悬赏或派币设置。`, '确认发布'))
+          )
+            return;
+        }
+      }
       assertCurrent();
       const submission: TopicSubmissionAttempt = {
         id: identifier(),
         source: value.source,
         identityKey: value.identityKey,
-        target: topicDraftTarget(value),
+        ...(editing ? { target: topicDraftTarget(value) } : {}),
+        ...(editing && value.additionalReward ? { additionalReward: value.additionalReward } : {}),
         draftId: value.id,
         revision: value.revision,
         startedAt: Date.now(),
         status: 'sending'
       };
-      run.attempted(submission);
       await beginTopicSubmissionAttempt(submission);
+      recorded = submission;
       setAttempt(submission);
       let body = value.body;
-      if (value.source === 'nodeseek' && value.pendingNodeSeekPolls.length) {
+      if (value.source === 'nodeseek' && (!editing || value.pendingNodeSeekPolls.length)) {
         body = await materializePendingNodeSeekPolls({
           content: body,
           polls: value.pendingNodeSeekPolls,
           identityKey: value.identityKey,
           assertCurrent,
-          confirmReplacement: () => confirm('投票已有创建记录', '修改后的投票会创建新对象，继续？', '继续保存'),
+          confirmReplacement: () =>
+            editing
+              ? confirmOnCurrentRoute('投票已有创建记录', '修改后的投票会创建新对象，继续？', '继续保存')
+              : confirmOnCurrentRoute('投票已有创建记录', '修改后的投票会创建一个新对象，继续？', '继续发布'),
           notify: runtimeRef.current.notify,
           createPoll: async (poll, options) => {
             const response = await runNodeSeekAction({
@@ -717,206 +882,63 @@ export function useTopicComposerController({
           }
         });
       }
-      const options = {
-        draft: { ...value, body },
-        fetcher: withRequestBeforeSend(access.fetcher, assertCurrent),
-        userAgent: access.userAgent
-      };
-      const result =
-        value.source === 'nodeseek'
-          ? await editNodeSeekTopic(options)
-          : value.source === 'yaohuo'
-            ? await editYaohuoTopic(options)
-            : await editLinuxDoTopic({
-                ...options,
-                context: fresh,
-                checkpoint: (fields) => checkpointTopicEdit(submission, fields)
-              });
-      run.received(result);
-      if (!(await settleTopicSubmissionAttempt(submission, result))) throw new Error('保存记录已变化，请先到原站核对');
-      if (result.status === 'saved') {
-        retireDraft(value.id);
-        await Promise.allSettled(value.attachments.map((file) => removeTopicDraftAttachmentFile(value!, file)));
-      } else await applyConfirmedEdit(value, result.confirmed);
-      if (
-        !mounted.current ||
-        draftRef.current?.id !== value.id ||
-        siteSessionIdentityKey(runtimeRef.current.sessions[value.source]) !== value.identityKey
-      )
-        return;
-      setAttempt(topicSubmissionWithReceipt(submission, result));
-      if (result.status === 'saved') {
-        runtimeRef.current.notify(result.message);
-      } else setError(result.message);
-    } catch (cause) {
-      const submission = run.attempt;
-      const result = run.result;
-      if (submission && !result) {
-        let failure: TopicEditResult = {
-          status: dispatchState.mayHaveSent ? 'unknown' : 'rejected',
-          message: dispatchState.mayHaveSent ? '保存结果未知，请到原站核对，勿重复提交' : errorMessage(cause)
-        };
-        try {
-          await settleTopicSubmissionAttempt(submission, failure);
-        } catch {
-          failure = { status: 'unknown', message: '保存记录写入失败，请到原站核对' };
+      assertCurrent();
+      const fetcher = withRequestBeforeSend(access.fetcher, assertCurrent);
+      let acknowledged: TopicSubmissionAttempt = submission;
+      let result: CreateTopicResult | TopicEditResult;
+      if (editing) {
+        const options = { draft: { ...value, body }, fetcher, userAgent: access.userAgent };
+        result =
+          value.source === 'nodeseek'
+            ? await editNodeSeekTopic(options)
+            : value.source === 'yaohuo'
+              ? await editYaohuoTopic(options)
+              : await editLinuxDoTopic({
+                  ...options,
+                  context: editing,
+                  checkpoint: (fields) =>
+                    checkpointTopicEdit(submission, fields, normalizedTopicEditInput(sentDraft, fields))
+                });
+        if (result.status === 'saved') {
+          result = { ...result, confirmed: { ...topicEditChanges(options.draft), ...result.confirmed } };
         }
-        run.received(failure);
-      } else if (result)
-        run.received({ ...result, status: 'unknown', message: '原站已返回结果，但本机记录未完成保存，请先核对' });
-      const failure = run.result;
-      if (
-        mounted.current &&
-        value &&
-        draftRef.current?.id === value.id &&
-        siteSessionIdentityKey(runtimeRef.current.sessions[value.source]) === value.identityKey
-      ) {
-        if (submission && failure) setAttempt(topicSubmissionWithReceipt(submission, failure));
-        setError(failure?.message || errorMessage(cause));
+        acknowledged = { ...submission, normalizedFrom: normalizedTopicEditInput(value, result.confirmed) };
+      } else {
+        const options = { input: { draft: value, body }, fetcher, userAgent: access.userAgent };
+        result =
+          value.source === 'nodeseek'
+            ? await createNodeSeekTopic(options)
+            : value.source === 'linuxdo'
+              ? await createLinuxDoTopic(options)
+              : await createYaohuoTopic(options);
       }
-    } finally {
-      releaseOperation(run);
-    }
-  }, [
-    loading,
-    editContext,
-    attempt,
-    flush,
-    runtimeRef,
-    requestAccess,
-    assertOwner,
-    readEditContext,
-    applyConfirmedEdit,
-    operationIdle,
-    beginEdit,
-    releaseOperation,
-    retireDraft,
-    snapshotIssue
-  ]);
 
-  const submit = useCallback(async () => {
-    if (editTopicId) return submitEdit();
-    if (!operationIdle() || getUploadJob(attachmentWork.current) || loading) return;
-    const run = beginCreate();
-    if (!run) return;
-    setError('');
-    const dispatchState = run.dispatchState;
-    const owner = draftRef.current;
-    try {
-      const value = await flush();
-      if (!value || !context || context.source !== value.source) throw new Error('请先加载当前站点的发帖设置');
-      const validation = validateTopicDraft(value, context);
-      const issue = snapshotIssue(value.id);
-      if (issue) validation.body = issue;
-      setErrors(validation);
-      if (Object.keys(validation).length) return;
-      const access = await requestAccess(value, dispatchState);
-      const assertSubmissionCurrent = () => {
-        assertOwner(value, access.ticket);
-        if (draftRef.current?.revision !== value.revision) throw new Error('草稿已更新，请确认最新内容后重新发布');
-      };
-      if (value.source === 'linuxdo') {
-        const latestTags = await searchLinuxDoTopicTags({
-          ...access,
-          categoryId: value.categoryId,
-          selectedTags: value.tags,
-          query: ''
-        });
-        assertSubmissionCurrent();
-        if (latestTags.forbidden || latestTags.forbiddenMessage) {
-          setErrors({ tags: latestTags.forbiddenMessage || `此标签不可使用：${latestTags.forbidden}` });
-          return;
-        }
-        if (latestTags.requiredGroup) {
-          setErrors({
-            tags: `请从${latestTags.requiredGroup.name || '要求的标签组'}选择至少 ${latestTags.requiredGroup.minCount} 个标签`
-          });
-          return;
-        }
-      }
-      if (
-        value.source === 'nodeseek' &&
-        value.categoryId === 'inside' &&
-        !(await confirm(
-          '发布到内版',
-          `本次发布将收取 ${context.source === 'nodeseek' ? context.insideFee : 5} 鸡腿。`,
-          '确认发布'
-        ))
-      )
+      received = result;
+      const receipt = topicSubmissionWithReceipt(acknowledged, result);
+      const published = result.status === 'posted' || result.status === 'enqueued';
+      if (published || result.status === 'saved') completedSubmission.current = receipt;
+      if (!(await settleTopicSubmissionAttempt(acknowledged, result))) {
+        showReconciledAttempt(await readReconciledAttempt(acknowledged));
         return;
-      if (value.source === 'yaohuo') {
-        const amount =
-          value.kind === 'gift'
-            ? value.gift.total
-            : value.kind === 'poll' && value.poll.giftEnabled
-              ? value.poll.total
-              : value.kind === 'normal'
-                ? value.reward
-                : '';
-        if (amount && !(await confirm('确认发布金额', `本帖包含 ${amount} 妖晶的悬赏或派币设置。`, '确认发布'))) return;
       }
-      assertSubmissionCurrent();
-      const candidate: TopicSubmissionAttempt = {
-        id: identifier(),
-        source: value.source,
-        identityKey: value.identityKey,
-        draftId: value.id,
-        revision: value.revision,
-        startedAt: Date.now(),
-        status: 'sending'
-      };
-      await beginTopicSubmissionAttempt(candidate);
-      run.attempted(candidate);
-      const submission = candidate;
-      setAttempt(submission);
-      let body = value.body;
-      if (value.source === 'nodeseek') {
-        body = await materializePendingNodeSeekPolls({
-          content: body,
-          polls: value.pendingNodeSeekPolls,
-          identityKey: value.identityKey,
-          assertCurrent: assertSubmissionCurrent,
-          confirmReplacement: () => confirm('投票已有创建记录', '修改后的投票会创建一个新对象，继续？', '继续发布'),
-          notify: runtimeRef.current.notify,
-          createPoll: async (poll, options) => {
-            const pollFetcher: Fetcher = (input, init) =>
-              withRequestBeforeSend(access.accountFetcher, assertSubmissionCurrent, options.dispatchState)(input, init);
-            const response = await runNodeSeekAction({
-              fetcher: pollFetcher,
-              userAgent: access.userAgent,
-              request: buildNodeSeekPollCreateRequest({ poll })
-            });
-            await options.persistResult(response);
-            assertSubmissionCurrent();
-            return response;
-          }
-        });
-      }
-      assertSubmissionCurrent();
-      const options = {
-        input: { draft: value, body },
-        fetcher: withRequestBeforeSend(access.fetcher, assertSubmissionCurrent),
-        userAgent: access.userAgent
-      };
-      const result =
-        value.source === 'nodeseek'
-          ? await createNodeSeekTopic(options)
-          : value.source === 'linuxdo'
-            ? await createLinuxDoTopic(options)
-            : await createYaohuoTopic(options);
-      run.received(result);
-      if (!(await settleTopicSubmissionAttempt(submission, result)))
-        throw new Error('本机发布记录已变化，请到原站核对发布结果');
-      if (result.status === 'posted' || result.status === 'enqueued')
-        await Promise.allSettled(value.attachments.map((file) => removeTopicDraftAttachmentFile(value, file)));
+      if (published || result.status === 'saved') {
+        const current = draftRef.current;
+        if (current?.id === value.id ? current.revision === value.revision : published)
+          await Promise.allSettled(value.attachments.map((file) => removeTopicDraftAttachmentFile(sentDraft, file)));
+        if (draftRef.current?.id === value.id && draftRef.current.revision > value.revision) {
+          if (editing) await applyConfirmedEdit(value, receipt);
+          await flushDraft({ accept: acceptSnapshot });
+        }
+      } else if (editing) await applyConfirmedEdit(value, receipt);
       if (
         !mounted.current ||
         draftRef.current?.id !== value.id ||
         siteSessionIdentityKey(runtimeRef.current.sessions[value.source]) !== value.identityKey
       )
         return;
-      setAttempt(topicSubmissionWithReceipt(submission, result));
-      if (result.status === 'posted' || result.status === 'enqueued') {
+      setAttempt(receipt);
+      if (result.status === 'saved') runtimeRef.current.notify(result.message);
+      else if (published) {
         const canNavigate = activeRef.current && runtimeRef.current.enabledSources.includes(value.source);
         if (draftRef.current.revision === value.revision) {
           retireDraft(value.id);
@@ -932,61 +954,49 @@ export function useTopicComposerController({
         else onAccepted();
       } else setError(result.message);
     } catch (cause) {
-      const submission = run.attempt;
-      const result = run.result;
-      const message = errorMessage(cause);
-      if (submission && !result) {
-        let failure: CreateTopicResult = dispatchState.mayHaveSent
-          ? { status: 'unknown', message: '发布结果未知，请先到原站核对，勿直接重发' }
-          : { status: 'rejected', message };
-        try {
-          if (!(await settleTopicSubmissionAttempt(submission, failure)))
-            failure = { status: 'unknown', message: '本机发布记录已变化，请先到原站核对，勿直接重发' };
-        } catch {
-          failure = { status: 'unknown', message: '发布记录保存失败，请先到原站核对，勿直接重发' };
-        }
-        run.received(failure);
-        if (
-          mounted.current &&
-          draftRef.current?.id === submission.draftId &&
-          siteSessionIdentityKey(runtimeRef.current.sessions[submission.source]) === submission.identityKey
-        ) {
-          setAttempt(topicSubmissionWithReceipt(submission, failure));
-          setError(failure.message);
-        }
+      if (recorded) {
+        showReconciledAttempt(await receiptAfterFailure(recorded, dispatchState.mayHaveSent, cause, received));
       } else if (
         mounted.current &&
         owner &&
         draftRef.current?.id === owner.id &&
         siteSessionIdentityKey(runtimeRef.current.sessions[owner.source]) === owner.identityKey
       )
-        setError(result ? '原站已返回发布结果，但本机记录保存失败。请先到原站核对，勿重复发布。' : message);
+        setError(errorMessage(cause));
     } finally {
       releaseOperation(run);
     }
   }, [
-    activeRef,
-    assertOwner,
-    context,
-    flush,
-    installDraft,
     loading,
-    onAccepted,
-    onPosted,
-    requestAccess,
-    runtimeRef,
     editTopicId,
-    submitEdit,
-    operationIdle,
-    beginCreate,
-    releaseOperation,
+    editContext,
+    attempt,
+    beginOperation,
+    flush,
+    applyConfirmedEdit,
+    confirmOnCurrentRoute,
+    context,
+    snapshotIssue,
+    requestAccess,
+    assertOwner,
+    readEditContext,
+    runtimeRef,
+    showReconciledAttempt,
+    flushDraft,
+    acceptSnapshot,
+    activeRef,
     retireDraft,
+    installDraft,
     markFreshDraft,
-    snapshotIssue
+    onPosted,
+    onAccepted,
+    releaseOperation
   ]);
 
   const acknowledgeUnknown = useCallback(async () => {
+    const ownsFocus = captureConfirmationFocus();
     if (
+      !ownsFocus() ||
       operationSubmitting() ||
       !attempt ||
       !(await confirm(
@@ -998,8 +1008,8 @@ export function useTopicComposerController({
       ))
     )
       return;
-    if (!operationIdle()) return;
-    const run = beginTravel();
+    if (!ownsFocus()) return;
+    const run = beginOperation('travel');
     if (!run) return;
     try {
       if (
@@ -1010,17 +1020,22 @@ export function useTopicComposerController({
       if (editTopicId) {
         // Keep the durable checkpoint until its confirmed baseline is safely in the draft.
         const recorded = await readTopicSubmissionAttempt(attempt.source, attempt.identityKey, target);
+        if (!ownsFocus()) return;
         if (recorded?.id !== attempt.id) throw new Error('保存记录已变化，请重新进入后核对');
         const value = await flush();
-        if (value?.id === recorded.draftId) await applyConfirmedEdit(value, recorded.confirmed, recorded.revision);
+        if (!ownsFocus()) return;
+        if (value?.id === recorded.draftId) await applyConfirmedEdit(value, recorded);
       }
+      if (!ownsFocus()) return;
       if (
         draftRef.current?.source !== attempt.source ||
         siteSessionIdentityKey(runtimeRef.current.sessions[attempt.source]) !== attempt.identityKey
       )
         throw new Error('站点或账号已变化，请重新核对当前草稿');
-      if (!(await acknowledgeTopicSubmissionAttempt(attempt.source, attempt.identityKey, attempt.id, target)))
-        throw new Error('发布记录已变化，请重新进入后核对');
+      if (!(await acknowledgeTopicSubmissionAttempt(attempt.source, attempt.identityKey, attempt.id, target))) {
+        showReconciledAttempt(await readReconciledAttempt(attempt));
+        return;
+      }
       if (
         !mounted.current ||
         draftRef.current?.source !== attempt.source ||
@@ -1036,30 +1051,33 @@ export function useTopicComposerController({
     }
   }, [
     attempt,
+    captureConfirmationFocus,
     runtimeRef,
     editTopicId,
     target,
     flush,
     applyConfirmedEdit,
-    operationIdle,
     operationSubmitting,
-    beginTravel,
+    beginOperation,
+    showReconciledAttempt,
     releaseOperation
   ]);
   const discard = useCallback(async () => {
-    if (!operationIdle() || getUploadJob(attachmentWork.current) || !draftRef.current) return;
+    const ownsFocus = captureConfirmationFocus();
+    if (!ownsFocus() || getUploadJob(attachmentWork.current) || !draftRef.current) return;
     const owner = draftRef.current;
-    const run = beginTravel();
+    const run = beginOperation('travel');
     if (!run) return;
     try {
       if (!(await confirm('丢弃当前草稿', '只删除当前站点当前账号的本机草稿。', '丢弃'))) return;
+      if (!ownsFocus()) return;
       if (
         draftRef.current?.id !== owner.id ||
         siteSessionIdentityKey(runtimeRef.current.sessions[owner.source]) !== owner.identityKey
       )
         throw new Error('站点或账号已变化，请重新确认后重试');
       const value = await flush();
-      if (!value) return;
+      if (!value || !ownsFocus()) return;
       if (
         !(await discardTopicDraft(value.source, value.identityKey, value.id, value.revision, topicDraftTarget(value)))
       )
@@ -1080,15 +1098,15 @@ export function useTopicComposerController({
       releaseOperation(run);
     }
   }, [
+    beginOperation,
+    captureConfirmationFocus,
     flush,
     installDraft,
-    runtimeRef,
+    markDraftDiscarded,
     onAccepted,
-    operationIdle,
-    beginTravel,
     releaseOperation,
     retireDraft,
-    markDraftDiscarded
+    runtimeRef
   ]);
 
   const insertMarkup = useCallback(
@@ -1132,7 +1150,7 @@ export function useTopicComposerController({
             files.some(
               (file) => draftRef.current?.attachments.find((item) => item.id === file.id)?.status === 'unknown'
             ) &&
-            !(await confirm(
+            !(await confirmOnCurrentRoute(
               '核对上次上传结果',
               '上次上传可能已被原站接收。请先核对上传记录；确认仍需上传后，会创建新的远端文件。',
               '已核对，重新上传'
@@ -1237,7 +1255,17 @@ export function useTopicComposerController({
         : { kind: 'upload', upload };
       return promise;
     },
-    [assertOwner, context, installDraft, persist, requestAccess, runtimeRef, editContext, operationIdle]
+    [
+      assertOwner,
+      confirmOnCurrentRoute,
+      context,
+      installDraft,
+      persist,
+      requestAccess,
+      runtimeRef,
+      editContext,
+      operationIdle
+    ]
   );
 
   const pickAttachments = useCallback(
@@ -1253,51 +1281,83 @@ export function useTopicComposerController({
         if (value.edit && !editContext?.permissions.body) throw new Error('原站不允许编辑正文');
         const ticket = await runtimeRef.current.ensureWritableSession(value.source);
         assertOwner(value, ticket);
-        const selected = await DocumentPicker.getDocumentAsync({
-          type: kind === 'image' ? 'image/*' : '*/*',
-          multiple: true,
-          copyToCacheDirectory: true
-        });
-        assertLocalOwner(value, ticket);
-        if (selected.canceled) return;
-        if (!operationIdle()) throw new Error('正在保存或发布，请稍后重新选择文件');
-        if (
-          kind === 'yaohuo-file' &&
-          value.attachments.filter((file) => file.kind === kind).length + selected.assets.length > 9
-        )
-          throw new Error('文件帖最多选择 9 个文件');
-        const added: TopicDraftAttachment[] = [];
-        for (const asset of selected.assets) {
-          const normalizedAsset =
-            kind === 'image' && !asset.mimeType
-              ? { ...asset, mimeType: normalizeReplyImageAsset({ uri: asset.uri, name: asset.name }).mimeType }
-              : asset;
-          const file = await persistTopicDraftAttachment({ draft: value, asset: normalizedAsset, kind });
-          try {
-            try {
-              validateTopicAttachment(file, context);
-              if (kind === 'yaohuo-file' && ['image/jpeg', 'image/jpg', 'image/png'].includes(file.mimeType))
-                await Image.getSize(file.uri);
-            } catch (cause) {
-              await removeTopicDraftAttachmentFile(value, file);
-              rejected.push(`${file.name}：${errorMessage(cause)}`);
-              continue;
-            }
+        const limits =
+          kind === 'yaohuo-file'
+            ? {
+                ...yaohuoFileBytePolicy,
+                maxFiles: Math.max(0, 9 - value.attachments.filter((file) => file.kind === kind).length),
+                maxFilesMessage: '文件帖最多选择 9 个文件'
+              }
+            : {
+                maxBytes:
+                  context.source === 'linuxdo'
+                    ? kind === 'image'
+                      ? context.maxImageBytes
+                      : context.maxAttachmentBytes
+                    : MAX_REPLY_IMAGE_UPLOAD_BYTES
+              };
+        return await withPickedAttachmentCopies(
+          { type: kind === 'image' ? 'image/*' : '*/*', multiple: true, ...limits },
+          async (selected) => {
             assertLocalOwner(value, ticket);
+            if (selected.canceled) return;
             if (!operationIdle()) throw new Error('正在保存或发布，请稍后重新选择文件');
-            added.push(file);
-            change((current) => ({ ...current, attachments: [...current.attachments, file] }));
-          } catch (cause) {
-            await removeTopicDraftAttachmentFile(value, file);
-            throw cause;
+            if (
+              kind === 'yaohuo-file' &&
+              value.attachments.filter((file) => file.kind === kind).length + selected.assets.length > 9
+            )
+              throw new Error('文件帖最多选择 9 个文件');
+            const added: TopicDraftAttachment[] = [];
+            for (const asset of selected.assets) {
+              const normalizedAsset =
+                kind === 'image' && !asset.mimeType
+                  ? { ...asset, mimeType: normalizeReplyImageAsset({ uri: asset.uri, name: asset.name }).mimeType }
+                  : asset;
+              const size = Math.max(normalizedAsset.size ?? 0, knownTopicDraftAttachmentSize(normalizedAsset.uri) ?? 0);
+              if (size > 0) {
+                try {
+                  validateTopicAttachment(
+                    {
+                      ...normalizedAsset,
+                      kind,
+                      mimeType: normalizedAsset.mimeType || 'application/octet-stream',
+                      size
+                    },
+                    context
+                  );
+                } catch (cause) {
+                  rejected.push(`${normalizedAsset.name}：${errorMessage(cause)}`);
+                  continue;
+                }
+              }
+              const file = await persistTopicDraftAttachment({ draft: value, asset: normalizedAsset, kind });
+              try {
+                try {
+                  validateTopicAttachment(file, context);
+                  if (kind === 'yaohuo-file' && ['image/jpeg', 'image/jpg', 'image/png'].includes(file.mimeType))
+                    await Image.getSize(file.uri);
+                } catch (cause) {
+                  await removeTopicDraftAttachmentFile(value, file);
+                  rejected.push(`${file.name}：${errorMessage(cause)}`);
+                  continue;
+                }
+                assertLocalOwner(value, ticket);
+                if (!operationIdle()) throw new Error('正在保存或发布，请稍后重新选择文件');
+                added.push(file);
+                change((current) => ({ ...current, attachments: [...current.attachments, file] }));
+              } catch (cause) {
+                await removeTopicDraftAttachmentFile(value, file);
+                throw cause;
+              }
+            }
+            if (draftRef.current) await persist(draftRef.current);
+            assertLocalOwner(value, ticket);
+            if (kind !== 'yaohuo-file' && added.length) {
+              assertOwner(value, ticket);
+              return await uploadFiles(added, !hostInsert);
+            }
           }
-        }
-        if (draftRef.current) await persist(draftRef.current);
-        assertLocalOwner(value, ticket);
-        if (kind !== 'yaohuo-file' && added.length) {
-          assertOwner(value, ticket);
-          return await uploadFiles(added, !hostInsert);
-        }
+        );
       } catch (cause) {
         setError(errorMessage(cause));
       } finally {
@@ -1372,10 +1432,11 @@ export function useTopicComposerController({
   );
 
   const editorServices = {
-    useTemplate: async () => {
+    useTemplate: async (id: string) => {
       const value = draftRef.current;
       if (!value || value.source !== 'linuxdo') throw new Error('当前站点不支持模板');
-      assertOwner(value);
+      const access = await requestAccess(value);
+      await recordLinuxDoTemplateUse({ ...access, id });
     },
     loadTemplates: async () => {
       const value = draftRef.current;
@@ -1445,7 +1506,7 @@ export function useTopicComposerController({
         const value = await flush();
         if (!value?.edit) return;
         if (
-          !(await confirm(
+          !(await confirmOnCurrentRoute(
             '保留本机修改继续',
             '已核对原站最新内容。继续后，下次保存将以最新内容为基准提交你的修改。',
             '继续编辑'
@@ -1453,16 +1514,18 @@ export function useTopicComposerController({
         )
           return;
         assertOwner(value);
+        const current = draftRef.current;
+        if (!current?.edit) return;
         const updated = {
-          ...value,
+          ...current,
           ...editContext.original,
-          ...topicEditChanges(value),
-          edit: { ...value.edit, original: editContext.original },
-          revision: value.revision + 1,
+          ...topicEditChanges(current),
+          edit: { ...current.edit, original: editContext.original },
+          revision: current.revision + 1,
           updatedAt: Date.now()
         } as TopicDraft;
-        await persist(updated);
         installDraft(updated);
+        await persist(updated);
         setError('');
       } catch (cause) {
         setError(errorMessage(cause));

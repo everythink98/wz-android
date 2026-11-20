@@ -28,12 +28,25 @@ jest.mock('@shopify/flash-list', () => {
   const { View } = require('react-native') as typeof import('react-native');
   return {
     FlashList: ReactModule.forwardRef(function List(
-      props: { testID?: string; data: unknown[]; onEndReached?: () => void; ListHeaderComponent?: React.ReactNode },
+      props: {
+        testID?: string;
+        data: unknown[];
+        onEndReached?: () => void;
+        ListHeaderComponent?: React.ReactNode;
+        ListEmptyComponent?: React.ReactNode;
+        ListFooterComponent?: React.ReactNode;
+      },
       ref
     ) {
       mockListFrames.push(props);
       ReactModule.useImperativeHandle(ref, () => ({ scrollToOffset: () => undefined }));
-      return ReactModule.createElement(View, { testID: props.testID }, props.ListHeaderComponent);
+      return ReactModule.createElement(
+        View,
+        { testID: props.testID },
+        props.ListHeaderComponent,
+        !props.data.length && props.ListEmptyComponent,
+        props.ListFooterComponent
+      );
     })
   };
 });
@@ -52,6 +65,11 @@ jest.mock('@/platform/storage/readerDataStore', () => ({
 }));
 jest.mock('@react-navigation/native', () => ({
   ...jest.requireActual<typeof import('@react-navigation/native')>('@react-navigation/native'),
+  useFocusEffect: (effect: React.EffectCallback) => {
+    const { useEffect } = require('react') as typeof React;
+    const focused = mockFocused;
+    useEffect(() => (focused ? effect() : undefined), [effect, focused]);
+  },
   useIsFocused: () => mockFocused,
   useNavigation: () => mockNavigation,
   useRoute: () => ({ name: 'Library', params: { initialTab: mockInitialTab } }),
@@ -78,13 +96,10 @@ const page = (id: string, next?: ReaderPage['next']): ReaderPage => ({
       savedAt: '2026-09-10T00:00:00Z'
     }
   ],
-  total: 2,
-  visibleTotal: 2,
   next
 });
-async function mount(enabledSources: readonly Source[] = ['nodeseek']) {
+async function mount(enabledSources: readonly Source[] = ['nodeseek'], data = createEmptyReaderState()) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
-  const data = createEmptyReaderState();
   const value = {
     enabledSources,
     notify: jest.fn(),
@@ -113,18 +128,64 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 describe('Library route database query lifecycle', () => {
+  it.each([
+    { source: 'nodeseek', visible: true },
+    { source: 'linuxdo', visible: false }
+  ])(
+    'offers clear history for an empty filtered page only when $source history is enabled',
+    async ({ source, visible }) => {
+      mockInitialTab = 'history';
+      query.mockResolvedValue({ records: [] });
+      const data = createEmptyReaderState();
+      data.history = { [`${source}:123`]: true, 'v2ex:456': true };
+      data.counts.history = 2;
+      const view = await mount(['nodeseek'], data);
+      try {
+        await waitFor(() => expect(view.getByTestId('library-history-ready')).toBeTruthy());
+        expect(mockScreen.historyCountToClear).toBe(visible ? 2 : 0);
+      } finally {
+        await view.unmount();
+        view.client.clear();
+      }
+    }
+  );
   it.each<{ tab: LibraryTab; collection: Parameters<typeof queryReaderPage>[0]['collection'] }>([
     { tab: 'favorites', collection: 'favorites' },
     { tab: 'users', collection: 'followedUsers' },
     { tab: 'history', collection: 'history' }
   ])('opens the $tab shortcut with only its own collection query', async ({ tab, collection }) => {
     mockInitialTab = tab;
-    query.mockResolvedValue({ records: [], total: 0, visibleTotal: 0 });
+    query.mockResolvedValue({ records: [] });
     const view = await mount();
     try {
       await waitFor(() => expect(view.getByTestId(`library-${tab}-ready`)).toBeTruthy());
       expect(mockScreen.libraryTab).toBe(tab);
       expect(query.mock.calls.map(([request]) => request.collection)).toEqual([collection]);
+    } finally {
+      await view.unmount();
+      view.client.clear();
+    }
+  });
+
+  it('preserves loaded pages when only the enabled source order changes', async () => {
+    const cursor = { time: 123, ordinal: 50 };
+    query.mockImplementation(async (request) => (request.after ? page('second') : page('first', cursor)));
+    const view = await mount(['nodeseek', 'v2ex']);
+    try {
+      await waitFor(() => expect(mockScreen.favoriteRecords).toHaveLength(1));
+      await act(async () =>
+        mockListFrames.findLast((frame) => frame.testID === 'library-favorites-ready')!.onEndReached!()
+      );
+      await waitFor(() => expect(mockScreen.favoriteRecords).toHaveLength(2));
+      await view.rerender(
+        <QueryClientProvider client={view.client}>
+          <LibraryRouteRuntimeProvider value={{ ...view.runtime, enabledSources: ['v2ex', 'nodeseek'] }}>
+            <LibraryRoute />
+          </LibraryRouteRuntimeProvider>
+        </QueryClientProvider>
+      );
+      expect(mockScreen.favoriteRecords.map((record) => record.topic.id)).toEqual(['first', 'second']);
+      expect(query).toHaveBeenCalledTimes(2);
     } finally {
       await view.unmount();
       view.client.clear();
@@ -172,6 +233,41 @@ describe('Library route database query lifecycle', () => {
       view.client.clear();
     }
   });
+  it('recovers a collection read in place and retries a failed next page only at its original cursor', async () => {
+    const cursor = { time: 123, ordinal: 50 };
+    const nextPage = Promise.withResolvers<ReaderPage>();
+    query
+      .mockRejectedValueOnce(new Error('first read failed'))
+      .mockResolvedValueOnce(page('first', cursor))
+      .mockRejectedValueOnce(new Error('next read failed'))
+      .mockReturnValueOnce(nextPage.promise);
+    const view = await mount();
+    try {
+      await waitFor(() => expect(view.getByText('本机资料加载失败')).toBeTruthy());
+      expect(view.queryByTestId('library-favorites-ready')).toBeNull();
+      await fireEvent.press(view.getByRole('button', { name: '重试' }));
+      await waitFor(() => expect(view.getByTestId('library-favorites-ready')).toBeTruthy());
+      const listEnd = mockListFrames.findLast((frame) => frame.testID === 'library-favorites-ready')!.onEndReached!;
+      await act(async () => listEnd());
+      await waitFor(() => expect(view.getByRole('button', { name: '重试读取' })).toBeTruthy());
+      expect(mockScreen.favoriteRecords.map((record) => record.topic.id)).toEqual(['first']);
+      await act(async () => listEnd());
+      expect(query).toHaveBeenCalledTimes(3);
+      await fireEvent.press(view.getByRole('button', { name: '重试读取' }));
+      await waitFor(() => expect(view.getByRole('status', { name: '加载更多中' })).toBeTruthy());
+      expect(mockScreen.favoriteRecords.map((record) => record.topic.id)).toEqual(['first']);
+      await act(async () => nextPage.resolve(page('second')));
+      await waitFor(() =>
+        expect(mockScreen.favoriteRecords.map((record) => record.topic.id)).toEqual(['first', 'second'])
+      );
+      expect(query.mock.calls.map(([request]) => request.after)).toEqual([undefined, undefined, cursor, cursor]);
+      expect(view.queryByRole('button', { name: '重试读取' })).toBeNull();
+    } finally {
+      await view.unmount();
+      view.client.clear();
+    }
+  });
+
   it('retries a failed local category read without discarding the loaded collection', async () => {
     query.mockResolvedValue(page('kept'));
     categoryQuery.mockRejectedValueOnce(new Error('category read failed')).mockResolvedValue(localCategories);
@@ -210,7 +306,7 @@ describe('Library route database query lifecycle', () => {
     }
   });
   it('queries only the active collection with filters selected through its controls', async () => {
-    query.mockResolvedValue({ records: [], total: 0, visibleTotal: 0 });
+    query.mockResolvedValue({ records: [] });
     const view = await mount(['nodeseek', 'v2ex']);
     try {
       await waitFor(() => expect(view.getByTestId('library-favorites-ready')).toBeTruthy());
@@ -266,7 +362,7 @@ describe('Library route database query lifecycle', () => {
     }
   });
   it('starts a changed source with all categories without querying the previous source category', async () => {
-    query.mockResolvedValue({ records: [], total: 0, visibleTotal: 0 });
+    query.mockResolvedValue({ records: [] });
     const view = await mount(['nodeseek', 'v2ex']);
     try {
       await waitFor(() => expect(view.getByTestId('library-favorites-ready')).toBeTruthy());
@@ -299,7 +395,7 @@ describe('Library route database query lifecycle', () => {
     }
   });
   it('preserves the selected category without querying again when its source is pressed again', async () => {
-    query.mockResolvedValue({ records: [], total: 0, visibleTotal: 0 });
+    query.mockResolvedValue({ records: [] });
     const view = await mount(['nodeseek', 'v2ex']);
     try {
       await waitFor(() => expect(view.getByTestId('library-favorites-ready')).toBeTruthy());
@@ -359,9 +455,7 @@ describe('Library route database query lifecycle', () => {
                 },
                 followedAt: '2026-09-10T00:00:00Z'
               }
-            ],
-            total: 1,
-            visibleTotal: 1
+            ]
           }
         : page(collection)
     );

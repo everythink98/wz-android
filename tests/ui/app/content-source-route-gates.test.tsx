@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import type { ComponentProps, ReactNode } from 'react';
-import { StackActions } from '@react-navigation/native';
+import { CommonActions, StackActions } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RenderHTMLConfigProvider, TRenderEngineProvider } from 'react-native-render-html';
 import type { Topic, UserReference } from '@/domain/forum/models';
@@ -90,7 +90,7 @@ jest.mock('@/features/more/components/MoreUtilityPanels', () => ({
       expanded: contentSourcesExpanded,
       preferences: runtime.settings.value.contentSources,
       onExpandedChange: onContentSourcesExpandedChange,
-      onChange: (contentSources) => runtime.settings.update({ contentSources })
+      onChange: runtime.settings.update
     });
   }
 }));
@@ -156,9 +156,8 @@ function disabledReaderData() {
 describe('disabled content source route gates', () => {
   it('blocks a disabled Topic route before topic controllers mount', async () => {
     const dispatch = jest.fn();
-    const goBack = jest.fn();
     const data = disabledReaderData();
-    const navigation = { dispatch, goBack } as unknown as NativeStackScreenProps<
+    const navigation = { dispatch, isFocused: () => true } as unknown as NativeStackScreenProps<
       RootStackParamList,
       'Topic'
     >['navigation'];
@@ -181,14 +180,13 @@ describe('disabled content source route gates', () => {
     );
     expect(dispatch).toHaveBeenCalledWith(expectedManageContentSourcesAction);
     await fireEvent.press(view.getByLabelText('返回'));
-    expect(goBack).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenLastCalledWith(CommonActions.goBack());
   });
 
   it('blocks a disabled User route before the user controller mounts', async () => {
     const dispatch = jest.fn();
-    const goBack = jest.fn();
     const data = disabledReaderData();
-    const navigation = { dispatch, goBack } as unknown as NativeStackScreenProps<
+    const navigation = { dispatch, isFocused: () => true } as unknown as NativeStackScreenProps<
       RootStackParamList,
       'User'
     >['navigation'];
@@ -207,13 +205,12 @@ describe('disabled content source route gates', () => {
     await fireEvent.press(view.getByLabelText('管理内容源'));
     expect(dispatch).toHaveBeenCalledWith(expectedManageContentSourcesAction);
     await fireEvent.press(view.getByLabelText('返回'));
-    expect(goBack).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenLastCalledWith(CommonActions.goBack());
   });
 
   it('routes a disabled NotificationDetail through the same content-source management intent', async () => {
     const dispatch = jest.fn();
-    const goBack = jest.fn();
-    const navigation = { dispatch, goBack } as unknown as NativeStackScreenProps<
+    const navigation = { dispatch, isFocused: () => true } as unknown as NativeStackScreenProps<
       RootStackParamList,
       'NotificationDetail'
     >['navigation'];
@@ -235,13 +232,31 @@ describe('disabled content source route gates', () => {
     await fireEvent.press(view.getByLabelText('管理内容源'));
     expect(dispatch).toHaveBeenCalledWith(expectedManageContentSourcesAction);
     await fireEvent.press(view.getByLabelText('返回'));
-    expect(goBack).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenLastCalledWith(CommonActions.goBack());
   });
+
+  const moreCenter = {
+    openCredits: jest.fn(),
+    openLinuxDoCredit: jest.fn(),
+    command: jest.fn<MoreRouteRuntimeValue['account']['center']['command']>(),
+    nodeImageKey: {
+      authorize: jest.fn(),
+      clear: jest.fn(),
+      save: jest.fn(),
+      authorized: false,
+      saved: false,
+      busy: false
+    },
+    nodeSeek: { checkIn: jest.fn(), observeBoard: jest.fn(), state: { kind: 'idle' }, busy: false }
+  } satisfies Pick<
+    MoreRouteRuntimeValue['account']['center'],
+    'openCredits' | 'openLinuxDoCredit' | 'command' | 'nodeImageKey' | 'nodeSeek'
+  >;
 
   it('expands only for the management intent and then preserves local panel state', async () => {
     const data = createEmptyReaderData();
     const runtime = {
-      account: { surfaces: { closeAll: jest.fn() } },
+      account: { center: moreCenter, surfaces: { closeAll: jest.fn() } },
       diagnostics: { getCurrentScreen: () => 'more', metadata: {} },
       notify: jest.fn(),
       notifications: {},
@@ -249,7 +264,6 @@ describe('disabled content source route gates', () => {
       reader: {
         commit: jest.fn(),
         data,
-        dataRef: { current: data },
         replace: jest.fn(async () => undefined),
         waitForSave: jest.fn(async () => undefined)
       },
@@ -285,7 +299,7 @@ describe('disabled content source route gates', () => {
     const secondCloseAll = jest.fn();
     const latestCloseAll = jest.fn();
     let runtime = {
-      account: { surfaces: { closeAll: firstCloseAll } },
+      account: { center: moreCenter, surfaces: { closeAll: firstCloseAll } },
       diagnostics: { getCurrentScreen: () => 'more', metadata: {} },
       notify: jest.fn(),
       notifications: {},
@@ -293,7 +307,6 @@ describe('disabled content source route gates', () => {
       reader: {
         commit: jest.fn(),
         data,
-        dataRef: { current: data },
         replace: jest.fn(async () => undefined),
         waitForSave: jest.fn(async () => undefined)
       },
@@ -356,8 +369,7 @@ describe('disabled content source route gates', () => {
         composer: { toggle: jest.fn() },
         view: {
           changeCommentQuery: jest.fn(),
-          changeReplyFilter: jest.fn(),
-          rememberScrollY: jest.fn()
+          changeReplyFilter: jest.fn()
         }
       }
     } as never);
@@ -392,6 +404,7 @@ describe('disabled content source route gates', () => {
       dispatch: jest.fn(),
       goBack: jest.fn(),
       push: jest.fn(),
+      isFocused: () => true,
       setParams: jest.fn()
     } as unknown as NativeStackScreenProps<RootStackParamList, 'Topic'>['navigation'];
     const route = {

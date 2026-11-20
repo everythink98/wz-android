@@ -17,6 +17,7 @@ import {
   textExcerptFromPlainText,
   sortTopicsByTime,
   sortTopicsByCreatedAt,
+  toIsoString,
   type ForumTextSegment
 } from './html';
 
@@ -349,6 +350,20 @@ describe('forum text indexing', () => {
 });
 
 describe('topic timestamp ordering', () => {
+  it.each([sortTopicsByTime, sortTopicsByCreatedAt])('sorts known dates across undated entries', (sort) => {
+    const topics = [
+      { id: 'older', createdAt: '2020-01-01' },
+      { id: 'unknown', createdAt: '' },
+      { id: 'newer', createdAt: '2026-01-01' }
+    ];
+    expect(sort(topics).map((item) => item.id)).toEqual(['newer', 'older', 'unknown']);
+  });
+
+  it('keeps a timestamp outside the supported calendar unknown', () => {
+    expect(toIsoString(9e18)).toBe('');
+    expect(toIsoString(1_700_000_000)).toBe('2023-11-14T22:13:20.000Z');
+  });
+
   it.each([sortTopicsByTime, sortTopicsByCreatedAt])('parses each timestamp once and preserves stable ties', (sort) => {
     const items = Array.from({ length: 100 }, (_, index) => ({
       id: index,

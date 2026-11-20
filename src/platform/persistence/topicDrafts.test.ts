@@ -216,6 +216,75 @@ describe('topic drafts and publication receipts', () => {
     expect(await store.saveTopicDraft(draft(100))).toBe(false);
   });
 
+  it('keeps a settled edit receipt until a newer submission has incorporated its baseline', async () => {
+    const store = await load();
+    const first = {
+      ...draft(),
+      edit: { topicId: '123', original: { title: '原题', body: '原文', categoryId: 'daily' } }
+    };
+    const sending = { ...attempt(first), target: 'edit:123' };
+    const later = { ...first, revision: first.revision + 1, body: '第二页的新正文' };
+    await store.saveTopicDraft(first);
+    await store.beginTopicSubmissionAttempt(sending);
+    await store.saveTopicDraft(later, first.revision);
+    await store.settleTopicSubmissionAttempt(sending, {
+      status: 'saved',
+      message: '已保存',
+      confirmed: { title: first.title }
+    });
+    await expect(
+      store.beginTopicSubmissionAttempt({ ...attempt(later, 'next'), target: sending.target })
+    ).rejects.toThrow();
+    expect(await store.readTopicSubmissionAttempt(first.source, first.identityKey, sending.target)).toMatchObject({
+      id: sending.id,
+      status: 'saved'
+    });
+  });
+
+  it.each([
+    ['edit:123', false],
+    ['edit:123', true],
+    ['create', false],
+    ['create', true]
+  ] as const)(
+    'permits one continuation of %s until the next writer acquires the target (new draft: %s)',
+    async (target, newDraft) => {
+      const store = await load();
+      const first = {
+        ...draft(),
+        ...(target === 'edit:123'
+          ? { edit: { topicId: '123', original: { title: '原题', body: '原文', categoryId: 'daily' } } }
+          : {})
+      };
+      const sending = { ...attempt(first), target };
+      const later = { ...first, revision: first.revision + 1, body: '新正文' };
+      await store.saveTopicDraft(first);
+      await store.beginTopicSubmissionAttempt(sending);
+      await store.settleTopicSubmissionAttempt(sending, {
+        status: target === 'edit:123' ? 'saved' : 'enqueued',
+        message: '已确认'
+      });
+      expect(await store.saveTopicDraft(later, first.revision)).toBe(false);
+      expect(await store.saveTopicDraft(later, first.revision, 'another-attempt')).toBe(false);
+      expect(await store.saveTopicDraft(later, null, sending.id)).toBe(false);
+      const next = newDraft ? { ...later, id: 'another-draft' } : later;
+      expect(
+        await store.saveTopicDraft(next, newDraft ? null : first.revision, newDraft ? undefined : sending.id)
+      ).toBe(true);
+      expect(
+        await store.saveTopicDraft(
+          { ...later, revision: later.revision + 1, body: '过期的另一个编辑页' },
+          first.revision
+        )
+      ).toBe(false);
+      expect(await store.loadTopicDraft(first.source, first.identityKey, sending.target)).toEqual(next);
+      expect(
+        await store.discardTopicDraft(first.source, first.identityKey, next.id, next.revision, sending.target)
+      ).toBe(true);
+      expect(await store.saveTopicDraft(later, first.revision, sending.id)).toBe(false);
+    }
+  );
+
   it('recovers an interrupted send as unknown and blocks resending even after its draft is discarded', async () => {
     const store = await load();
     await store.saveTopicDraft(draft());
@@ -240,10 +309,12 @@ describe('topic drafts and publication receipts', () => {
     const store = await load();
     await store.saveTopicDraft(draft());
     await store.beginTopicSubmissionAttempt(attempt());
-    await store.saveTopicDraft(draft(2));
+    await store.saveTopicDraft(draft(2), 1);
     await store.settleTopicSubmissionAttempt(attempt(), { status: 'posted', message: '已发布' });
     expect(await store.loadTopicDraft('nodeseek', 'nodeseek:42')).toEqual(draft(2));
     expect(await store.settleTopicSubmissionAttempt(attempt(), { status: 'unknown', message: '旧异常' })).toBe(false);
+    expect(await store.acknowledgeTopicSubmissionAttempt('nodeseek', 'nodeseek:42', 'attempt-one')).toBe(false);
+    expect((await store.readTopicSubmissionAttempt('nodeseek', 'nodeseek:42'))?.status).toBe('posted');
     await store.beginTopicSubmissionAttempt(attempt(draft(2), 'attempt-two'));
     expect(await store.settleTopicSubmissionAttempt(attempt(), { status: 'posted', message: '迟到' })).toBe(false);
     await store.settleTopicSubmissionAttempt(attempt(draft(2), 'attempt-two'), {

@@ -64,10 +64,10 @@ export function useNodeSeekCredits({
     queryKey: key,
     queryFn: ({ signal, pageParam }): Promise<CreditPage> =>
       currency === 'coin'
-        ? gateway.getNodeSeekCredits({ userId, page: pageParam, signal }, { readPlanScope: scope })
+        ? gateway.getNodeSeekCredits({ userId, page: pageParam, signal }, { plan })
         : gateway.getNodeSeekStardustCredits(
             { userId, ...(pageParam > 0 ? { beforeId: pageParam } : {}), signal },
-            { readPlanScope: scope }
+            { plan }
           ),
     initialPageParam: currency === 'coin' ? 1 : 0,
     getNextPageParam: (page) => ('nextPage' in page ? page.nextPage : page.nextBeforeId) ?? undefined,

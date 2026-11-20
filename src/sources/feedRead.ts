@@ -6,6 +6,7 @@ import { getYaohuoFeedDirect } from '@/sources/yaohuo/reader';
 import { getLinuxDoCategories, getLinuxDoFeed, type LinuxDoReadAuth } from '@/sources/linuxdo/reader';
 import { isDiscourseSource, sourceValues } from '@/domain/forum/sourceCatalog';
 import { balanceTopicsBySource, mergeTopics } from '@/domain/forum/feed';
+import { nextPagePosition, pagePosition, type PagePosition } from '@/domain/forum/pagination';
 import type {
   CategoriesResponse,
   DiscourseFeedFilter,
@@ -21,7 +22,7 @@ import { DEFAULT_REQUEST_TIMEOUT_MS, REQUEST_CANCELED_MESSAGE, type Fetcher } fr
 import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
 import { markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
-import { sortTopicsByTime } from '@/domain/forum/html';
+import { isRecord, sortTopicsByTime } from '@/domain/forum/html';
 import { mergeSourceDiagnosticSummaries } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { runForumSourceReadAggregateAttempt, runForumSourceReadAttempt } from './forumSourceReadAttempt';
 import {
@@ -40,46 +41,42 @@ type AllFeedCursorWire = {
   sourceCursors?: Partial<Record<Source, string | null>>;
 };
 
-type FeedContinuation =
-  { kind: 'exhausted' } | { kind: 'paged'; page: number; cursor?: string } | { kind: 'opaque-only'; cursor: string };
-
 type AllFeedSourceState = {
   source: Source;
   buffer: Topic[];
-  continuation: FeedContinuation;
+  continuation?: PagePosition;
 };
 
 type AggregateFeedSourcePlan = Readonly<AllFeedSourceState> &
-  ({ kind: 'buffer-only' } | { kind: 'fetch'; request: Readonly<{ page: number; cursor?: string }> });
+  ({ kind: 'buffer-only' } | { kind: 'fetch'; request: PagePosition });
 
-function feedContinuation(page: number | null | undefined, cursor: string | null | undefined): FeedContinuation {
-  if (typeof page === 'number' && page > 0) return { kind: 'paged', page, ...(cursor ? { cursor } : {}) };
-  return cursor ? { kind: 'opaque-only', cursor } : { kind: 'exhausted' };
-}
-
-function cursorTopic(value: unknown): Topic | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return null;
-  }
-  const topic = value as Partial<Topic>;
-  return topic.source && topic.id && topic.title && topic.url && topic.createdAt ? (topic as Topic) : null;
+function isCursorTopic(value: unknown, source: Source): value is Topic {
+  return (
+    isRecord(value) &&
+    value.source === source &&
+    typeof value.id === 'string' &&
+    Boolean(value.id.trim()) &&
+    typeof value.title === 'string' &&
+    Boolean(value.title.trim()) &&
+    typeof value.url === 'string' &&
+    Boolean(value.url.trim()) &&
+    typeof value.createdAt === 'string'
+  );
 }
 
 function decodeAllFeedCursor(cursor: string | undefined, sources: readonly Source[]): AllFeedSourceState[] {
-  const empty = (): AllFeedSourceState[] =>
-    sources.map((source) => ({ source, buffer: [], continuation: { kind: 'exhausted' } }));
+  const empty = (): AllFeedSourceState[] => sources.map((source) => ({ source, buffer: [] }));
   if (!cursor) return empty();
   try {
     const parsed = JSON.parse(decodeURIComponent(cursor)) as AllFeedCursorWire;
     return sources.map((source) => {
-      const items = Array.isArray(parsed.buffers?.[source])
-        ? (parsed.buffers[source]?.map(cursorTopic).filter(Boolean) as Topic[])
-        : [];
+      const buffer = parsed.buffers?.[source];
+      const items = Array.isArray(buffer) ? buffer.filter((topic) => isCursorTopic(topic, source)) : [];
       const cursor = parsed.sourceCursors?.[source];
       return {
         source,
         buffer: items,
-        continuation: feedContinuation(parsed.nextPages?.[source], typeof cursor === 'string' ? cursor : undefined)
+        continuation: pagePosition(parsed.nextPages?.[source], typeof cursor === 'string' ? cursor : undefined)
       };
     });
   } catch {
@@ -95,11 +92,9 @@ function encodeAllFeedCursor(states: readonly AllFeedSourceState[]) {
     if (buffer.length) {
       buffers[source] = buffer;
     }
-    if (continuation.kind === 'paged') {
+    if (continuation) {
       nextPages[source] = continuation.page;
-    }
-    if (continuation.kind !== 'exhausted' && continuation.cursor) {
-      sourceCursors[source] = continuation.cursor;
+      if (continuation.cursor) sourceCursors[source] = continuation.cursor;
     }
   }
   if (!Object.keys(buffers).length && !Object.keys(nextPages).length && !Object.keys(sourceCursors).length) {
@@ -173,20 +168,17 @@ export async function getFeed({
         const sourceStates = decodeAllFeedCursor(cursor, sources);
         const bufferedItems = sourceStates.flatMap((state) => state.buffer);
         const hasRetryableCursor = Boolean(
-          cursor && sourceStates.some((state) => state.buffer.length || state.continuation.kind !== 'exhausted')
+          cursor && sourceStates.some((state) => state.buffer.length || state.continuation)
         );
         const plans = sourceStates.map<AggregateFeedSourcePlan>((state) => {
           const { continuation } = state;
-          if (cursor && !(continuation.kind === 'paged' && state.buffer.length < limit)) {
+          if (cursor && (!continuation || state.buffer.length >= limit)) {
             return { ...state, kind: 'buffer-only' };
           }
           return {
             ...state,
             kind: 'fetch',
-            request: {
-              page: cursor && continuation.kind === 'paged' ? continuation.page : page,
-              ...(continuation.kind !== 'exhausted' && continuation.cursor ? { cursor: continuation.cursor } : {})
-            }
+            request: continuation ?? { page }
           };
         });
         const adapterLimit = limit < 30 ? limit * sources.length : limit;
@@ -196,13 +188,7 @@ export async function getFeed({
           plans.map((plan): Promise<FeedResponse> => {
             const item = plan.source;
             if (plan.kind === 'buffer-only') {
-              return Promise.resolve({
-                items: [],
-                errors: {},
-                hasMore: false,
-                nextPage: plan.continuation.kind === 'paged' ? plan.continuation.page : null,
-                nextCursor: plan.continuation.kind !== 'exhausted' ? (plan.continuation.cursor ?? null) : null
-              });
+              return Promise.resolve({ items: [], errors: {} });
             }
             const startedAt = Date.now();
             const userAgent = item === 'nodeseek' ? nodeSeekUserAgent : discourseAuth?.userAgent;
@@ -220,7 +206,7 @@ export async function getFeed({
                     source: item,
                     nodeSeekAuthenticated,
                     discourseAuth,
-                    cursor: item === 'v2ex' ? plan.request.cursor : cursor,
+                    cursor: plan.request.cursor,
                     fetcher: sourceFetcher,
                     limit: item === 'v2ex' ? limit : adapterLimit,
                     page: plan.request.page,
@@ -300,7 +286,7 @@ export async function getFeed({
             return {
               source: plan.source,
               buffer,
-              continuation: feedContinuation(result.value.nextPage, result.value.nextCursor)
+              continuation: plan.kind === 'fetch' ? nextPagePosition(result.value, plan.request) : plan.continuation
             };
           }
           const aggregateTimedOut =
@@ -313,8 +299,8 @@ export async function getFeed({
             buffer,
             continuation:
               plan.kind === 'fetch' && (hasRetryableCursor || hasFulfilledSource || aggregateTimedOut)
-                ? feedContinuation(plan.request.page, plan.request.cursor)
-                : { kind: 'exhausted' }
+                ? plan.request
+                : undefined
           };
         });
         const nextCursor = encodeAllFeedCursor(nextStates);
@@ -365,6 +351,7 @@ export async function getFeed({
 
 export async function getCategories({
   source = 'all',
+  v2exNodeDirectory,
   fetcher,
   fetcherForSource,
   nodeSeekAuthenticated,
@@ -378,6 +365,7 @@ export async function getCategories({
   timeoutMs
 }: {
   source?: FeedSource;
+  v2exNodeDirectory?: boolean;
   fetcher?: Fetcher;
   fetcherForSource?: (source: Source) => Fetcher;
   nodeSeekAuthenticated?: boolean;
@@ -406,6 +394,7 @@ export async function getCategories({
         const readSource = (activeFetcher: Fetcher) =>
           getSourceCategories({
             source: item,
+            v2exNodeDirectory,
             nodeSeekAuthenticated,
             nodeSeekUserAgent,
             discourseAuth,
@@ -458,6 +447,7 @@ export async function getCategories({
 
 export function getSourceCategories({
   source,
+  v2exNodeDirectory,
   fetcher,
   nodeSeekAuthenticated,
   nodeSeekUserAgent,
@@ -473,6 +463,6 @@ export function getSourceCategories({
   const options = { authenticated: nodeSeekAuthenticated, fetcher, nodeSeekUserAgent, signal, timeoutMs };
   return dispatchSourceRead(source, {
     nodeseek: () => getNodeSeekCategories(options),
-    v2ex: () => getV2exCategories(options)
+    v2ex: () => getV2exCategories({ ...options, v2exNodeDirectory })
   });
 }

@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { Alert, Keyboard, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { ChevronRight, RefreshCw, Settings2 } from 'lucide-react-native';
-import { Button, List } from 'react-native-paper';
+import { List } from 'react-native-paper';
 import { AppTextInput as TextInput } from '@/ui/controls/InputControls';
 import { CredentialVaultError } from '@/platform/storage/credentialVault';
 import type { CredentialSite } from '@/domain/session/sessionContracts';
@@ -14,7 +14,7 @@ import { Avatar } from '@/ui/avatar/Avatar';
 import type { SessionSite, SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import { createReaderFontSizer, type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { IconButton } from '@/ui/controls/ButtonControls';
+import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { DisclosureChevron, ExpandableContent } from '@/ui/controls/ExpandableControls';
 import { ModalSheetFrame, ModalSheetHeader } from '@/ui/controls/ModalSheetFrame';
 import { Portal } from '@gorhom/portal';
@@ -148,9 +148,9 @@ function createAccountCenterStyles(theme: ReaderTheme, settings: ReaderStyleSett
       borderTopWidth: StyleSheet.hairlineWidth,
       flexDirection: 'row',
       flexWrap: 'wrap',
-      gap: 4,
-      paddingHorizontal: 4,
-      paddingVertical: 2
+      gap: 8,
+      paddingHorizontal: 0,
+      paddingVertical: 6
     },
     accountFeatures: {
       borderTopColor: theme.line,
@@ -182,7 +182,6 @@ function CredentialEditor({
   view,
   accountStyles,
   styles,
-  theme,
   onCommand
 }: {
   active: boolean;
@@ -190,7 +189,6 @@ function CredentialEditor({
   view: SiteAccountView;
   accountStyles: AccountCenterStyles;
   styles: MoreScreenStyles;
-  theme: ReaderTheme;
   onCommand: CommandHandler;
 }) {
   const { height } = useWindowDimensions();
@@ -354,6 +352,7 @@ function CredentialEditor({
   return (
     <View style={accountStyles.section}>
       <List.Item
+        testID="account-credential-row"
         title="自动填入"
         accessible={false}
         onPress={openEditor}
@@ -362,7 +361,7 @@ function CredentialEditor({
             ? '需要重新设置'
             : view.credential.hasCredential
               ? `已设置 · ${view.credential.protection === 'biometric' ? '用户身份认证' : 'Android 本机加密'}`
-              : '未设置，登录失效时可快速填入'
+              : undefined
         }
         style={settingStyles.row}
         containerStyle={settingStyles.rowContainer}
@@ -373,20 +372,17 @@ function CredentialEditor({
         right={
           !editing
             ? () => (
-                <Button
+                <AppButton
                   compact
-                  icon={({ color, size }) => <ChevronRight color={color} size={size} />}
-                  style={settingStyles.button}
-                  contentStyle={settingStyles.buttonContent}
-                  labelStyle={settingStyles.buttonLabel}
+                  label={
+                    view.credential.state === 'invalidated'
+                      ? '重新设置'
+                      : view.credential.hasCredential
+                        ? '管理'
+                        : '设置'
+                  }
                   onPress={openEditor}
-                >
-                  {view.credential.state === 'invalidated'
-                    ? '重新设置'
-                    : view.credential.hasCredential
-                      ? '管理'
-                      : '设置'}
-                </Button>
+                />
               )
             : undefined
         }
@@ -416,92 +412,65 @@ function CredentialEditor({
           contentContainerStyle={styles.searchFilterBodyInner}
           keyboardShouldPersistTaps="always"
         >
-          <View style={styles.stack}>
-            <TextInput
-              variant="outlined"
-              label="账号 / 邮箱"
-              accessibilityLabel={`${view.label} 登录账号`}
-              aria-label={`${view.label} 登录账号`}
-              autoCapitalize="none"
-              autoComplete="off"
-              autoCorrect={false}
-              placeholder="账号 / 邮箱"
-              placeholderTextColor={theme.muted}
-              style={settingStyles.input}
-              value={account}
-              onFocus={() => setKeyboardAvoidingEnabled(true)}
-              onChange={recordUserInteraction}
-              onChangeText={setAccount}
-            />
-          </View>
-          <View style={styles.stack}>
-            <TextInput
-              variant="outlined"
-              label="密码"
-              accessibilityLabel={`${view.label} 登录密码`}
-              aria-label={`${view.label} 登录密码`}
-              autoCapitalize="none"
-              autoComplete="off"
-              autoCorrect={false}
-              placeholder="密码"
-              placeholderTextColor={theme.muted}
-              secureTextEntry
-              style={settingStyles.input}
-              value={password}
-              onFocus={() => setKeyboardAvoidingEnabled(true)}
-              onChange={recordUserInteraction}
-              onChangeText={setPassword}
-            />
-          </View>
+          <TextInput
+            variant="outlined"
+            label="账号 / 邮箱"
+            accessibilityLabel={`${view.label} 登录账号`}
+            aria-label={`${view.label} 登录账号`}
+            autoCapitalize="none"
+            autoComplete="off"
+            autoCorrect={false}
+            style={settingStyles.input}
+            value={account}
+            onFocus={() => setKeyboardAvoidingEnabled(true)}
+            onChange={recordUserInteraction}
+            onChangeText={setAccount}
+          />
+          <TextInput
+            variant="outlined"
+            label="密码"
+            accessibilityLabel={`${view.label} 登录密码`}
+            aria-label={`${view.label} 登录密码`}
+            autoCapitalize="none"
+            autoComplete="off"
+            autoCorrect={false}
+            secureTextEntry
+            style={settingStyles.input}
+            value={password}
+            onFocus={() => setKeyboardAvoidingEnabled(true)}
+            onChange={recordUserInteraction}
+            onChangeText={setPassword}
+          />
         </ScrollView>
         <View style={styles.searchFilterActions}>
           {view.credential.state !== 'missing' ? (
-            <Button
+            <AppButton
               compact
+              variant="danger"
               accessibilityLabel="删除"
-              textColor={theme.danger}
-              style={settingStyles.button}
-              contentStyle={settingStyles.buttonContent}
-              labelStyle={settingStyles.buttonLabel}
+              label="删除"
               disabled={busy}
-              onPress={() => {
-                recordUserInteraction();
-                confirmDelete();
-              }}
-            >
-              删除
-            </Button>
+              onPress={confirmDelete}
+            />
           ) : null}
           <View style={styles.flex} />
-          <Button
+          <AppButton
             compact
+            variant="ghost"
             accessibilityLabel="取消"
-            style={settingStyles.button}
-            contentStyle={settingStyles.buttonContent}
-            labelStyle={settingStyles.buttonLabel}
+            label="取消"
             disabled={busy}
-            onPress={() => {
-              recordUserInteraction();
-              closeEditor();
-            }}
-          >
-            取消
-          </Button>
-          <Button
+            onPress={closeEditor}
+          />
+          <AppButton
             compact
-            mode="contained"
+            variant="solid"
             accessibilityLabel={busy ? '保存中' : '保存'}
-            style={settingStyles.button}
-            contentStyle={settingStyles.buttonContent}
-            labelStyle={settingStyles.buttonLabel}
+            label={busy ? '保存中' : '保存'}
+            loading={busy}
             disabled={busy || !account.trim() || !password}
-            onPress={() => {
-              recordUserInteraction();
-              void persist();
-            }}
-          >
-            {busy ? '保存中' : '保存'}
-          </Button>
+            onPress={() => void persist()}
+          />
         </View>
       </ModalSheetFrame>
     </View>
@@ -575,7 +544,6 @@ export function AccountCenterPanel({
       .filter((view): view is SiteAccountView => Boolean(view));
   }, [availableViews, enabledSessionSources]);
   const { styles: accountStyles } = useReaderThemeStyles(createAccountCenterStyles);
-  const { styles: settingStyles } = useReaderThemeStyles(createMoreSiteSettingStyles);
   const selectedView = views.find((view) => view.site === (selectedSite ?? expandedSite)) ?? views[0];
   const settingsOwner = selectedView ? `${selectedView.site}:${selectedView.user?.id ?? 'anonymous'}` : '';
   const settingsVisited = settingsState.phase !== 'unvisited' && settingsState.owner === settingsOwner;
@@ -744,42 +712,30 @@ export function AccountCenterPanel({
               view={selectedView}
               accountStyles={accountStyles}
               styles={styles}
-              theme={theme}
               onCommand={onCommand}
             />
             {loggedIn ? (
               <View style={accountStyles.secondaryActions}>
-                <Button
+                <AppButton
                   compact
                   accessibilityLabel="检测或重新登录"
-                  icon={({ color, size }) => <ChevronRight color={color} size={size} />}
-                  style={settingStyles.button}
-                  contentStyle={settingStyles.buttonContent}
-                  labelStyle={settingStyles.buttonLabel}
+                  label="检测或重新登录"
                   onPress={() => {
-                    recordUserInteraction();
                     setSettingsState({ phase: 'unvisited' });
                     void onCommand({ type: 'open-login', site: selectedView.site });
                   }}
-                >
-                  检测或重新登录
-                </Button>
+                />
                 {selectedView.credential.hasCredential ? (
-                  <Button
+                  <AppButton
                     compact
-                    accessibilityLabel="自动填入"
-                    style={settingStyles.button}
-                    contentStyle={settingStyles.buttonContent}
-                    labelStyle={settingStyles.buttonLabel}
+                    accessibilityLabel="填入并登录"
+                    label="填入并登录"
                     disabled={waitingForForm}
                     onPress={() => {
-                      recordUserInteraction();
                       setSettingsState({ phase: 'unvisited' });
                       void onCommand({ type: 'open-login-with-fill', site: selectedView.site });
                     }}
-                  >
-                    自动填入
-                  </Button>
+                  />
                 ) : null}
               </View>
             ) : null}

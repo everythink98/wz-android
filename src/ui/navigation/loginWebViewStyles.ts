@@ -54,7 +54,7 @@ export function createLoginWebViewStyles(theme: ReaderTheme, settings: ReaderSty
       backgroundColor: theme.surface
     },
     toolbarContent: {
-      paddingHorizontal: 12,
+      paddingHorizontal: 14,
       paddingBottom: 8
     },
     action: {
@@ -64,7 +64,7 @@ export function createLoginWebViewStyles(theme: ReaderTheme, settings: ReaderSty
       backgroundColor: 'transparent'
     },
     actionPrimary: {
-      backgroundColor: theme.primaryStrong,
+      backgroundColor: theme.dark ? theme.primary : theme.primaryStrong,
       borderRadius: readerRadii.control
     },
     iconAction: {
@@ -119,7 +119,7 @@ export function createLoginWebViewStyles(theme: ReaderTheme, settings: ReaderSty
       gap: 8,
       backgroundColor: theme.surface,
       borderColor: alphaColor(theme.primary, 0.18),
-      borderRadius: 6,
+      borderRadius: readerRadii.control,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 12,
       paddingVertical: 10

@@ -214,7 +214,6 @@ describe('account status queries', () => {
       },
       catalogCategories: [],
       notify: () => undefined,
-      readerData,
       topicStateIndex: createTopicListItemStateIndex(readerData)
     };
     const options: Parameters<typeof useAccountStatusController>[0] = {
@@ -424,6 +423,35 @@ describe('account status queries', () => {
     }
   });
 
+  it.each([1, 2])('finishes cold migration on time when native Cookie read %i stalls', async (stalledRead) => {
+    jest.useFakeTimers();
+    const pending = Promise.withResolvers<string>();
+    let reads = 0;
+    const readNodeSeekCookieHeader = jest.fn(async () =>
+      ++reads === stalledRead ? pending.promise : 'session=candidate'
+    );
+    try {
+      const { hook } = await renderStatusController({
+        enabledSources: ['nodeseek'],
+        enabledSourcesReady: true,
+        readNodeSeekCookieHeader
+      });
+      await act(async () => Promise.resolve());
+      expect(readNodeSeekCookieHeader).toHaveBeenCalledTimes(stalledRead);
+      expect(hook.result.current.hydrated).toBe(false);
+      await act(async () => jest.advanceTimersByTimeAsync(5_000));
+
+      expect(hook.result.current.hydrated).toBe(true);
+      expect(hook.result.current.statusBusy).toBe(false);
+      expect(await AsyncStorage.getItem('account-session.migration.v1')).toBe('1');
+      await act(async () => pending.resolve('session=late'));
+      expect(mockGetCurrentUser).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => pending.resolve('session=late'));
+      jest.useRealTimers();
+    }
+  });
+
   afterEach(async () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -479,6 +507,42 @@ describe('account status queries', () => {
     ).toEqual([expect.objectContaining({ outcome: 'partial', reason: 'storage_error' })]);
     expect(JSON.stringify(diagnosticEvents)).not.toContain('PRIVATE_MIGRATION_STORAGE');
   });
+
+  it.each(['account-session.v1.nodeseek', 'account-session.migration.v1'])(
+    'retries an unsuccessful local read of %s before resuming ordinary startup',
+    async (failingKey) => {
+      const key = 'account-session.v1.nodeseek';
+      const signedIn = JSON.stringify({ version: 1, state: 'authenticated', identity: nodeSeekUser });
+      await AsyncStorage.setMany({ [key]: signedIn, 'account-session.migration.v1': '1' });
+      const read = AsyncStorage.getItem.bind(AsyncStorage);
+      let failurePending = true;
+      const reader = jest.spyOn(AsyncStorage, 'getItem').mockImplementation((candidate) => {
+        if (candidate !== failingKey || !failurePending) return read(candidate);
+        failurePending = false;
+        return Promise.reject(new Error('temporary local read failure'));
+      });
+      const readNodeSeekCookieHeader = jest.fn(async () => 'session=known');
+      const { hook } = await renderStatusController({
+        enabledSources: ['nodeseek'],
+        enabledSourcesReady: true,
+        readNodeSeekCookieHeader
+      });
+      try {
+        await waitFor(() => expect(hook.result.current.hydrated).toBe(true));
+        expect(reader.mock.calls.filter(([candidate]) => candidate === failingKey)).toHaveLength(2);
+        expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
+          currentUser: nodeSeekUser,
+          identityTrust: 'confirmed'
+        });
+        expect(readNodeSeekCookieHeader).not.toHaveBeenCalled();
+        expect(mockGetCurrentUser).not.toHaveBeenCalled();
+        expect(await read(key)).toBe(signedIn);
+      } finally {
+        await hook.unmount();
+        reader.mockRestore();
+      }
+    }
+  );
 
   it('emits one canceled restore terminal when unmounted before storage resolves', async () => {
     const marker = Promise.withResolvers<string | null>();

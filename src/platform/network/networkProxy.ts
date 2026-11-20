@@ -240,6 +240,12 @@ function networkProxyNativeModule() {
   return networkProxyModuleFromReactNativeImport({ NativeModules });
 }
 
+export class InvalidSavedNetworkProxyStateError extends Error {
+  constructor() {
+    super('代理配置已损坏，请重新保存或删除该配置。');
+  }
+}
+
 export async function loadNetworkProxyState() {
   const raw = await SecureStore.getItemAsync(NETWORK_PROXY_STORAGE_KEY);
   if (raw === null) {
@@ -273,7 +279,7 @@ export async function loadNetworkProxyState() {
     if (input.enabled && !state.enabled) throw new Error();
     return state;
   } catch {
-    throw new Error('代理配置已损坏，请重新保存或删除该配置。');
+    throw new InvalidSavedNetworkProxyStateError();
   }
 }
 

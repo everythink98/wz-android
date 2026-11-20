@@ -1,4 +1,4 @@
-import { QueryClient, type InfiniteData } from '@tanstack/react-query';
+import { hashKey, QueryClient, type InfiniteData, type QueryKey } from '@tanstack/react-query';
 import type { SourceSearchFilter } from '@/domain/forum/searchFilters';
 import { isSessionSource, type DiscourseSource, type NotificationSource } from '@/domain/forum/sourceCatalog';
 import type { FeedSource, ReplyOrder, Source } from '@/domain/forum/models';
@@ -19,6 +19,9 @@ export const accountQueryKeys = {
 export const forumQueryKeys = {
   all: ['forum'] as const,
   source: (source: FeedSource) => ['forum', source] as const,
+  v2exNodeDirectory: ['forum', 'v2ex', 'node-directory'] as const,
+  searchAuthorLabels: (sessionEpoch: number, readPlanScope: string) =>
+    ['forum', 'linuxdo', 'search-author-labels', { sessionEpoch, readPlanScope }] as const,
   accountData: ({
     source,
     kind,
@@ -184,8 +187,12 @@ export const forumQueryKeys = {
         topicId
       }
     ] as const,
-  replies: (topicQueryKey: readonly unknown[], order: ReplyOrder, readPlanScope?: string) =>
-    [...topicQueryKey, 'replies', { order, ...(readPlanScope ? { readPlanScope } : {}) }] as const,
+  replies: (topicQueryKey: readonly unknown[], order: ReplyOrder, readPlanScope?: string, windowOwner?: string) =>
+    [
+      ...topicQueryKey,
+      'replies',
+      { order, ...(readPlanScope ? { readPlanScope } : {}), ...(windowOwner ? { windowOwner } : {}) }
+    ] as const,
   replyRefresh: (repliesQueryKey: readonly unknown[], page: number, offset: number | null, limit: number) =>
     [...repliesQueryKey, 'refresh', { limit, offset, page }] as const,
   reply: ({
@@ -273,14 +280,23 @@ export const forumQueryKeys = {
   notificationDetail: ({
     identityKey,
     notificationId,
+    sessionEpoch,
     source
   }: {
     identityKey: string;
     notificationId: string;
+    sessionEpoch: number;
     source: NotificationSource;
-  }) => ['forum', source, 'notifications', 'detail', { identityKey, notificationId }] as const,
-  notificationSnapshot: ({ identityKey, source }: { identityKey: string; source: NotificationSource }) =>
-    ['forum', source, 'notifications', 'snapshot', { identityKey }] as const,
+  }) => ['forum', source, 'notifications', 'detail', { identityKey, notificationId, sessionEpoch }] as const,
+  notificationSnapshot: ({
+    identityKey,
+    sessionEpoch,
+    source
+  }: {
+    identityKey: string;
+    sessionEpoch: number;
+    source: NotificationSource;
+  }) => ['forum', source, 'notifications', 'snapshot', { identityKey, sessionEpoch }] as const,
   level: (source: Source) => ['forum', source, 'level'] as const,
   levelProfile: ({ sessionEpochs, source }: { sessionEpochs: ForumSessionEpochs; source: Source }) =>
     ['forum', source, 'level', { sessionEpoch: sessionEpochKey(source, sessionEpochs) }] as const
@@ -289,6 +305,30 @@ export const forumQueryKeys = {
 export const forumMutationKeys = {
   topic: (source: Source, topicId: string) => ['forum', source, 'mutation', 'topic', topicId] as const
 };
+
+export function forumReplyWindowKeys(queryClient: QueryClient, topicKey: QueryKey, readPlanScope: string): QueryKey[] {
+  return (['oldest', 'newest'] as const).flatMap((order): QueryKey[] => {
+    const shared = forumQueryKeys.replies(topicKey, order, readPlanScope);
+    return [
+      shared,
+      ...queryClient
+        .getQueryCache()
+        .findAll({
+          queryKey: shared,
+          predicate: ({ queryKey, queryHash }) => {
+            if (queryKey.length !== shared.length) return false;
+            const options = queryKey.at(-1);
+            if (!options || typeof options !== 'object' || !('windowOwner' in options)) return false;
+            return (
+              typeof options.windowOwner === 'string' &&
+              queryHash === hashKey(forumQueryKeys.replies(topicKey, order, readPlanScope, options.windowOwner))
+            );
+          }
+        })
+        .map(({ queryKey }) => queryKey)
+    ];
+  });
+}
 
 export function createAppQueryClient() {
   return new QueryClient({

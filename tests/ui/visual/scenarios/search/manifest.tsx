@@ -1,7 +1,7 @@
 import { View } from 'react-native';
 
 import type { Category, Source, Topic } from '@/domain/forum/models';
-import { DEFAULT_SEARCH_FILTERS, searchFilterSummary, type SearchFilterState } from '@/domain/forum/searchFilters';
+import { DEFAULT_SEARCH_FILTERS, type SearchFilterState } from '@/domain/forum/searchFilters';
 import type { TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { SearchFilterSheet } from '@/features/search/SearchFilterSheet';
@@ -133,19 +133,29 @@ function SearchScenario({ state }: { state: SearchScenarioState }) {
   return (
     <SearchScreen
       busy={false}
-      categories={[]}
+      renderFilters={(placement) => (
+        <SearchFilterSheet
+          {...placement}
+          active
+          categories={[]}
+          requestsEnabled={false}
+          readPlanScopes={{ tags: 'visual:tags', users: 'visual:users' }}
+          searchFilters={filters()}
+          sessionEpochs={initialForumSessionEpochs}
+          onLoadV2exNodes={emptyCandidates}
+          onSearchDiscourseTags={emptyCandidates}
+          onSearchDiscourseUsers={emptyCandidates}
+        />
+      )}
       expectedSearchSources={expectedSearchSources}
       externalSearchSources={state === 'external' ? ['linuxdo', 'nodeseek'] : []}
       linuxDoAiState={{ count: 0, enabled: false, status: 'idle' }}
       linuxDoAiVisible={false}
       query={query}
+      readScope={`visual:${state}`}
       recentSearches={state === 'idle' ? ['Android 大字号', '深色主题'] : []}
-      requestsEnabled={false}
-      searchCandidateReadPlanScopes={{ tags: 'visual:tags', users: 'visual:users' }}
-      searchFilters={filters()}
       searchGroups={groups(state)}
       searchSource={searchSource}
-      sessionEpochs={{ ...initialForumSessionEpochs }}
       submittedQuery={query}
       topicStateIndex={topicStateIndex}
       onLoadMoreSearchSource={noop}
@@ -157,8 +167,6 @@ function SearchScenario({ state }: { state: SearchScenarioState }) {
       onRetryLinuxDoAiSearch={noop}
       onRetrySearchSource={noop}
       onSearch={noop}
-      onSearchDiscourseTags={emptyCandidates}
-      onSearchDiscourseUsers={emptyCandidates}
       onSearchFilterApply={noop}
       onSearchSourceChange={noop}
       onToggleLinuxDoAiSearch={noop}
@@ -184,6 +192,7 @@ function LinuxDoFilterScenario() {
   return (
     <View style={styles.contentInner}>
       <SearchFilterSheet
+        active
         categories={categories}
         readPlanScopes={{ tags: 'visual:tags', users: 'visual:users' }}
         requestsEnabled={false}
@@ -191,7 +200,7 @@ function LinuxDoFilterScenario() {
         sessionEpochs={{ ...initialForumSessionEpochs }}
         source="linuxdo"
         styles={styles}
-        summary={searchFilterSummary('linuxdo', searchFilters.linuxdo, categories)}
+        onLoadV2exNodes={emptyCandidates}
         theme={theme}
         onApply={noop}
         onSearchDiscourseTags={emptyCandidates}

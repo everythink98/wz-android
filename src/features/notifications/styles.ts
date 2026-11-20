@@ -13,7 +13,7 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
   const fontFamily = fontFamilyValue(settings.fontFamily);
   const scaled = createReaderFontSizer(settings);
   return StyleSheet.create({
-    screen: { flex: 1, backgroundColor: theme.background },
+    screen: { flex: 1, backgroundColor: theme.surface },
     listContent: { flexGrow: 1, backgroundColor: theme.surface, paddingBottom: 24 },
     toolbar: {
       gap: 0,
@@ -26,14 +26,14 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
     },
     categoryStrip: { minHeight: 48 },
     controlRow: {
-      minHeight: 48,
+      minHeight: 44,
       alignItems: 'center',
       flexDirection: 'row',
       justifyContent: 'space-between',
       gap: 8,
       flexWrap: 'wrap'
     },
-    unreadControl: { minHeight: 48, alignItems: 'center', flexDirection: 'row', gap: 7 },
+    unreadControl: { minHeight: 44, alignItems: 'center', flexDirection: 'row', gap: 7 },
     controlSummary: {
       flex: 1,
       minWidth: 0,
@@ -48,6 +48,8 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
     controlMeta: { color: theme.muted, fontFamily, fontSize: scaled(11), lineHeight: scaled(16) },
     inlineAction: {
       minHeight: 48,
+      minWidth: 64,
+      alignItems: 'flex-end',
       justifyContent: 'center',
       paddingHorizontal: 4
     },
@@ -112,13 +114,13 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
       borderTopWidth: StyleSheet.hairlineWidth
     },
     settingRow: {
-      minHeight: 64,
+      minHeight: 54,
       alignItems: 'center',
       flexDirection: 'row',
       gap: 12,
       borderBottomColor: theme.line,
       borderBottomWidth: StyleSheet.hairlineWidth,
-      paddingVertical: 8
+      paddingVertical: 6
     },
     settingBody: { flex: 1, minWidth: 0, gap: 2 },
     settingLabel: { color: theme.ink, fontFamily, fontSize: scaled(15), fontWeight: '600', lineHeight: scaled(21) },
@@ -261,6 +263,7 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
       lineHeight: Math.round(scaled(14) * lineHeightMultiplier(settings.lineHeight))
     },
     replyDock: {
+      gap: 6,
       backgroundColor: theme.surface,
       borderTopColor: theme.line,
       borderTopWidth: StyleSheet.hairlineWidth,
@@ -268,7 +271,7 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
       paddingVertical: 9
     },
     replyLauncher: {
-      minHeight: 50,
+      minHeight: 48,
       alignItems: 'center',
       flexDirection: 'row',
       gap: 10,
@@ -276,8 +279,8 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
       borderColor: theme.lineStrong,
       borderRadius: readerRadii.control,
       borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 15,
-      paddingVertical: 7
+      paddingHorizontal: 14,
+      paddingVertical: 6
     },
     replyLauncherBody: { flex: 1, minWidth: 0, alignItems: 'center', flexDirection: 'row', gap: 8 },
     replyLauncherTitle: {
@@ -287,12 +290,20 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
       fontSize: scaled(14),
       lineHeight: scaled(20)
     },
-    replyLauncherHint: {
+    replyLauncherDraftText: {
+      color: theme.ink
+    },
+    replyLauncherBadge: {
+      backgroundColor: theme.primarySoft,
+      borderRadius: readerRadii.badge,
       color: theme.primary,
       fontFamily,
       fontSize: scaled(11),
       fontWeight: '600',
-      lineHeight: scaled(16)
+      lineHeight: scaled(16),
+      overflow: 'hidden',
+      paddingHorizontal: 6,
+      paddingVertical: 2
     },
     replyDisabledReason: {
       color: theme.muted,
@@ -302,10 +313,14 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
       marginTop: 5
     },
     readFailure: {
+      alignItems: 'center',
       backgroundColor: theme.surface2,
       borderColor: alphaColor(theme.danger, theme.dark ? 0.4 : 0.24),
       borderRadius: readerRadii.content,
       borderWidth: StyleSheet.hairlineWidth,
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
       padding: 10
     },
     readOnlyNotice: {
@@ -325,7 +340,7 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
       minHeight: 48,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: theme.primaryStrong,
+      backgroundColor: theme.dark ? theme.primary : theme.primaryStrong,
       borderRadius: readerRadii.control,
       paddingHorizontal: 16
     },
@@ -336,7 +351,11 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
       fontWeight: '700',
       lineHeight: scaled(20)
     },
-    topicActionSecondary: { backgroundColor: theme.surface },
+    topicActionSecondary: {
+      backgroundColor: theme.surface,
+      borderColor: theme.line,
+      borderWidth: StyleSheet.hairlineWidth
+    },
     topicActionSecondaryText: { color: theme.primary },
     disabled: { opacity: 0.45 }
   });

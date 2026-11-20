@@ -1,4 +1,5 @@
 import { File, Paths } from 'expo-file-system';
+import { androidShareDidNotStart } from '@/platform/android/shareChooserError';
 import { createDiagnosticExport } from './diagnosticExportFiles';
 import { beginDiagnosticTrace, finishDiagnosticTrace, setDiagnosticWriter } from './diagnostics';
 import {
@@ -42,8 +43,6 @@ export type DiagnosticExportMetadata = {
   versionCode: number;
   yaohuoSession?: DiagnosticSessionStatus;
 };
-
-type DiagnosticExportOwnership = { phase: 'owned'; file: File } | { phase: 'handed-off'; file: File };
 
 let writerInstalled = false;
 type NativeDiagnosticBatch = { readonly lines: string; readonly byteLength: number; watchdog: 'armed' | 'expired' };
@@ -535,26 +534,28 @@ export async function exportDiagnosticLog(metadata: DiagnosticExportMetadata) {
       lastCheck?.processSessionId && lastCheck.processSessionId === diagnosticBuildContext().processSessionId
     )
   });
-  let ownership: DiagnosticExportOwnership = {
-    phase: 'owned',
-    file: await createDiagnosticExport(
-      `${metadataLine(metadata)}\n${coverage}\n${accountSummary}\n${merged.lines.join('\n')}${merged.lines.length ? '\n' : ''}`
-    )
-  };
+  const file = await createDiagnosticExport(
+    `${metadataLine(metadata)}\n${coverage}\n${accountSummary}\n${merged.lines.join('\n')}${merged.lines.length ? '\n' : ''}`
+  );
+  let preserveForReceiver = false;
   try {
     const Sharing = await import('expo-sharing');
     if (!(await Sharing.isAvailableAsync())) {
       throw new Error('当前设备不支持分享诊断日志。');
     }
-    ownership = { phase: 'handed-off', file: ownership.file };
-    await Sharing.shareAsync(ownership.file.uri, {
+    preserveForReceiver = true;
+    await Sharing.shareAsync(file.uri, {
       dialogTitle: '分享诊断日志',
       mimeType: 'text/plain'
     });
+  } catch (error) {
+    // An unknown rejection can follow handoff and the receiving app may still need the file.
+    if (androidShareDidNotStart(error)) preserveForReceiver = false;
+    throw error;
   } finally {
     try {
-      if (ownership.phase === 'owned' && ownership.file.exists) {
-        ownership.file.delete();
+      if (!preserveForReceiver && file.exists) {
+        file.delete();
       }
     } catch {
       // A failed cleanup must not replace the actual export result.

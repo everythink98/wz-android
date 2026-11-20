@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
-import { List } from 'react-native-paper';
+import { ActivityIndicator, List } from 'react-native-paper';
 import { ChevronDown, ChevronRight, type LucideIcon } from 'lucide-react-native';
 import Animated, {
   Easing,
@@ -144,33 +144,39 @@ export function DisclosureChevron({ expanded, color, size = 18 }: { expanded: bo
 
 export function MenuButton({
   accessibilityLabel,
+  busy = false,
   disabled = false,
   icon,
   label,
   nested = false,
-  value,
+  testID,
+  value = '',
   expanded,
   onPress
 }: {
   accessibilityLabel?: string;
+  busy?: boolean;
   disabled?: boolean;
   icon: LucideIcon;
   label: string;
   nested?: boolean;
-  value: string;
+  testID?: string;
+  value?: string;
   expanded?: boolean;
   onPress: () => void;
 }) {
   const { styles, theme } = useReaderThemeStyles(createExpandableStyles);
   const Icon = icon;
   const nestedActionColor = theme.primary;
+  const isDisabled = disabled || busy;
   return (
     <List.Item
+      testID={testID}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
-      accessibilityState={{ disabled, expanded }}
-      disabled={disabled}
-      style={[styles.menuButton, disabled && styles.disabled]}
+      accessibilityState={{ disabled: isDisabled, expanded, busy }}
+      disabled={isDisabled}
+      style={[styles.menuButton, isDisabled && styles.disabled]}
       containerStyle={styles.row}
       contentStyle={styles.content}
       title={label}
@@ -190,7 +196,9 @@ export function MenuButton({
       }
       right={() => (
         <View style={styles.menuChevron}>
-          {expanded === undefined ? (
+          {busy ? (
+            <ActivityIndicator size={16} color={theme.primary} accessible={false} />
+          ) : expanded === undefined ? (
             <ChevronRight
               size={18}
               color={nested ? nestedActionColor : theme.muted}
@@ -213,6 +221,7 @@ export function ExpandablePanel({
   icon,
   meta,
   quiet = false,
+  testID,
   title,
   onExpandedChange
 }: {
@@ -221,6 +230,7 @@ export function ExpandablePanel({
   icon?: LucideIcon;
   meta?: string;
   quiet?: boolean;
+  testID?: string;
   title: string;
   onExpandedChange: (expanded: boolean) => void;
 }) {
@@ -230,6 +240,7 @@ export function ExpandablePanel({
   return (
     <View style={quiet ? styles.groupList : styles.group}>
       <List.Item
+        testID={testID}
         accessibilityLabel={expanded ? `收起${title}` : `展开${title}`}
         accessibilityRole="button"
         accessibilityState={{ expanded }}
@@ -237,7 +248,7 @@ export function ExpandablePanel({
         containerStyle={styles.row}
         contentStyle={styles.content}
         title={title}
-        titleStyle={styles.panelTitle}
+        titleStyle={quiet ? styles.menuLabel : styles.panelTitle}
         titleNumberOfLines={0}
         description={meta || undefined}
         descriptionStyle={styles.meta}

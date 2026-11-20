@@ -47,7 +47,7 @@ type PlannedTopicContent = {
 
 const plannedReplyContentCache = new WeakMap<Reply, Map<string, PlannedTopicContent>>();
 
-function isAccessNotice(topic: TopicOpeningSeed) {
+export function isTopicAccessNotice(topic: TopicOpeningSeed) {
   if (!topic.accessRequirement) return false;
   const text = textContentFromHtml(topic.contentHtml || '');
   return !text || Boolean(accessRequirementFromNoticeText(text));
@@ -238,7 +238,7 @@ export function buildTopicOpeningContent(topic: TopicOpeningSeed | null) {
       showsAccessNotice: false
     };
   }
-  const showsAccessNotice = isAccessNotice(topic);
+  const showsAccessNotice = isTopicAccessNotice(topic);
   const polls = topic.polls || [];
   const content = topicContent(topic, showsAccessNotice);
   return {

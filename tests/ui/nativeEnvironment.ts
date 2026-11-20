@@ -1,5 +1,11 @@
-import { NativeModules } from 'react-native';
+import { NativeModules, View } from 'react-native';
 import type { NotificationChannelGroupManager, NotificationChannelManager } from 'expo-notifications';
+
+// The RN preset retains every clock read, measured view and animation callback in Jest call history.
+globalThis.performance.now = Date.now;
+View.prototype.measure = () => {};
+const animator = NativeModules.NativeAnimatedModule;
+animator.startAnimatingNode = animator.startAnimatingNode.getMockImplementation();
 
 // Match our own Android build. jest-expo also supplies Expo Go's native module by default.
 // Configure the native schema before public Expo imports so each owner can still mock its API.

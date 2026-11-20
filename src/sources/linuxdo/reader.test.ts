@@ -24,6 +24,15 @@ function topic(index: number) {
   };
 }
 
+it('keeps the publication time unknown for a restricted topic with no source timestamp', async () => {
+  const detail = await getLinuxDoTopic('123', {
+    fetcher: async () => new Response(JSON.stringify({ errors: ['当前用户组不可查看该主题'] }), { status: 403 })
+  });
+  expect(detail.accessRequirement?.type).toBe('permission');
+  expect(detail.createdAt).toBe('');
+  expect(detail.lastReplyAt).toBeUndefined();
+});
+
 const deletedReply = {
   id: 2,
   username: 'wmuj',

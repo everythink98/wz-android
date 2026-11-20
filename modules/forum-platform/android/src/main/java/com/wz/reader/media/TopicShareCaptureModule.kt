@@ -20,7 +20,6 @@ import java.io.IOException
 import java.io.OutputStream
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.zip.CRC32
 import java.util.zip.Deflater
 import kotlin.math.ceil
@@ -106,31 +105,15 @@ internal suspend fun writeTopicShareCapture(
   checkActive: () -> Unit,
   openOutput: (File) -> OutputStream = { it.outputStream().buffered() },
   render: suspend (TopicSharePngWriter) -> Unit
-): File {
-  checkActive()
-  check(directory.isDirectory || directory.mkdirs()) { "无法创建分享图片文件。" }
-  val partial = File.createTempFile("capture-", ".part", directory)
-  var completed: File? = null
-  try {
-    openOutput(partial).use { output ->
-      TopicSharePngWriter(output, width, height).use { writer ->
-        render(writer)
-        checkActive()
-        writer.finish()
-      }
+): File = writeTemporaryImage(directory, "capture-", checkActive) { partial ->
+  openOutput(partial).use { output ->
+    TopicSharePngWriter(output, width, height).use { writer ->
+      render(writer)
+      checkActive()
+      writer.finish()
     }
-    checkActive()
-    val target = File(directory, "${partial.nameWithoutExtension}.png")
-    if (!partial.renameTo(target)) throw IOException("无法完成分享图片文件。")
-    completed = target
-    checkActive()
-    return target
-  } catch (error: Throwable) {
-    completed?.delete()
-    throw error
-  } finally {
-    partial.delete()
   }
+  "png"
 }
 
 internal data class TopicShareCaptureResult(val file: File, val width: Int, val height: Int)
@@ -189,22 +172,15 @@ internal suspend fun captureTopicShareContent(
   }
 }
 
-private class TopicShareCapture {
-  val started = AtomicBoolean(false)
-  @Volatile var canceled = false
-  @Volatile var file: File? = null
-  fun release() { canceled = true; file?.delete() }
-}
-
 class TopicShareCaptureModule : Module() {
-  private val captures = ConcurrentHashMap<String, TopicShareCapture>()
+  private val captures = ConcurrentHashMap<String, TemporaryImageOperation>()
 
   override fun definition() = ModuleDefinition {
     Name("TopicShareCapture")
     Function("createCapture") {
-      UUID.randomUUID().toString().also { captures[it] = TopicShareCapture() }
+      UUID.randomUUID().toString().also { captures[it] = TemporaryImageOperation() }
     }
-    Function("cancelCapture") { id: String -> captures[id]?.let { it.canceled = true } }
+    Function("cancelCapture") { id: String -> captures[id]?.cancel() }
     Function("releaseCapture") { id: String -> captures.remove(id)?.release() }
     OnDestroy {
       captures.values.forEach { it.release() }
@@ -212,13 +188,13 @@ class TopicShareCaptureModule : Module() {
     }
     AsyncFunction("capture") Coroutine { id: String, tag: Int ->
       val state = requireNotNull(captures[id]) { "分享图片生成已结束。" }
-      check(state.started.compareAndSet(false, true)) { "分享图片已开始生成。" }
+      state.start()
       val directory = File(requireNotNull(appContext.reactContext).cacheDir, "topic-share-captures")
       withContext(Dispatchers.IO) {
         val context = currentCoroutineContext()
         val checkActive = {
           context.ensureActive()
-          if (state.canceled) throw IOException("分享图片生成已取消。")
+          state.checkActive()
         }
         try {
           val scrollView = withContext(Dispatchers.Main) {
@@ -226,11 +202,11 @@ class TopicShareCaptureModule : Module() {
             appContext.findView<View>(tag) as? ScrollView ?: throw IOException("分享图片预览不可用。")
           }
           val result = captureTopicShareContent(scrollView, directory, checkActive)
-          state.file = result.file
+          state.publish(result.file)
           checkActive()
           mapOf("uri" to Uri.fromFile(result.file).toString(), "width" to result.width, "height" to result.height)
         } catch (error: Throwable) {
-          state.file?.delete()
+          state.release()
           throw error
         }
       }

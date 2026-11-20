@@ -1277,7 +1277,7 @@ export const StructuredReplyComposer = forwardRef<
           ) : null
         ) : (
           <>
-            {status ? (
+            {status && (embedded || Boolean(expandedPanel) || Boolean(expressionPanel)) ? (
               <Text accessibilityLiveRegion="polite" style={styles.message}>
                 {status}
               </Text>
@@ -1296,16 +1296,22 @@ export const StructuredReplyComposer = forwardRef<
             ) : (
               <>
                 <View style={styles.footerBody}>
-                  <Text numberOfLines={1} style={styles.metaText}>
-                    {count}
+                  <Text
+                    accessibilityLiveRegion={status ? 'polite' : 'none'}
+                    numberOfLines={1}
+                    style={[styles.metaText, { fontVariant: ['tabular-nums'] }]}
+                  >
+                    {status || count}
                   </Text>
                 </View>
                 {historyActions}
                 <AppButton
                   compact
-                  variant="primary"
+                  minWidth={76}
+                  variant="solid"
                   accessibilityLabel={submitLabel}
-                  label={actionBusy || submitting ? '处理中…' : submitLabel}
+                  label={actionBusy || submitting ? '发送中' : submitLabel}
+                  loading={actionBusy || submitting}
                   disabled={
                     !ready ||
                     actionBusy ||

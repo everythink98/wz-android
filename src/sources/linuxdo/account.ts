@@ -2,6 +2,7 @@ import { normalizeTopicId } from '@/domain/forum/numericValues';
 import { withBrowserFetchIntent, withDefaultBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { fetchWithTimeout } from '@/platform/network/request';
 import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
+import { isCanceledRequest } from '@/platform/network/errors';
 import { isCloudflareChallengeResponse, LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
 import type {
   Topic,
@@ -15,6 +16,7 @@ import {
   decodeHtml,
   isRecord,
   parsePositiveInteger,
+  recordText,
   sortTopicsByCreatedAt,
   textExcerpt,
   toIsoString
@@ -24,6 +26,7 @@ import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnost
 import { proveForumReadResponse } from '@/sources/forumSourceReadAttempt';
 import { stripDiscourseCalloutMarkersFromExcerpt } from '@/sources/discourse/content';
 import { discourseAccountCount } from '@/sources/discourse/level';
+import { discourseDisplayName } from '@/sources/discourse/model';
 import { LINUXDO_BASE_URL as BASE_URL, linuxDoAvatarUrl as avatarUrl, linuxDoUserUrl as userUrl } from './protocol';
 import {
   LIST_PAGE_SIZE,
@@ -43,8 +46,7 @@ interface LinuxDoCurrentUserOptions extends LinuxDoOptions {
 function normalizeUserActionReply(
   raw: unknown,
   categoryMap: Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>,
-  author: string,
-  authorData?: UserDetails
+  profile: UserDetails
 ): UserReplyActivity | null {
   if (!isRecord(raw)) {
     return null;
@@ -66,10 +68,10 @@ function normalizeUserActionReply(
     topicTitle,
     topicUrl: `${BASE_URL}/t/${slug}/${topicId}`,
     url,
-    author,
-    authorId: author || undefined,
-    authorAvatar: authorData?.avatar,
-    authorUrl: author ? userUrl(author) : undefined,
+    author: profile.displayName?.trim() || profile.username,
+    authorId: profile.username,
+    authorAvatar: profile.avatar,
+    authorUrl: userUrl(profile.username),
     categoryId: raw.category_id ? String(raw.category_id) : undefined,
     category: category?.name,
     createdAt: toIsoString(raw.created_at || raw.createdAt) || undefined,
@@ -95,20 +97,31 @@ export async function getLinuxDoUserDetails(
   const summaryUser = isRecord(summary.user) ? summary.user : {};
   const dataUser = isRecord(data.user) ? data.user : {};
   const listedUsers = Array.isArray(data.users) ? data.users.filter(isRecord) : [];
+  const userId = summaryUser.id ?? dataUser.id;
+  const matchesAccount = (row: Record<string, unknown>) =>
+    recordText(row, 'username').toLowerCase() === name.toLowerCase();
   const listedUser =
-    listedUsers.find((item) => String(item.username || item.name || '').toLowerCase() === name.toLowerCase()) ||
-    listedUsers.find((item) => String(item.id || '') === String(summaryUser.id || dataUser.id || id)) ||
-    {};
-  const user = { ...listedUser, ...dataUser, ...summaryUser };
-  const resolvedUsername = String(user.username || name);
-  const displayName = typeof user.name === 'string' ? user.name : resolvedUsername;
-  const avatar = avatarUrl(user.avatar_template);
-  const levelLabel = linuxDoLevelLabel(user);
-
-  // A standard Discourse summary has no target user relation; root users may instead be badge grantors.
+    listedUsers.find(matchesAccount) ?? listedUsers.find((row) => userId != null && String(row.id) === String(userId));
+  let user = { ...listedUser, ...dataUser, ...summaryUser };
   const hasProfile =
     Boolean(user.username || user.name || user.id) ||
     (typeof summary.can_see_summary_stats === 'boolean' && typeof summary.can_see_user_actions === 'boolean');
+  // Standard Discourse summaries can contain only stats and unrelated badge grantors.
+  if (hasProfile && !('name' in user) && !discourseDisplayName(user)) {
+    const profile = await fetchLinuxDoJson<Record<string, unknown>>(
+      `/u/${encodeURIComponent(name)}.json`,
+      undefined,
+      options
+    ).catch((error: unknown) => {
+      if (options.signal?.aborted || isCanceledRequest(error)) throw error;
+      return null;
+    });
+    if (isRecord(profile?.user) && matchesAccount(profile.user)) user = { ...user, ...profile.user };
+  }
+  const resolvedUsername = recordText(user, 'username') || name;
+  const displayName = discourseDisplayName(user) || resolvedUsername;
+  const avatar = avatarUrl(user.avatar_template);
+  const levelLabel = linuxDoLevelLabel(user);
   return annotateSourceDiagnosticSummary(
     {
       source: 'linuxdo',
@@ -138,24 +151,33 @@ export async function getLinuxDoUserDetails(
   );
 }
 
+function userTopicContinuation(link: unknown, path: string, currentPage: number) {
+  if (typeof link !== 'string' || !link.trim()) return null;
+  try {
+    const target = new URL(link, BASE_URL + path);
+    const pages = target.searchParams.getAll('page');
+    const page = pages.length === 1 && /^\d+$/.test(pages[0]) ? Number(pages[0]) : NaN;
+    return target.origin === BASE_URL && Number.isSafeInteger(page) && page > currentPage ? page : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function getLinuxDoUserTopics(
   profile: UserDetails,
   options: LinuxDoOptions = {}
 ): Promise<UserTopicsPage> {
   options = withDefaultBrowserFetchIntent(options, 'user', 'foreground');
   const page = parsePositiveInteger(options.cursor);
-  const data = await fetchLinuxDoJson<Record<string, unknown>>(
-    `/topics/created-by/${encodeURIComponent(profile.username)}.json`,
-    { page, per_page: LIST_PAGE_SIZE },
-    options
-  );
+  const path = `/topics/created-by/${encodeURIComponent(profile.username)}.json`;
+  const data = await fetchLinuxDoJson<Record<string, unknown>>(path, { page, per_page: LIST_PAGE_SIZE }, options);
   if (!isRecord(data.topic_list) || !Array.isArray(data.topic_list.topics))
     throw new Error('linux.do 主题列表响应不完整');
   const rawTopics = data.topic_list.topics;
   const categories = await categoryMapForTopics(data, rawTopics, categoryMapFromData(data), options);
   const topics = sortTopicsByCreatedAt(
     rawTopics
-      .map((raw) => normalizeTopic(raw, categories, profile.username))
+      .map((raw) => normalizeTopic(raw, categories, { username: profile.username, name: profile.displayName }))
       .filter((topic): topic is Topic => topic !== null)
       .map((topic) => ({
         ...topic,
@@ -163,14 +185,17 @@ export async function getLinuxDoUserTopics(
         authorLevelLabel: profile.levelLabel || topic.authorLevelLabel
       }))
   );
-  const hasMoreTopics =
-    rawTopics.length > 0 &&
-    topics.length > 0 &&
-    (profile.topicCount === undefined
+  const nextLink = data.topic_list.more_topics_url;
+  // Discourse supplies the continuation on the current list; older responses omit the field.
+  const hasMoreByCount =
+    profile.topicCount === undefined
       ? rawTopics.length >= LIST_PAGE_SIZE
-      : page * LIST_PAGE_SIZE + rawTopics.length < profile.topicCount);
+      : page * LIST_PAGE_SIZE + rawTopics.length < profile.topicCount;
+  const next =
+    nextLink === undefined ? (hasMoreByCount ? page + 1 : null) : userTopicContinuation(nextLink, path, page);
+  const hasMoreTopics = topics.length > 0 && next !== null;
   return annotateSourceDiagnosticSummary(
-    { topics, hasMoreTopics, nextTopicsCursor: hasMoreTopics ? String(page + 1) : null },
+    { topics, hasMoreTopics, nextTopicsCursor: hasMoreTopics ? String(next) : null },
     {
       parserVariant: 'discourse-user',
       candidateCount: rawTopics.length,
@@ -201,11 +226,11 @@ export async function getLinuxDoUserReplies(
   const raw = data.user_actions.slice(0, LIST_PAGE_SIZE);
   const categories = await categoryMapForTopics(data, raw, categoryMapFromData(data), options);
   const replies = raw
-    .map((action) => normalizeUserActionReply(action, categories, profile.username, profile))
+    .map((action) => normalizeUserActionReply(action, categories, profile))
     .filter((reply): reply is UserReplyActivity => reply !== null);
   const hasMoreReplies = Boolean(
     data.user_actions[LIST_PAGE_SIZE] &&
-    normalizeUserActionReply(data.user_actions[LIST_PAGE_SIZE], categories, profile.username, profile)
+    normalizeUserActionReply(data.user_actions[LIST_PAGE_SIZE], categories, profile)
   );
   return annotateSourceDiagnosticSummary(
     { replies, hasMoreReplies, nextRepliesCursor: hasMoreReplies ? String(offset + LIST_PAGE_SIZE) : null },
@@ -296,7 +321,7 @@ export async function getLinuxDoCurrentUserIdentity(options: LinuxDoCurrentUserO
     throw new Error('无法读取当前 linux.do 用户名，请重新检测 linux.do 登录状态。');
   }
   accountEvidence('current-user');
-  const displayName = typeof merged.name === 'string' ? merged.name : username;
+  const displayName = discourseDisplayName(merged) || username;
   const levelLabel = linuxDoLevelLabel(merged);
   return {
     source: 'linuxdo',

@@ -37,7 +37,9 @@ async function setup(transactions = true, active = true) {
     nextPage: page === 1 ? 2 : null
   }));
   const gateway: LinuxDoCreditGateway = {
-    getReadPlan: () => ({
+    getReadPlan: (source, operation) => ({
+      source,
+      operation,
       state: 'ready',
       lane: 'authenticated',
       transport: 'managed-session',
@@ -51,12 +53,14 @@ async function setup(transactions = true, active = true) {
       active,
       userId,
       sessionEpoch,
-      connecting = false
+      connecting = false,
+      details = transactions
     }: {
       active: boolean;
       userId: string;
       sessionEpoch: number;
       connecting?: boolean;
+      details?: boolean;
     }) =>
       useLinuxDoCredit({
         active,
@@ -64,7 +68,7 @@ async function setup(transactions = true, active = true) {
         userId,
         username: userId,
         sessionEpoch,
-        transactions,
+        transactions: details,
         connectSilently,
         connecting
       }),
@@ -95,6 +99,19 @@ describe('LDC account and transaction ownership', () => {
     await act(async () => hook.result.current.refresh());
     await waitFor(() => expect(hook.result.current.entries).toHaveLength(1));
     expect(hook.getTransactions.mock.calls.map(([request]) => request.page)).toEqual([1, 2, 1]);
+  });
+
+  it('keeps all loaded ledger pages when refreshing the balance from the account overview', async () => {
+    const hook = await setup();
+    await waitFor(() => expect(hook.result.current.entries).toHaveLength(1));
+    await act(async () => hook.result.current.loadMore());
+    await waitFor(() => expect(hook.result.current.entries).toHaveLength(2));
+    const owner = { active: true, userId: 'alice', sessionEpoch: 0 };
+    await hook.rerender({ ...owner, details: false });
+    await act(async () => hook.result.current.refresh());
+    await hook.rerender({ ...owner, details: true });
+    await waitFor(() => expect(hook.result.current.entries.map((item) => item.id)).toEqual(['1', '2']));
+    expect(hook.getTransactions.mock.calls.map(([request]) => request.page)).toEqual([1, 2]);
   });
 
   it('hides cached balance and records when a refresh discovers another Credit owner', async () => {

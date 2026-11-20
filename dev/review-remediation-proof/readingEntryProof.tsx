@@ -229,14 +229,13 @@ export function ReadingProbe({
         commentSearchFocused={false}
         currentNodeSeekUser={undefined}
         discourseEmojiUrls={{}}
-        headerState={null}
+        headerError={null}
         html={{ ...html, contentWidth: 340, mediaSessionIdentity: `reading-proof:${detail.id}` }}
         nodeSeekUserId={null}
         onImagePreviewDescriptors={noop}
         onCommentSearchFocusChange={noop}
         onOpenTopic={noop}
         onOpenUser={noop}
-        onScroll={noop}
         onScrollProgress={onNativeScroll}
         read={observed}
         session={session}
@@ -295,7 +294,7 @@ export async function verifyReadingEntryProof(
     }
   });
   const snapshot = { topicId: detail.id, lastReadPostNumber: 15, highestPostNumber: 40 };
-  const observe = () => reading.observe(snapshot, reading.startRequest());
+  const observe = () => reading.observe([snapshot], reading.startRequest());
   const replies = Array.from({ length: 39 }, (_, i) => ({
     author: `proof${i}`,
     commentId: 97006000 + i,

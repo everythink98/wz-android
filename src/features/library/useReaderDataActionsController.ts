@@ -10,28 +10,6 @@ export function useReaderDataActionsController({
   commitReaderData: (command: ReaderCommand) => void;
   readerDataRef: RefObject<ReaderState>;
 }) {
-  const toggleTopicFavorite = useCallback(
-    (topic: Topic) => {
-      commitReaderData({
-        type: 'favorite',
-        topic,
-        enabled: !readerDataRef.current.favorites[topicKey(topic)],
-        at: new Date().toISOString()
-      });
-    },
-    [commitReaderData, readerDataRef]
-  );
-  const toggleUserFollow = useCallback(
-    (user: UserProfile) => {
-      commitReaderData({
-        type: 'follow',
-        user,
-        enabled: !readerDataRef.current.followedUsers[userKey(user)],
-        at: new Date().toISOString()
-      });
-    },
-    [commitReaderData, readerDataRef]
-  );
   const removeFollowedUser = useCallback(
     (user: UserProfile) => {
       commitReaderData({
@@ -52,5 +30,5 @@ export function useReaderDataActionsController({
   const clearHistory = useCallback(() => {
     if (readerDataRef.current.counts.history) commitReaderData({ type: 'clear-history', at: new Date().toISOString() });
   }, [commitReaderData, readerDataRef]);
-  return { clearHistory, removeFollowedUser, removeLibraryTopic, toggleTopicFavorite, toggleUserFollow };
+  return { clearHistory, removeFollowedUser, removeLibraryTopic };
 }

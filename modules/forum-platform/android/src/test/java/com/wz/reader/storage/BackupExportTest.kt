@@ -1,5 +1,6 @@
 package com.wz.reader
 
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import kotlinx.coroutines.runBlocking
@@ -7,6 +8,32 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class BackupExportTest {
+  @Test fun readsAnExactLimitUtf8DocumentAndStopsAnOversizedProviderAfterOneExtraByte() {
+    val text = "汉字🙂\uFFFD".repeat(1500)
+    val bytes = text.toByteArray()
+    assertEquals(text, readBackupDocument(ByteArrayInputStream(bytes), bytes.size))
+    val oversized = object : ByteArrayInputStream(ByteArray(bytes.size * 2)) {
+      var closed = false
+      override fun close() { closed = true }
+    }
+    val error = assertThrows(IllegalArgumentException::class.java) { readBackupDocument(oversized, bytes.size) }
+    assertTrue(error.message.orEmpty().contains("备份文件过大"))
+    assertEquals(bytes.size - 1, oversized.available())
+    assertTrue(oversized.closed)
+  }
+
+  @Test fun rejectsMalformedUtf8InsideAnOtherwiseValidJsonString() {
+    val bytes = "{\"title\":\"prefix".toByteArray() + byteArrayOf(0xc3.toByte()) + " suffix\"}".toByteArray()
+    var closed = false
+    val input = object : ByteArrayInputStream(bytes) {
+      override fun close() { closed = true }
+    }
+
+    val error = assertThrows(IllegalArgumentException::class.java) { readBackupDocument(input, bytes.size) }
+    assertTrue(error.message.orEmpty().contains("UTF-8"))
+    assertTrue(closed)
+  }
+
   @Test fun destroyedOwnerRejectsItsPendingResultAndReplacementIgnoresLateResults() {
     val original = BackupExportOwner()
     val abandoned = original.begin()

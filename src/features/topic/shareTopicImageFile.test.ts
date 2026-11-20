@@ -200,6 +200,38 @@ describe('topic image sharing', () => {
     expect(readFileSync(fileURLToPath(original))).toEqual(imageBytes);
   });
 
+  it('removes a share copy rejected before opening the chooser and allows retry', async () => {
+    const failure = Object.assign(new Error('another share is already open'), { code: 'ERR_SHARING_NOT_STARTED' });
+    boundary.share.mockRejectedValueOnce(failure);
+    const original = image();
+    const folder = join(boundary.directory, 'topic-share');
+
+    await expect(shareTopicImageFile(original, '正文图片')).rejects.toBe(failure);
+
+    expect(readdirSync(folder)).toEqual([]);
+    expect(readFileSync(fileURLToPath(original))).toEqual(imageBytes);
+    await shareTopicImageFile(original, '正文图片');
+    const [shared] = boundary.share.mock.calls[1]!;
+    expect(readFileSync(fileURLToPath(shared))).toEqual(imageBytes);
+  });
+
+  it.each(['rejection', 'throw'] as const)('keeps an attempted share copy after an unknown %s', async (kind) => {
+    const failure = new Error('unknown chooser failure');
+    if (kind === 'rejection') boundary.share.mockRejectedValueOnce(failure);
+    else {
+      boundary.share.mockImplementationOnce(() => {
+        throw failure;
+      });
+    }
+    const original = image();
+
+    await expect(shareTopicImageFile(original, '正文图片')).rejects.toBe(failure);
+
+    const [shared] = boundary.share.mock.calls[0]!;
+    expect(readFileSync(fileURLToPath(shared))).toEqual(imageBytes);
+    expect(readFileSync(fileURLToPath(original))).toEqual(imageBytes);
+  });
+
   it('does not copy or open sharing when its preview has already closed', async () => {
     await shareTopicImageFile(image(), '正文图片', () => false);
 
@@ -220,14 +252,17 @@ describe('topic image sharing', () => {
     expect(readdirSync(boundary.directory)).toEqual(['view-shot.png']);
   });
 
-  it('does not open sharing when its preview closes during the file copy', async () => {
+  it('discards the unshared copy when its preview closes during the file copy', async () => {
     let current = true;
     boundary.onCopied = () => {
       current = false;
     };
 
-    await shareTopicImageFile(image(), '正文图片', () => current);
+    const original = image();
+    await shareTopicImageFile(original, '正文图片', () => current);
 
     expect(boundary.share).not.toHaveBeenCalled();
+    expect(readdirSync(join(boundary.directory, 'topic-share'))).toEqual([]);
+    expect(readFileSync(fileURLToPath(original))).toEqual(imageBytes);
   });
 });

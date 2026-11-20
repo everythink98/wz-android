@@ -24,7 +24,11 @@ import {
 import { isNodeSeekHost } from './sourceCatalog';
 import { bilibiliEmbedUrlFromUrl, nsEmbedFromUrl } from './videoEmbeds';
 import { normalizeMediaReferrerPolicy } from './mediaReferrer';
-import { FORUM_BOUNDED_INLINE_IMAGE_ATTRIBUTE, FORUM_FLOW_IMAGE_CONTEXT_ATTRIBUTE } from './forumContentMedia';
+import {
+  FORUM_BOUNDED_INLINE_IMAGE_ATTRIBUTE,
+  FORUM_FLOW_IMAGE_CONTEXT_ATTRIBUTE,
+  parseSrcsetCandidates
+} from './forumContentMedia';
 
 function parsedAbsoluteUrl(value: unknown, baseUrl?: string) {
   const text = String(value || '').trim();
@@ -53,6 +57,42 @@ function sanitizedHttpMediaUrl(value: unknown, baseUrl?: string) {
   if (!url) return '';
   const protocol = url.protocol.toLowerCase();
   return protocol === 'http:' || protocol === 'https:' ? url.toString() : '';
+}
+
+type PictureCandidate = { url: string; descriptor: string };
+
+function resolvePictureSources(root: HTMLElement, baseUrl: string) {
+  const svgCandidates = new WeakMap<HTMLElement, PictureCandidate[]>();
+  for (const picture of root.querySelectorAll('picture')) {
+    let candidates: PictureCandidate[] = [];
+    let type: string | undefined;
+    for (const child of picture.childNodes) {
+      if (!(child instanceof HTMLElement)) continue;
+      const tag = nodeTagName(child);
+      if (tag === 'img') {
+        if (candidates.length) {
+          child.setAttribute('srcset', candidates.map(({ url, descriptor }) => `${url} ${descriptor}`).join(', '));
+          if (type === 'image/svg+xml') svgCandidates.set(child, candidates);
+          if (!sanitizedUrlAttribute('src', child.getAttribute('src') || '', baseUrl)) {
+            child.setAttribute('src', candidates[0].url);
+          }
+        }
+        break;
+      }
+      if (tag !== 'source' || candidates.length) continue;
+      const media = child.getAttribute('media')?.trim().toLowerCase();
+      if (media && media !== 'all') continue;
+      type = child.getAttribute('type')?.trim().toLowerCase();
+      if (type && !/^image\/(?:avif|bmp|gif|jpeg|png|svg\+xml|webp)$/.test(type)) continue;
+      candidates = parseSrcsetCandidates(child.getAttribute('srcset') || '').flatMap((candidate) => {
+        const [rawUrl, descriptor = '1x', extra] = candidate.trim().split(/\s+/);
+        if (extra || !/^(?:[1-9]\d*w|(?:\d*\.)?\d+x)$/.test(descriptor) || parseFloat(descriptor) <= 0) return [];
+        const url = sanitizedUrlAttribute('src', rawUrl, baseUrl);
+        return url ? [{ url, descriptor: descriptor.startsWith('.') ? `0${descriptor}` : descriptor }] : [];
+      });
+    }
+  }
+  return svgCandidates;
 }
 
 function decodedCloudflareEmail(value: string) {
@@ -1018,6 +1058,7 @@ export function sanitizeContentHtmlWithRoot(
     sanitizePlayableVideos(root, baseUrl);
   }
   if (markup.includes('<audio')) sanitizePlayableAudio(root, baseUrl);
+  const svgCandidates = markup.includes('<picture') ? resolvePictureSources(root, baseUrl) : undefined;
   if (markup.includes('<iframe')) sanitizeIframes(root, baseUrl);
   if (markup.includes('bilibili.com')) sanitizeNsVideoImages(root, baseUrl);
   if (markup.includes('<aside')) sanitizeDiscourseOneboxes(root, baseUrl);
@@ -1090,7 +1131,7 @@ export function sanitizeContentHtmlWithRoot(
     }
   });
   const contentHtml = root.toString();
-  return { contentHtml, root };
+  return { contentHtml, root, svgCandidates };
 }
 
 export function sanitizeContentHtml(html: unknown, baseUrl: string, transformRoot?: (root: HTMLElement) => void) {

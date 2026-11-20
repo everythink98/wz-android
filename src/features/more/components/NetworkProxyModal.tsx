@@ -1,7 +1,8 @@
 import { AppSwitch as Switch, AppTextInput as TextInput } from '@/ui/controls/InputControls';
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import type { MoreStyles } from '../styles';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { NavigationContext } from '@react-navigation/native';
 import {
   Alert,
   Keyboard,
@@ -13,13 +14,13 @@ import {
   useWindowDimensions,
   View
 } from 'react-native';
-import { ArrowLeft, Check, Info, Trash2, X } from 'lucide-react-native';
+import { Activity, ArrowLeft, Check, Pencil, Plus, Trash2, X } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { AppButton } from '@/ui/controls/ButtonControls';
+import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { EmptyText } from '@/ui/controls/FeedbackStates';
 import { SettingRail } from '@/ui/controls/SelectionControls';
 import { ModalSheetFrame, ModalSheetHeader } from '@/ui/controls/ModalSheetFrame';
-import { readerRadii, type ReaderTheme } from '@/ui/theme/tokens';
+import { alphaColor, readerRadii, type ReaderTheme } from '@/ui/theme/tokens';
 import {
   createNetworkProxyProfile,
   validateNetworkProxyProfile,
@@ -113,6 +114,7 @@ export function NetworkProxyModal({
   onTestProfile: (profile: NetworkProxyProfile) => Promise<NetworkProxyStatus>;
   onUpsertProfile: (profile: NetworkProxyProfile) => Promise<void>;
 }) {
+  const navigation = useContext(NavigationContext);
   const { height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const [draftState, setDraftState] = useState<ProxyDraftState>({ mode: 'closed' });
@@ -133,10 +135,9 @@ export function NetworkProxyModal({
   const selecting = selectedIds.length > 0;
   const displayedEnabled = pendingEnabled ?? proxyState.enabled;
   const switchDisabled = busy || applyStatus === 'applying';
-  const accentBaseColor = '#1677FF';
   const accentColor = theme.primary;
-  const accentSoftColor = theme.primarySoft;
-  const accentBorderColor = theme.line;
+  const accentSoftColor = alphaColor(theme.primary, theme.dark ? 0.14 : 0.06);
+  const accentBorderColor = alphaColor(theme.primary, theme.dark ? 0.28 : 0.16);
   const cardColor = theme.surface;
   const pageColor = theme.background;
   const updateDraft = (patch: Partial<Omit<Draft, 'id'>>) => {
@@ -197,7 +198,12 @@ export function NetworkProxyModal({
   }, [proxyState.profiles]);
 
   const executeProxyTask = async <T,>(task: () => Promise<T>) => {
-    if (!opening || activeOpening.current.phase !== 'ready' || activeOpening.current.opening !== opening) {
+    if (
+      navigation?.isFocused() === false ||
+      !opening ||
+      activeOpening.current.phase !== 'ready' ||
+      activeOpening.current.opening !== opening
+    ) {
       return null;
     }
     const request = { phase: 'running' as const, opening };
@@ -302,6 +308,14 @@ export function NetworkProxyModal({
     setTestingId(null);
   };
 
+  const deleteProfiles = (ids: readonly string[]) => {
+    return executeProxyTask(async () => {
+      for (const id of ids) {
+        await onDeleteProfile(id);
+      }
+    });
+  };
+
   const deleteSelectedProfiles = () => {
     Alert.alert('删除代理', `确定删除选中的 ${selectedIds.length} 个代理？`, [
       { text: '取消', style: 'cancel' },
@@ -309,13 +323,30 @@ export function NetworkProxyModal({
         text: '删除',
         style: 'destructive',
         onPress: async () => {
-          const result = await executeProxyTask(async () => {
-            for (const id of selectedIds) {
-              await onDeleteProfile(id);
-            }
-          });
+          const result = await deleteProfiles(selectedIds);
           if (result?.ok) {
             setSelectedIds([]);
+          }
+        }
+      }
+    ]);
+  };
+
+  const deleteDraftProfile = () => {
+    if (draftState.mode !== 'edit' || !draftState.draft.id) return;
+    const targetId = draftState.draft.id;
+    const targetName = draftState.draft.name;
+    Alert.alert('删除代理', `确定删除代理「${targetName}」？`, [
+      { text: '取消', style: 'cancel' },
+      {
+        text: '删除',
+        style: 'destructive',
+        onPress: async () => {
+          const result = await deleteProfiles([targetId]);
+          if (result?.ok) {
+            Keyboard.dismiss();
+            setDraftState({ mode: 'closed' });
+            setDraftKeyboardInset(0);
           }
         }
       }
@@ -338,44 +369,38 @@ export function NetworkProxyModal({
         ]}
       >
         <View style={[styles.loginWebViewHeader, proxyStyles.header, { backgroundColor: theme.background }]}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={selecting ? '取消选择' : '返回'}
-            style={proxyStyles.headerIcon}
+          <IconButton
+            ghost
+            iconOnly
+            icon={selecting ? X : ArrowLeft}
+            label={selecting ? '取消选择' : '返回'}
             onPress={selecting ? () => setSelectedIds([]) : onClose}
-          >
-            {selecting ? (
-              <X size={24} color={theme.ink} strokeWidth={2.2} />
-            ) : (
-              <ArrowLeft size={24} color={theme.ink} strokeWidth={2.2} />
-            )}
-          </Pressable>
+          />
           <Text style={[styles.loginWebViewTitle, proxyStyles.headerTitle]} numberOfLines={1}>
             {selecting ? selectedIds.length : '服务器代理'}
           </Text>
           {selecting ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="删除选中的代理"
+            <IconButton
+              ghost
+              iconOnly
+              icon={Trash2}
+              label="删除选中的代理"
               disabled={busy}
-              style={proxyStyles.headerIcon}
               onPress={deleteSelectedProfiles}
-            >
-              <Trash2 size={23} color={theme.ink} strokeWidth={2} />
-            </Pressable>
+            />
           ) : (
             <View style={proxyStyles.headerIcon} />
           )}
         </View>
         {applyError ? (
-          <View style={styles.errorBox}>
-            <Text style={styles.errorText}>{applyError}</Text>
+          <View style={[styles.errorBox, proxyStyles.errorBanner]}>
+            <Text style={[styles.errorText, styles.flex]}>{applyError}</Text>
             {applyStatus === 'failed' ? (
               <AppButton
                 compact
+                variant="danger"
                 disabled={busy}
                 label="重置为直连"
-                variant="ghost"
                 onPress={() => {
                   void executeProxyTask(() => onSetEnabled(false));
                 }}
@@ -402,7 +427,6 @@ export function NetworkProxyModal({
           </View>
 
           <View style={[proxyStyles.card, { backgroundColor: cardColor }]}>
-            <Text style={[proxyStyles.cardTitle, { color: accentColor }]}>代理连接</Text>
             {!proxyState.profiles.length ? <EmptyText text="还没有代理配置" /> : null}
             {proxyState.profiles.map((profile) => {
               const active = profile.id === proxyState.activeId;
@@ -411,25 +435,23 @@ export function NetworkProxyModal({
               const activeApplying = active && (applyStatus === 'applying' || pendingEnabled !== null);
               const activeDisplayedEnabled = active && displayedEnabled;
               let status = `${protocolLabel(profile.protocol)}${profile.username ? ' · 已填写账号' : ''}`;
-              if (active) {
-                status = '已选择，未开启';
-              }
               if (activeDisplayedEnabled) {
                 status = applyStatus === 'failed' ? '代理异常' : `已连接${latency ? `, 连通性: ${latency}` : ''}`;
+              } else if (latency) {
+                status = `${status} · 连通性: ${latency}`;
               }
               if (activeApplying) {
-                status = displayedEnabled ? '正在开启代理...' : '正在关闭代理...';
+                status = displayedEnabled ? '正在开启代理' : '正在关闭代理';
               }
               if (testingId === profile.id) {
-                status = '正在测试连通性...';
+                status = '正在测试连通性';
               }
-              const canTestLatency =
-                !selecting && testingId !== profile.id && applyStatus !== 'applying' && pendingEnabled === null;
-              const statusText = canTestLatency
-                ? activeDisplayedEnabled
-                  ? `✓ ${status}`
-                  : `${status}${latency ? ` · 连通性: ${latency}` : ' · 连通性测试'}`
-                : status;
+              const isTestingThis = testingId === profile.id;
+              const showLatencyAction = !selecting && applyStatus !== 'applying' && pendingEnabled === null;
+              const activeFailed =
+                activeDisplayedEnabled && applyStatus === 'failed' && !activeApplying && !isTestingThis;
+              const statusText =
+                activeDisplayedEnabled && showLatencyAction && !isTestingThis && !activeFailed ? `✓ ${status}` : status;
               return (
                 <Pressable
                   key={profile.id}
@@ -444,7 +466,7 @@ export function NetworkProxyModal({
                       style={[
                         proxyStyles.checkCircle,
                         { borderColor: theme.lineStrong },
-                        selected && { backgroundColor: accentBaseColor, borderColor: accentBaseColor }
+                        selected && { backgroundColor: accentColor, borderColor: accentColor }
                       ]}
                     >
                       {selected ? <Check size={13} color={theme.onPrimary} strokeWidth={2.4} /> : null}
@@ -452,53 +474,64 @@ export function NetworkProxyModal({
                   ) : null}
                   <View style={styles.flex}>
                     <View style={proxyStyles.addressLine}>
-                      <Text style={[proxyStyles.proxyAddress, { color: theme.ink }]} numberOfLines={1}>
+                      <Text
+                        style={[styles.menuLabel, proxyStyles.proxyAddress, { color: theme.ink }]}
+                        numberOfLines={1}
+                      >
                         {profile.name}
                       </Text>
                       {active ? (
                         <View
                           style={[
                             proxyStyles.currentBadge,
-                            { backgroundColor: accentSoftColor, borderColor: accentBorderColor }
+                            {
+                              backgroundColor: active && !selecting ? cardColor : accentSoftColor,
+                              borderColor: accentBorderColor
+                            }
                           ]}
                         >
                           <Text style={[proxyStyles.currentBadgeText, { color: accentColor }]}>当前</Text>
                         </View>
                       ) : null}
                     </View>
-                    {canTestLatency ? (
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel="测试代理连通性"
-                        disabled={busy}
-                        style={proxyStyles.statusHit}
-                        onPress={(event) => {
-                          event.stopPropagation();
-                          testProfile(profile);
-                        }}
-                      >
-                        <Text style={[styles.meta, { color: accentColor }]} numberOfLines={1}>
-                          {profile.host}:{profile.port} · {statusText}
-                        </Text>
-                      </Pressable>
-                    ) : (
-                      <Text
-                        style={[styles.meta, activeApplying || activeDisplayedEnabled ? { color: accentColor } : null]}
-                        numberOfLines={1}
-                      >
-                        {profile.host}:{profile.port} · {statusText}
-                      </Text>
-                    )}
+                    <Text
+                      style={[
+                        styles.meta,
+                        activeFailed
+                          ? { color: theme.danger }
+                          : activeApplying || activeDisplayedEnabled || testingId === profile.id
+                            ? { color: accentColor }
+                            : null
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {profile.host}:{profile.port} · {statusText}
+                    </Text>
                   </View>
                   {!selecting ? (
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel="编辑代理"
-                      style={proxyStyles.infoButton}
-                      onPress={() => openEdit(profile)}
-                    >
-                      <Info size={21} color={theme.muted} strokeWidth={1.8} />
-                    </Pressable>
+                    <View style={proxyStyles.rowActions}>
+                      {showLatencyAction ? (
+                        <IconButton
+                          ghost
+                          iconOnly
+                          iconSize={18}
+                          icon={Activity}
+                          label="测试代理连通性"
+                          loading={isTestingThis}
+                          disabled={busy}
+                          onPress={() => void testProfile(profile)}
+                        />
+                      ) : null}
+                      <IconButton
+                        ghost
+                        iconOnly
+                        iconSize={18}
+                        icon={Pencil}
+                        label="编辑代理"
+                        disabled={busy}
+                        onPress={() => openEdit(profile)}
+                      />
+                    </View>
                   ) : null}
                 </Pressable>
               );
@@ -506,10 +539,14 @@ export function NetworkProxyModal({
             <Pressable
               accessibilityRole="button"
               disabled={busy}
-              style={[proxyStyles.addRow, { borderTopColor: theme.line }]}
+              style={[
+                proxyStyles.addRow,
+                proxyState.profiles.length ? { borderTopColor: theme.line, marginTop: 6 } : { borderTopWidth: 0 }
+              ]}
               onPress={openCreate}
             >
-              <Text style={[proxyStyles.addRowText, { color: theme.ink }]}>添加代理</Text>
+              <Plus size={18} color={accentColor} strokeWidth={2} />
+              <Text style={[proxyStyles.addRowText, { color: accentColor }]}>添加代理</Text>
             </Pressable>
           </View>
         </ScrollView>
@@ -598,8 +635,20 @@ export function NetworkProxyModal({
             </View>
           </ScrollView>
           <View style={styles.searchFilterActions}>
+            {draftMode === 'edit' ? (
+              <AppButton compact label="删除" variant="danger" disabled={busy} onPress={deleteDraftProfile} />
+            ) : null}
+            <View style={styles.flex} />
             <AppButton compact label="取消" variant="ghost" disabled={busy} onPress={closeDraft} />
-            <AppButton compact label={busy ? '保存中' : '确定'} variant="primary" disabled={busy} onPress={saveDraft} />
+            <AppButton
+              compact
+              minWidth={72}
+              label={busy ? '保存中' : '确定'}
+              loading={busy}
+              variant="solid"
+              disabled={busy}
+              onPress={saveDraft}
+            />
           </View>
         </ModalSheetFrame>
       </View>
@@ -659,16 +708,22 @@ const proxyStyles = StyleSheet.create({
     gap: 8,
     padding: 16
   },
+  errorBanner: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 12,
+    marginHorizontal: 16,
+    marginTop: 4
+  },
   header: {
     borderBottomWidth: 0,
     minHeight: 62
   },
   headerIcon: {
     alignItems: 'center',
-    borderRadius: readerRadii.pill,
-    height: 40,
+    height: 48,
     justifyContent: 'center',
-    width: 40
+    width: 48
   },
   headerTitle: {
     flex: 1,
@@ -684,26 +739,22 @@ const proxyStyles = StyleSheet.create({
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'space-between',
-    minHeight: 62
+    minHeight: 58
   },
   switchLabel: {
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: '600'
-  },
-  cardTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    marginBottom: 12
   },
   proxyRow: {
     alignItems: 'center',
     borderRadius: readerRadii.control,
     flexDirection: 'row',
-    gap: 12,
+    gap: 8,
     marginHorizontal: -10,
-    minHeight: 60,
-    paddingHorizontal: 10,
-    paddingVertical: 8
+    minHeight: 58,
+    paddingLeft: 10,
+    paddingRight: 2,
+    paddingVertical: 6
   },
   checkCircle: {
     alignItems: 'center',
@@ -715,9 +766,7 @@ const proxyStyles = StyleSheet.create({
   },
   proxyAddress: {
     flexShrink: 1,
-    fontSize: 17,
-    fontWeight: '600',
-    lineHeight: 23
+    fontWeight: '600'
   },
   addressLine: {
     alignItems: 'center',
@@ -726,39 +775,31 @@ const proxyStyles = StyleSheet.create({
     minWidth: 0
   },
   currentBadge: {
-    borderRadius: readerRadii.pill,
+    borderRadius: readerRadii.badge,
     borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 7,
+    paddingHorizontal: 6,
     paddingVertical: 2
   },
   currentBadgeText: {
     fontSize: 11,
-    fontWeight: '700',
+    fontWeight: '600',
     lineHeight: 14
   },
-  statusHit: {
-    alignSelf: 'flex-start',
-    minHeight: 28,
-    justifyContent: 'center',
-    paddingRight: 10
-  },
-  infoButton: {
+  rowActions: {
     alignItems: 'center',
-    borderRadius: readerRadii.pill,
-    height: 36,
-    justifyContent: 'center',
-    width: 36
+    flexDirection: 'row'
   },
   addRow: {
     alignItems: 'center',
     borderTopWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    minHeight: 50,
-    paddingVertical: 12
+    gap: 8,
+    minHeight: 48,
+    paddingHorizontal: 0,
+    paddingVertical: 11
   },
   addRowText: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600'
   },
   sheetBody: {

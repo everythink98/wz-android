@@ -1,14 +1,9 @@
 import { StyleSheet, StatusBar as NativeStatusBar } from 'react-native';
-import {
-  readerRadii,
-  type ReaderStyleSettings,
-  type ReaderTheme,
-  alphaColor,
-  fontFamilyValue
-} from '@/ui/theme/tokens';
+import { readerRadii, type ReaderStyleSettings, type ReaderTheme, fontFamilyValue } from '@/ui/theme/tokens';
 
 export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const appFontFamily = fontFamilyValue(settings.fontFamily);
+  const filterLabelWidth = Math.round(92 * settings.fontScale);
   return StyleSheet.create({
     button: {
       minHeight: 40,
@@ -57,9 +52,6 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
     flex: {
       flex: 1
     },
-    input: {
-      minHeight: 48
-    },
     meta: {
       color: theme.muted,
       fontFamily: appFontFamily,
@@ -69,18 +61,47 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
     searchFilterActions: {
       alignItems: 'center',
       flexDirection: 'row',
-      justifyContent: 'flex-end',
+      justifyContent: 'space-between',
       gap: 8,
       borderTopColor: theme.line,
       borderTopWidth: StyleSheet.hairlineWidth,
-      paddingTop: 12
+      paddingTop: 5
+    },
+    searchFilterReset: {
+      justifyContent: 'center',
+      minWidth: 48,
+      minHeight: 48
     },
     searchFilterBody: {
-      flexGrow: 0
+      flexGrow: 0,
+      flexShrink: 1
     },
-    searchFilterBodyInner: {
-      gap: 14,
-      paddingBottom: 4
+    searchFilterHeader: {
+      minHeight: 48,
+      flexDirection: 'row',
+      alignItems: 'center'
+    },
+    searchFilterHeading: {
+      flex: 1,
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'baseline',
+      columnGap: 10
+    },
+    searchFilterTitle: {
+      color: theme.ink,
+      fontFamily: appFontFamily,
+      fontSize: Math.round(19 * settings.fontScale),
+      lineHeight: Math.round(25 * settings.fontScale),
+      fontWeight: '700',
+      includeFontPadding: false
+    },
+    searchFilterSite: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: Math.round(13 * settings.fontScale),
+      lineHeight: Math.round(18 * settings.fontScale),
+      includeFontPadding: false
     },
     sectionHeader: {
       alignItems: 'center',
@@ -100,7 +121,7 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
     },
     contentInner: {
       padding: 16,
-      paddingTop: (NativeStatusBar.currentHeight ?? 0) + 4,
+      paddingTop: (NativeStatusBar.currentHeight ?? 0) + 10,
       paddingBottom: 96
     },
     listHeader: {
@@ -112,9 +133,7 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
     searchTopicRow: {
       marginHorizontal: -16
     },
-    searchInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     searchInputShell: {
-      flex: 1,
       minWidth: 0,
       minHeight: 48,
       alignItems: 'center',
@@ -123,12 +142,12 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
       borderColor: theme.line,
       borderRadius: readerRadii.control,
       borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 0
+      paddingRight: 4
     },
     searchInput: {
       flex: 1,
       minWidth: 0,
-      minHeight: 46,
+      minHeight: 48,
       color: theme.ink,
       fontFamily: appFontFamily,
       fontSize: 15 * settings.fontScale,
@@ -137,6 +156,28 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
       textAlignVertical: 'center',
       paddingHorizontal: 0,
       paddingVertical: 0
+    },
+    searchInputActions: { flexDirection: 'row', alignItems: 'center' },
+    searchSubmitSlot: {
+      minHeight: 48,
+      justifyContent: 'center',
+      borderLeftColor: theme.line,
+      borderLeftWidth: StyleSheet.hairlineWidth
+    },
+    searchScopeBar: {
+      borderBottomColor: theme.line,
+      borderBottomWidth: StyleSheet.hairlineWidth
+    },
+    searchFilterTrigger: {
+      minHeight: 48,
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 8,
+      paddingHorizontal: 8
+    },
+    searchFilterTriggerActive: {
+      backgroundColor: theme.mist,
+      borderRadius: readerRadii.control
     },
     searchFilterEntry: {
       minHeight: 48,
@@ -149,10 +190,6 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 10,
       paddingVertical: 6
-    },
-    searchFilterEntryActive: {
-      backgroundColor: theme.mist,
-      borderColor: alphaColor(theme.primary, theme.dark ? 0.36 : 0.22)
     },
     searchFilterEntryIcon: {
       width: 22,
@@ -180,74 +217,143 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
       lineHeight: 17
     },
     searchFilterEntrySummaryActive: {
-      color: theme.primary,
+      color: theme.dark ? theme.primary : theme.primaryStrong,
       fontWeight: '600'
-    },
-    searchFilterField: {
-      gap: 8
     },
     searchFilterLabel: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: 13,
-      fontWeight: '500',
-      lineHeight: 18
+      fontSize: Math.round(14 * settings.fontScale),
+      fontWeight: '600',
+      lineHeight: Math.round(20 * settings.fontScale),
+      includeFontPadding: false
     },
-    searchFilterMoreButton: {
-      minHeight: 38,
+    searchFilterRow: {
+      minHeight: 48,
       alignItems: 'center',
       flexDirection: 'row',
-      justifyContent: 'space-between',
-      gap: 10,
-      backgroundColor: theme.surface2,
-      borderColor: theme.line,
-      borderRadius: readerRadii.control,
-      borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 12,
-      paddingVertical: 8
+      borderBottomColor: theme.line,
+      borderBottomWidth: StyleSheet.hairlineWidth
     },
-    searchFilterMoreText: {
+    searchFilterRowInvalid: { borderBottomColor: theme.danger },
+    searchFilterFieldError: {
+      color: theme.danger,
+      fontFamily: appFontFamily,
+      fontSize: Math.round(12 * settings.fontScale),
+      lineHeight: Math.round(17 * settings.fontScale),
+      includeFontPadding: false,
+      marginLeft: filterLabelWidth,
+      paddingVertical: 6
+    },
+    searchFilterRowMain: {
+      flex: 1,
+      minWidth: 0,
+      minHeight: 48,
+      alignItems: 'center',
+      flexDirection: 'row'
+    },
+    searchFilterLabelColumn: {
+      width: filterLabelWidth,
+      paddingRight: 8
+    },
+    searchFilterInputLabel: {
+      justifyContent: 'center',
+      minHeight: 48
+    },
+    searchFilterTextInput: {
+      flex: 1,
+      minWidth: 0,
+      minHeight: 48,
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: 13,
-      fontWeight: '500',
-      lineHeight: 18
+      fontSize: Math.round(14 * settings.fontScale),
+      lineHeight: Math.round(20 * settings.fontScale),
+      includeFontPadding: false,
+      paddingHorizontal: 0,
+      paddingVertical: 0
     },
-    searchFilterOptionWrap: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8
+    searchFilterTrailing: {
+      width: 48,
+      minHeight: 48,
+      alignItems: 'center',
+      justifyContent: 'center'
     },
-    searchFilterOptionRow: {
-      flexDirection: 'row',
-      gap: 8,
-      paddingRight: 4
-    },
-    searchFilterOption: {
-      minHeight: 36,
-      justifyContent: 'center',
-      backgroundColor: theme.surface2,
-      borderColor: theme.line,
-      borderRadius: readerRadii.control,
-      borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 11,
-      paddingVertical: 3
-    },
-    searchFilterOptionActive: {
-      backgroundColor: theme.mist,
-      borderColor: alphaColor(theme.primary, theme.dark ? 0.36 : 0.22)
-    },
-    searchFilterOptionText: {
+    searchFilterValue: {
+      flex: 1,
+      minWidth: 0,
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: 12,
+      fontSize: Math.round(14 * settings.fontScale),
+      lineHeight: Math.round(20 * settings.fontScale),
+      includeFontPadding: false,
+      paddingVertical: 9
+    },
+    searchFilterSegments: {
+      backgroundColor: theme.surface2,
+      borderRadius: readerRadii.control,
+      borderColor: theme.line,
+      borderWidth: StyleSheet.hairlineWidth,
+      overflow: 'hidden',
+      flex: 1,
+      minWidth: 0,
+      flexDirection: 'row',
+      marginVertical: 6
+    },
+    searchFilterSegment: {
+      flex: 1,
+      minWidth: 0,
+      minHeight: 48,
+      alignItems: 'center',
+      flexDirection: 'row',
+      columnGap: 5,
+      paddingHorizontal: 8,
+      paddingVertical: 6
+    },
+    searchFilterSegmentDivider: {
+      borderLeftWidth: StyleSheet.hairlineWidth,
+      borderLeftColor: theme.line
+    },
+    searchFilterSegmentMark: {
+      width: 14
+    },
+    searchFilterSegmentText: {
+      flex: 1,
+      color: theme.ink,
+      fontFamily: appFontFamily,
+      fontSize: Math.round(13 * settings.fontScale),
       fontWeight: '600',
       includeFontPadding: false,
-      lineHeight: 17
+      lineHeight: Math.round(18 * settings.fontScale)
     },
-    searchFilterOptionTextActive: {
-      color: theme.primary,
-      fontWeight: '700'
+    searchFilterOptionCopy: { flex: 1, minWidth: 0, rowGap: 3, paddingVertical: 9 },
+    searchFilterUnchecked: {
+      width: 16,
+      height: 16,
+      borderRadius: 3,
+      borderWidth: 1,
+      borderColor: theme.muted
+    },
+    searchFilterOptionActive: { backgroundColor: theme.mist },
+    searchFilterActiveText: {
+      color: theme.dark ? theme.primary : theme.primaryStrong
+    },
+    searchFilterCandidateInput: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 8,
+      paddingLeft: 12,
+      paddingRight: 2,
+      backgroundColor: theme.background,
+      borderColor: theme.line,
+      borderRadius: readerRadii.control,
+      borderWidth: StyleSheet.hairlineWidth
+    },
+    searchFilterDetail: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: Math.round(12 * settings.fontScale),
+      includeFontPadding: false,
+      lineHeight: Math.round(17 * settings.fontScale)
     },
     searchGroupHeader: {
       minHeight: 48,
@@ -306,10 +412,6 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
       justifyContent: 'center',
       paddingHorizontal: 12,
       paddingVertical: 8
-    },
-    chipWrap: {
-      borderTopColor: theme.line,
-      borderTopWidth: StyleSheet.hairlineWidth
     },
     recentSearchItem: {
       overflow: 'hidden',

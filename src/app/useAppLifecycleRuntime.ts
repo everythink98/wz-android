@@ -11,7 +11,7 @@ import type { Screen } from '@/ui/navigation/types';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 import { useAppDeepLinkNavigation } from './useAppDeepLinkNavigation';
-import { navigateAppScreen, navigationRef, pushUserRoute, shouldUpdateAppRootScreen } from './appNavigation';
+import { navigationRef, pushUserRoute } from './appNavigation';
 import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
 import { diagnosticRef, type DiagnosticFields } from '@/platform/diagnostics/diagnosticPolicy';
 import { useInitialForegroundRuntime } from './useInitialForegroundRuntime';
@@ -33,9 +33,6 @@ export function useAppLifecycleRuntime() {
     if (message) ToastAndroid.show(message, ToastAndroid.SHORT);
   }, []);
   const getCurrentScreen = useCallback(() => screenRef.current, []);
-  const changeScreen = useCallback((nextScreen: Screen) => {
-    navigateAppScreen(nextScreen);
-  }, []);
   const openUserRoute = useCallback(
     async (user: UserReference, initialTab?: UserActivityTab) => {
       const normalized = normalizeUserReference(user);
@@ -89,7 +86,7 @@ export function useAppLifecycleRuntime() {
       return;
     }
     screenRef.current = nextScreen;
-    if (shouldUpdateAppRootScreen(previousScreen, nextScreen)) setScreen(nextScreen);
+    if (previousScreen !== nextScreen) setScreen(nextScreen);
     finishDiagnosticTrace(trace, 'success', { ...fields, state: 'applied' });
   }, []);
 
@@ -113,7 +110,6 @@ export function useAppLifecycleRuntime() {
   return {
     appActive,
     onUserInteraction: recordUserInteraction,
-    changeScreen,
     getCurrentScreen,
     height,
     feedContentReady: initialForeground.feedContentReady,

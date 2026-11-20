@@ -155,21 +155,8 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       borderRadius: readerRadii.pill,
       backgroundColor: theme.lineStrong
     },
-    composer: { flexShrink: 1, gap: 16, paddingTop: 4 },
+    composer: { flexShrink: 1, gap: 14, paddingTop: 4 },
     emojiPicker: { flexShrink: 1, gap: 8 },
-    input: {
-      color: theme.ink,
-      fontFamily: fontFamilyValue(settings.fontFamily),
-      fontSize: Math.round(16 * settings.fontScale),
-      backgroundColor: theme.surface2,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: theme.line,
-      borderRadius: readerRadii.control,
-      paddingHorizontal: 12,
-      paddingVertical: 12,
-      minHeight: 56
-    },
-    searchInput: { minHeight: 48, paddingVertical: 8, fontSize },
     catalog: { maxHeight: 208 },
     catalogChoice: { width: '16.666666%', minHeight: 48, borderRadius: readerRadii.control, padding: 4 },
     error: {
@@ -715,9 +702,9 @@ export function LinuxDoPostInteractionsProvider({
           {isPending ? (
             <Text style={styles.muted}>正在读取表情…</Text>
           ) : error ? (
-            <View>
+            <View style={styles.row}>
               <Text style={styles.error}>表情读取失败</Text>
-              <AppButton label="重试" onPress={() => void refetch()} />
+              <AppButton compact variant="primary" label="重试" onPress={() => void refetch()} />
             </View>
           ) : config?.reactionsEnabled ? (
             <View style={styles.choices}>
@@ -772,7 +759,6 @@ export function LinuxDoPostInteractionsProvider({
                     <Text style={styles.title}>
                       加电给 {boostTarget?.author} · {boostTargetLabel}
                     </Text>
-                    <Text style={styles.muted}>最多 16 个字符、5 个表情</Text>
                   </View>
                   <IconButton icon={X} label="关闭加电" iconOnly ghost onPress={actions.closeBoostComposer} />
                 </View>
@@ -829,6 +815,7 @@ export function LinuxDoPostInteractionsProvider({
                     <IconButton
                       icon={Smile}
                       label="选择加电表情"
+                      active={emojiPickerOpen}
                       iconOnly
                       ghost
                       onPress={() => {
@@ -836,7 +823,12 @@ export function LinuxDoPostInteractionsProvider({
                         setEmojiPickerOpen((value) => !value);
                       }}
                     />
-                    <Text style={stats.length > 16 || stats.emojiCount > 5 ? styles.error : styles.muted}>
+                    <Text
+                      style={[
+                        stats.length > 16 || stats.emojiCount > 5 ? styles.error : styles.muted,
+                        { fontVariant: ['tabular-nums'] }
+                      ]}
+                    >
                       {stats.length}/16 · 表情 {stats.emojiCount}/5
                     </Text>
                   </View>
@@ -845,16 +837,18 @@ export function LinuxDoPostInteractionsProvider({
                       label="核对结果"
                       onPress={() => void actions.recheckLinuxDoPost(boostTarget.commentId!)}
                     />
+                  ) : error ? (
+                    <AppButton label="重试读取互动配置" onPress={() => void refetch()} />
                   ) : (
                     <AppButton
-                      variant="primary"
+                      variant="solid"
                       label={boostDecision?.reason === 'pending' ? '发送中' : '发送加电'}
-                      disabled={!stats.valid || !boostDecision?.allowed || isPending || !!error}
+                      loading={boostDecision?.reason === 'pending'}
+                      disabled={!stats.valid || !boostDecision?.allowed || isPending}
                       onPress={() => void actions.submitBoost()}
                     />
                   )}
                 </View>
-                {error ? <AppButton label="重试读取互动配置" onPress={() => void refetch()} /> : null}
               </View>
             </>
           ) : null

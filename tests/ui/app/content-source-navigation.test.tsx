@@ -1,16 +1,19 @@
 jest.mock('@/platform/storage/readerDataStore', () => ({
   queryReaderCategories: jest.fn(async () => []),
-  queryReaderPage: jest.fn(async () => ({ records: [], total: 0, visibleTotal: 0 }))
+  queryReaderPage: jest.fn(async () => ({ records: [] }))
 }));
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createEmptyReaderState } from '@/domain/reader/readerRecordState';
 import { projectTestAccountSessions } from '../../helpers/accountSessions';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { cleanup } from '@testing-library/react-native';
 import { DefaultTheme } from '@react-navigation/native';
 import React from 'react';
-import { Pressable, Text } from 'react-native';
+import { Alert, BackHandler, Linking, Pressable, Text, View } from 'react-native';
 import { AppNavigator } from '@/app/AppNavigator';
+import { useAppDeepLinkNavigation } from '@/app/useAppDeepLinkNavigation';
+import { useContentSourceQueryCleanup } from '@/app/useContentSourceQueryCleanup';
 import {
   navigateMainTab,
   navigationRef,
@@ -20,10 +23,10 @@ import {
   pushTopicRoute,
   pushUserRoute
 } from '@/app/appNavigation';
-import type { FeedSource, Topic, UserIdentity, UserReference } from '@/domain/forum/models';
+import type { FeedResponse, FeedSource, Topic, UserIdentity, UserReference } from '@/domain/forum/models';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
+import { canonicalEnabledSourcesKey, projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import { createSiteSessionStates } from '@/domain/session/siteSessionState';
 import { FeedRoute, FeedRouteRuntimeProvider, type FeedRouteRuntimeValue } from '@/features/feed/FeedRoute';
 import { useFeedController } from '@/features/feed/useFeedController';
@@ -34,10 +37,12 @@ import {
 } from '@/features/library/LibraryRoute';
 import { useReaderDataActionsController } from '@/features/library/useReaderDataActionsController';
 import { MoreRoute, MoreRouteRuntimeProvider, type MoreRouteRuntimeValue } from '@/features/more/MoreRoute';
+import { NodeSeekServicesPanel } from '@/features/more/components/NodeSeekServicesPanel';
 import { SearchRoute, SearchRouteRuntimeProvider, type SearchRouteRuntimeValue } from '@/features/search/SearchRoute';
 import { useSearchController } from '@/features/search/useSearchController';
 import { TopicRoute, TopicRouteRuntimeProvider, type TopicRouteRuntimeValue } from '@/features/topic/TopicRoute';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import { queryReaderCategories, queryReaderPage } from '@/platform/storage/readerDataStore';
 import type { ReadGateway } from '@/sources/readGateway';
 import { createTheme } from '@/ui/theme/tokens';
 import { act, fireEvent, render, waitFor } from '../render';
@@ -46,14 +51,24 @@ import { createTestStyles as createStyles } from '../styleFixture';
 jest.mock('lucide-react-native', () => {
   const Icon = () => null;
   return {
-    ChevronLeft: Icon,
     Bell: Icon,
+    Check: Icon,
+    ChevronDown: Icon,
+    ChevronLeft: Icon,
+    ChevronRight: Icon,
+    Eye: Icon,
     Home: Icon,
+    ListFilter: Icon,
+    MessageCircle: Icon,
     MoreHorizontal: Icon,
-    UserRound: Icon,
     Search: Icon,
     Settings: Icon,
-    Star: Icon
+    SlidersHorizontal: Icon,
+    SquarePen: Icon,
+    Star: Icon,
+    Trash2: Icon,
+    UserRound: Icon,
+    X: Icon
   };
 });
 jest.mock('react-native-webview', () => ({ WebView: () => null }));
@@ -71,7 +86,7 @@ jest.mock('@/ui/media/ImagePreviewModal', () => ({ ImagePreviewModal: () => null
 jest.mock('@/features/topic/TopicScreen', () => ({ TopicScreen: () => null }));
 jest.mock('@/features/more/useBackupStatusController', () => ({
   useBackupStatusController: () => ({
-    backupBusy: false,
+    backupOperation: 'idle',
     exportBackupFile: jest.fn(),
     importBackupFile: jest.fn()
   })
@@ -95,17 +110,23 @@ let mockFeedScreenMountCount = 0;
 let mockFeedLoadMoreCallbacks: ((() => void) | undefined)[] = [];
 let mockFeedOpenTopic: ((topic: Topic) => void) | undefined;
 let mockSearchOpenTopic: ((topic: Topic) => void) | undefined;
+let mockRealListScreen: 'feed' | 'search' | 'library' | undefined;
 let mockLibraryOpenTopic: ((topic: Topic) => void) | undefined;
 let mockLibraryOpenUser: ((user: UserReference) => void) | undefined;
 let mockMoreAccount: MoreRouteRuntimeValue['account'] | undefined;
 let mockMoreLibrary: MoreRouteRuntimeValue['library'] | undefined;
-function mockFeedScreen({
+let mockMoreThreshold = false;
+function MockFeedScreen({
+  feedHasMore,
+  feedItems,
   feedSource,
   onFeedSourceChange,
   onLoadMore,
   onManageContentSources,
   onOpenTopic
 }: {
+  feedHasMore?: boolean;
+  feedItems?: Topic[];
   feedSource?: FeedSource;
   onFeedSourceChange?: (source: FeedSource) => void;
   onLoadMore?: () => void;
@@ -113,11 +134,17 @@ function mockFeedScreen({
   onOpenTopic: (topic: Topic) => void;
 }) {
   const [mount] = React.useState(() => ++mockFeedScreenMountCount);
-  mockFeedLoadMoreCallbacks.push(onLoadMore);
-  mockFeedOpenTopic = onOpenTopic;
+  React.useLayoutEffect(() => {
+    mockFeedLoadMoreCallbacks.push(onLoadMore);
+    mockFeedOpenTopic = onOpenTopic;
+  }, [onLoadMore, onOpenTopic]);
   return (
     <>
       {mockManagementEntry('首页', onManageContentSources)}
+      {feedItems?.map((topic) => (
+        <Text key={topic.id}>{topic.title}</Text>
+      ))}
+      {feedHasMore ? <Text>还有下一页</Text> : null}
       <Pressable testID="feed-test-select-v2ex" onPress={() => onFeedSourceChange?.('v2ex')}>
         <Text>{`首页来源 ${feedSource || 'all'} 挂载 ${mount}`}</Text>
       </Pressable>
@@ -125,32 +152,39 @@ function mockFeedScreen({
   );
 }
 
-jest.mock('@/features/feed/FeedScreen', () => ({ FeedScreen: mockFeedScreen }));
+jest.mock('@/features/feed/FeedScreen', () => ({
+  FeedScreen: (props: React.ComponentProps<typeof import('@/features/feed/FeedScreen').FeedScreen>) => {
+    if (mockRealListScreen === 'feed') {
+      const { FeedScreen } =
+        jest.requireActual<typeof import('@/features/feed/FeedScreen')>('@/features/feed/FeedScreen');
+      return <FeedScreen {...props} />;
+    }
+    return <MockFeedScreen {...props} />;
+  }
+}));
 jest.mock('@/features/search/SearchScreen', () => ({
-  SearchScreen: ({
-    onManageContentSources,
-    onOpenTopic
-  }: {
-    onManageContentSources: () => void;
-    onOpenTopic: (topic: Topic) => void;
-  }) => {
-    mockSearchOpenTopic = onOpenTopic;
-    return mockManagementEntry('搜索', onManageContentSources);
+  SearchScreen: (props: React.ComponentProps<typeof import('@/features/search/SearchScreen').SearchScreen>) => {
+    if (mockRealListScreen === 'search') {
+      const { SearchScreen } = jest.requireActual<typeof import('@/features/search/SearchScreen')>(
+        '@/features/search/SearchScreen'
+      );
+      return <SearchScreen {...props} />;
+    }
+    mockSearchOpenTopic = props.onOpenTopic;
+    return mockManagementEntry('搜索', props.onManageContentSources);
   }
 }));
 jest.mock('@/features/library/LibraryScreen', () => ({
-  LibraryScreen: ({
-    onManageContentSources,
-    onOpenTopic,
-    onOpenUser
-  }: {
-    onManageContentSources: () => void;
-    onOpenTopic: (topic: Topic) => void;
-    onOpenUser: (user: UserReference) => void;
-  }) => {
-    mockLibraryOpenTopic = onOpenTopic;
-    mockLibraryOpenUser = onOpenUser;
-    return mockManagementEntry('收藏', onManageContentSources);
+  LibraryScreen: (props: React.ComponentProps<typeof import('@/features/library/LibraryScreen').LibraryScreen>) => {
+    if (mockRealListScreen === 'library') {
+      const { LibraryScreen } = jest.requireActual<typeof import('@/features/library/LibraryScreen')>(
+        '@/features/library/LibraryScreen'
+      );
+      return <LibraryScreen {...props} />;
+    }
+    mockLibraryOpenTopic = props.onOpenTopic;
+    mockLibraryOpenUser = props.onOpenUser;
+    return mockManagementEntry('收藏', props.onManageContentSources);
   }
 }));
 function mockMoreScreen({
@@ -184,6 +218,19 @@ function mockMoreScreen({
       >
         <Text>{utilities.settings.visible ? '外观面板已展开' : '外观面板已折叠'}</Text>
       </Pressable>
+      {mockMoreThreshold ? (
+        <NodeSeekServicesPanel
+          apiKeyAuthorized={false}
+          apiKeyBusy={false}
+          apiKeySaved={false}
+          recoveryThreshold={3}
+          theme={theme}
+          onAuthorizeApiKey={jest.fn()}
+          onClearApiKey={jest.fn()}
+          onRecoveryThresholdChange={jest.fn()}
+          onSaveApiKey={jest.fn()}
+        />
+      ) : null}
     </>
   );
 }
@@ -212,8 +259,16 @@ const theme = createTheme(readerData.settings);
 const styles = createStyles(theme, readerData.settings, 800);
 const topicStateIndex = createTopicListItemStateIndex(readerData);
 const readGateway = {
-  getReadPlan: () => ({ state: 'ready', cacheScope: 'public:test' })
+  getCategories: async () => ({ items: [], errors: {} }),
+  getFeed: async () => emptyFeed,
+  getReadPlan: (...[source, operation]: Parameters<ReadGateway['getReadPlan']>) => ({
+    source,
+    operation,
+    state: 'ready',
+    cacheScope: 'public:test'
+  })
 } as unknown as ReadGateway;
+const emptyFeed: FeedResponse = { items: [], errors: {}, hasMore: false, nextPage: null };
 const sessionViewModels = projectTestAccountSessions(createSiteSessionStates());
 
 const feedRuntime = {
@@ -227,7 +282,6 @@ const feedRuntime = {
     showLinuxDoVerification: jest.fn(),
     showYaohuoLogin: jest.fn()
   },
-  appActive: true,
   catalogCategories: [],
   notify: jest.fn(),
   onInitialContentReady: jest.fn(),
@@ -244,7 +298,6 @@ const searchRuntime = {
   },
   catalogCategories: [],
   notify: jest.fn(),
-  readerData,
   topicStateIndex
 } as SearchRouteRuntimeValue;
 const libraryRuntime = {
@@ -258,6 +311,7 @@ const libraryRuntime = {
   },
   topicStateIndex
 } as LibraryRouteRuntimeValue;
+const libraryRuntimeWithSources: LibraryRouteRuntimeValue = { ...libraryRuntime, enabledSources: ['v2ex'] };
 const moreRuntime = {
   account: {
     surfaces: { closeAll: jest.fn() },
@@ -270,7 +324,16 @@ const moreRuntime = {
       },
       openLinuxDoCredit: () => {
         openLinuxDoCreditRoute({ identityKey: 'linuxdo:7', userId: '7', username: 'alice' });
-      }
+      },
+      nodeImageKey: {
+        authorize: jest.fn(),
+        clear: jest.fn(),
+        save: jest.fn(),
+        authorized: false,
+        saved: false,
+        busy: false
+      },
+      nodeSeek: { checkIn: jest.fn(), observeBoard: jest.fn(), state: { kind: 'idle' }, busy: false }
     }
   },
   library: { open: openLibraryRoute },
@@ -281,7 +344,6 @@ const moreRuntime = {
   reader: {
     commit: jest.fn(),
     data: readerData,
-    dataRef: { current: readerData },
     importBackup: jest.fn(async () => undefined),
     exportBackup: jest.fn(async () => '{}')
   },
@@ -307,7 +369,7 @@ function SearchTab() {
 
 function LibraryTab() {
   return (
-    <LibraryRouteRuntimeProvider value={libraryRuntime}>
+    <LibraryRouteRuntimeProvider value={mockRealListScreen === 'library' ? libraryRuntimeWithSources : libraryRuntime}>
       <LibraryRoute />
     </LibraryRouteRuntimeProvider>
   );
@@ -340,9 +402,20 @@ function EmptyRoute() {
   return null;
 }
 
-function Navigator({ feedRuntimeValue = feedRuntime }: { feedRuntimeValue?: FeedRouteRuntimeValue }) {
+type TestLinking = Pick<typeof Linking, 'addEventListener' | 'getInitialURL'>;
+
+function Navigator({
+  feedRuntimeValue = feedRuntime,
+  linking
+}: {
+  feedRuntimeValue?: FeedRouteRuntimeValue;
+  linking?: TestLinking;
+}) {
+  const [client] = React.useState(() => new QueryClient({ defaultOptions: { queries: { gcTime: 0, retry: false } } }));
+  const onReady = useAppDeepLinkNavigation(linking);
   return (
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { gcTime: 0, retry: false } } })}>
+    <QueryClientProvider client={client}>
+      <SourceQueryCleanup runtime={feedRuntimeValue} />
       <FeedTestRuntimeContext.Provider value={feedRuntimeValue}>
         <AppNavigator
           moreBadgeState="none"
@@ -362,12 +435,26 @@ function Navigator({ feedRuntimeValue = feedRuntime }: { feedRuntimeValue?: Feed
           getUserRoute={() => EmptyRoute}
           styles={styles}
           theme={theme}
-          onReady={jest.fn()}
+          onReady={onReady}
           onScreenChange={jest.fn()}
         />
       </FeedTestRuntimeContext.Provider>
     </QueryClientProvider>
   );
+}
+
+function SourceQueryCleanup({ runtime }: { runtime: FeedRouteRuntimeValue }) {
+  useContentSourceQueryCleanup(runtime.enabledSources, runtime.enabledSourcesKey);
+  return null;
+}
+
+function mockUseRealFeedController() {
+  jest
+    .mocked(useFeedController)
+    .mockImplementation(
+      jest.requireActual<typeof import('@/features/feed/useFeedController')>('@/features/feed/useFeedController')
+        .useFeedController
+    );
 }
 
 describe('content-source management navigation', () => {
@@ -376,6 +463,7 @@ describe('content-source management navigation', () => {
     mockFeedLoadMoreCallbacks = [];
     mockFeedOpenTopic = undefined;
     mockSearchOpenTopic = undefined;
+    mockRealListScreen = undefined;
     mockLibraryOpenTopic = undefined;
     mockLibraryOpenUser = undefined;
     mockMoreAccount = undefined;
@@ -509,6 +597,61 @@ describe('content-source management navigation', () => {
     expect(view.getByLabelText('收起外观').props.accessibilityState.expanded).toBe(true);
   });
 
+  it.each(['appearance', 'threshold'] as const)(
+    'lets hardware Back return from a warm topic when More had opened %s',
+    async (control) => {
+      mockMoreThreshold = control === 'threshold';
+      const handlers = new Set<Parameters<typeof BackHandler.addEventListener>[1]>();
+      const register = jest.spyOn(BackHandler, 'addEventListener').mockImplementation((_event, handler) => {
+        handlers.add(handler);
+        return { remove: () => handlers.delete(handler) };
+      });
+      const measure = jest
+        .spyOn(View.prototype, 'measureInWindow')
+        .mockImplementation((callback) => callback(40, 200, 180, 36));
+      const subscription = Linking.addEventListener('url', () => {});
+      const addEventListener = jest.fn<TestLinking['addEventListener']>(() => subscription);
+      const linking: TestLinking = { addEventListener, getInitialURL: async () => null };
+      const view = await render(<Navigator linking={linking} />);
+      const systemBack = () =>
+        [...handlers]
+          .reverse()
+          .some((handler) => handler({ type: 'hardwareBackPress', timeStamp: Date.now() }) === true);
+      const isExpanded = () =>
+        control === 'appearance' ? Boolean(view.queryByText('外观面板已展开')) : Boolean(view.queryByLabelText('4 次'));
+      try {
+        await waitFor(() => expect(navigationRef.isReady()).toBe(true));
+        await fireEvent.press(view.getByTestId('main-tab-more'));
+        await fireEvent.press(view.getByLabelText(control === 'appearance' ? '展开外观' : '读取通道自愈阈值'));
+        await waitFor(() => expect(isExpanded()).toBe(true));
+
+        const [[, onUrl]] = addEventListener.mock.calls;
+        await act(async () => {
+          onUrl({ url: disabledTopic.url });
+          expect(navigationRef.getCurrentRoute()?.name).toBe('Topic');
+          expect(systemBack()).toBe(true);
+        });
+        expect(navigationRef.getCurrentRoute()?.name).toBe('more');
+        if (control === 'appearance') {
+          expect(isExpanded()).toBe(true);
+        } else {
+          await waitFor(() => expect(isExpanded()).toBe(false));
+          await fireEvent.press(view.getByLabelText('读取通道自愈阈值'));
+          await waitFor(() => expect(isExpanded()).toBe(true));
+        }
+
+        await act(async () => expect(systemBack()).toBe(true));
+        expect(navigationRef.getCurrentRoute()?.name).toBe('more');
+        await waitFor(() => expect(isExpanded()).toBe(false));
+      } finally {
+        await view.unmount();
+        mockMoreThreshold = false;
+        register.mockRestore();
+        measure.mockRestore();
+      }
+    }
+  );
+
   it.each<['feed' | 'search' | 'library', string]>([
     ['feed', '首页'],
     ['search', '搜索'],
@@ -543,23 +686,19 @@ describe('content-source management navigation', () => {
   });
 
   it('rebuilds Feed at all after the source order changes in More', async () => {
-    jest.mocked(useFeedController).mockImplementation(({ readerData: currentReaderData }) => {
-      const [feedSource, setFeedSource] = React.useState<FeedSource>('all');
-      return {
-        activeFeedState: {
-          hasMore: false,
-          loadMoreFailureSignal: 0,
-          loadingMore: false,
-          page: 1,
-          refreshing: false
-        },
-        changeFeedSource: setFeedSource,
-        feedAllowsRemotePagination: false,
-        feedSource,
-        enabledFeedSources: projectContentSourcePreferences(currentReaderData.settings.contentSources).enabledSources
-      } as never;
-    });
-    const view = await render(<Navigator />);
+    mockUseRealFeedController();
+    const initialRuntime = {
+      ...feedRuntime,
+      account: {
+        ...feedRuntime.account,
+        readGateway: {
+          ...readGateway,
+          getCategories: jest.fn<ReadGateway['getCategories']>().mockResolvedValue({ items: [], errors: {} }),
+          getFeed: jest.fn<ReadGateway['getFeed']>().mockResolvedValue(emptyFeed)
+        }
+      }
+    };
+    const view = await render(<Navigator feedRuntimeValue={initialRuntime} />);
     await waitFor(() => expect(view.getByText('首页来源 all 挂载 1')).toBeTruthy());
     await fireEvent.press(view.getByTestId('feed-test-select-v2ex'));
     await waitFor(() => expect(view.getByText('首页来源 v2ex 挂载 1')).toBeTruthy());
@@ -567,7 +706,7 @@ describe('content-source management navigation', () => {
 
     const [first, second, ...rest] = readerData.settings.contentSources;
     const reorderedFeedRuntime = {
-      ...feedRuntime,
+      ...initialRuntime,
       enabledSources: [second, first, ...rest].filter((entry) => entry.enabled).map((entry) => entry.source),
       reader: {
         ...feedRuntime.reader,
@@ -581,6 +720,76 @@ describe('content-source management navigation', () => {
     await fireEvent.press(view.getByTestId('main-tab-feed'));
 
     await waitFor(() => expect(view.getByText('首页来源 all 挂载 2')).toBeTruthy());
+  });
+
+  it('keeps trusted home items through source changes without reusing the old cursor', async () => {
+    mockUseRealFeedController();
+    const retained: Topic = {
+      ...disabledTopic,
+      source: 'v2ex',
+      id: '123',
+      title: '仍启用来源的首页主题',
+      url: 'https://www.v2ex.com/t/123'
+    };
+    const restored = { ...disabledTopic, title: '重新启用来源的新主题' };
+    const disabledRead = Promise.withResolvers<FeedResponse>();
+    const restoredRead = Promise.withResolvers<FeedResponse>();
+    const getFeed = jest
+      .fn<ReadGateway['getFeed']>()
+      .mockResolvedValueOnce({
+        items: [retained, disabledTopic],
+        errors: {},
+        hasMore: true,
+        nextPage: 2,
+        nextCursor: 'previous-aggregate-cursor'
+      })
+      .mockReturnValueOnce(disabledRead.promise)
+      .mockReturnValue(restoredRead.promise);
+    const initialRuntime = {
+      ...feedRuntime,
+      account: { ...feedRuntime.account, readGateway: { ...readGateway, getFeed } }
+    };
+    const preferences = disabledTopicReaderData.settings.contentSources;
+    const disabledRuntime = {
+      ...initialRuntime,
+      enabledSources: projectContentSourcePreferences(preferences).enabledSources,
+      enabledSourcesKey: canonicalEnabledSourcesKey(preferences),
+      reader: { data: disabledTopicReaderData, loaded: true }
+    };
+    const view = await render(<Navigator feedRuntimeValue={initialRuntime} />);
+    try {
+      await waitFor(() => expect(view.getByText(retained.title)).toBeTruthy());
+      expect(view.getByText(disabledTopic.title)).toBeTruthy();
+      expect(view.getByText('还有下一页')).toBeTruthy();
+
+      await fireEvent.press(view.getByTestId('main-tab-more'));
+      await view.rerender(<Navigator feedRuntimeValue={disabledRuntime} />);
+      await fireEvent.press(view.getByTestId('main-tab-feed'));
+      await waitFor(() => expect(getFeed).toHaveBeenCalledTimes(2));
+      expect(view.getByText('首页来源 all 挂载 2')).toBeTruthy();
+      expect(view.getByText(retained.title)).toBeTruthy();
+      expect(view.queryByText(disabledTopic.title)).toBeNull();
+      expect(view.queryByText('还有下一页')).toBeNull();
+
+      await act(async () => disabledRead.reject(new Error('fixture read failed')));
+      expect(view.getByText(retained.title)).toBeTruthy();
+      expect(view.queryByText('还有下一页')).toBeNull();
+
+      await fireEvent.press(view.getByTestId('main-tab-more'));
+      await view.rerender(<Navigator feedRuntimeValue={initialRuntime} />);
+      await fireEvent.press(view.getByTestId('main-tab-feed'));
+      await waitFor(() => expect(getFeed).toHaveBeenCalledTimes(3));
+      expect(view.getByText(retained.title)).toBeTruthy();
+      expect(view.queryByText(disabledTopic.title)).toBeNull();
+      expect(view.queryByText('还有下一页')).toBeNull();
+
+      await act(async () => restoredRead.resolve({ ...emptyFeed, items: [retained, restored] }));
+      await waitFor(() => expect(view.getByText(restored.title)).toBeTruthy());
+      expect(getFeed.mock.calls.map(([request]) => request.cursor)).toEqual([undefined, undefined, undefined]);
+    } finally {
+      disabledRead.resolve(emptyFeed);
+      restoredRead.resolve(emptyFeed);
+    }
   });
 
   it('keeps load-more callback stable across unrelated runtime renders', async () => {
@@ -602,7 +811,11 @@ describe('content-source management navigation', () => {
     const view = await render(<Navigator />);
     const firstCallback = mockFeedLoadMoreCallbacks.at(-1);
 
-    await view.rerender(<Navigator feedRuntimeValue={{ ...feedRuntime, appActive: false }} />);
+    await view.rerender(
+      <Navigator
+        feedRuntimeValue={{ ...feedRuntime, catalogCategories: [{ source: 'v2ex', id: 'qna', name: '问与答' }] }}
+      />
+    );
 
     expect(mockFeedLoadMoreCallbacks.at(-1)).toBe(firstCallback);
   });
@@ -626,5 +839,405 @@ describe('content-source management navigation', () => {
       expect(view.getByText('内容源面板已展开')).toBeTruthy();
     });
     await waitFor(() => expect(navigationRef.getCurrentRoute()?.params).toEqual({}));
+  });
+
+  it.each([true, false])('changes Feed source only for a focused tab press (leave: %s)', async (leave) => {
+    mockRealListScreen = 'feed';
+    mockUseRealFeedController();
+    const subscription = Linking.addEventListener('url', () => {});
+    const addEventListener = jest.fn<TestLinking['addEventListener']>(() => subscription);
+    const view = await render(<Navigator linking={{ addEventListener, getInitialURL: async () => null }} />);
+    try {
+      await waitFor(() => expect(navigationRef.isReady()).toBe(true));
+      expect(view.getByTestId('feed-source-all').props.accessibilityState).toMatchObject({ selected: true });
+      const [[, onUrl]] = addEventListener.mock.calls;
+      await act(async () => {
+        if (leave) {
+          onUrl({ url: disabledTopic.url });
+          expect(navigationRef.getCurrentRoute()?.name).toBe('Topic');
+        }
+        await fireEvent.press(view.getByTestId('feed-source-v2ex', { includeHiddenElements: true }));
+      });
+      if (leave) await act(() => navigationRef.goBack());
+      expect(view.getByTestId('feed-source-v2ex').props.accessibilityState).toMatchObject({ selected: !leave });
+      expect(view.getByTestId('feed-source-all').props.accessibilityState).toMatchObject({ selected: leave });
+      if (leave) {
+        await fireEvent.press(view.getByTestId('feed-source-v2ex'));
+        expect(view.getByTestId('feed-source-v2ex').props.accessibilityState).toMatchObject({ selected: true });
+      }
+    } finally {
+      await view.unmount();
+    }
+  });
+
+  it.each(['open', 'queued-option'] as const)(
+    'retires a %s feed filter menu when a warm link opens a topic',
+    async (mode) => {
+      mockRealListScreen = 'feed';
+      mockUseRealFeedController();
+      const subscription = Linking.addEventListener('url', () => {});
+      const addEventListener = jest.fn<TestLinking['addEventListener']>(() => subscription);
+      const linking: TestLinking = { addEventListener, getInitialURL: async () => null };
+      const view = await render(<Navigator linking={linking} />);
+      try {
+        await waitFor(() => expect(navigationRef.isReady()).toBe(true));
+        await fireEvent.press(view.getByTestId('feed-source-v2ex'));
+        await fireEvent.press(view.getByTestId('feed-list-filter'));
+        await fireEvent.press(view.getByLabelText('最新'));
+        await fireEvent.press(view.getByTestId('feed-list-filter'));
+        expect(view.getByLabelText('关闭列表筛选菜单')).toBeTruthy();
+
+        expect(addEventListener).toHaveBeenCalledTimes(1);
+        const [[, onUrl]] = addEventListener.mock.calls;
+        await act(async () => {
+          onUrl({ url: disabledTopic.url });
+          if (mode === 'queued-option') {
+            expect(navigationRef.getCurrentRoute()?.name).toBe('Topic');
+            await fireEvent.press(view.getByLabelText('最热', { includeHiddenElements: true }));
+          }
+        });
+        await waitFor(() => expect(navigationRef.getCurrentRoute()?.name).toBe('Topic'));
+        expect(view.queryByLabelText('关闭列表筛选菜单', { includeHiddenElements: true })).toBeNull();
+
+        await act(() => navigationRef.goBack());
+        expect(view.getByTestId('feed-list-filter').props.accessibilityValue).toEqual({ text: '最新' });
+        expect(view.queryByLabelText('关闭列表筛选菜单', { includeHiddenElements: true })).toBeNull();
+        await fireEvent.press(view.getByTestId('feed-list-filter'));
+        await fireEvent.press(view.getByLabelText('最热'));
+        expect(view.getByTestId('feed-list-filter').props.accessibilityValue).toEqual({ text: '最热' });
+      } finally {
+        await view.unmount();
+      }
+    }
+  );
+
+  it.each(['open', 'queued-apply'] as const)(
+    'retires a %s search filter draft when a warm link opens a topic',
+    async (mode) => {
+      mockRealListScreen = 'search';
+      jest
+        .mocked(useSearchController)
+        .mockImplementation(
+          jest.requireActual<typeof import('@/features/search/useSearchController')>(
+            '@/features/search/useSearchController'
+          ).useSearchController
+        );
+      const subscription = Linking.addEventListener('url', () => {});
+      const addEventListener = jest.fn<TestLinking['addEventListener']>(() => subscription);
+      const linking: TestLinking = { addEventListener, getInitialURL: async () => null };
+      const view = await render(<Navigator linking={linking} />);
+      try {
+        await waitFor(() => expect(navigationRef.isReady()).toBe(true));
+        await fireEvent.press(view.getByTestId('main-tab-search'));
+        await fireEvent.press(view.getByTestId('search-source-v2ex'));
+        await fireEvent.changeText(view.getByPlaceholderText('输入关键词'), '回到搜索');
+        await fireEvent.press(view.getByTestId('search-filter-trigger'));
+        await fireEvent.press(view.getByText('相关'));
+        await fireEvent.press(view.getByText('确认筛选'));
+
+        await fireEvent.press(view.getByLabelText('打开搜索筛选，当前相关'));
+        await fireEvent.press(view.getByText('最新'));
+        await fireEvent.press(view.getByTestId('search-filter-node'));
+        expect(view.getByTestId('search-filter-node-query')).toBeTruthy();
+
+        expect(addEventListener).toHaveBeenCalledTimes(1);
+        const [[, onUrl]] = addEventListener.mock.calls;
+        await act(async () => {
+          onUrl({ url: disabledTopic.url });
+          if (mode === 'queued-apply') {
+            expect(navigationRef.getCurrentRoute()?.name).toBe('Topic');
+            await fireEvent.press(view.getByText('确认筛选', { includeHiddenElements: true }));
+          }
+        });
+        await waitFor(() => expect(navigationRef.getCurrentRoute()?.name).toBe('Topic'));
+        expect(view.queryByTestId('search-filter-close', { includeHiddenElements: true })).toBeNull();
+
+        await act(() => navigationRef.goBack());
+        expect(view.getByDisplayValue('回到搜索')).toBeTruthy();
+        expect(view.queryByTestId('search-filter-close', { includeHiddenElements: true })).toBeNull();
+        await fireEvent.press(view.getByLabelText('打开搜索筛选，当前相关'));
+        expect(view.getByRole('radio', { name: '相关', checked: true })).toBeTruthy();
+        expect(view.queryByTestId('search-filter-node-query')).toBeNull();
+      } finally {
+        await view.unmount();
+      }
+    }
+  );
+
+  it.each([
+    { action: 'submit', leave: true },
+    { action: 'submit', leave: false },
+    { action: 'remove', leave: true },
+    { action: 'remove', leave: false }
+  ] as const)('persists Search $action only while focused (leave: $leave)', async ({ action, leave }) => {
+    mockRealListScreen = 'search';
+    jest
+      .mocked(useSearchController)
+      .mockImplementation(
+        jest.requireActual<typeof import('@/features/search/useSearchController')>(
+          '@/features/search/useSearchController'
+        ).useSearchController
+      );
+    const historyKey = 'reader-search-history';
+    const history = await AsyncStorage.getItem(historyKey);
+    const saved = '已有搜索';
+    const query = '新搜索';
+    await AsyncStorage.setItem(historyKey, JSON.stringify([saved]));
+    const subscription = Linking.addEventListener('url', () => {});
+    const addEventListener = jest.fn<TestLinking['addEventListener']>(() => subscription);
+    const view = await render(<Navigator linking={{ addEventListener, getInitialURL: async () => null }} />);
+    try {
+      await waitFor(() => expect(navigationRef.isReady()).toBe(true));
+      await fireEvent.press(view.getByTestId('main-tab-search'));
+      await waitFor(() => expect(view.getByText(saved)).toBeTruthy());
+      if (action === 'submit') await fireEvent.changeText(view.getByPlaceholderText('输入关键词'), query);
+
+      const [[, onUrl]] = addEventListener.mock.calls;
+      await act(async () => {
+        if (leave) {
+          onUrl({ url: disabledTopic.url });
+          expect(navigationRef.getCurrentRoute()?.name).toBe('Topic');
+        }
+        if (action === 'submit') {
+          await fireEvent(view.getByPlaceholderText('输入关键词', { includeHiddenElements: true }), 'submitEditing', {
+            nativeEvent: { text: query }
+          });
+        } else {
+          await fireEvent.press(view.getByLabelText(`删除最近搜索 ${saved}`, { includeHiddenElements: true }));
+        }
+      });
+      if (leave) await act(() => navigationRef.goBack());
+      if (action === 'submit') expect(view.getByDisplayValue(query)).toBeTruthy();
+      if (!leave) {
+        await waitFor(async () => {
+          expect(await AsyncStorage.getItem(historyKey)).toBe(
+            JSON.stringify(action === 'submit' ? [query, saved] : [])
+          );
+        });
+      } else {
+        expect(await AsyncStorage.getItem(historyKey)).toBe(JSON.stringify([saved]));
+      }
+    } finally {
+      await view.unmount();
+      if (history === null) await AsyncStorage.removeItem(historyKey);
+      else await AsyncStorage.setItem(historyKey, history);
+    }
+  });
+
+  it.each([true, false])('selects the search source only while focused (leave: %s)', async (leave) => {
+    mockRealListScreen = 'search';
+    jest
+      .mocked(useSearchController)
+      .mockImplementation(
+        jest.requireActual<typeof import('@/features/search/useSearchController')>(
+          '@/features/search/useSearchController'
+        ).useSearchController
+      );
+    const subscription = Linking.addEventListener('url', () => {});
+    const addEventListener = jest.fn<TestLinking['addEventListener']>(() => subscription);
+    const view = await render(<Navigator linking={{ addEventListener, getInitialURL: async () => null }} />);
+    try {
+      await waitFor(() => expect(navigationRef.isReady()).toBe(true));
+      await fireEvent.press(view.getByTestId('main-tab-search'));
+      expect(view.getByTestId('search-source-all').props.accessibilityState.selected).toBe(true);
+      const [[, onUrl]] = addEventListener.mock.calls;
+      await act(async () => {
+        if (leave) {
+          onUrl({ url: disabledTopic.url });
+          expect(navigationRef.getCurrentRoute()?.name).toBe('Topic');
+        }
+        await fireEvent.press(view.getByTestId('search-source-v2ex', { includeHiddenElements: true }));
+      });
+      if (leave) await act(() => navigationRef.goBack());
+      expect(view.getByTestId('search-source-v2ex').props.accessibilityState.selected).toBe(!leave);
+      expect(view.getByTestId('search-source-all').props.accessibilityState.selected).toBe(leave);
+    } finally {
+      await view.unmount();
+    }
+  });
+
+  it('keeps the selected feed reading filter when a tap arrives after a warm link opens a topic', async () => {
+    mockRealListScreen = 'feed';
+    mockUseRealFeedController();
+    const subscription = Linking.addEventListener('url', () => {});
+    const addEventListener = jest.fn<TestLinking['addEventListener']>(() => subscription);
+    const view = await render(<Navigator linking={{ addEventListener, getInitialURL: async () => null }} />);
+    try {
+      await waitFor(() => expect(navigationRef.isReady()).toBe(true));
+      expect(view.getByLabelText('未读')).toBeTruthy();
+      const [[, onUrl]] = addEventListener.mock.calls;
+      await act(async () => {
+        onUrl({ url: disabledTopic.url });
+        expect(navigationRef.getCurrentRoute()?.name).toBe('Topic');
+        await fireEvent.press(view.getByLabelText('未读', { includeHiddenElements: true }));
+      });
+      await act(() => navigationRef.goBack());
+      expect(view.queryByLabelText('未读，已选择')).toBeNull();
+      await fireEvent.press(view.getByLabelText('未读'));
+      expect(view.getByLabelText('未读，已选择')).toBeTruthy();
+    } finally {
+      await view.unmount();
+    }
+  });
+
+  it('discards a queued library category select after a warm link opens a topic', async () => {
+    mockRealListScreen = 'library';
+    jest.mocked(queryReaderCategories).mockResolvedValueOnce([{ source: 'v2ex', id: 'qna', name: '问与答' }]);
+    const measure = jest
+      .spyOn(View.prototype, 'measureInWindow')
+      .mockImplementation((callback) => callback(40, 200, 180, 44));
+    const subscription = Linking.addEventListener('url', () => {});
+    const addEventListener = jest.fn<TestLinking['addEventListener']>(() => subscription);
+    const linking: TestLinking = { addEventListener, getInitialURL: async () => null };
+    const view = await render(<Navigator linking={linking} />);
+    try {
+      await waitFor(() => expect(navigationRef.isReady()).toBe(true));
+      await act(() => {
+        openLibraryRoute('favorites');
+      });
+      const categoryLabel = '分类：全部';
+      await waitFor(() => expect(view.getByLabelText(categoryLabel).props.accessibilityState.disabled).toBe(false));
+      await fireEvent.press(view.getByLabelText(categoryLabel));
+      expect(view.getByLabelText('关闭分类菜单')).toBeTruthy();
+
+      expect(addEventListener).toHaveBeenCalledTimes(1);
+      const [[, onUrl]] = addEventListener.mock.calls;
+      await act(async () => {
+        onUrl({ url: disabledTopic.url });
+        expect(navigationRef.getCurrentRoute()?.name).toBe('Topic');
+        await fireEvent.press(view.getByRole('menuitem', { name: '问与答', includeHiddenElements: true }));
+      });
+      expect(view.queryByLabelText('关闭分类菜单', { includeHiddenElements: true })).toBeNull();
+
+      await act(() => navigationRef.goBack());
+      expect(view.getByTestId('library-category-menu-button').props.accessibilityLabel).toBe(categoryLabel);
+      await fireEvent.press(view.getByLabelText(categoryLabel));
+      await fireEvent.press(view.getByRole('menuitem', { name: '问与答' }));
+      expect(view.getByLabelText('分类：问与答')).toBeTruthy();
+    } finally {
+      measure.mockRestore();
+      await view.unmount();
+    }
+  });
+
+  it.each([
+    { tab: 'history', button: '清空历史', command: { type: 'clear-history' } },
+    { tab: 'favorites', button: '取消收藏', command: { type: 'delete', collection: 'favorites', keys: ['v2ex:7'] } }
+  ] as const)(
+    'retires the library $tab confirmation across a warm topic link and back',
+    async ({ tab, button, command }) => {
+      mockRealListScreen = 'library';
+      jest
+        .mocked(useReaderDataActionsController)
+        .mockImplementation(
+          jest.requireActual<typeof import('@/features/library/useReaderDataActionsController')>(
+            '@/features/library/useReaderDataActionsController'
+          ).useReaderDataActionsController
+        );
+      const localTopic: Topic = {
+        ...disabledTopic,
+        source: 'v2ex',
+        id: '7',
+        title: '本机已保存的主题',
+        url: 'https://www.v2ex.com/t/7'
+      };
+      jest.mocked(queryReaderPage).mockResolvedValueOnce({ records: [{ topic: localTopic, savedAt: '2026-01-01' }] });
+      const reader = libraryRuntimeWithSources.reader;
+      const original = reader.data;
+      const fixture = {
+        ...original,
+        counts: { ...original.counts, [tab]: 1 },
+        [tab]: { 'v2ex:7': true }
+      };
+      reader.data = fixture;
+      reader.dataRef.current = fixture;
+      const commit = jest.mocked(reader.commit);
+      commit.mockClear();
+      const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+      const subscription = Linking.addEventListener('url', () => {});
+      const addEventListener = jest.fn<TestLinking['addEventListener']>(() => subscription);
+      const linking: TestLinking = { addEventListener, getInitialURL: async () => null };
+      const view = await render(<Navigator linking={linking} />);
+      const requestConfirmation = async () => {
+        await fireEvent.press(view.getByLabelText(button));
+        const confirm = alert.mock.calls.at(-1)?.[2]?.find((item) => item.style === 'destructive')?.onPress;
+        if (!confirm) throw new Error('找不到资料库确认按钮');
+        return confirm;
+      };
+      try {
+        await waitFor(() => expect(navigationRef.isReady()).toBe(true));
+        await act(() => {
+          openLibraryRoute(tab);
+        });
+        await waitFor(() => expect(view.getByLabelText(button)).toBeTruthy());
+        const previousConfirm = await requestConfirmation();
+
+        const [[, onUrl]] = addEventListener.mock.calls;
+        await act(async () => onUrl({ url: disabledTopic.url }));
+        await waitFor(() => expect(navigationRef.getCurrentRoute()?.name).toBe('Topic'));
+        await act(() => previousConfirm());
+        expect(commit).not.toHaveBeenCalled();
+
+        await act(() => navigationRef.goBack());
+        await act(() => previousConfirm());
+        expect(commit).not.toHaveBeenCalled();
+
+        const currentConfirm = await requestConfirmation();
+        await act(() => currentConfirm());
+        expect(commit).toHaveBeenCalledTimes(1);
+        expect(commit).toHaveBeenCalledWith(expect.objectContaining(command));
+      } finally {
+        alert.mockRestore();
+        reader.data = original;
+        reader.dataRef.current = original;
+        await view.unmount();
+      }
+    }
+  );
+
+  it('keeps a history entry when its delete tap arrives after a warm link opens a topic', async () => {
+    mockRealListScreen = 'library';
+    jest
+      .mocked(useReaderDataActionsController)
+      .mockImplementation(
+        jest.requireActual<typeof import('@/features/library/useReaderDataActionsController')>(
+          '@/features/library/useReaderDataActionsController'
+        ).useReaderDataActionsController
+      );
+    const topic: Topic = {
+      ...disabledTopic,
+      source: 'v2ex',
+      id: '7',
+      url: 'https://www.v2ex.com/t/7'
+    };
+    jest.mocked(queryReaderPage).mockResolvedValueOnce({
+      records: [{ topic, savedAt: '2026-01-01T00:00:00.000Z', visitCount: 1 }]
+    });
+    const commit = jest.mocked(libraryRuntimeWithSources.reader.commit);
+    commit.mockClear();
+    const subscription = Linking.addEventListener('url', () => {});
+    const addEventListener = jest.fn<TestLinking['addEventListener']>(() => subscription);
+    const view = await render(<Navigator linking={{ addEventListener, getInitialURL: async () => null }} />);
+    try {
+      await waitFor(() => expect(navigationRef.isReady()).toBe(true));
+      await act(() => openLibraryRoute('history'));
+      await waitFor(() => expect(view.getByLabelText('删除')).toBeTruthy());
+      const [[, onUrl]] = addEventListener.mock.calls;
+      await act(async () => {
+        onUrl({ url: disabledTopic.url });
+        expect(navigationRef.getCurrentRoute()?.name).toBe('Topic');
+        await fireEvent.press(view.getByLabelText('删除', { includeHiddenElements: true }));
+      });
+      expect(commit).not.toHaveBeenCalled();
+
+      await act(() => navigationRef.goBack());
+      await fireEvent.press(view.getByLabelText('删除'));
+      expect(commit).toHaveBeenCalledTimes(1);
+      expect(commit).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'delete', collection: 'history', keys: ['v2ex:7'] })
+      );
+    } finally {
+      await view.unmount();
+    }
   });
 });

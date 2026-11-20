@@ -25,10 +25,14 @@ async function runFixture(
   let report: { results: { error?: string }[] } | undefined;
   let animation = '1';
   const exec = vi.fn((_command: string, args: readonly string[]) => {
+    if (_command.endsWith('aapt2') || _command.endsWith('aapt2.exe'))
+      return "package: name='com.wz.reader' versionCode='42' versionName='fixture'";
     const command = args.slice(2).join(' ');
+    if (command.startsWith('shell sha256sum')) return createHash('sha256').update(bytes).digest('hex');
     if (args.includes('screencap')) return image;
     if (command === 'emu avd name') return 'WZ_ComposerInsets_0916\nOK\n';
-    if (command === 'shell dumpsys package com.wz.reader') return 'firstInstallTime=2026-01-01 00:00:00\n';
+    if (command === 'shell dumpsys package com.wz.reader')
+      return 'firstInstallTime=2026-01-01 00:00:00\nappId=10123\nUser 0: installed=true\n';
     if (command === 'shell settings get secure default_input_method') return 'fixture.RealIME';
     if (command === 'shell settings get global window_animation_scale') return animation;
     if (command === 'shell pm path com.wz.reader') return 'package:/data/app/fixture/base.apk';
@@ -63,8 +67,9 @@ async function runFixture(
     }
   }));
   vi.doMock('../../scripts/agent-device-runtime.mjs', () => ({ runAgentDevice: agent }));
-  vi.doMock('../../scripts/device-apk-signer.mjs', () => ({
-    findDeviceApkSigner: () => 'fixture-signer',
+  vi.doMock('../../scripts/device-apk-signer.mjs', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('../../scripts/device-apk-signer.mjs')>()),
+    findApkSignerJar: () => 'fixture-signer',
     deviceApkSignerSha256: () => 'a'.repeat(64)
   }));
   const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);

@@ -4,7 +4,15 @@ import { beginDiagnosticTrace, finishDiagnosticTrace, setDiagnosticWriter } from
 import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import type { ForumNotification, NotificationPage } from '@/domain/notifications/models';
 import { buildSourceNotificationDigest, runNotificationBackgroundWorker } from './notificationWorker';
-import { defaultNotificationState, recordNotificationDelivery, type NotificationState } from './notificationStore';
+import {
+  clearNotificationSourceForContentDisable,
+  defaultNotificationState,
+  loadNotificationState,
+  recordNotificationDelivery,
+  recordNotificationSnapshot,
+  resetNotificationSourceIdentity,
+  type NotificationState
+} from './notificationStore';
 
 const persistence = vi.hoisted(() => ({ state: undefined as NotificationState | undefined }));
 vi.mock('@react-native-async-storage/async-storage', () => ({
@@ -790,9 +798,103 @@ describe('background notification digest', () => {
     await expect(operation).resolves.toMatchObject({ delivered: 0, failedSources: 0 });
     expect(dismiss).toHaveBeenCalledWith('nodeseek', 'android-id');
     expect(rollback).toHaveBeenCalledTimes(1);
-    expect(clearForContentDisable).toHaveBeenCalledWith('nodeseek');
+    expect(clearForContentDisable).toHaveBeenCalledWith(
+      'nodeseek',
+      expect.objectContaining({ identityKey: 'nodeseek:7' })
+    );
     expect(state.sources.nodeseek.notificationIdentifier).toBeUndefined();
   });
+
+  it.each(['same', 'replacement'] as const)(
+    'preserves the %s identity state after a retired worker finishes disabled cleanup',
+    async (account) => {
+      const state = defaultNotificationState();
+      state.globalEnabled = true;
+      state.sources.nodeseek = {
+        intentEnabled: true,
+        identityKey: 'nodeseek:7',
+        baselineReady: true,
+        deliveredIds: ['old']
+      };
+      const record = testRecord(state);
+      let allowed = true;
+      const dismissStarted = Promise.withResolvers<void>();
+      const finishDismiss = Promise.withResolvers<void>();
+      const readPage = async (id: string) => {
+        const page = await unreadNodeSeekReplyPage();
+        return { ...page, items: page.items.map((item) => ({ ...item, id })) };
+      };
+      const dependencies = {
+        sources: ['nodeseek'] as const,
+        sourceAllowed: async () => allowed,
+        network: {
+          restoreProxy: async () => undefined,
+          probeAccess: nodeSeekWorkerAccess,
+          listPage: () => readPage('first-new')
+        },
+        store: {
+          load: loadNotificationState,
+          record,
+          clearForContentDisable: clearNotificationSourceForContentDisable
+        },
+        system: {
+          permissionGranted,
+          reconcileDigests,
+          presentDigest: async (_source: string, _digest: unknown, identifier: string) => identifier,
+          dismissDigest
+        }
+      };
+      const retired = runNotificationBackgroundWorker({
+        ...dependencies,
+        store: {
+          ...dependencies.store,
+          record: async (...args) => {
+            const receipt = await record(...args);
+            allowed = false;
+            return receipt;
+          }
+        },
+        system: {
+          ...dependencies.system,
+          dismissDigest: async (_source, identifier) => {
+            expect(identifier).toBe('wz-message-nodeseek-nodeseek%3A7-a');
+            dismissStarted.resolve();
+            await finishDismiss.promise;
+          }
+        }
+      });
+      try {
+        await dismissStarted.promise;
+        allowed = true;
+        const identityKey = account === 'same' ? 'nodeseek:7' : 'nodeseek:8';
+        if (account === 'replacement') await resetNotificationSourceIdentity('nodeseek', identityKey);
+        await recordNotificationSnapshot('nodeseek', identityKey, 5, '2026-06-01T00:00:00Z');
+        if (account === 'replacement') {
+          const network = {
+            ...dependencies.network,
+            probeAccess: async () => ({ identityKey, userId: '8' })
+          };
+          expect((await runNotificationBackgroundWorker({ ...dependencies, network })).delivered).toBe(0);
+          const replacement = await runNotificationBackgroundWorker({
+            ...dependencies,
+            network: { ...network, listPage: () => readPage('replacement-new') }
+          });
+          expect(replacement.delivered).toBe(1);
+        }
+        const beforeDismiss = (await loadNotificationState()).sources.nodeseek;
+        expect(beforeDismiss).toMatchObject({ identityKey, unreadCount: 5, baselineReady: true });
+        if (account === 'replacement') {
+          expect(beforeDismiss.notificationIdentifier).toBe('wz-message-nodeseek-nodeseek%3A8-a');
+        }
+        finishDismiss.resolve();
+        await retired;
+        expect((await loadNotificationState()).sources.nodeseek).toEqual(beforeDismiss);
+      } finally {
+        finishDismiss.resolve();
+        await retired;
+      }
+    }
+  );
 
   it('returns at the wall-clock deadline even when proxy restoration never settles', async () => {
     const result = await Promise.race([

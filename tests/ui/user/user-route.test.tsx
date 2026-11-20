@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { createNavigationContainerRef, NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { Linking, Text } from 'react-native';
+import { useAppDeepLinkNavigation } from '@/app/useAppDeepLinkNavigation';
 import type { Topic, UserProfile } from '@/domain/forum/models';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
@@ -9,10 +11,18 @@ import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { UserRoute, UserRouteRuntimeProvider, type UserRouteRuntimeValue } from '@/features/user/UserRoute';
 import { UserScreen } from '@/features/user/UserScreen';
 import { useUserController } from '@/features/user/useUserController';
-import { act, render } from '../render';
+import { act, fireEvent, render } from '../render';
 
 jest.mock('@/features/user/useUserController');
-jest.mock('@/features/user/UserScreen', () => ({ UserScreen: jest.fn(() => null) }));
+let mockUseRealUserScreen = false;
+jest.mock('@/features/user/UserScreen', () => ({
+  UserScreen: jest.fn((props: React.ComponentProps<typeof import('@/features/user/UserScreen').UserScreen>) => {
+    if (!mockUseRealUserScreen) return null;
+    const { UserScreen } =
+      jest.requireActual<typeof import('@/features/user/UserScreen')>('@/features/user/UserScreen');
+    return <UserScreen {...props} />;
+  })
+}));
 
 const profile: UserProfile = {
   source: 'nodeseek',
@@ -66,8 +76,111 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 describe('NodeSeek profile private conversation', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockUseRealUserScreen = false;
     setProfile(profile);
   });
+
+  it('ignores a queued original profile link after a warm link opens a topic', async () => {
+    mockUseRealUserScreen = true;
+    const navigation = createNavigationContainerRef<RootStackParamList>();
+    const subscription = Linking.addEventListener('url', () => {});
+    const addEventListener = jest.fn<typeof Linking.addEventListener>(() => subscription);
+    const linking = { addEventListener, getInitialURL: async () => null };
+    const openOriginal = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined);
+    const pushTopic = (destination: RootStackParamList['Topic']) => {
+      navigation.navigate('Topic', destination);
+      return true;
+    };
+    function Routes() {
+      useAppDeepLinkNavigation(linking, pushTopic);
+      return (
+        <NavigationContainer ref={navigation}>
+          <Stack.Navigator initialRouteName="User" screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="User" component={UserRoute} initialParams={{ user: profile }} />
+            <Stack.Screen name="Topic">{() => <Text>链接主题</Text>}</Stack.Screen>
+          </Stack.Navigator>
+        </NavigationContainer>
+      );
+    }
+    const view = await render(
+      <UserRouteRuntimeProvider value={runtime()}>
+        <Routes />
+      </UserRouteRuntimeProvider>
+    );
+    try {
+      expect(view.getByLabelText('原站')).toBeTruthy();
+      const [[, openLink]] = addEventListener.mock.calls;
+      await act(async () => {
+        openLink({ url: 'https://linux.do/t/topic/123' });
+        expect(navigation.getCurrentRoute()?.name).toBe('Topic');
+        await fireEvent.press(view.getByLabelText('原站', { includeHiddenElements: true }));
+      });
+      expect(openOriginal).not.toHaveBeenCalled();
+      await act(() => navigation.goBack());
+      await fireEvent.press(view.getByLabelText('原站'));
+      expect(openOriginal).toHaveBeenCalledTimes(1);
+      expect(openOriginal).toHaveBeenCalledWith(profile.url);
+    } finally {
+      openOriginal.mockRestore();
+      await view.unmount();
+    }
+  });
+
+  it.each(['profile-back', 'profile-follow', 'disabled-back', 'disabled-manage'] as const)(
+    'keeps the active Topic when the previous User route receives a queued %s action',
+    async (action) => {
+      const navigationRef = createNavigationContainerRef<RootStackParamList>();
+      const disabled = action === 'disabled-back' || action === 'disabled-manage';
+      const value = runtime();
+      const view = await render(
+        <UserRouteRuntimeProvider value={disabled ? { ...value, enabledSources: [] } : value}>
+          <NavigationContainer ref={navigationRef}>
+            <Stack.Navigator initialRouteName="MainTabs" screenOptions={{ headerShown: false }}>
+              <Stack.Screen name="MainTabs">{() => null}</Stack.Screen>
+              <Stack.Screen name="User" component={UserRoute} />
+              <Stack.Screen name="Topic">{() => null}</Stack.Screen>
+            </Stack.Navigator>
+          </NavigationContainer>
+        </UserRouteRuntimeProvider>
+      );
+      await act(() => navigationRef.navigate('User', { user: profile }));
+      const label = action === 'disabled-manage' ? '管理内容源' : '返回';
+      const click = disabled ? view.getByLabelText(label).props.onClick : undefined;
+      const actions = disabled ? undefined : screenProps();
+      const topic: Topic = {
+        source: 'nodeseek',
+        id: '42',
+        title: 'Reply target',
+        author: 'writer',
+        createdAt: '2026-10-24T00:00:00Z',
+        url: 'https://www.nodeseek.com/post-42-1'
+      };
+
+      await act(() => navigationRef.navigate('Topic', { topic }));
+      const topicKey = navigationRef.getCurrentRoute()?.key;
+      expect(navigationRef.getCurrentRoute()?.name).toBe('Topic');
+      await act(() => {
+        if (disabled) click({ target: 1, currentTarget: 1, nativeEvent: {} });
+        else if (action === 'profile-follow') actions?.onToggleFollow(profile);
+        else actions?.onBack();
+      });
+      expect(navigationRef.getCurrentRoute()?.key).toBe(topicKey);
+      expect(value.reader.commit).not.toHaveBeenCalled();
+
+      await act(() => navigationRef.goBack());
+      expect(navigationRef.getCurrentRoute()?.name).toBe('User');
+      if (disabled) await fireEvent.press(view.getByLabelText(label));
+      else {
+        if (action === 'profile-follow') {
+          await act(() => screenProps().onToggleFollow(profile));
+          expect(value.reader.commit).toHaveBeenCalledTimes(1);
+          expect(value.reader.commit).toHaveBeenCalledWith(expect.objectContaining({ type: 'follow', enabled: true }));
+        }
+        await act(() => screenProps().onBack());
+      }
+      expect(navigationRef.getCurrentRoute()?.name).toBe('MainTabs');
+    }
+  );
 
   it.each(['topic', 'private-message'] as const)(
     'ignores queued %s navigation after leaving the profile and permits revisiting after return',

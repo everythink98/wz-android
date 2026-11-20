@@ -153,14 +153,16 @@ describe('Discourse notifications', () => {
         jsonResponse({
           notifications: [
             { id: 1, data: { display_username: '显示名' } },
-            { id: 2, data: { display_username: '显示名', username: 'actual_username' } }
+            { id: 2, acting_user_name: '显示名', data: { username: 'actual_username' } },
+            { id: 3, acting_user_name: '只有昵称', data: {} }
           ],
-          total_rows_notifications: 2
+          total_rows_notifications: 3
         })
     });
     expect(page.items.map((item) => item.actor)).toEqual([
       { name: '显示名' },
-      { name: '显示名', id: 'actual_username' }
+      { name: '显示名', id: 'actual_username' },
+      { name: '只有昵称' }
     ]);
   });
   it('reports optional category-discovery degradation while keeping its existing fallback categories', async () => {
@@ -393,7 +395,7 @@ describe('Discourse notifications', () => {
             topics: [{ id: 201, title: '私信主题', last_poster_username: lastPoster, participants }],
             users: [
               { id: 7, username: 'Alice', name: '本人' },
-              { id: 9, username: 'bob', name: 'Bob' },
+              { id: 9, username: 'bob', display_username: 'Bob' },
               { id: 10, username: 'carol', name: 'Carol' }
             ]
           })
@@ -657,6 +659,35 @@ describe('Discourse notifications', () => {
     ]);
   });
 
+  it.each([
+    [{ success: true }, true],
+    [{ success: 'OK' }, true],
+    [{ success: false, errors: ['could not save'] }, false],
+    [{ success: 'OK', errors: ['could not save'] }, false],
+    [{}, false]
+  ] as const)('requires a successful server receipt for single and bulk mark-read: %j', async (receipt, confirmed) => {
+    const access = {
+      fetcher: async (url: string) =>
+        jsonResponse(new URL(url).pathname === '/session/csrf' ? { csrf: 'test' } : receipt),
+      identityKey: 'linuxdo:alice',
+      userId: 'alice'
+    };
+    const item = {
+      source: 'linuxdo',
+      id: '31',
+      kind: 'mention',
+      actor: { name: 'Alice' },
+      title: 'Topic',
+      createdAt: null,
+      unread: true,
+      target: { type: 'information' }
+    } as const;
+    await expect(
+      linuxDoNotificationAdapter.markRead(item, { notification: item, title: item.title }, access)
+    ).resolves.toMatchObject({ confirmed });
+    await expect(linuxDoNotificationAdapter.markAllRead(access)).resolves.toMatchObject({ confirmed });
+  });
+
   it('uses the unread filter and the authoritative unread total', async () => {
     const fetcher = vi.fn(async (_input: string, _init?: RequestInit) =>
       jsonResponse({
@@ -749,6 +780,7 @@ describe('Discourse notifications', () => {
         topic_id: 201,
         post_number: 4,
         username: 'alice',
+        display_username: '山月',
         cooked:
           '<p>准确正文</p><div class="policy" data-accept="已阅读" data-revoke="取消确认">我已知晓此更新内容</div>',
         policy_accepted: false,
@@ -786,7 +818,12 @@ describe('Discourse notifications', () => {
       policy: { postId: '777', accepted: false, canAccept: true, acceptLabel: '已阅读' }
     });
     expect(detail.contentHtml).toContain('<p>准确正文</p>');
-    expect(detail.topic).toMatchObject({ source: 'linuxdo', id: '201', url: 'https://linux.do/t/hello/201/4' });
+    expect(detail.topic).toMatchObject({
+      source: 'linuxdo',
+      id: '201',
+      author: '山月',
+      url: 'https://linux.do/t/hello/201/4'
+    });
     expect(new URL(fetcher.mock.calls[0]?.[0] || '').pathname).toBe('/posts/777.json');
   });
 
@@ -806,6 +843,7 @@ describe('Discourse notifications', () => {
               id: 100,
               post_number: 1,
               username: 'bob',
+              name: '同名用户',
               cooked: '<p>第一条</p>',
               created_at: '2026-08-03T10:00:00Z'
             },
@@ -813,6 +851,7 @@ describe('Discourse notifications', () => {
               id: 101,
               post_number: 2,
               username: 'alice',
+              name: '同名用户',
               cooked: '<p>第二条</p>',
               created_at: '2026-08-03T10:01:00Z'
             }
@@ -840,8 +879,8 @@ describe('Discourse notifications', () => {
 
     expect(detail.reply).toEqual({ format: 'markdown' });
     expect(detail.messages).toEqual([
-      expect.objectContaining({ id: '100', author: 'bob', mine: false, contentHtml: '<p>第一条</p>' }),
-      expect.objectContaining({ id: '101', author: 'alice', mine: true, contentHtml: '<p>第二条</p>' })
+      expect.objectContaining({ id: '100', author: '同名用户', mine: false, contentHtml: '<p>第一条</p>' }),
+      expect.objectContaining({ id: '101', author: '同名用户', mine: true, contentHtml: '<p>第二条</p>' })
     ]);
     const detailUrl = new URL(fetcher.mock.calls[0]?.[0] || '');
     expect(detailUrl.pathname).toBe('/t/201.json');

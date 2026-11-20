@@ -18,6 +18,7 @@ import { credentialVault, emptyCredentialSummaries } from '@/platform/storage/cr
 import { useAccountRuntime } from '@/features/account/useAccountRuntime';
 import { useAccountCredentialController } from '@/features/account/useAccountCredentialController';
 import { useLinuxDoCredit } from '@/features/more/useLinuxDoCredit';
+import { NodeSeekServicesPanel } from '@/features/more/components/NodeSeekServicesPanel';
 import { nativeSecureRandomHex } from '@/platform/android/secureRandom';
 import { accountQueryKeys, appQueryClient } from '@/platform/query/serverState';
 import { discourseReadingQueryKey } from '@/platform/query/discourseReadingRuntime';
@@ -1104,6 +1105,35 @@ describe('local login identity restoration', () => {
     expect(readManagedCookieHeader).not.toHaveBeenCalled();
   });
 
+  it('offers startup retry when a disabled site never returns its saved user agent and ignores its late value', async () => {
+    jest.useFakeTimers();
+    const old = Promise.withResolvers<string | null>();
+    let first = true;
+    storageRead.mockImplementation((key: string) => {
+      if (key !== 'nodeseek-user-agent') return Promise.resolve(null);
+      if (!first) return Promise.resolve('Current user agent');
+      first = false;
+      return old.promise;
+    });
+    const hook = await startIdentityRuntime(true, []);
+    try {
+      await act(async () => {
+        jest.advanceTimersByTime(5_000);
+      });
+      expect(hook.result.current.read.sessionsReady).toBe(false);
+      expect(hook.result.current.hosts.startupRecovery).not.toBeNull();
+      await retryIdentityRecovery(hook.result.current);
+      await waitFor(() => expect(hook.result.current.read.sessionsReady).toBe(true));
+      await act(async () => old.resolve('Stale user agent'));
+      expect(hook.result.current.read.getNodeSeekUserAgent()).toBe('Current user agent');
+      expect(hook.fetcher).not.toHaveBeenCalled();
+    } finally {
+      old.resolve(null);
+      await hook.unmount();
+      jest.useRealTimers();
+    }
+  });
+
   it('keeps remote account refresh behind failed local restoration', async () => {
     storageRead.mockRejectedValue(new Error('storage unavailable'));
     const { result, fetcher } = await startIdentityRuntime();
@@ -1206,6 +1236,65 @@ describe('local login identity restoration', () => {
     } finally {
       write.mockRestore();
       native.mockImplementation(previous);
+    }
+  });
+
+  it('offers startup retry when persisted account records cannot be read', async () => {
+    const marker = 'account-session.migration.v1';
+    const read = AsyncStorage.getItem.bind(AsyncStorage);
+    let unavailable = true;
+    const reader = jest.spyOn(AsyncStorage, 'getItem').mockImplementation((key) => {
+      if (unavailable && key === marker) return Promise.reject(new Error('private storage failure'));
+      return read(key);
+    });
+    const hook = await startIdentityRuntime();
+    try {
+      await waitFor(() => expect(hook.result.current.hosts.startupRecovery).not.toBeNull());
+      expect(hook.result.current.read.sessionsReady).toBe(false);
+      expect(reader.mock.calls.filter(([key]) => key === marker)).toHaveLength(2);
+      expect(await read(marker)).toBe('1');
+      unavailable = false;
+      const recovery = await render(hook.result.current.hosts.startupRecovery!, { wrapper: QueryTestWrapper });
+      try {
+        await fireEvent.press(recovery.getByRole('button', { name: '重试启动' }));
+        await waitFor(() => expect(hook.result.current.read.sessionsReady).toBe(true));
+        expect(hook.result.current.hosts.startupRecovery).toBeNull();
+        expect(hook.fetcher).not.toHaveBeenCalled();
+        expect(readManagedCookieHeader).not.toHaveBeenCalled();
+      } finally {
+        await recovery.unmount();
+      }
+    } finally {
+      await hook.unmount();
+      reader.mockRestore();
+    }
+  });
+
+  it('offers startup retry when legacy identity confirmation stalls and ignores its late completion', async () => {
+    jest.useFakeTimers();
+    storageRead.mockImplementation((key: string) =>
+      Promise.resolve(key === 'linuxdo-clearance' ? JSON.stringify({ userAgent: 'Legacy UA' }) : null)
+    );
+    const pending = Promise.withResolvers<Awaited<ReturnType<typeof readManagedCookieHeader>>>();
+    jest.mocked(readManagedCookieHeader).mockReturnValueOnce(pending.promise);
+    const hook = await startIdentityRuntime(true, ['linuxdo']);
+    try {
+      expect(readManagedCookieHeader).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        jest.advanceTimersByTime(5_000);
+      });
+      expect(hook.result.current.read.sessionsReady).toBe(false);
+      expect(hook.result.current.hosts.startupRecovery).not.toBeNull();
+      expect(SecureStore.deleteItemAsync).not.toHaveBeenCalled();
+      await retryIdentityRecovery(hook.result.current);
+      await waitFor(() => expect(hook.result.current.read.sessionsReady).toBe(true));
+      await act(async () => pending.resolve({ status: 'ok', header: '' }));
+      expect(SecureStore.deleteItemAsync).toHaveBeenCalledTimes(1);
+      expect(hook.fetcher).not.toHaveBeenCalled();
+    } finally {
+      pending.resolve({ status: 'unsupported' });
+      await hook.unmount();
+      jest.useRealTimers();
     }
   });
 
@@ -1589,7 +1678,8 @@ function recordCookieBarriers() {
 async function renderSiteRuntime(
   source: 'nodeseek' | 'linuxdo' | 'yaohuo',
   fetcher: Fetcher,
-  screen: 'topic' | 'more' = 'topic'
+  screen: 'topic' | 'more' = 'topic',
+  initiallyEnabled = true
 ) {
   let runtime!: ReturnType<typeof useAccountRuntime>;
   const notify = jest.fn();
@@ -1616,7 +1706,7 @@ async function renderSiteRuntime(
     });
     return runtime.hosts.element;
   }
-  const view = await render(<Harness />, { wrapper: QueryTestWrapper });
+  const view = await render(<Harness enabled={initiallyEnabled} />, { wrapper: QueryTestWrapper });
   await waitFor(() => expect(runtime.read.sessionsReady).toBe(true));
   return {
     view,
@@ -2113,6 +2203,114 @@ function seedNodeSeekAccount() {
   );
 }
 
+function nodeImageControls(key: ReturnType<typeof useAccountRuntime>['center']['nodeImage']['key']) {
+  const settings = createEmptyReaderData().settings;
+  const theme = createTheme(settings);
+  return (
+    <ReaderStyleProvider value={{ settings, theme }}>
+      <NodeSeekServicesPanel
+        theme={theme}
+        apiKeyAuthorized={key.authorized}
+        apiKeyBusy={key.busy}
+        apiKeySaved={key.saved}
+        recoveryThreshold={1}
+        onAuthorizeApiKey={key.authorize}
+        onClearApiKey={key.clear}
+        onRecoveryThresholdChange={() => undefined}
+        onSaveApiKey={key.save}
+      />
+    </ReaderStyleProvider>
+  );
+}
+
+it.each(['verified', 'legacy'] as const)(
+  'keeps the NodeImage authorization indicator scoped to the current account for a %s local key',
+  async (kind) => {
+    seedNodeSeekAccount();
+    await saveAccountSessionSnapshot(appQueryClient.getQueryData(accountQueryKeys.snapshot('nodeseek'))!);
+    defaultStorageRead.mockImplementation(async (key: string) => {
+      if (key !== 'nodeimage-api-key') return null;
+      return kind === 'legacy'
+        ? 'synthetic-retained-key'
+        : JSON.stringify({
+            version: 1,
+            apiKey: 'synthetic-retained-key',
+            ownership: { kind: 'verified', identityKey: 'nodeseek:42' }
+          });
+    });
+    let member: { id: number; name: string } | null = { id: 42, name: 'alice' };
+    const hook = await renderRuntime(
+      async () =>
+        new Response(
+          member
+            ? `<html><a class="Username" href="/space/${member.id}">${member.name}</a></html>`
+            : '<html><head><meta name="nodeseekAccountState" content="anonymous"></head></html>'
+        ),
+      true,
+      ['nodeseek']
+    );
+    await waitFor(() => expect(hook.result.current.center.nodeImage.key.saved).toBe(true));
+    const panel = () => nodeImageControls(hook.result.current.center.nodeImage.key);
+    const view = await render(panel());
+    const label = (authorized: boolean) => `NodeImage 授权，${authorized ? '已授权' : '未授权'}`;
+    const initialAuthorization = kind === 'verified';
+    expect(view.getByLabelText(label(initialAuthorization))).toBeTruthy();
+    await fireEvent.press(view.getByLabelText(label(initialAuthorization)));
+
+    for (const next of [{ id: 57, name: 'bob' }, { id: 42, name: 'alice' }, null]) {
+      member = next;
+      await act(async () => {
+        await expect(hook.result.current.read.reconcileAccountStatus('nodeseek')).resolves.toMatchObject({
+          status: next ? 'changed' : 'anonymous'
+        });
+      });
+      expect(hook.result.current.read.accountSessionViewModels.nodeseek.currentUser?.id).toBe(
+        next ? String(next.id) : undefined
+      );
+      await view.rerender(panel());
+      const authorized = kind === 'verified' && next?.id === 42;
+      expect(view.getByLabelText(label(authorized))).toBeTruthy();
+      expect(view.queryByLabelText(label(!authorized))).toBeNull();
+      expect(view.getByLabelText('清除 Key')).toBeTruthy();
+      if (!authorized) await expect(hook.result.current.write.ensureNodeImageApiKey()).resolves.toBeNull();
+    }
+    expect(SecureStore.deleteItemAsync).not.toHaveBeenCalled();
+  }
+);
+
+it('shows the current NodeImage authorization when a matching source is re-enabled', async () => {
+  seedNodeSeekAccount();
+  await saveAccountSessionSnapshot(appQueryClient.getQueryData(accountQueryKeys.snapshot('nodeseek'))!);
+  defaultStorageRead.mockImplementation(async (key: string) =>
+    key === 'nodeimage-api-key'
+      ? JSON.stringify({
+          version: 1,
+          apiKey: 'synthetic-retained-key',
+          ownership: { kind: 'verified', identityKey: 'nodeseek:42' }
+        })
+      : null
+  );
+  const fetcher = jest.fn(async () => Response.json({}));
+  const hook = await renderRuntime(fetcher, true, ['nodeseek']);
+  await waitFor(() => expect(hook.result.current.center.nodeImage.key.authorized).toBe(true));
+  const panel = () => nodeImageControls(hook.result.current.center.nodeImage.key);
+  const view = await render(panel());
+  try {
+    expect(view.getByLabelText('NodeImage 授权，已授权')).toBeTruthy();
+    await hook.rerender({ enabledSources: [] });
+    expect(hook.result.current.read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42')).toBe(false);
+    await hook.rerender({ enabledSources: ['nodeseek'] });
+    expect(hook.result.current.read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42')).toBe(true);
+    await view.rerender(panel());
+    expect(view.getByLabelText('NodeImage 授权，已授权')).toBeTruthy();
+    expect(view.queryByLabelText('NodeImage 授权，未授权')).toBeNull();
+    expect(fetcher).not.toHaveBeenCalled();
+  } finally {
+    await view.unmount();
+    await hook.unmount();
+  }
+});
+
 function accountClearFixture(site: 'nodeseek' | 'linuxdo' | 'yaohuo') {
   const id = site === 'nodeseek' ? '42' : site === 'linuxdo' ? 'alice' : '7';
   const username = site === 'yaohuo' ? '火友' : 'alice';
@@ -2226,6 +2424,47 @@ it.each(['nodeseek', 'linuxdo', 'yaohuo', 'nodeimage'] as const)(
   }
 );
 
+it.each(['nodeseek', 'linuxdo', 'yaohuo'] as const)(
+  're-enables %s with a disabled cold-start handoff pending until the user refreshes',
+  async (site) => {
+    const { id, response } = accountClearFixture(site);
+    const key = `account-session.v1.${site}`;
+    await saveAccountSessionSnapshot(appQueryClient.getQueryData(accountQueryKeys.snapshot(site))!);
+    const first = await renderSiteRuntime(site, async () => response(), 'more');
+    try {
+      await act(async () => first.runtime().center.handleAccountCenterCommand({ type: 'open-login', site }));
+      await waitFor(() => expect(first.view.getByTestId('login-webview')).toBeTruthy());
+      await first.enabled(false);
+      expect(JSON.parse((await AsyncStorage.getItem(key))!)).toMatchObject({ handoffPending: true, identity: { id } });
+    } finally {
+      await first.view.unmount();
+    }
+    appQueryClient.clear();
+
+    const fetcher = jest.fn(async () => response());
+    const restored = await renderSiteRuntime(site, fetcher, 'more', false);
+    try {
+      expect(fetcher).not.toHaveBeenCalled();
+      expect(restored.runtime().read.notificationPrivateAccessAllowed(site, `${site}:${id}`)).toBe(false);
+      await restored.enabled(true);
+      expect(restored.runtime().read.notificationPrivateAccessAllowed(site, `${site}:${id}`)).toBe(false);
+      expect(restored.runtime().read.readGateway.getReadPlan(site, 'account-data')).toMatchObject({
+        state: 'blocked',
+        reason: 'identity-pending'
+      });
+      expect(JSON.parse((await AsyncStorage.getItem(key))!)).toMatchObject({ handoffPending: true, identity: { id } });
+      expect(restored.view.queryByTestId('login-webview')).toBeNull();
+      expect(fetcher).not.toHaveBeenCalled();
+      await act(async () => restored.runtime().center.handleAccountCenterCommand({ type: 'refresh' }));
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(restored.runtime().read.notificationPrivateAccessAllowed(site, `${site}:${id}`)).toBe(true);
+      expect(JSON.parse((await AsyncStorage.getItem(key))!).handoffPending).toBeUndefined();
+    } finally {
+      await restored.view.unmount();
+    }
+  }
+);
+
 it.each(['same', 'changed', 'anonymous', 'storage-failed'] as const)(
   'retains an interrupted identity on an unknown recovery and explicitly settles %s without replaying authorization',
   async (outcome) => {
@@ -2288,6 +2527,87 @@ it.each(['same', 'changed', 'anonymous', 'storage-failed'] as const)(
     }
   }
 );
+
+it.each(['nodeseek', 'linuxdo', 'yaohuo'] as const)(
+  'blocks %s native clear while its handoff marker is pending or failed',
+  async (site) => {
+    const { id } = accountClearFixture(site);
+    await saveAccountSessionSnapshot(appQueryClient.getQueryData(accountQueryKeys.snapshot(site))!);
+    const nativeClear = jest.fn(async () => true);
+    NativeModules.NetworkProxyModule = { ...NativeModules.NetworkProxyModule, clearManagedLoginCookies: nativeClear };
+    const fetcher = jest.fn(async () => new Response('', { status: 401 }));
+    const first = await renderSiteRuntime(site, fetcher);
+    const marker = Promise.withResolvers<void>();
+    const write = jest.spyOn(AsyncStorage, 'setItem').mockReturnValueOnce(marker.promise);
+    try {
+      await act(async () => first.runtime().center.handleAccountCenterCommand({ type: 'open-login', site }));
+      await waitFor(() => expect(write).toHaveBeenCalled());
+      await fireEvent.press(first.view.getByLabelText('清除登录'));
+      expect(nativeClear).not.toHaveBeenCalled();
+      await act(async () => marker.reject(new Error('disk unavailable')));
+      expect(first.notify).toHaveBeenCalledWith('登录会话保存失败，请关闭后重试');
+      await fireEvent.press(first.view.getByLabelText('清除登录'));
+      expect(nativeClear).not.toHaveBeenCalled();
+
+      await first.view.unmount();
+      appQueryClient.clear();
+      const restarted = await renderSiteRuntime(site, fetcher);
+      try {
+        expect(restarted.runtime().read.notificationPrivateAccessAllowed(site, `${site}:${id}`)).toBe(true);
+        expect(fetcher).not.toHaveBeenCalled();
+      } finally {
+        await restarted.view.unmount();
+      }
+    } finally {
+      marker.resolve();
+      write.mockRestore();
+      await first.view.unmount();
+    }
+  }
+);
+
+it('recovers a new login after clearing the account in the still-open login page', async () => {
+  const site = 'nodeseek';
+  accountClearFixture(site);
+  await saveAccountSessionSnapshot(appQueryClient.getQueryData(accountQueryKeys.snapshot(site))!);
+  const nativeClear = jest.fn(async () => true);
+  NativeModules.NetworkProxyModule = { ...NativeModules.NetworkProxyModule, clearManagedLoginCookies: nativeClear };
+  const first = await renderSiteRuntime(site, async () => new Response('', { status: 401 }));
+  try {
+    await act(async () => first.runtime().center.handleAccountCenterCommand({ type: 'open-login', site }));
+    await waitFor(() => expect(first.view.getByTestId('login-webview')).toBeTruthy());
+    await fireEvent.press(first.view.getByLabelText('清除登录'));
+    await waitFor(async () => {
+      expect(JSON.parse((await AsyncStorage.getItem(`account-session.v1.${site}`))!)).toMatchObject({
+        state: 'anonymous',
+        handoffPending: true
+      });
+    });
+    expect(nativeClear).toHaveBeenCalledTimes(1);
+    expect(first.view.getByTestId('login-webview')).toBeTruthy();
+  } finally {
+    await first.view.unmount();
+  }
+
+  appQueryClient.clear();
+  const fetcher = jest.fn(async () => new Response('<html><a class="Username" href="/space/84">bob</a></html>'));
+  const restarted = await renderSiteRuntime(site, fetcher);
+  try {
+    await waitFor(() =>
+      expect(restarted.runtime().read.notificationPrivateAccessAllowed(site, 'nodeseek:84')).toBe(true)
+    );
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(JSON.parse((await AsyncStorage.getItem(`account-session.v1.${site}`))!)).toMatchObject({
+      state: 'authenticated',
+      identity: { id: '84' }
+    });
+    expect(JSON.parse((await AsyncStorage.getItem(`account-session.v1.${site}`))!)).not.toHaveProperty(
+      'handoffPending'
+    );
+  } finally {
+    await restarted.view.unmount();
+  }
+});
 
 it('does not mount a login document until its durable marker is saved and preserves the account if saving fails', async () => {
   const { response } = accountClearFixture('nodeseek');
@@ -3313,7 +3633,7 @@ it.each([
     });
     if (stage === 'handoff') jest.mocked(setLinuxDoCookieResponseBarrier).mockImplementationOnce(() => pending);
     await fireEvent.press(view.getByText('检测并继续'));
-    expect(view.getByText('可以随时关闭并返回原页面。')).toBeTruthy();
+    expect(view.getByText('验证结果正在交回原请求，请稍候。')).toBeTruthy();
     if (exit === 'close') await fireEvent.press(view.getByLabelText('关闭'));
     if (exit === 'back')
       await act(async () => {
