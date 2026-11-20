@@ -63,7 +63,7 @@ describe('search candidate pressure through production hooks', () => {
     const searchDiscourseTags = jest.fn<Parameters<typeof useSearchCandidateQueries>[0]['searchDiscourseTags']>(
       () => response.promise
     );
-    const tagRequest = { source: 'linuxdo' as const, query: '', selectedTags: [] };
+    const tagRequest = { source: 'linuxdo' as const, query: '' };
     const reads = {
       enabled: true,
       sessionEpochs: initialForumSessionEpochs,
@@ -124,7 +124,7 @@ describe('search candidate pressure through production hooks', () => {
           enabled: true,
           sessionEpochs: initialForumSessionEpochs,
           readPlanScopes: { tags: 'stress', users: 'stress' },
-          tagRequest: { source: 'linuxdo', query: `tag-${index}`, selectedTags: [] },
+          tagRequest: { source: 'linuxdo', query: `tag-${index}` },
           userRequest: { source: 'linuxdo', term: `user-${index}` },
           searchDiscourseTags,
           searchDiscourseUsers

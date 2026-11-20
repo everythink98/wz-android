@@ -288,19 +288,23 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
       includeFontPadding: false,
       paddingVertical: 9
     },
+    searchFilterSegmentRow: { flexWrap: 'wrap' },
     searchFilterSegments: {
       backgroundColor: theme.surface2,
       borderRadius: readerRadii.control,
       borderColor: theme.line,
       borderWidth: StyleSheet.hairlineWidth,
       overflow: 'hidden',
-      flex: 1,
+      flexGrow: 1,
+      flexShrink: 1,
+      maxWidth: '100%',
       minWidth: 0,
       flexDirection: 'row',
       marginVertical: 6
     },
     searchFilterSegment: {
-      flex: 1,
+      flexGrow: 1,
+      flexShrink: 1,
       minWidth: 0,
       minHeight: 48,
       alignItems: 'center',
@@ -313,11 +317,12 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
       borderLeftWidth: StyleSheet.hairlineWidth,
       borderLeftColor: theme.line
     },
+    searchFilterSegmentSelected: { backgroundColor: theme.surface },
     searchFilterSegmentMark: {
       width: 14
     },
     searchFilterSegmentText: {
-      flex: 1,
+      flexShrink: 1,
       color: theme.ink,
       fontFamily: appFontFamily,
       fontSize: Math.round(13 * settings.fontScale),
@@ -326,16 +331,18 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
       lineHeight: Math.round(18 * settings.fontScale)
     },
     searchFilterOptionCopy: { flex: 1, minWidth: 0, rowGap: 3, paddingVertical: 9 },
-    searchFilterUnchecked: {
+    searchFilterCheckbox: {
       width: 16,
       height: 16,
       borderRadius: 3,
       borderWidth: 1,
-      borderColor: theme.muted
+      borderColor: theme.muted,
+      alignItems: 'center',
+      justifyContent: 'center'
     },
-    searchFilterOptionActive: { backgroundColor: theme.mist },
+    searchFilterCheckboxChecked: { borderColor: theme.ink },
     searchFilterActiveText: {
-      color: theme.dark ? theme.primary : theme.primaryStrong
+      color: theme.ink
     },
     searchFilterCandidateInput: {
       alignItems: 'center',

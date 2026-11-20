@@ -152,11 +152,6 @@ export function createFeedStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       paddingTop: 0,
       paddingBottom: 96
     },
-    topicListSeparator: {
-      width: '100%',
-      height: StyleSheet.hairlineWidth,
-      backgroundColor: theme.dark ? '#2B2D30' : '#ECEEF0'
-    },
     feedListFooter: {
       alignItems: 'center',
       paddingHorizontal: 16,

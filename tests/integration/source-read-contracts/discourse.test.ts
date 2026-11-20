@@ -2481,7 +2481,6 @@ describe('Android local sources', () => {
     const tags = await searchLinuxDoTags({
       query: '人',
       categoryId: '4',
-      selectedTags: ['快问快答'],
       limit: 20,
       fetcher,
       linuxDoAccess: testLinuxDoAccess()
@@ -2495,7 +2494,7 @@ describe('Android local sources', () => {
     expect(url.pathname).toBe('/tags/filter/search');
     expect(url.searchParams.get('q')).toBe('人');
     expect(url.searchParams.get('categoryId')).toBe('4');
-    expect(url.searchParams.getAll('selected_tags[]')).toEqual(['快问快答']);
+    expect(url.searchParams.has('selected_tags[]')).toBe(false);
     expect(url.searchParams.get('limit')).toBe('8');
     expect(url.searchParams.has('filterForInput')).toBe(false);
     expect((fetcher.mock.calls as unknown as [string, RequestInit][])[0]?.[1]).toEqual(

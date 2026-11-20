@@ -145,7 +145,7 @@ export function FilterSegments<Value extends string>({
   onChange: (value: Value) => void;
 }) {
   return (
-    <View style={styles.searchFilterRow}>
+    <View style={[styles.searchFilterRow, styles.searchFilterSegmentRow]}>
       <Text style={[styles.searchFilterLabel, styles.searchFilterLabelColumn]}>{label}</Text>
       <View style={styles.searchFilterSegments}>
         {items.map((item, index) => {
@@ -159,7 +159,7 @@ export function FilterSegments<Value extends string>({
               style={[
                 styles.searchFilterSegment,
                 index > 0 && styles.searchFilterSegmentDivider,
-                selected && styles.searchFilterOptionActive
+                selected && styles.searchFilterSegmentSelected
               ]}
               onPress={() => onChange(item.value)}
             >
@@ -168,9 +168,7 @@ export function FilterSegments<Value extends string>({
                   <Check size={14} color={styles.searchFilterActiveText.color} strokeWidth={2} accessible={false} />
                 ) : null}
               </View>
-              <Text style={[styles.searchFilterSegmentText, selected && styles.searchFilterActiveText]}>
-                {item.label}
-              </Text>
+              <Text style={styles.searchFilterSegmentText}>{item.label}</Text>
             </Pressable>
           );
         })}
@@ -187,6 +185,7 @@ export function FilterOptionRow({
   styles,
   testID,
   title = label,
+  theme,
   onPress
 }: FilterAppearance & {
   checked: boolean;
@@ -204,18 +203,20 @@ export function FilterOptionRow({
       accessibilityLabel={label}
       accessibilityState={{ checked }}
       accessibilityValue={detail ? { text: detail } : undefined}
-      style={[styles.searchFilterRow, checked && styles.searchFilterOptionActive]}
+      style={styles.searchFilterRow}
       onPress={onPress}
     >
       <View style={styles.searchFilterOptionCopy}>
-        <Text style={[styles.searchFilterLabel, checked && styles.searchFilterActiveText]}>{title}</Text>
+        <Text style={styles.searchFilterLabel}>{title}</Text>
         {detail ? <Text style={styles.searchFilterDetail}>{detail}</Text> : null}
       </View>
       <View style={styles.searchFilterTrailing}>
-        {checked ? (
-          <Check size={18} color={styles.searchFilterActiveText.color} strokeWidth={2} accessible={false} />
-        ) : role === 'checkbox' ? (
-          <View style={styles.searchFilterUnchecked} />
+        {role === 'checkbox' ? (
+          <View style={[styles.searchFilterCheckbox, checked && styles.searchFilterCheckboxChecked]}>
+            {checked ? <Check size={12} color={theme.ink} strokeWidth={2} accessible={false} /> : null}
+          </View>
+        ) : checked ? (
+          <Check size={18} color={theme.ink} strokeWidth={2} accessible={false} />
         ) : null}
       </View>
     </Pressable>

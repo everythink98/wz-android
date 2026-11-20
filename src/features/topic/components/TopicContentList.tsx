@@ -4,6 +4,7 @@ import { useTopicLocationCommand, useTopicFloorPositioning, useTopicAcceptedScro
 import { useTopicReplyEdgeLoad } from '../useTopicReplyEdgeLoad';
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import { topicLocationForReply } from '@/domain/forum/topicLocation';
+import { ContentLoadingPlaceholder } from '@/ui/controls/ContentLoadingPlaceholder';
 import { createTopicStyles, createTopicTableStyles, type TopicStyles } from '../styles';
 import {
   createContext,
@@ -306,13 +307,18 @@ function rowPresentationPart(row: CompiledForumContentRow) {
 type QuoteContentLayoutProgress =
   { contentToken: string; primed: false; frame: number | null } | { contentToken: string; primed: true };
 
-function TopicEntryProgress({ text }: { text: string }) {
+function TopicEntryProgress({ text, layout }: { text: string; layout: 'body' | 'position' }) {
   const [visible, setVisible] = useState(false);
   useEffect(() => {
     const timer = setTimeout(() => setVisible(true), 300);
     return () => clearTimeout(timer);
   }, []);
-  return visible ? <LoadingState compact text={text} /> : null;
+  if (!visible) return null;
+  return layout === 'body' ? (
+    <ContentLoadingPlaceholder layout="body" text={text} />
+  ) : (
+    <LoadingState compact text={text} />
+  );
 }
 
 function TopicListItemFrame({
@@ -2493,9 +2499,9 @@ export const TopicContentList = memo(function TopicContentList({
                     <View style={[styles.readingEntryStatus, topicColumnStyle]}>
                       {headerError ||
                         (topic && !readingPositionReady && read.readingEntry?.location ? (
-                          <TopicEntryProgress text="正在定位阅读位置" />
+                          <TopicEntryProgress layout="position" text="正在定位阅读位置" />
                         ) : !topic || (!listDrawn && pendingBodyKey.current === detailTopicStateKey) ? (
-                          <TopicEntryProgress text="正在加载正文" />
+                          <TopicEntryProgress layout="body" text="正在加载正文" />
                         ) : null)}
                     </View>
                   </ScrollView>

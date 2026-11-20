@@ -21,11 +21,13 @@
 
 筛选面板共用一条标题与字段名的左边线。每行的值从第二列起，清除、勾选和箭头有独立位置。两个短选项共用分段控件，较长的候选列表在面板内打开，返回后保留草稿。选中、切换输入焦点或收起键盘时仍按相同列对齐。[Android 分段按钮](https://developer.android.com/develop/ui/compose/components/segmented-button) · [Material Android 列表](https://github.com/material-components/material-components-android/blob/master/docs/components/List.md)
 
-长候选页沿用 Bencho 多选列表的固定勾选位，行文字在选中时保持原位。字段校验参考它的表单错误示例，从面板任意一页确认，都能回到出错输入，直接看到原因并修改。[Bencho 多选列表](https://bencho.dev/blocks/picker) · [Bencho 表单反馈](https://bencho.dev/blocks/form-error)
+长候选页沿用 Bencho 多选列表的固定勾选位，行文字在选中时保持原位。复选项在原框内打勾，单选项使用同位置的中性勾选标记，行底色和文字颜色保持原样。窄屏下两项分段选择可整组移到字段下方。字段校验参考它的表单错误示例，从面板任意一页确认，都能回到出错输入，直接看到原因并修改。[Bencho 多选列表](https://bencho.dev/blocks/picker) · [Bencho 表单反馈](https://bencho.dev/blocks/form-error)
 
 列表刷新参考 Now in Android。首次进入时在内容区提示加载；已有结果时保留阅读位置，下拉刷新只显示系统进度。翻页失败时把原因和重试放在列表末尾，成功后从同一处继续阅读。[Now in Android 信息流](https://github.com/android/nowinandroid/blob/main/feature/foryou/impl/src/main/kotlin/com/google/samples/apps/nowinandroid/feature/foryou/impl/ForYouScreen.kt)
 
 详情页先画列表已知的标题、作者和标签。V2EX 仅标题帖沿用同一标题字号和换行方式，紧凑间距放在回复区前。正文准备好时沿用同一组文字的位置，等待不足 300 毫秒时省去进度提示，内容与可操作的错误随时可以出现。续读只在确实定位楼层时提示。刷新、重试与字段错误的反馈紧贴对应操作。[Vibe Design 界面连续性](https://vibedesign.tips/015-ui-continuity/) · [加载状态](https://vibedesign.tips/017-loading-states/) · [提示与通知](https://vibedesign.tips/016-toast-or-notification/)
+
+首次读取且缺少内容时，首页和搜索显示少量静态列表占位，主题正文和用户主页在已知标题或身份下方补上对应区域的占位。已有内容在刷新时继续显示。楼层定位、其他来源读取和翻页进度仍标在对应区域，内容与错误按实际结算接入。[Apple 加载指南](https://developer.apple.com/design/human-interface-guidelines/loading?changes=_4_8) · [Carbon 加载模式](https://www.carbondesignsystem.com/building-blocks/core/patterns/loading)
 
 ## 品牌风格
 
@@ -78,6 +80,7 @@
 
 - 先用文字大小、字重、位置和分组留白表达主次，再决定是否需要边线或底色。保留 App 的字体、字号、行距、内容宽度和列表密度设置，不为视觉统一固定成一种阅读密度。
 - 同一内容组沿共同边线排布。外层铺满屏幕与内层保留文字边距可以同时成立；「我的」顶部背景和 Tab 铺满，不意味着下方等级与入口要受头像、昵称所在的窄列限制。
+- 主题卡片的用户名与时间同一行，过长用户名优先省略。新回复提示、回复数和浏览数保持为行尾的一组。只有宽度不足以容纳作者区和统计时，整组统计才移到下一行。首页与搜索相邻主题之间共用一条细分隔线。
 - 浅色模式以连续白色或主题实底为主。中性灰用于辅助文字、边线和必要状态，避免在普通工具、登录校验和下拉入口中堆叠灰黑色底块。用户对灰底的否定不等于禁止辅助灰字。
 - 内容稀疏时先合并重复标题和空行、调整密度，不靠大头像、巨幅标题、装饰卡片或无意义留白填满首屏。
 - 删除不提供新状态的标语、复述性说明与次要标签；若删去说明后操作关系不清晰，直接调整布局层级与对齐，不靠说明文字修补结构。

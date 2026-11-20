@@ -13,7 +13,6 @@ import { FilterOptionRow, type FilterAppearance } from './SearchFilterControls';
 type SearchTagCandidatesRequest = {
   categoryId?: string;
   query: string;
-  selectedTags: string[];
   source: DiscourseSource;
 };
 
@@ -52,7 +51,6 @@ export function useSearchCandidateQueries({
     query: tagRequest?.query || '',
     readPlanScope: readPlanScopes.tags,
     scope: sessionEpochs,
-    selectedTags: tagRequest?.selectedTags || [],
     source: tagRequest?.source || 'linuxdo'
   });
   const userQueryKey = forumQueryKeys.searchUsers({
@@ -101,11 +99,11 @@ export function useDiscourseFilterPickers({
   query: string;
   enabled: boolean;
 }) {
+  const term = query.trim();
   const input = useMemo(() => {
-    if (picker === 'tags') return { picker, term: query };
-    if (picker === 'author' && query.trim()) return { picker, term: query.trim() };
+    if (picker === 'tags' || (picker === 'author' && term)) return { picker, term };
     return null;
-  }, [picker, query]);
+  }, [picker, term]);
   const [submitted, setSubmitted] = useState<typeof input>(null);
   useEffect(() => {
     if (!input) return;
@@ -121,8 +119,7 @@ export function useDiscourseFilterPickers({
         ? {
             source: discourseDraft.source,
             query: input.term,
-            categoryId: discourseDraft.category || undefined,
-            selectedTags: discourseDraft.tags
+            categoryId: discourseDraft.category || undefined
           }
         : null,
     userRequest:

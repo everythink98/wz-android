@@ -113,14 +113,12 @@ export const forumQueryKeys = {
     query,
     readPlanScope,
     scope,
-    selectedTags,
     source
   }: {
     categoryId?: string;
     query: string;
     readPlanScope?: string;
     scope: ForumSessionEpochs;
-    selectedTags: string[];
     source: Source;
   }) =>
     [
@@ -131,8 +129,7 @@ export const forumQueryKeys = {
         categoryId: categoryId || null,
         ...(readPlanScope ? { readPlanScope } : {}),
         sessionEpoch: sessionEpochKey(source, scope),
-        query,
-        selectedTags
+        query
       }
     ] as const,
   searchUsers: ({

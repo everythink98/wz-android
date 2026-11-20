@@ -141,11 +141,15 @@ export function TopicCard({
       </View>
       {showStats ? (
         <View renderToHardwareTextureAndroid style={styles.topicStatGroup}>
-          {readerState.hasNewReplies ? <Text style={styles.topicStatText}>有新回复</Text> : null}
+          {readerState.hasNewReplies ? (
+            <Text style={styles.topicStatText} numberOfLines={1}>
+              有新回复
+            </Text>
+          ) : null}
           {showReplyCount ? (
             <View style={styles.topicStatItem}>
               <MessageCircle size={14} color={theme.muted} strokeWidth={1.9} accessible={false} />
-              <Text accessibilityLabel={`回复 ${topic.replyCount}`} style={styles.topicStatText}>
+              <Text accessibilityLabel={`回复 ${topic.replyCount}`} style={styles.topicStatText} numberOfLines={1}>
                 {topic.replyCount}
               </Text>
             </View>
@@ -153,7 +157,7 @@ export function TopicCard({
           {topic.viewCount ? (
             <View style={styles.topicStatItem}>
               <Eye size={14} color={theme.muted} strokeWidth={1.9} accessible={false} />
-              <Text accessibilityLabel={`浏览 ${topic.viewCount}`} style={styles.topicStatText}>
+              <Text accessibilityLabel={`浏览 ${topic.viewCount}`} style={styles.topicStatText} numberOfLines={1}>
                 {topic.viewCount}
               </Text>
             </View>
@@ -231,12 +235,18 @@ export function TopicCard({
 
 export const MemoizedTopicCard = memo(TopicCard, topicCardPropsAreEqual);
 
+export function TopicListSeparator() {
+  const { styles } = useReaderThemeStyles(createStyles);
+  return <View testID="topic-list-separator" style={styles.topicListSeparator} />;
+}
+
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontFamily = fontFamilyValue(settings.fontFamily);
   const fontSize = createReaderFontSizer(settings);
   const densityPadding = settings.listDensity === 'compact' ? 11 : settings.listDensity === 'loose' ? 16 : 14;
   const densityGap = settings.listDensity === 'compact' ? 6 : settings.listDensity === 'loose' ? 10 : 8;
   return StyleSheet.create({
+    topicListSeparator: { height: StyleSheet.hairlineWidth, backgroundColor: theme.line },
     topicRowShell: { position: 'relative', overflow: 'hidden', width: '100%', backgroundColor: theme.surface },
     topicCardPressable: {
       gap: densityGap,
@@ -272,7 +282,8 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       lineHeight: fontSize(16)
     },
     timeText: {
-      maxWidth: '100%',
+      flexShrink: 0,
+      maxWidth: '65%',
       color: theme.muted,
       fontFamily,
       fontSize: fontSize(12),
@@ -319,7 +330,8 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     topicFooterWithAction: { flex: 1, minWidth: 0 },
     topicFooterActionRow: { minHeight: 48, alignItems: 'center', flexDirection: 'row', gap: 8 },
     topicAuthorChip: {
-      flexBasis: 128,
+      // Keep space for the avatar and a short byline before moving the entire stats row below it.
+      flexBasis: 76,
       flexGrow: 1,
       flexShrink: 1,
       minWidth: 0,
@@ -328,10 +340,10 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       gap: 7
     },
     topicAuthorTextGroup: { flex: 1, minWidth: 0, gap: 2 },
-    topicByline: { alignItems: 'baseline', flexDirection: 'row', flexWrap: 'wrap', columnGap: 8, rowGap: 2 },
+    topicByline: { alignItems: 'baseline', flexDirection: 'row', gap: 8 },
     topicAuthorName: {
       flexShrink: 1,
-      maxWidth: '100%',
+      minWidth: 0,
       color: theme.muted,
       fontFamily,
       fontSize: fontSize(13),
@@ -347,15 +359,14 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       includeFontPadding: false
     },
     topicStatGroup: {
+      flexShrink: 0,
       maxWidth: '100%',
       marginLeft: 'auto',
       alignItems: 'center',
       flexDirection: 'row',
-      flexWrap: 'wrap',
-      columnGap: 10,
-      rowGap: 4
+      gap: 10
     },
-    topicStatItem: { maxWidth: '100%', alignItems: 'center', flexDirection: 'row', gap: 4 },
+    topicStatItem: { flexShrink: 1, minWidth: 0, alignItems: 'center', flexDirection: 'row', gap: 4 },
     topicStatText: {
       flexShrink: 1,
       color: theme.muted,

@@ -173,26 +173,22 @@ export function MoreUtilityPanels({
         >
           <View style={styles.stack}>
             <View style={styles.backupActions}>
-              <View style={styles.backupActionSlot}>
-                <AppButton
-                  testID="more-backup-export"
-                  icon={Download}
-                  label={operation === 'export' ? '导出中' : '导出备份文件'}
-                  loading={operation === 'export'}
-                  disabled={backupBusy || runtime.backup.recovery}
-                  onPress={runtime.backup.exportFile}
-                />
-              </View>
-              <View style={styles.backupActionSlot}>
-                <AppButton
-                  testID="more-backup-import"
-                  icon={RotateCcw}
-                  label={operation === 'import' ? '恢复中' : '选择备份文件恢复'}
-                  loading={operation === 'import'}
-                  disabled={backupBusy}
-                  onPress={runtime.backup.importFile}
-                />
-              </View>
+              <AppButton
+                testID="more-backup-export"
+                icon={Download}
+                label={operation === 'export' ? '导出中' : '导出备份文件'}
+                loading={operation === 'export'}
+                disabled={backupBusy || runtime.backup.recovery}
+                onPress={runtime.backup.exportFile}
+              />
+              <AppButton
+                testID="more-backup-import"
+                icon={RotateCcw}
+                label={operation === 'import' ? '恢复中' : '选择备份文件恢复'}
+                loading={operation === 'import'}
+                disabled={backupBusy}
+                onPress={runtime.backup.importFile}
+              />
             </View>
           </View>
         </ExpandablePanel>

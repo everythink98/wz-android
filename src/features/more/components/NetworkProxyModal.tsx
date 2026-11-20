@@ -494,19 +494,24 @@ export function NetworkProxyModal({
                         </View>
                       ) : null}
                     </View>
-                    <Text
-                      style={[
-                        styles.meta,
-                        activeFailed
-                          ? { color: theme.danger }
-                          : activeApplying || activeDisplayedEnabled || testingId === profile.id
-                            ? { color: accentColor }
-                            : null
-                      ]}
-                      numberOfLines={1}
-                    >
-                      {profile.host}:{profile.port} · {statusText}
-                    </Text>
+                    <View style={[proxyStyles.addressLine, proxyStyles.proxyDetails]}>
+                      <Text style={[styles.meta, proxyStyles.proxyHost]} numberOfLines={1}>
+                        {profile.host}:{profile.port}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.meta,
+                          proxyStyles.proxyStatus,
+                          activeFailed
+                            ? { color: theme.danger }
+                            : activeApplying || activeDisplayedEnabled || isTestingThis
+                              ? { color: accentColor }
+                              : null
+                        ]}
+                      >
+                        {statusText}
+                      </Text>
+                    </View>
                   </View>
                   {!selecting ? (
                     <View style={proxyStyles.rowActions}>
@@ -768,6 +773,9 @@ const proxyStyles = StyleSheet.create({
     flexShrink: 1,
     fontWeight: '600'
   },
+  proxyDetails: { flexWrap: 'wrap', rowGap: 0 },
+  proxyHost: { maxWidth: '100%' },
+  proxyStatus: { flexShrink: 1 },
   addressLine: {
     alignItems: 'center',
     flexDirection: 'row',

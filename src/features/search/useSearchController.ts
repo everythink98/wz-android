@@ -1188,8 +1188,7 @@ export function useSearchController({
       markDiagnosticStage(trace, 'guard', {
         source,
         state: 'started',
-        hasQuery: Boolean(options.query?.trim()),
-        selectedCount: options.selectedTags?.length || 0
+        hasQuery: Boolean(options.query?.trim())
       });
       return runSearchOptions(source, trace, options.signal, () =>
         readGateway.searchTagOptions({ source, ...request }, { plan: tagReadPlan, trace })

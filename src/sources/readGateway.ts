@@ -207,7 +207,7 @@ type ManagedGetEmojiUrlsOptions = Pick<LinuxDoOptions, 'signal' | 'timeoutMs'> &
 };
 type ManagedTagOptionSearchOptions = Pick<
   NonNullable<Parameters<typeof searchLinuxDoTags>[0]>,
-  'categoryId' | 'limit' | 'query' | 'selectedTags'
+  'categoryId' | 'limit' | 'query'
 > &
   ManagedGetEmojiUrlsOptions;
 type ManagedUserOptionSearchOptions = Pick<Parameters<typeof searchLinuxDoUsers>[0], 'categoryId' | 'limit' | 'term'> &

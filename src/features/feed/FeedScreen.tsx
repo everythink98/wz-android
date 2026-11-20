@@ -14,7 +14,7 @@ import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flas
 import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
 import { RefreshControl, ScrollView } from 'react-native-gesture-handler';
 import { TabBar, TabView, type TabBarProps } from 'react-native-tab-view';
-import { ListFilter, SquarePen } from 'lucide-react-native';
+import { ChevronDown, SquarePen } from 'lucide-react-native';
 import Animated from 'react-native-reanimated';
 import { useScrollActionVisibility } from '@/ui/hooks/useScrollActionVisibility';
 import type {
@@ -42,10 +42,11 @@ import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { AppButton, FloatingIconButton } from '@/ui/controls/ButtonControls';
 import { EmptyText, LoadingState, RecoverableEmptyState } from '@/ui/controls/FeedbackStates';
+import { ContentLoadingPlaceholder } from '@/ui/controls/ContentLoadingPlaceholder';
 import { PillRail } from '@/ui/controls/SelectionControls';
 import { TOUCH_HIT_SLOP } from '@/ui/controls/touchTarget';
 import { PopupMenu, PopupMenuItem } from '@/ui/controls/PopupMenu';
-import { MemoizedTopicCard } from '@/ui/topic/TopicCard';
+import { MemoizedTopicCard, TopicListSeparator } from '@/ui/topic/TopicCard';
 import { FEED_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import { sourceLabel } from '@/domain/forum/presentation';
 import { isFeedFilterSource } from '@/domain/forum/sourceCatalog';
@@ -360,7 +361,6 @@ export const FeedScreen = memo(function FeedScreen({
     ),
     [feedSource, onOpenTopic, topicStateIndex]
   );
-  const renderTopicSeparator = useCallback(() => <View style={styles.topicListSeparator} />, [styles]);
   const renderFeedFilterItem = useCallback(
     (item: { value: SourceFeedFilter; label: string }, last: boolean) => {
       const active = item.value === feedFilter;
@@ -405,7 +405,11 @@ export const FeedScreen = memo(function FeedScreen({
         testID="feed-loading-scene"
         style={[styles.content, { paddingTop: sourceHeaderHeight + secondaryHeaderHeight }]}
       >
-        <LoadingState text="加载中" animating={screenActive && routeSource === feedSource} />
+        {screenActive && routeSource === feedSource ? (
+          <ContentLoadingPlaceholder layout="list" text="加载中" />
+        ) : (
+          <LoadingState text="加载中" animating={false} />
+        )}
       </View>
     ),
     [styles, sourceHeaderHeight, secondaryHeaderHeight, screenActive, feedSource]
@@ -461,7 +465,11 @@ export const FeedScreen = memo(function FeedScreen({
             {...FEED_LIST_PERFORMANCE_PROPS}
             ListEmptyComponent={
               busy ? (
-                <LoadingState text="加载中" animating={screenActive} />
+                screenActive ? (
+                  <ContentLoadingPlaceholder layout="list" text="加载中" />
+                ) : (
+                  <LoadingState text="加载中" animating={false} />
+                )
               ) : (
                 <View testID="feed-empty-state" onLayout={handleInitialListLoad}>
                   {allSourcesDisabled ? (
@@ -511,7 +519,7 @@ export const FeedScreen = memo(function FeedScreen({
                 ) : null
               ) : null
             }
-            ItemSeparatorComponent={renderTopicSeparator}
+            ItemSeparatorComponent={TopicListSeparator}
             renderItem={renderTopicItem}
           />
         </View>
@@ -541,7 +549,6 @@ export const FeedScreen = memo(function FeedScreen({
       screenActive,
       renderFeedLoadingScene,
       renderTopicItem,
-      renderTopicSeparator,
       requestFeedLoadMore,
       styles,
       sourceHeaderHeight,
@@ -617,10 +624,10 @@ export const FeedScreen = memo(function FeedScreen({
                       if (active) toggleFeedFilterMenu();
                     }}
                   >
-                    <ListFilter accessible={false} size={15} color={theme.primary} strokeWidth={1.8} />
                     <Text style={styles.linuxDoFilterButtonText} numberOfLines={1}>
                       {feedFilterLabel(routeSource, routeFilter)}
                     </Text>
+                    <ChevronDown accessible={false} size={14} color={theme.primary} strokeWidth={1.8} />
                   </Pressable>
                 ) : null}
               </View>

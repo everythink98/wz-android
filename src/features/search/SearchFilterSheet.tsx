@@ -83,7 +83,6 @@ type SearchFilterSheetProps = SearchFilterPlacement & {
     source?: DiscourseSource;
     query: string;
     categoryId?: string;
-    selectedTags: string[];
     signal?: AbortSignal;
   }) => Promise<DiscourseTagOption[]>;
   onSearchDiscourseUsers: (options: {

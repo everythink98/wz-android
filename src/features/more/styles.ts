@@ -279,7 +279,9 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     updateIntegratedContent: {
       alignItems: 'center',
       flexDirection: 'row',
-      gap: 10,
+      flexWrap: 'wrap',
+      columnGap: 10,
+      rowGap: 4,
       justifyContent: 'space-between',
       paddingHorizontal: 14,
       paddingVertical: 8
@@ -287,10 +289,11 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     updateIntegratedLeft: {
       alignItems: 'center',
       flexDirection: 'row',
-      flexShrink: 0,
+      maxWidth: '100%',
       gap: 7
     },
     updateIntegratedActionText: {
+      flexShrink: 1,
       color: theme.dark ? theme.primary : theme.primaryStrong,
       fontFamily: appFontFamily,
       fontSize: fontSize(13),
@@ -300,11 +303,12 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     },
     updateIntegratedRight: {
       alignItems: 'center',
-      flex: 1,
+      flexGrow: 1,
+      flexShrink: 1,
       flexDirection: 'row',
       gap: 8,
       justifyContent: 'flex-end',
-      minWidth: 0
+      maxWidth: '100%'
     },
     updateSecondaryRow: {
       alignItems: 'center',
@@ -335,10 +339,6 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       flexDirection: 'row',
       flexWrap: 'wrap',
       gap: 10
-    },
-    backupActionSlot: {
-      flex: 1,
-      minWidth: 140
     },
     appearanceSettings: {
       gap: 6,

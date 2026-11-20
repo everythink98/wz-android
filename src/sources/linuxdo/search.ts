@@ -36,7 +36,6 @@ export async function searchLinuxDoTags(
   options: LinuxDoOptions & {
     query?: string;
     categoryId?: string;
-    selectedTags?: string[];
     limit?: number;
   } = {}
 ): Promise<DiscourseTagOption[]> {
@@ -47,8 +46,7 @@ export async function searchLinuxDoTags(
     {
       q: options.query?.trim() || '',
       limit,
-      ...(options.categoryId?.trim() ? { categoryId: options.categoryId.trim() } : {}),
-      ...(options.selectedTags?.length ? { 'selected_tags[]': options.selectedTags } : {})
+      ...(options.categoryId?.trim() ? { categoryId: options.categoryId.trim() } : {})
     },
     options
   );

@@ -36,6 +36,7 @@ import type { DiscourseBoost, Reply, TopicDetail, UserReference } from '@/domain
 import { discourseBoostStats } from '@/domain/forum/discourseInteractions';
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import type { TopicActionsController } from '../actions/useTopicActionsController';
+import type { TopicActionDecision } from '../actions/topicActionDecision';
 import { PopupMenu } from '@/ui/controls/PopupMenu';
 import { ComposerBottomSheet } from '@/ui/sheets/ComposerBottomSheet';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
@@ -66,6 +67,12 @@ type InteractionContext = Pick<
   expandBoosts: (postId: number) => void;
 };
 const Context = createContext<InteractionContext | null>(null);
+
+function boostControlState(decision: TopicActionDecision | undefined) {
+  if (decision?.allowed) return 'ready';
+  return decision?.reason === 'pending' ? 'pending' : 'hidden';
+}
+
 export function useLinuxDoInteractionOverlayOpen() {
   return useContext(Context)?.overlayOpen || false;
 }
@@ -341,8 +348,8 @@ export function LinuxDoBoosts({ post }: { post: Post }) {
     : [];
   const fifthRow = rowTops[4];
   const collapsed = !expanded && fifthRow !== undefined;
-  const allowed = context?.decisionFor({ action: 'boost', target: post }).allowed;
-  const actionsWidth = allowed ? 80 : 40;
+  const boost = boostControlState(context?.decisionFor({ action: 'boost', target: post }));
+  const actionsWidth = boost === 'hidden' ? 40 : 80;
   const previewBoxes =
     fifthRow === undefined
       ? []
@@ -361,10 +368,12 @@ export function LinuxDoBoosts({ post }: { post: Post }) {
       ? Math.min(4, boosts.length) * (Math.max(32, Math.round(18 * settings.fontScale) + 6) + 6) - 6
       : undefined;
   const rocket = (hidden = false) =>
-    allowed ? (
+    boost !== 'hidden' ? (
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="添加加电"
+        accessibilityState={{ disabled: boost === 'pending' }}
+        disabled={boost === 'pending'}
         style={styles.rocket}
         hitSlop={8}
         pointerEvents={hidden ? 'none' : 'auto'}
@@ -482,20 +491,18 @@ export function LinuxDoBoostButton({
   post: Post;
 }) {
   const context = useContext(Context);
-  if (
-    !context ||
-    !post.commentId ||
-    post.siteExtension?.boosts?.length ||
-    !context.decisionFor({ action: 'boost', target: post }).allowed
-  )
-    return null;
+  const postId = post.commentId;
+  if (!context || !postId || post.siteExtension?.boosts?.length) return null;
+  const boost = boostControlState(context.decisionFor({ action: 'boost', target: post }));
+  if (boost === 'hidden') return null;
   return (
     <DetailActionButton
       {...props}
       icon={Rocket}
       label="加电"
       accessibilityLabel="添加加电"
-      onPress={() => context.openBoostComposer(post.commentId!)}
+      disabled={props.disabled || boost === 'pending'}
+      onPress={() => context.openBoostComposer(postId)}
     />
   );
 }

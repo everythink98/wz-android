@@ -46,8 +46,9 @@ import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/
 import { type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { AuthNoticeBox, EmptyText, LoadingState, RecoverableEmptyState } from '@/ui/controls/FeedbackStates';
+import { ContentLoadingPlaceholder } from '@/ui/controls/ContentLoadingPlaceholder';
 import { PillRail } from '@/ui/controls/SelectionControls';
-import { MemoizedTopicCard } from '@/ui/topic/TopicCard';
+import { MemoizedTopicCard, TopicListSeparator } from '@/ui/topic/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 
@@ -651,7 +652,12 @@ export const SearchScreen = memo(function SearchScreen({
         return <AuthNoticeBox notice={authNotice} />;
       }
       if (item.type === 'groupLoading') {
-        return <LoadingState compact text={item.group.items.length ? '刷新中' : `${item.group.label} 搜索中`} />;
+        const text = item.group.items.length ? '刷新中' : `${item.group.label} 搜索中`;
+        return active && visibleSearchSource !== 'all' && !item.group.items.length ? (
+          <ContentLoadingPlaceholder layout="list" text={text} />
+        ) : (
+          <LoadingState compact text={text} animating={active} />
+        );
       }
       if (item.type === 'groupEmpty') {
         const nextPage = item.group.hasMore && !item.group.error ? item.group.nextPage : null;
@@ -747,10 +753,11 @@ export const SearchScreen = memo(function SearchScreen({
     return `${item.group.source}:${item.type}`;
   }, []);
   const renderSearchListSeparator = useCallback(
-    ({ leadingItem, trailingItem }: { leadingItem: SearchListItem; trailingItem: SearchListItem }) =>
-      leadingItem.type === 'recentSearch' && trailingItem.type === 'recentSearch' ? null : (
-        <View style={styles.listSeparator} />
-      ),
+    ({ leadingItem, trailingItem }: { leadingItem: SearchListItem; trailingItem: SearchListItem }) => {
+      if (leadingItem.type === 'topic' && trailingItem.type === 'topic') return <TopicListSeparator />;
+      if (leadingItem.type === 'recentSearch' && trailingItem.type === 'recentSearch') return null;
+      return <View style={styles.listSeparator} />;
+    },
     [styles]
   );
   const aiControlActive = linuxDoAiVisible && active;
@@ -853,7 +860,7 @@ export const SearchScreen = memo(function SearchScreen({
               onAction={onManageContentSources}
             />
           ) : showSearchGroups ? null : searchBusy && hasSubmittedQuery ? (
-            <LoadingState text="搜索中" />
+            <ContentLoadingPlaceholder layout="list" text="搜索中" />
           ) : !hasSubmittedQuery ? null : (
             <EmptyText text="暂无搜索结果" />
           )

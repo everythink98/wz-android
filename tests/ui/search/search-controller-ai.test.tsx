@@ -699,8 +699,7 @@ describe('linux.do AI search controller', () => {
           searchDiscourseUsers: jest.fn(async () => []),
           tagRequest: {
             source: 'linuxdo',
-            query: 'react',
-            selectedTags: []
+            query: 'react'
           },
           userRequest: null
         }),
@@ -2574,9 +2573,9 @@ describe('linux.do AI search controller', () => {
       hook.rerender(undefined);
     });
     await act(async () => {
-      await first.searchDiscourseTags({ query: 'before', selectedTags: [] });
+      await first.searchDiscourseTags({ query: 'before' });
       await first.searchDiscourseUsers({ term: 'before' });
-      await hook.result.current.searchDiscourseTags({ query: 'after', selectedTags: [] });
+      await hook.result.current.searchDiscourseTags({ query: 'after' });
       await hook.result.current.searchDiscourseUsers({ term: 'after' });
     });
     for (const [mock, kind] of [
@@ -2614,7 +2613,7 @@ describe('linux.do AI search controller', () => {
     const hook = await renderSearchController(gateway);
 
     await act(async () => {
-      await hook.result.current.searchDiscourseTags({ query: 'private-tag', selectedTags: [] });
+      await hook.result.current.searchDiscourseTags({ query: 'private-tag' });
       await hook.result.current.searchDiscourseUsers({ term: 'private-user' });
     });
 
@@ -3516,7 +3515,7 @@ describe('linux.do AI search controller', () => {
         order: 'latest'
       });
       hook.result.current.retryLinuxDoAiSearch();
-      await hook.result.current.searchDiscourseTags({ source: 'linuxdo', query: 'ai', selectedTags: [] });
+      await hook.result.current.searchDiscourseTags({ source: 'linuxdo', query: 'ai' });
       await hook.result.current.searchDiscourseUsers({ source: 'linuxdo', term: 'alice' });
       await Promise.resolve();
     });

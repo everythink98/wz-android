@@ -60,11 +60,6 @@ export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderStyl
       justifyContent: 'space-between',
       gap: 10
     },
-    levelTitleBlock: {
-      flex: 1,
-      minWidth: 0,
-      gap: 2
-    },
     levelRefreshSlot: {
       width: 48,
       height: 48,
@@ -87,6 +82,8 @@ export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderStyl
       lineHeight: fontSize(24)
     },
     levelMetaRow: {
+      flex: 1,
+      minWidth: 0,
       alignItems: 'center',
       flexDirection: 'row',
       flexWrap: 'wrap',

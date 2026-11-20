@@ -202,7 +202,7 @@ jest.mock('lucide-react-native', () => {
   const ReactModule = require('react') as typeof React;
   const { View: NativeView } = require('react-native') as typeof import('react-native');
   return {
-    ListFilter: () => null,
+    ChevronDown: () => null,
     SquarePen: () => null,
     Eye: () => ReactModule.createElement(NativeView, { accessibilityLabel: '浏览统计图标' }),
     MessageCircle: () => ReactModule.createElement(NativeView, { accessibilityLabel: '回复统计图标' })
@@ -842,30 +842,27 @@ describe('Feed loading', () => {
     expect(within(view.getByTestId('mock-feed-scene-v2ex')).getByText('V2EX 新请求主题')).toBeTruthy();
   });
 
-  it('animates only the visible source while preserving loading placeholders across focus and source changes', async () => {
+  it('shows the loading skeleton only in the active source and preserves it until that source has data', async () => {
     const view = await render(renderFeed(true, []));
-    const indicators = (source: FeedSource) =>
-      view
-        .getByTestId(`mock-feed-scene-${source}`)
-        .queryAll((instance) => instance.props.accessibilityRole === 'progressbar')
-        .map((instance) => instance.props.accessibilityState.busy);
+    const skeleton = (source: FeedSource) =>
+      within(view.getByTestId(`mock-feed-scene-${source}`)).queryByTestId('content-loading-placeholder');
 
-    expect(indicators('all')).toEqual([true]);
-    expect(indicators('v2ex')).toEqual([]);
+    expect(skeleton('all')).toBeVisible();
+    expect(skeleton('v2ex')).toBeNull();
     expect(within(view.getByTestId('mock-feed-scene-v2ex')).getByText('加载中')).toBeTruthy();
 
     await view.rerender(renderFeed(true, [], { active: false }));
-    expect(indicators('all')).toEqual([]);
-    expect(indicators('v2ex')).toEqual([]);
+    expect(skeleton('all')).toBeNull();
+    expect(skeleton('v2ex')).toBeNull();
     expect(within(view.getByTestId('mock-feed-scene-all')).getByText('加载中')).toBeTruthy();
 
     await view.rerender(renderFeed(true, [], { feedSource: 'v2ex' }));
-    expect(indicators('all')).toEqual([]);
-    expect(indicators('v2ex')).toEqual([true]);
+    expect(skeleton('all')).toBeNull();
+    expect(skeleton('v2ex')).toBeVisible();
 
     await view.rerender(renderFeed(false, [topic], { feedSource: 'v2ex' }));
-    expect(indicators('v2ex')).toEqual([]);
-    expect(indicators('all')).toEqual([]);
+    expect(skeleton('v2ex')).toBeNull();
+    expect(skeleton('all')).toBeNull();
   });
 
   it('keeps the prelaid loading scene mounted until the target source has data', async () => {

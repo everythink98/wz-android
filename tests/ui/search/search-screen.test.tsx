@@ -113,7 +113,10 @@ jest.mock('@shopify/flash-list', () => {
           ReactModule.createElement(
             NativeView,
             { key: keyExtractor?.(item, index) ?? index },
-            renderItem?.({ item, index })
+            renderItem?.({ item, index }),
+            ItemSeparatorComponent && index + 1 < data.length
+              ? ReactModule.createElement(ItemSeparatorComponent, { leadingItem: item, trailingItem: data[index + 1] })
+              : null
           )
         ),
         data.length ? null : ListEmptyComponent
@@ -1748,6 +1751,25 @@ describe('Search state', () => {
     expect(view.queryByRole('button', { name: '继续搜索 NodeSeek' })).toBeNull();
   });
 
+  it('draws one divider between two search results and none beside the group controls', async () => {
+    const view = await renderSearchScreen({
+      searchSource: 'v2ex',
+      searchGroups: [
+        {
+          source: 'v2ex',
+          label: 'V2EX',
+          items: [firstTopic, { ...secondTopic, source: 'v2ex' }],
+          hasMore: true,
+          nextPage: 2
+        }
+      ]
+    });
+
+    expect(view.getByText(firstTopic.title)).toBeTruthy();
+    expect(view.getByText(secondTopic.title)).toBeTruthy();
+    expect(view.getAllByTestId('topic-list-separator')).toHaveLength(1);
+  });
+
   it('opens an empty overview source with a next page but disables a terminal empty source', async () => {
     const onSearchSourceChange = jest.fn<(source: FeedSource) => void>();
     const view = await renderSearchScreen({
@@ -2279,6 +2301,27 @@ describe('Search state', () => {
     expect(view.queryByText('任意手打')).toBeNull();
   });
 
+  it('reuses the same tag candidates while checking, unchecking and reopening for the same search', async () => {
+    const onSearchDiscourseTags = jest.fn<FilterInputs['onSearchDiscourseTags']>().mockResolvedValue([
+      { name: '软件开发', topicCount: 12 },
+      { name: 'OpenAI', topicCount: 34 }
+    ]);
+    const view = await renderSearchScreen({ searchSource: 'linuxdo', filter: { onSearchDiscourseTags } });
+
+    await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
+    await fireEvent.press(view.getByLabelText('选择标签'));
+    await fireEvent.press(await view.findByRole('checkbox', { name: '标签 软件开发', checked: false }));
+    expect(view.getByRole('checkbox', { name: '标签 软件开发', checked: true })).toBeTruthy();
+    expect(onSearchDiscourseTags).toHaveBeenCalledTimes(1);
+    await fireEvent.press(view.getByRole('checkbox', { name: '标签 OpenAI', checked: false }));
+    await fireEvent.press(view.getByRole('checkbox', { name: '标签 软件开发', checked: true }));
+    await fireEvent.press(view.getByLabelText('返回筛选'));
+    await fireEvent.press(view.getByLabelText('选择标签'));
+    expect(await view.findByRole('checkbox', { name: '标签 OpenAI', checked: true })).toBeTruthy();
+    expect(await view.findByText('34 个主题')).toBeTruthy();
+    expect(onSearchDiscourseTags).toHaveBeenCalledTimes(1);
+  });
+
   it('ignores a stale linux.do tag response after the search term changes', async () => {
     const oldResponse = Promise.withResolvers<{ name: string }[]>();
     const freshResponse = Promise.withResolvers<{ name: string }[]>();
@@ -2358,7 +2401,6 @@ describe('Search state', () => {
           source: 'nodeseek',
           query: '',
           scope: initialForumSessionEpochs,
-          selectedTags: [],
           readPlanScope: 'independent-picker'
         }),
         queryFn: ({ signal }) => {

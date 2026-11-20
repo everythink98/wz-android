@@ -529,6 +529,35 @@ describe('LinuxDo native post interactions', () => {
     expect(Vibration.vibrate).not.toHaveBeenCalled();
     await view.unmount();
   });
+
+  it.each([
+    ['主帖点赞', 'opening-actions'],
+    ['评论点赞', 'comment-actions']
+  ])('keeps the boost control in place while %s is pending', async (label, actionsId) => {
+    const settled = Promise.withResolvers<void>();
+    const respond = fetcher.getMockImplementation();
+    if (!respond) throw new Error('Expected the mocked reaction endpoint');
+    fetcher.mockImplementation(async (input, init) => {
+      if (init?.method === 'PUT') await settled.promise;
+      return respond(input, init);
+    });
+    try {
+      const view = await render(<Harness />, { wrapper: QueryTestWrapper });
+      const boostButton = () => within(view.getByTestId(actionsId)).getByLabelText('添加加电');
+      expect(boostButton()).toBeEnabled();
+
+      await fireEvent.press(view.getByLabelText(label));
+      await waitFor(() => expect(fetcher.mock.calls.filter(([, init]) => init?.method === 'PUT')).toHaveLength(1));
+      await waitFor(() => expect(boostButton()).toBeDisabled());
+
+      await act(async () => settled.resolve());
+      await waitFor(() => expect(boostButton()).toBeEnabled());
+    } finally {
+      await act(async () => settled.resolve());
+      fetcher.mockImplementation(respond);
+    }
+  });
+
   it('opens reactions with one vibration through the accessibility long-press action', async () => {
     const view = await render(<Harness />, { wrapper: QueryTestWrapper });
     await fireEvent(view.getByLabelText('主帖点赞'), 'accessibilityAction', {

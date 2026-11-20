@@ -11,7 +11,8 @@ import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { DisclosureChevron } from '@/ui/controls/ExpandableControls';
-import { AuthNoticeBox, EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
+import { AuthNoticeBox, EmptyText } from '@/ui/controls/FeedbackStates';
+import { ContentLoadingPlaceholder } from '@/ui/controls/ContentLoadingPlaceholder';
 import { COMPACT_BUTTON_HIT_SLOP, TOUCH_HIT_SLOP } from '@/ui/controls/touchTarget';
 import { ScreenTopBar, ScreenTopBarActions, ScreenTopBarTitle } from '@/ui/controls/ScreenTopBar';
 import { NavigationBackdropProvider, NavigationBackdropTarget } from '@/ui/navigation/NavigationGlass';
@@ -403,7 +404,7 @@ export const UserScreen = memo(function UserScreen({
             </View>
           )
         ) : null}
-        {busy && !profile ? <LoadingState compact text="加载中" /> : null}
+        {busy && !profile && !error ? <ContentLoadingPlaceholder layout="body" text="加载中" /> : null}
       </View>
     );
   }, [
@@ -541,7 +542,10 @@ export const UserScreen = memo(function UserScreen({
                     ) : null}
                   </View>
                 ) : profile && activityBusy && !activityData ? (
-                  <LoadingState compact text={userTab === 'topics' ? '正在读取主题' : '正在读取回复'} />
+                  <ContentLoadingPlaceholder
+                    layout="list"
+                    text={userTab === 'topics' ? '正在读取主题' : '正在读取回复'}
+                  />
                 ) : profile && activityData && !activityData.length && !activityHasMore ? (
                   <View style={styles.emptyActivity}>
                     <EmptyText text={userTab === 'replies' ? '暂无回复' : '暂无主题'} />

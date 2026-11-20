@@ -1658,10 +1658,7 @@ describe('source gateway read contract', () => {
     const tagTrace = beginDiagnosticTrace('search', 'searchTagOptions', { source: 'linuxdo' });
     linuxDoMocks.searchLinuxDoTags.mockResolvedValueOnce([{ name: '人工智能' }]);
 
-    await gateway.searchTagOptions(
-      { source: 'linuxdo', query: '人', categoryId: '4', selectedTags: ['快问快答'] },
-      { trace: tagTrace }
-    );
+    await gateway.searchTagOptions({ source: 'linuxdo', query: '人', categoryId: '4' }, { trace: tagTrace });
     markDiagnosticStage(tagTrace, 'apply', { source: 'linuxdo', itemCount: 1 });
     finishDiagnosticTrace(tagTrace, 'success', { source: 'linuxdo', itemCount: 1 });
     await gateway.searchUserOptions({ source: 'linuxdo', term: 'ali', categoryId: '4' });
@@ -1671,7 +1668,6 @@ describe('source gateway read contract', () => {
       expect.objectContaining({
         query: '人',
         categoryId: '4',
-        selectedTags: ['快问快答'],
         fetcher: expect.any(Function)
       })
     );

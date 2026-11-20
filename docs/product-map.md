@@ -254,7 +254,7 @@ V2EX 搜索只有在响应包含受支持的结果列表时才展示空结果。
 
 linux.do 评论的「回复」对象、主帖和回复中的引用、采纳答案里的引用都优先使用原站昵称。可见引用或回复对象只有账号时，先显示已有文字，再按主题和楼层后台补全作者。同一楼层复用已有数据和请求，读取期间保留当前展开状态。只为补昵称读取的楼层图片不加入图集，读者打开引用后再将图片纳入当前主题目录。点评论署名或回复对象按账号打开主页，引用楼号定位原帖。
 
-`SEARCH-03` 的筛选入口和摘要位于 `src/features/search/SearchFilterSheet.tsx`。打开时创建本次草稿，取消时释放。标签和作者共用当前子页的输入，停止输入 300 毫秒后读取候选。空标签查询显示默认候选，空白作者查询等待输入。关闭子页会解除该页的查询订阅，最后一个订阅退出才取消在途请求；相同账号和查询仍有其他订阅时继续读取。换号或重开后，迟到响应不能替换当前候选。表单、候选和交互证据见 `src/features/search/SearchFilterForm.tsx`、`src/features/search/DiscourseFilterPickers.tsx`、`tests/ui/search/search-screen.test.tsx` 和 `tests/ui/search/search-performance-stress.test.tsx`。
+`SEARCH-03` 的筛选入口和摘要位于 `src/features/search/SearchFilterSheet.tsx`。打开时创建本次草稿，取消时释放。标签和作者共用当前子页的输入，停止输入 300 毫秒后读取候选。空标签查询显示默认候选，空白作者查询等待输入。同站点、账号、分类和关键词复用标签候选，勾选和取消只更新本地草稿。关闭子页会解除该页的查询订阅，最后一个订阅退出才取消在途请求；相同账号和查询仍有其他订阅时继续读取。换号或重开后，迟到响应不能替换当前候选。表单、候选和交互证据见 `src/features/search/SearchFilterForm.tsx`、`src/features/search/DiscourseFilterPickers.tsx`、`tests/ui/search/search-screen.test.tsx` 和 `tests/ui/search/search-performance-stress.test.tsx`。
 
 linux.do 筛选打开，或已应用的作者需要在摘要中显示昵称时，才订阅本机作者标签缓存。默认筛选下，`tests/ui/search/search-screen.test.tsx` 核对订阅数在打开、关闭面板时依次从 0 变为 1，再回到 0。
 
