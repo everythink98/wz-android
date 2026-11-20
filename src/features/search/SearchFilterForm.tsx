@@ -247,11 +247,11 @@ export function SearchFilterForm({
           />
           <FilterSegments
             {...appearance}
-            label="关键词关系"
+            label="关键词"
             value={draftFilter.operator}
             items={[
-              { value: 'or', label: '任一关键词' },
-              { value: 'and', label: '全部关键词' }
+              { value: 'or', label: '任一' },
+              { value: 'and', label: '全部' }
             ]}
             onChange={(operator) => updateDraft({ operator })}
           />

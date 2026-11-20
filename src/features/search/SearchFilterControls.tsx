@@ -145,7 +145,7 @@ export function FilterSegments<Value extends string>({
   onChange: (value: Value) => void;
 }) {
   return (
-    <View style={[styles.searchFilterRow, styles.searchFilterSegmentRow]}>
+    <View style={styles.searchFilterRow}>
       <Text style={[styles.searchFilterLabel, styles.searchFilterLabelColumn]}>{label}</Text>
       <View style={styles.searchFilterSegments}>
         {items.map((item, index) => {

@@ -288,23 +288,19 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
       includeFontPadding: false,
       paddingVertical: 9
     },
-    searchFilterSegmentRow: { flexWrap: 'wrap' },
     searchFilterSegments: {
       backgroundColor: theme.surface2,
       borderRadius: readerRadii.control,
       borderColor: theme.line,
       borderWidth: StyleSheet.hairlineWidth,
       overflow: 'hidden',
-      flexGrow: 1,
-      flexShrink: 1,
-      maxWidth: '100%',
+      flex: 1,
       minWidth: 0,
       flexDirection: 'row',
       marginVertical: 6
     },
     searchFilterSegment: {
-      flexGrow: 1,
-      flexShrink: 1,
+      flex: 1,
       minWidth: 0,
       minHeight: 48,
       alignItems: 'center',
@@ -322,7 +318,7 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
       width: 14
     },
     searchFilterSegmentText: {
-      flexShrink: 1,
+      flex: 1,
       color: theme.ink,
       fontFamily: appFontFamily,
       fontSize: Math.round(13 * settings.fontScale),

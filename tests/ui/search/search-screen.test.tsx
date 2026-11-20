@@ -2910,7 +2910,7 @@ describe('Search state', () => {
     await fireEvent.press(view.getByLabelText('节点 问与答'));
     await fireEvent.press(view.getByLabelText('展开 V2EX 更多筛选'));
     await fireEvent.changeText(view.getByLabelText('作者'), 'alice');
-    await fireEvent.press(view.getByText('全部关键词'));
+    await fireEvent.press(view.getByRole('radio', { name: '全部' }));
     await fireEvent.press(view.getByText('确认筛选'));
 
     expect(view.getByLabelText('打开搜索筛选，当前相关 · 问与答 · alice · 全部关键词 · 30天')).toBeTruthy();

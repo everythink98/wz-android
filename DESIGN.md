@@ -21,7 +21,7 @@
 
 筛选面板共用一条标题与字段名的左边线。每行的值从第二列起，清除、勾选和箭头有独立位置。两个短选项共用分段控件，较长的候选列表在面板内打开，返回后保留草稿。选中、切换输入焦点或收起键盘时仍按相同列对齐。[Android 分段按钮](https://developer.android.com/develop/ui/compose/components/segmented-button) · [Material Android 列表](https://github.com/material-components/material-components-android/blob/master/docs/components/List.md)
 
-长候选页沿用 Bencho 多选列表的固定勾选位，行文字在选中时保持原位。复选项在原框内打勾，单选项使用同位置的中性勾选标记，行底色和文字颜色保持原样。窄屏下两项分段选择可整组移到字段下方。字段校验参考它的表单错误示例，从面板任意一页确认，都能回到出错输入，直接看到原因并修改。[Bencho 多选列表](https://bencho.dev/blocks/picker) · [Bencho 表单反馈](https://bencho.dev/blocks/form-error)
+长候选页沿用 Bencho 多选列表的固定勾选位，行文字在选中时保持原位。复选项在原框内打勾，单选项使用同位置的中性勾选标记，行底色和文字颜色保持原样。分段选项用字段名提供语境，避免重复长文案挤占窄屏空间。字段校验参考它的表单错误示例，从面板任意一页确认，都能回到出错输入，直接看到原因并修改。[Bencho 多选列表](https://bencho.dev/blocks/picker) · [Bencho 表单反馈](https://bencho.dev/blocks/form-error)
 
 列表刷新参考 Now in Android。首次进入时在内容区提示加载；已有结果时保留阅读位置，下拉刷新只显示系统进度。翻页失败时把原因和重试放在列表末尾，成功后从同一处继续阅读。[Now in Android 信息流](https://github.com/android/nowinandroid/blob/main/feature/foryou/impl/src/main/kotlin/com/google/samples/apps/nowinandroid/feature/foryou/impl/ForYouScreen.kt)
 
