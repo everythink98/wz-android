@@ -1032,7 +1032,7 @@
 | 点击去向 | 正文组件用同一 300 × 400 封面分别绑定红包页面和图片自身。前者打开页面一次，后者即使是 SVG 也只打开一次图集。`tests/ui/topic/topic-rich-text-selection.test.tsx` 核对点击次数和显示尺寸。 |
 | 设备与范围 | Android 15 主模拟器保留数据覆盖安装后，在已登录的阅坛内打开原帖，核对矿洞图案、“查看”按钮、带时间的奖池快照，以及原生链接节点的无障碍名称。正文显示为 `LIVE_PASS`，点击分派为 `UI_PASS`；红包领取未执行。 |
 | 2026-11-20 原帖点击 | Android 15 普通包在已登录的阅坛内核对主题 3205240。原站的 420 × 560 SVG 以 300 × 400 展示，点阅坛封面后打开第三方页面，完整落地地址的摘要与作者链接一致。返回后仍在原帖并可继续滚动。封面点击与落地页为 `LIVE_PASS`。本次止于第三方登录入口，未领取红包。 |
-| 个人领取结果 | 主题 3218290 在用户浏览器显示本人金额，旧版阅坛显示「已领完」。带链接的红包站封面改由同源 WebView 核对登录身份并显示。原生 SVG 兼容渲染遵守响应的 `no-store`，临时 PNG 不写入海报缓存。归属 `src/features/topic/rendering/linuxDoPacketDocument.test.ts`、`src/platform/media/compatibleImageSources.test.ts` 和 `tests/ui/topic/topic-route-external-links.test.tsx`。 |
+| 个人领取结果 | 主题 3218290 在用户浏览器显示本人金额，旧版阅坛显示「已领完」。带链接的红包站封面改由同源 WebView 核对登录身份并显示。原生 SVG 兼容渲染遵守响应的 `no-store`，临时 PNG 不写入海报缓存。归属 `src/platform/media/linuxDoPacketDocument.test.ts`、`src/platform/media/compatibleImageSources.test.ts` 和 `tests/ui/topic/topic-route-external-links.test.tsx`。 |
 | 长图中的同一封面 | `TOPIC-04` 的长图曾对已在正文显示的 SVG 再次请求原文件，解码失败后，30 秒计时又把错误改报为超时。分享页现复用按请求身份生成的静态 PNG，并等图片实际显示再开放导出。无缓存、重试、迟到显示与同帖不同图片格式的回归见 `tests/ui/topic/topic-share-sheet.test.tsx` 和 `src/features/topic/topicShareContent.test.ts`。 |
 
 ## `REG-ACCOUNT-078` NodeSeek 站内相对链接未能确认访客

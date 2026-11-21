@@ -7,6 +7,7 @@ import RenderHTML from 'react-native-render-html';
 import * as Clipboard from 'expo-clipboard';
 import * as WebBrowser from 'expo-web-browser';
 import { navigationRef } from '@/app/appNavigation';
+import { LinuxDoPacketPage } from '@/features/topic/components/LinuxDoPacketPage';
 import { useAppDeepLinkNavigation } from '@/app/useAppDeepLinkNavigation';
 import type { Topic, TopicDetail } from '@/domain/forum/models';
 import { createEmptyReaderData, topicKey } from '@/domain/reader/readerData';
@@ -362,10 +363,25 @@ describe('Topic Route external links', () => {
       link?.({ stopPropagation: jest.fn() } as never, 'https://hb.lafi.sh/', {} as never, {} as never)
     );
     await fireEvent(view.getByTestId('linuxdo-packet-session'), 'message', {
-      nativeEvent: { url: 'https://hb.lafi.sh/', data: 'matching' }
+      nativeEvent: { url: 'https://hb.lafi.sh', data: 'matching' }
     });
     expect(view.getByTestId('linuxdo-packet-page')).toHaveProp('source', { uri: 'https://hb.lafi.sh/' });
     expect(view.getByTestId('linuxdo-packet-page').props.onMessage).toBeUndefined();
+  });
+
+  it('keeps the previous packet account hidden when a user cancels reconnecting', async () => {
+    const view = await render(
+      <LinuxDoPacketPage url="https://hb.lafi.sh/" username="reader" blockMessage="" onClose={jest.fn()} />
+    );
+    await fireEvent(view.getByTestId('linuxdo-packet-session'), 'message', {
+      nativeEvent: { url: 'https://hb.lafi.sh/', data: 'mismatch' }
+    });
+    await fireEvent.press(view.getByLabelText('连接当前账号'));
+    const navigate = view.getByTestId('linuxdo-packet-page').props.onShouldStartLoadWithRequest;
+    await act(async () =>
+      expect(navigate({ url: 'https://hb.lafi.sh/?authError=access_denied', isTopFrame: true })).toBe(false)
+    );
+    expect(view.queryByTestId('linuxdo-packet-page')).toBeNull();
   });
 
   it('reports a Custom Tab rejection, keeps original-site opening in the full browser, and stops native content in the background', async () => {

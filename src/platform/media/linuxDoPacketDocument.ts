@@ -1,7 +1,7 @@
 import { escapeHtmlAttribute } from '@/domain/forum/html';
 import { isLinuxDoPacketCover, LINUX_DO_PACKET_ORIGIN } from '@/domain/forum/linuxDoPacket';
 
-// Chromium owns the credentials. The native application only receives display or identity status.
+// Chromium owns the credentials. Native callers only receive display or identity status.
 const sessionScript = `
 const report=(status)=>window.ReactNativeWebView.postMessage(status);
 async function readWithTimeout(url, options, milliseconds, read){

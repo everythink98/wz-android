@@ -297,6 +297,53 @@ describe('Topic body image sharing', () => {
     expect(mockReleaseImage).toHaveBeenCalledTimes(count);
   });
 
+  it('limits transient no-store posters to the shared decode budget without saving them through Glide', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android');
+    const count = 13;
+    jest
+      .spyOn(svgPosterRenderer, 'fetchBoundedSvgDocument')
+      .mockResolvedValue({ base64: Buffer.from('<svg width="256" height="256"/>').toString('base64'), noStore: true });
+    jest.spyOn(svgPosterRenderer, 'renderSvgPoster').mockResolvedValue({
+      uri: 'data:image/png;base64,AA==',
+      documentWidth: 256,
+      documentHeight: 256,
+      width: 2048,
+      height: 2048
+    });
+    const view = await render(
+      <TopicShareSheet
+        topic={{
+          ...topic,
+          contentHtml: Array.from(
+            { length: count },
+            (_, i) => `<img src="https://images.example.com/transient-${i}.svg" alt="临时 ${i}">`
+          ).join('')
+        }}
+        mediaContext={mediaContext}
+        onClose={jest.fn()}
+      />
+    );
+    let decodedPixels = 0;
+    for (let first = 0; first < count; first += 4) {
+      const batch = Array.from({ length: Math.min(4, count - first) }, (_, i) =>
+        view.getByLabelText(`临时 ${first + i}`)
+      );
+      await act(async () => {
+        for (const image of batch) {
+          const { source, cachePolicy } = image.props;
+          expect(cachePolicy).toBe('none');
+          expect(source.scale).toBe(1);
+          decodedPixels += source.width * source.height;
+          image.props.onLoad({ source });
+          image.props.onDisplay();
+        }
+      });
+    }
+    expect(decodedPixels).toBeGreaterThan(0);
+    expect(decodedPixels).toBeLessThanOrEqual(48 * 1024 * 1024);
+    expect(mockLoadImage).not.toHaveBeenCalled();
+  });
+
   it('keeps a tall original the same size on paper when other images reduce its decode budget', async () => {
     jest.replaceProperty(Platform, 'OS', 'android');
     // Expo reports the dimensions of the downsampled Android drawable, not the original dimensions.

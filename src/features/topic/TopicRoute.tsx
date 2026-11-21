@@ -10,7 +10,7 @@ import * as WebBrowser from 'expo-web-browser';
 import { openHttpUrl } from '@/ui/navigation/openHttpUrl';
 import { useForumMediaSessionIdentity } from '@/platform/media/mediaSessionEpoch';
 import { isLinuxDoPacketPage } from '@/domain/forum/linuxDoPacket';
-import { LinuxDoPacketViewer } from './rendering/LinuxDoPacketCover';
+import { LinuxDoPacketViewer } from '@/ui/content/LinuxDoPacketCover';
 import { LinuxDoPacketPage } from './components/LinuxDoPacketPage';
 import { OriginalImageUpgradeBoundary } from '@/platform/media/originalImageLoading';
 

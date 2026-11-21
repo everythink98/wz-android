@@ -107,7 +107,20 @@ async function decodeShareImage(
       if (!artifact || signal.aborted) throw error;
     }
   }
-  if (artifact.noStore) return { image: artifact.posterSource, dimensions: artifact.dimensions };
+  if (artifact.noStore) {
+    const width = artifact.posterSource.width || artifact.dimensions.width;
+    const height = artifact.posterSource.height || artifact.dimensions.height;
+    const fit = Math.min(1, decodeSize.maxWidth / width, decodeSize.maxHeight / height);
+    return {
+      image: {
+        ...artifact.posterSource,
+        width: Math.max(1, Math.floor(width * fit)),
+        height: Math.max(1, Math.floor(height * fit)),
+        scale: 1
+      },
+      dimensions: artifact.dimensions
+    };
+  }
   try {
     return { image: await Image.loadAsync(artifact.posterSource, decodeSize), dimensions: artifact.dimensions };
   } catch (error) {

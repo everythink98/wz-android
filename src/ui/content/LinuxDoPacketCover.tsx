@@ -1,7 +1,8 @@
 import { createContext, useContext, useMemo } from 'react';
 import { StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { WebView } from 'react-native-webview';
-import { packetCoverDocument } from './linuxDoPacketDocument';
+import { packetCoverDocument } from '@/platform/media/linuxDoPacketDocument';
+import { LINUX_DO_PACKET_ORIGIN } from '@/domain/forum/linuxDoPacket';
 
 export const LinuxDoPacketViewer = createContext({ active: true, username: '', revision: 0, scope: '' });
 
@@ -26,7 +27,9 @@ export function LinuxDoPacketCover({
           style={styles.cover}
           containerStyle={styles.cover}
           originWhitelist={['*']}
-          onShouldStartLoadWithRequest={({ url }) => url === source.baseUrl || url === 'about:blank'}
+          onShouldStartLoadWithRequest={({ url }) =>
+            url === source.baseUrl || url === LINUX_DO_PACKET_ORIGIN || url === 'about:blank'
+          }
           cacheMode="LOAD_NO_CACHE"
           sharedCookiesEnabled
           thirdPartyCookiesEnabled={false}

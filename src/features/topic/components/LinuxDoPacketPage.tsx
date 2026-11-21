@@ -3,7 +3,7 @@ import { LogIn, RefreshCw } from 'lucide-react-native';
 import { WebView } from 'react-native-webview';
 import { allowLinuxDoPacketNavigation, LINUX_DO_PACKET_ORIGIN } from '@/domain/forum/linuxDoPacket';
 import { LoginWebViewAction, LoginWebViewModal } from '@/ui/navigation/LoginWebViewModal';
-import { packetSessionDocument } from '../rendering/linuxDoPacketDocument';
+import { packetSessionDocument } from '@/platform/media/linuxDoPacketDocument';
 
 type PageState = 'checking' | 'open' | 'mismatch' | 'connecting' | 'failed';
 const returnPath = '/?wz_packet_connected=1';
@@ -28,8 +28,13 @@ export function LinuxDoPacketPage({
     ? '红包站已登录其他账号。请用当前 LINUX DO 账号重新连接。'
     : '请先在「我的」登录领取红包时使用的 LINUX DO 账号。';
   const onReturned = (value: string) => {
-    if (state !== 'connecting' || value !== returnUrl) return false;
-    setState('checking');
+    if (
+      state !== 'connecting' ||
+      !value.startsWith(LINUX_DO_PACKET_ORIGIN + '/') ||
+      value.startsWith(LINUX_DO_PACKET_ORIGIN + '/api/auth/')
+    )
+      return false;
+    setState(value === returnUrl ? 'checking' : 'failed');
     return true;
   };
   return (
@@ -61,7 +66,12 @@ export function LinuxDoPacketPage({
           source={checking ? session : { uri: state === 'connecting' ? connectUrl : url }}
           originWhitelist={['*']}
           onShouldStartLoadWithRequest={(request) => {
-            if (checking) return request.url === session.baseUrl || request.url === 'about:blank';
+            if (checking)
+              return (
+                request.url === session.baseUrl ||
+                request.url === LINUX_DO_PACKET_ORIGIN ||
+                request.url === 'about:blank'
+              );
             if (onReturned(request.url)) return false;
             if (state === 'open' && request.url.split('?')[0] === LINUX_DO_PACKET_ORIGIN + '/api/auth/login') {
               setState('connecting');
@@ -82,7 +92,12 @@ export function LinuxDoPacketPage({
           onMessage={
             checking
               ? ({ nativeEvent }) => {
-                  if (nativeEvent.url !== session.baseUrl && nativeEvent.url !== 'about:blank') return;
+                  if (
+                    nativeEvent.url !== LINUX_DO_PACKET_ORIGIN &&
+                    nativeEvent.url !== session.baseUrl &&
+                    nativeEvent.url !== 'about:blank'
+                  )
+                    return;
                   const status = nativeEvent.data;
                   if (status === 'matching' || status === 'anonymous') setState('open');
                   else if (status === 'mismatch') setState('mismatch');

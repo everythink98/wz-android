@@ -42,7 +42,7 @@ import { inlineForumImageAlignmentStyle, inlineForumImageAttachmentSize } from '
 import { readerRadii, type ReaderTheme } from '@/ui/theme/tokens';
 import { useForumContentWidth } from '@/ui/content/ForumContentWidth';
 import { isLinuxDoPacketCover } from '@/domain/forum/linuxDoPacket';
-import { LinuxDoPacketCover } from './LinuxDoPacketCover';
+import { LinuxDoPacketCover, LinuxDoPacketViewer } from '@/ui/content/LinuxDoPacketCover';
 import type { HtmlRenderers } from './types';
 import { createHtmlRendererStyles } from './htmlStyles';
 import { useContentBoundarySpacing, useContentImageMaxHeight } from './TopicContentPresentation';
@@ -604,8 +604,13 @@ function AdmittedPreviewImageBlock({
 }
 
 function PreviewImageBlock(props: PreviewImageBlockProps) {
-  const requestIdentity = compatibleImageRequestIdentity(props.imageSource);
-  const bodyMediaLease = useTopicBodyMediaLease({ kind: 'base', requestIdentity });
+  const packet = props.mediaContext.contentSource === 'linuxdo' && isLinuxDoPacketCover(props.src);
+  const viewer = useContext(LinuxDoPacketViewer);
+  const imageIdentity = compatibleImageRequestIdentity(props.imageSource);
+  const requestIdentity = packet
+    ? JSON.stringify([imageIdentity, viewer.scope, viewer.username, viewer.revision])
+    : imageIdentity;
+  const bodyMediaLease = useTopicBodyMediaLease({ kind: 'base', requestIdentity, enabled: !packet || viewer.active });
   const contentWidth = Math.max(1, props.contentWidth);
   const cacheKey = imageDisplayCacheIdentity(props.imageSource);
   const cachedDimensions = cachedImageDisplayDimensions(cacheKey);
@@ -623,11 +628,35 @@ function PreviewImageBlock(props: PreviewImageBlockProps) {
       }
     : { height: Math.round(naturalDimensions.height * scale), width: naturalDimensions.width * scale };
   if (bodyMediaLease.admitted) {
-    if (props.hasDestinationLink && props.mediaContext.contentSource === 'linuxdo' && isLinuxDoPacketCover(props.src)) {
-      return (
-        <View style={[{ alignSelf: props.alignment }, props.boundarySpacing]}>
-          <LinuxDoPacketCover cover={props.src} dimensions={dimensions} settle={bodyMediaLease.settle} />
-        </View>
+    if (packet) {
+      const cover = (
+        <LinuxDoPacketCover
+          key={bodyMediaLease.attemptId}
+          cover={props.src}
+          dimensions={dimensions}
+          settle={bodyMediaLease.settle}
+        />
+      );
+      return props.hasDestinationLink ? (
+        <View style={[{ alignSelf: props.alignment }, props.boundarySpacing]}>{cover}</View>
+      ) : (
+        <ImagePreviewPressable
+          accessibilityRole="button"
+          accessibilityLabel={props.attributes.alt || '查看红包封面'}
+          style={[{ alignSelf: props.alignment }, props.boundarySpacing]}
+          onPress={(event) => {
+            event.stopPropagation?.();
+            props.onOpenImagePreview(
+              props.src,
+              dimensions,
+              undefined,
+              normalizeMediaReferrerPolicy(props.attributes.referrerpolicy),
+              props.originalUri
+            );
+          }}
+        >
+          {cover}
+        </ImagePreviewPressable>
       );
     }
     return <AdmittedPreviewImageBlock {...props} bodyMediaLease={bodyMediaLease} />;

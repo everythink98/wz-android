@@ -1,6 +1,7 @@
 import { ActivityIndicator } from 'react-native-paper';
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import { isLinuxDoPacketCover } from '@/domain/forum/linuxDoPacket';
+import { LinuxDoPacketCover } from '@/ui/content/LinuxDoPacketCover';
 import {
   useCallback,
   useEffect,
@@ -1697,7 +1698,16 @@ function PreviewPage({
         }}
       >
         <View testID={`preview-zoom-content-${index}`} style={[componentStyles.previewPage, imageSize]}>
-          {status !== 'failed' ? (
+          {status !== 'failed' && mediaContext.contentSource === 'linuxdo' && isLinuxDoPacketCover(item.originalUri) ? (
+            <LinuxDoPacketCover
+              key={JSON.stringify([mediaContext.sessionIdentity, sourceIdentity, retryVersion])}
+              cover={item.originalUri}
+              dimensions={imageSize}
+              settle={(outcome) =>
+                outcome === 'displayed' ? settleLoaded(false) : settleFailure(false, 'native-error')
+              }
+            />
+          ) : status !== 'failed' ? (
             <PreviewPageLoadLayer
               active={active}
               activeAnimatedArtifact={activeAnimatedArtifact}

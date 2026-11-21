@@ -1,6 +1,7 @@
 import { createImageTouch } from '../imageTouchFixture';
 import { describe, expect, it, jest } from '@jest/globals';
 import { inactivePostInteractionActions } from '../topicInteractionFixture';
+import { LinuxDoPacketViewer } from '@/ui/content/LinuxDoPacketCover';
 import React, { type ReactNode, type RefObject } from 'react';
 import type { FlashListRef } from '@shopify/flash-list';
 import { Platform, StyleSheet, Text, View } from 'react-native';
@@ -731,41 +732,63 @@ describe('topic rich-text selection', () => {
     }
   });
 
-  it('renders the LINUX DO packet cover in its own browser session, outside the shared image cache', async () => {
-    const packet = `https://hb.lafi.sh/${encodeURIComponent('🧧')}/${encodeURIComponent('🍎'.repeat(13) + '☕')}`;
-    const cover = `${packet}/${encodeURIComponent('🖼️')}.svg`;
-    const onOpenExternalUrl = jest.fn();
-    const topic = prepareTopicContent({
-      ...selectionTopic,
-      source: 'linuxdo',
-      url: 'https://linux.do/t/42',
-      contentHtml: sanitizeContentHtml(
-        `<a href="${packet}"><picture><source type="image/svg+xml" srcset="${cover} 1x"><img width="300" height="400" alt="红包封面"></picture></a>`,
-        'https://linux.do/'
-      )
-    });
-    const view = await render(
-      <QueryTestWrapper>
-        <ProductionContentList
-          topic={topic}
-          quotedReplies={{}}
-          contentWidth={360}
-          onOpenExternalUrl={onOpenExternalUrl}
-        />
-      </QueryTestWrapper>
-    );
-    await act(async () => {
-      mockReadingList.onViewableItemsChanged({
-        viewableItems: mockReadingList.data.map((item, index) => ({ item, index, isViewable: true }))
+  it.each(['packet', 'image'] as const)(
+    'renders the LINUX DO cover in its own session when linking to the %s',
+    async (target) => {
+      const packet = `https://hb.lafi.sh/${encodeURIComponent('🧧')}/${encodeURIComponent('🍎'.repeat(13) + '☕')}`;
+      const cover = `${packet}/${encodeURIComponent('🖼️')}.svg`;
+      const onOpenExternalUrl = jest.fn();
+      const onOpenImagePreview = jest.fn();
+      const href = target === 'packet' ? packet : cover;
+      const topic = prepareTopicContent({
+        ...selectionTopic,
+        source: 'linuxdo',
+        url: 'https://linux.do/t/42',
+        contentHtml: sanitizeContentHtml(
+          `<a href="${href}"><picture><source type="image/svg+xml" srcset="${cover} 1x"><img width="300" height="400" alt="红包封面"></picture></a>`,
+          'https://linux.do/'
+        )
       });
-      mockReadingList.onLoad();
-    });
-    expect(view.getByTestId('linuxdo-packet-cover')).toHaveProp('cacheMode', 'LOAD_NO_CACHE');
-    expect(view.getByTestId('topic-image-frame')).toHaveStyle({ width: 300, height: 400 });
-    expect(mockReadingImages.has(cover)).toBe(false);
-    await fireEvent.press(view.getByRole('link', { name: '红包封面' }));
-    expect(onOpenExternalUrl).toHaveBeenCalledWith(packet);
-  });
+      const surface = (active: boolean) => (
+        <QueryTestWrapper>
+          <LinuxDoPacketViewer.Provider value={{ active, username: 'reader', scope: 'test', revision: 0 }}>
+            <ProductionContentList
+              topic={topic}
+              quotedReplies={{}}
+              contentWidth={360}
+              onOpenExternalUrl={onOpenExternalUrl}
+              onOpenImagePreview={onOpenImagePreview}
+            />
+          </LinuxDoPacketViewer.Provider>
+        </QueryTestWrapper>
+      );
+      const view = await render(surface(true));
+      await act(async () => {
+        mockReadingList.onViewableItemsChanged({
+          viewableItems: mockReadingList.data.map((item, index) => ({ item, index, isViewable: true }))
+        });
+        mockReadingList.onLoad();
+      });
+      expect(view.getByTestId('linuxdo-packet-cover')).toHaveProp('cacheMode', 'LOAD_NO_CACHE');
+      if (target === 'packet') {
+        const first = view.getByTestId('linuxdo-packet-cover');
+        await fireEvent(first, 'message', { nativeEvent: { data: 'error' } });
+        expect(view.getByTestId('linuxdo-packet-cover')).not.toBe(first);
+        await view.rerender(surface(false));
+        expect(view.queryByTestId('linuxdo-packet-cover')).toBeNull();
+        await view.rerender(surface(true));
+        expect(view.getByTestId('linuxdo-packet-cover')).toBeTruthy();
+      }
+      expect(view.getByTestId('topic-image-frame')).toHaveStyle({ width: 300, height: 400 });
+      expect(mockReadingImages.has(cover)).toBe(false);
+      await fireEvent.press(view.getByRole('link', { name: '红包封面' }));
+      const [opened, other] =
+        target === 'packet' ? [onOpenExternalUrl, onOpenImagePreview] : [onOpenImagePreview, onOpenExternalUrl];
+      expect(opened).toHaveBeenCalledTimes(1);
+      expect(opened.mock.calls[0][0]).toBe(href);
+      expect(other).not.toHaveBeenCalled();
+    }
+  );
 
   it.each(['page', 'image'] as const)('opens the %s target of a linked cover at its authored size', async (kind) => {
     const cover = 'https://images.example/cover.svg';

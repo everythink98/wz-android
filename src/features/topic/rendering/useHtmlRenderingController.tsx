@@ -7,6 +7,7 @@ import {
   type CustomMixedRenderer
 } from 'react-native-render-html';
 import { isHttpOrHttpsUrl } from '@/platform/media/imageRequestSource';
+import { isLinuxDoPacketCover } from '@/domain/forum/linuxDoPacket';
 import {
   isPreviewableImageUrl,
   pictureLinkOpensPreview,
@@ -166,7 +167,14 @@ export function useHtmlRenderingController({
       const { Renderer, rendererProps } = useInternalRenderer('a', props);
       const href = props.tnode.attributes.href || '';
       const picture = href ? props.tnode.children.find((child) => child.tagName === 'picture') : undefined;
-      const image = picture?.children.find((child) => child.tagName === 'img')?.attributes;
+      const packetImage =
+        mediaContext.contentSource === 'linuxdo' && props.tnode.children.length === 1
+          ? props.tnode.children.find(
+              (child) => child.tagName === 'img' && isLinuxDoPacketCover(child.attributes.src || '')
+            )
+          : undefined;
+      const linkedPicture = picture || packetImage;
+      const image = (picture?.children.find((child) => child.tagName === 'img') || packetImage)?.attributes;
       const pictureOpensImage =
         !!image && pictureLinkOpensPreview(href, image, props.tnode.classes.includes('lightbox'));
       const { onPress, ...touchHandlers } = useImagePreviewPress(
@@ -181,12 +189,12 @@ export function useHtmlRenderingController({
       const isMentionLink = className.split(/\s+/).includes('forum-mention-link');
       const isFloorLink = className.split(/\s+/).includes('forum-floor-link');
       if (!isMentionLink && !isFloorLink) {
-        if (picture || isPreviewableImageUrl(props.tnode.attributes?.href)) {
+        if (linkedPicture || isPreviewableImageUrl(props.tnode.attributes?.href)) {
           let link;
           if (props.tnode.type === 'block') {
             const nativeProps = getNativePropsForTNode({ ...props, onPress: rendererProps.onPress });
             const pictureLabel =
-              picture &&
+              linkedPicture &&
               props.tnode.children.length === 1 &&
               (props.tnode.attributes['aria-label'] || image?.alt || props.tnode.attributes.title || '打开链接');
             link = (
@@ -206,7 +214,7 @@ export function useHtmlRenderingController({
               />
             );
           }
-          return picture && !pictureOpensImage ? (
+          return linkedPicture && !pictureOpensImage ? (
             <PictureDestinationContext.Provider value>{link}</PictureDestinationContext.Provider>
           ) : (
             link
