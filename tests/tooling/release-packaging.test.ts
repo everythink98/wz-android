@@ -312,7 +312,7 @@ describe('Android release packaging guards', () => {
     expect(app.expo.plugins).toContain('./plugins/withForumPlatform');
     for (const required of [
       'class SvgRendererModule',
-      'fun renderPoster(svgBase64: String, cacheKey: String, timeoutMs: Double, promise: Promise)',
+      'fun renderPoster(svgBase64: String, cacheKey: String?, timeoutMs: Double, promise: Promise)',
       'fun fetchSvgDocument(url: String, headers: ReadableMap, timeoutMs: Double, promise: Promise)',
       'boundedSvgBytes(body.source())',
       'val call = NetworkProxyRuntime.imageCallFactory.newCall(',
