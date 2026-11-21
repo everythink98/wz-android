@@ -67,11 +67,6 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
       borderTopWidth: StyleSheet.hairlineWidth,
       paddingTop: 5
     },
-    searchFilterReset: {
-      justifyContent: 'center',
-      minWidth: 48,
-      minHeight: 48
-    },
     searchFilterBody: {
       flexGrow: 0,
       flexShrink: 1
@@ -313,7 +308,7 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
       borderLeftWidth: StyleSheet.hairlineWidth,
       borderLeftColor: theme.line
     },
-    searchFilterSegmentSelected: { backgroundColor: theme.surface },
+    searchFilterSegmentSelected: { backgroundColor: theme.primarySoft },
     searchFilterSegmentMark: {
       width: 14
     },
@@ -336,9 +331,8 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
       alignItems: 'center',
       justifyContent: 'center'
     },
-    searchFilterCheckboxChecked: { borderColor: theme.ink },
     searchFilterActiveText: {
-      color: theme.ink
+      color: theme.dark ? theme.primary : theme.primaryStrong
     },
     searchFilterCandidateInput: {
       alignItems: 'center',

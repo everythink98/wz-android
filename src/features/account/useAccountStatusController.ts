@@ -383,7 +383,10 @@ export function useAccountStatusController({
           const observation = await withAbortableTimeout(
             (signal) =>
               readAccountStatus(source, {
-                fetcher: withDiagnosticFetcher(trace, rejectUnauthorizedResponse(fetcher)),
+                fetcher: withDiagnosticFetcher(
+                  trace,
+                  source === 'linuxdo' ? fetcher : rejectUnauthorizedResponse(fetcher)
+                ),
                 linuxDoUserAgent: getLinuxDoUserAgent(),
                 nodeSeekUserAgent: getNodeSeekUserAgent(),
                 readManagedCookieHeader,

@@ -134,19 +134,22 @@ describe('visual scenario catalog', () => {
     }
   );
 
-  it('keeps the proxy gallery modal clear of its parent safe area', async () => {
+  it('applies the gallery safe area once around the embedded proxy management screen', async () => {
     const view = await render(
       <GestureHandlerRootView>
         <SafeAreaInsetsContext.Provider value={{ top: 32, right: 0, bottom: 24, left: 0 }}>
-          <VisualScenarioView id="more.proxy.failed" />
+          <VisualScenarioView id="more.proxy.failed" insetContent />
         </SafeAreaInsetsContext.Provider>
       </GestureHandlerRootView>
     );
-    const modalContent = view.getByText('服务器代理').parent?.parent;
-    expect(modalContent).toHaveStyle({
-      paddingTop: 32,
-      paddingBottom: 24
+    expect(view.getByText('管理代理')).toBeTruthy();
+    expect(view.getByTestId('visual-scenario-content')).toHaveProp('edges', {
+      top: 'additive',
+      right: 'off',
+      bottom: 'additive',
+      left: 'off'
     });
+    expect(view.getByTestId('network-proxy-settings')).toHaveStyle({ paddingTop: 0, paddingBottom: 0 });
     await view.unmount();
   });
 });

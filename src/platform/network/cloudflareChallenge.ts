@@ -13,10 +13,13 @@ export class LinuxDoCloudflareError extends Error {
   }
 }
 
-function responseRetryAfterMs(headers: Pick<Headers, 'get'>) {
+export function responseRetryAfterMs(headers: Pick<Headers, 'get'>) {
   const value = headers.get('Retry-After');
   if (!value) return undefined;
-  const delay = /^\d+(?:\.\d+)?$/.test(value.trim()) ? Number(value) * 1000 : Date.parse(value) - Date.now();
+  const serverTime = Date.parse(headers.get('Date') || '');
+  const delay = /^\d+(?:\.\d+)?$/.test(value.trim())
+    ? Number(value) * 1000
+    : Date.parse(value) - (Number.isFinite(serverTime) ? serverTime : Date.now());
   return Number.isFinite(delay) ? Math.max(0, delay) : undefined;
 }
 

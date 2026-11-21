@@ -1,8 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createBrowserFetchQueue,
-  linuxDoBrowserResponse,
-  nodeSeekBrowserResponse,
+  forumBrowserResponse,
   requestHeaderValue,
   shouldHandleBrowserHttpError,
   type BrowserFetchQueueRequest
@@ -42,7 +41,7 @@ describe('browser fetch queue', () => {
   });
 
   it('removes a challenge body and marks the response explicitly', async () => {
-    const response = nodeSeekBrowserResponse('<html>private page</html>', true);
+    const response = forumBrowserResponse('<html>private page</html>', true);
 
     expect(response.status).toBe(403);
     expect(response.headers.get('cf-mitigated')).toBe('challenge');
@@ -50,7 +49,7 @@ describe('browser fetch queue', () => {
   });
 
   it('keeps the final NodeSeek browser document URL on the synthetic response', () => {
-    const response = nodeSeekBrowserResponse(
+    const response = forumBrowserResponse(
       '<html>page five</html>',
       false,
       undefined,
@@ -61,9 +60,9 @@ describe('browser fetch queue', () => {
   });
 
   it('classifies linux.do browser responses by body type', () => {
-    expect(linuxDoBrowserResponse('{"ok":true}').headers.get('content-type')).toBe('application/json');
-    expect(linuxDoBrowserResponse('<html></html>').headers.get('content-type')).toBe('text/html');
-    expect(linuxDoBrowserResponse('{}', 503).status).toBe(503);
+    expect(forumBrowserResponse('{"ok":true}', false).headers.get('content-type')).toBe('application/json');
+    expect(forumBrowserResponse('<html></html>', false).headers.get('content-type')).toBe('text/html');
+    expect(forumBrowserResponse('{}', false, 503).status).toBe(503);
   });
 
   it('handles document errors but ignores static resources and off-site frames', () => {

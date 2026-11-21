@@ -1,12 +1,10 @@
 import { MoreUtilityPanels, type MoreUtilityCapabilities } from '@/features/more/components/MoreUtilityPanels';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { createEmptyNetworkProxyState } from '@/platform/network/networkProxy';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import type { VisualScenarioDefinition } from '../../types';
 
 const noop = () => undefined;
-const noopAsync = async () => undefined;
 const noStyles = () => null;
 
 function createSafeAreaMetrics() {
@@ -33,19 +31,8 @@ function BackupScenario() {
       exportLog: noop
     },
     proxy: {
-      activeProfile: null,
-      applyError: '',
-      applyStatus: 'idle',
-      state: createEmptyNetworkProxyState(),
-      summary: '未启用',
-      visible: false,
-      close: noop,
-      open: noop,
-      deleteProfile: noopAsync,
-      selectProfile: noopAsync,
-      setEnabled: noopAsync,
-      testProfile: async () => ({ ok: true, latencyMs: 0 }),
-      upsertProfile: noopAsync
+      summary: '跟随系统',
+      open: noop
     },
     settings: {
       value: { ...createEmptyReaderData().settings, ...settings },

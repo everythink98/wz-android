@@ -26,8 +26,7 @@ describe('search visual scenarios', () => {
     expect(range.props.accessibilityValue.text).toBe('2–50');
     await fireEvent.press(range);
     expect(view.getByTestId('search-filter-input-minPosts').props.value).toBe('2');
-    expect(view.getByText('确认筛选')).toBeTruthy();
-    await fireEvent.press(view.getByTestId('search-filter-back'));
+    await fireEvent.press(view.getByRole('button', { name: '确认范围' }));
     await fireEvent.press(view.getByLabelText('收起更多筛选，已设置'));
     expect(view.getByText('更多筛选 · 已设置')).toBeTruthy();
   });

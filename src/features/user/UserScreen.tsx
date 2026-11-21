@@ -1,4 +1,3 @@
-import { recordUserInteraction } from '@/platform/network/userPresence';
 import { createUserListInteraction } from './userListInteraction';
 import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import { createUserStyles, type UserStyles } from './styles';
@@ -12,12 +11,12 @@ import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { DisclosureChevron } from '@/ui/controls/ExpandableControls';
 import { AuthNoticeBox, EmptyText } from '@/ui/controls/FeedbackStates';
-import { ContentLoadingPlaceholder } from '@/ui/controls/ContentLoadingPlaceholder';
-import { COMPACT_BUTTON_HIT_SLOP, TOUCH_HIT_SLOP } from '@/ui/controls/touchTarget';
+import { ContentLoadingPlaceholder, SkeletonBlock } from '@/ui/controls/ContentLoadingPlaceholder';
+import { TOUCH_HIT_SLOP } from '@/ui/controls/touchTarget';
 import { ScreenTopBar, ScreenTopBarActions, ScreenTopBarTitle } from '@/ui/controls/ScreenTopBar';
 import { NavigationBackdropProvider, NavigationBackdropTarget } from '@/ui/navigation/NavigationGlass';
 import { Avatar } from '@/ui/avatar/Avatar';
-import { MemoizedTopicCard } from '@/ui/topic/TopicCard';
+import { MemoizedTopicCard, TopicListPlaceholder } from '@/ui/topic/TopicCard';
 import { authNoticeForSourceError } from '@/domain/session/siteSessionPrompts';
 import {
   createUserListItems,
@@ -117,7 +116,7 @@ function UserReplyCard({
     .filter(Boolean)
     .join(' · ');
   return (
-    <View style={styles.topicRowShell}>
+    <View style={[styles.topicRowShell, styles.topicRowSurface]}>
       <Pressable accessibilityRole="button" style={styles.topicCardPressable} onPress={openTopicPress}>
         <Text style={styles.cardTitle} numberOfLines={2}>
           {reply.topicTitle || '查看原帖'}
@@ -138,6 +137,7 @@ function UserReplyCard({
 }
 
 export const UserScreen = memo(function UserScreen({
+  active = true,
   initialTab = 'topics',
   busy,
   error,
@@ -163,6 +163,7 @@ export const UserScreen = memo(function UserScreen({
   onRefresh,
   onToggleFollow
 }: {
+  active?: boolean;
   initialTab?: UserActivityTab;
   busy: boolean;
   error: SourceErrorInfo | null;
@@ -312,37 +313,18 @@ export const UserScreen = memo(function UserScreen({
       <View style={styles.profileActions}>
         {onPrivateMessage ? (
           <View style={[styles.followTouchSlot, isNodeSeek && { minWidth: actionMinWidth }]}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="私信"
-              hitSlop={COMPACT_BUTTON_HIT_SLOP}
-              style={[styles.followButton, styles.followButtonSelected, isNodeSeek && { minWidth: actionMinWidth }]}
-              onPress={() => {
-                recordUserInteraction();
-                onPrivateMessage();
-              }}
-            >
-              <Text style={[styles.followButtonText, styles.followButtonTextSelected]}>私信</Text>
-            </Pressable>
+            <AppButton minWidth={isNodeSeek ? actionMinWidth : 48} label="私信" onPress={onPrivateMessage} />
           </View>
         ) : null}
         <View style={[styles.followTouchSlot, { minWidth: actionMinWidth }]}>
-          <Pressable
-            hitSlop={COMPACT_BUTTON_HIT_SLOP}
-            accessibilityRole="button"
-            accessibilityLabel={followed ? '已关注' : '关注'}
+          <AppButton
+            minWidth={actionMinWidth}
+            label={followed ? '已关注' : '关注'}
             accessibilityHint={followed ? '再次点击取消本机关注' : '在本机关注这个用户'}
-            accessibilityState={{ selected: followed }}
-            style={[styles.followButton, { minWidth: actionMinWidth }, followed && styles.followButtonSelected]}
-            onPress={() => {
-              recordUserInteraction();
-              onToggleFollow(profile);
-            }}
-          >
-            <Text style={[styles.followButtonText, followed && styles.followButtonTextSelected]}>
-              {followed ? '已关注' : '关注'}
-            </Text>
-          </Pressable>
+            selected={followed}
+            variant={followed ? 'default' : 'solid'}
+            onPress={() => onToggleFollow(profile)}
+          />
         </View>
       </View>
     ) : null;
@@ -404,10 +386,22 @@ export const UserScreen = memo(function UserScreen({
             </View>
           )
         ) : null}
-        {busy && !profile && !error ? <ContentLoadingPlaceholder layout="body" text="加载中" /> : null}
+        {busy && !profile && !error ? (
+          <ContentLoadingPlaceholder label="加载中" animating={active}>
+            <View style={[styles.profileStatRail, { minHeight: styles.profileStatValue.lineHeight }]}>
+              {[28, 34].map((width) => (
+                <View key={width} style={styles.profileStat}>
+                  <SkeletonBlock style={{ width, height: styles.profileStatValue.fontSize }} />
+                  <SkeletonBlock style={{ width: 24, height: styles.profileStatLabel.fontSize }} />
+                </View>
+              ))}
+            </View>
+          </ContentLoadingPlaceholder>
+        ) : null}
       </View>
     );
   }, [
+    active,
     bioExpanded,
     busy,
     displayName,
@@ -542,10 +536,19 @@ export const UserScreen = memo(function UserScreen({
                     ) : null}
                   </View>
                 ) : profile && activityBusy && !activityData ? (
-                  <ContentLoadingPlaceholder
-                    layout="list"
-                    text={userTab === 'topics' ? '正在读取主题' : '正在读取回复'}
-                  />
+                  userTab === 'topics' ? (
+                    <TopicListPlaceholder label="正在读取主题" animating={active} />
+                  ) : (
+                    <ContentLoadingPlaceholder label="正在读取回复" animating={active} style={styles.topicRowSurface}>
+                      {(['89%', '66%'] as const).map((width) => (
+                        <View key={width} style={[styles.topicRowShell, styles.topicCardPressable]}>
+                          <SkeletonBlock style={{ width, height: styles.cardTitle.fontSize }} />
+                          <SkeletonBlock style={{ width: '96%', height: styles.excerpt.fontSize }} />
+                          <SkeletonBlock style={{ width: '29%', height: styles.replyMeta.fontSize }} />
+                        </View>
+                      ))}
+                    </ContentLoadingPlaceholder>
+                  )
                 ) : profile && activityData && !activityData.length && !activityHasMore ? (
                   <View style={styles.emptyActivity}>
                     <EmptyText text={userTab === 'replies' ? '暂无回复' : '暂无主题'} />

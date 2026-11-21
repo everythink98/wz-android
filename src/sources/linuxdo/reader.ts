@@ -22,6 +22,7 @@ import type {
   TopicDetail
 } from '@/domain/forum/models';
 import { isRecord, parsePositiveInteger, recordText, textContentFromHtml } from '@/domain/forum/html';
+import { mergeTopics } from '@/domain/forum/feed';
 import { discoursePostPolicy } from '@/sources/discourse/policy';
 import { accessRequirementFromObject, accessRequirementFromText } from '@/domain/forum/accessRequirements';
 import { isCloudflareChallengeResponse, LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
@@ -61,10 +62,11 @@ import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 import { AGGREGATE_SOURCE_BUDGET_MS } from '@/sources/readAggregation';
 
 export const LIST_PAGE_SIZE = 30;
+const LATEST_PINS_TIMEOUT_MS = 1_500;
 
 type LinuxDoEmojiCache = { kind: 'empty' } | { kind: 'ready'; urls: DiscourseEmojiUrlMap };
 let emojiUrlCache: LinuxDoEmojiCache = { kind: 'empty' };
-type LinuxDoCategoryMap = Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>;
+type LinuxDoCategoryMap = Map<string, { name: string; slug?: string; accessRequirement?: Topic['accessRequirement'] }>;
 type LinuxDoCategoryCache =
   | { scope: null }
   | {
@@ -99,7 +101,7 @@ export interface LinuxDoOptions {
 }
 
 export function categoryMapFromData(data: unknown) {
-  const map = new Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>();
+  const map: LinuxDoCategoryMap = new Map();
   if (!isRecord(data)) {
     return map;
   }
@@ -118,6 +120,7 @@ export function categoryMapFromData(data: unknown) {
       }
       map.set(String(category.id), {
         name: String(category.name),
+        ...(typeof category.slug === 'string' ? { slug: category.slug } : {}),
         accessRequirement: accessRequirementFromObject(category)
       });
     }
@@ -172,7 +175,7 @@ function waitForCategoryData(options: LinuxDoOptions) {
 export async function categoryMapForTopics(
   data: unknown,
   topics: unknown[],
-  categoryMap: Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>,
+  categoryMap: LinuxDoCategoryMap,
   options: LinuxDoOptions
 ) {
   const cache = activateCategoryCacheScope(options);
@@ -454,7 +457,7 @@ export async function fetchLinuxDoJson<T>(
   const text = await response.text();
   return proveForumReadResponse(response, () => {
     if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
-      throw new LinuxDoCloudflareError();
+      throw new LinuxDoCloudflareError(response);
     }
     let data: unknown = {};
     if (text) {
@@ -485,6 +488,65 @@ function topicStreamState(data: unknown) {
   return { stream, embeddedPostCount: embeddedPosts.length };
 }
 
+function linuxDoFeedRows(data: Record<string, unknown> | undefined) {
+  return isRecord(data?.topic_list) && Array.isArray(data.topic_list.topics) ? data.topic_list.topics : [];
+}
+
+function isLinuxDoFeedPin(raw: Record<string, unknown>, category?: string, sitePins = false) {
+  if (raw.unpinned === true ? !sitePins : raw.pinned !== true) return false;
+  if (!category) return raw.pinned_globally === true;
+  return !/^\d+$/.test(category) || String(raw.category_id) === String(Number(category));
+}
+
+function normalizeLinuxDoFeedRows(
+  rows: unknown[],
+  data: Record<string, unknown> | undefined,
+  categoryMap: LinuxDoCategoryMap,
+  category?: string,
+  sitePins = false
+) {
+  const users = discourseUsersById(data?.users);
+  return rows.flatMap((raw) => {
+    if (!isRecord(raw)) return [];
+    const topic = normalizeTopic(raw, categoryMap, discourseOriginalPoster(raw, users));
+    if (!topic) return [];
+    topic.pinned = isLinuxDoFeedPin(raw, category, sitePins) || undefined;
+    return [topic];
+  });
+}
+
+async function latestLinuxDoPins(options: LinuxDoOptions, categoryMap: LinuxDoCategoryMap, category?: string) {
+  const signedIn = options.linuxDoAccess?.authenticated === true;
+  const slug = category && (/^\d+$/.test(category) ? categoryMap.get(String(Number(category)))?.slug : category);
+  const query = slug ? `in:pinned =category:${slug}` : 'in:pinned';
+  let pins: Topic[] = [];
+  await withAbortableTimeout(
+    async (signal) => {
+      const seen = new Set<string>();
+      for (let page = 0; !signal.aborted; page++) {
+        // The signed-in activity list omits read pins. The pin index retains them and checks permissions.
+        const data = await fetchLinuxDoJson<Record<string, unknown>>(
+          signedIn ? '/filter.json' : linuxDoFeedPath('latest'),
+          signedIn ? { q: query, ...(page ? { page } : {}) } : category ? { category } : undefined,
+          { ...options, signal }
+        );
+        if (signal.aborted) return;
+        const rows = linuxDoFeedRows(data);
+        const scoped = rows.filter((row) => isRecord(row) && isLinuxDoFeedPin(row, category, signedIn));
+        pins = mergeTopics(pins, normalizeLinuxDoFeedRows(scoped, data, categoryMap, category, signedIn));
+        if (!signedIn || !isRecord(data.topic_list) || !data.topic_list.more_topics_url) return;
+        const previous = seen.size;
+        for (const row of rows) {
+          if (isRecord(row) && (typeof row.id === 'number' || typeof row.id === 'string')) seen.add(String(row.id));
+        }
+        if (seen.size === previous) return;
+      }
+    },
+    { signal: options.signal, timeoutMs: LATEST_PINS_TIMEOUT_MS }
+  ).catch(() => undefined);
+  return pins;
+}
+
 export async function getLinuxDoFeed(
   options: LinuxDoOptions & {
     page?: number;
@@ -500,6 +562,7 @@ export async function getLinuxDoFeed(
   const start = (page - 1) * limit;
   const firstListPage = Math.floor(start / LIST_PAGE_SIZE) + 1;
   const firstOffset = start % LIST_PAGE_SIZE;
+  let pins: Topic[] = [];
   let scan: LinuxDoFeedScan =
     0 < limit
       ? { kind: 'reading', page: firstListPage, items: [], droppedCount: 0, categories: new Map() }
@@ -510,15 +573,13 @@ export async function getLinuxDoFeed(
       linuxDoFeedParams(scan.page, options.category, linuxDoFilter),
       options
     );
-    const topics = isRecord(data.topic_list) && Array.isArray(data.topic_list.topics) ? data.topic_list.topics : [];
+    const topics = linuxDoFeedRows(data);
+    const firstLatest = page === 1 && scan.page === 1 && linuxDoFilter === 'latest' && !options.signal?.aborted;
+    const showSitePins = linuxDoFilter === 'latest' && options.linuxDoAccess?.authenticated === true;
     const categoryMap = await categoryMapForTopics(data, topics, scan.categories, options);
-    const users = discourseUsersById(data.users);
-    const items = topics
-      .map((topic) => {
-        const authorData = isRecord(topic) ? discourseOriginalPoster(topic, users) : undefined;
-        return normalizeTopic(topic, categoryMap, authorData);
-      })
-      .filter(Boolean) as Topic[];
+    const items = normalizeLinuxDoFeedRows(topics, data, categoryMap, options.category, showSitePins);
+    if (firstLatest && items.length && !options.signal?.aborted)
+      pins = await latestLinuxDoPins(options, categoryMap, options.category);
     const droppedCount = scan.droppedCount + Math.max(0, topics.length - items.length);
     const serverHasMore = Boolean(isRecord(data.topic_list) && data.topic_list.more_topics_url);
     scan.items.push(...(scan.page === firstListPage && firstOffset > 0 ? items.slice(firstOffset) : items));
@@ -530,8 +591,9 @@ export async function getLinuxDoFeed(
       scan = { kind: 'ready', items: scan.items, droppedCount, hasMore: false };
     }
   }
+  const items = scan.items.slice(0, limit);
   const result = {
-    items: scan.items.slice(0, limit),
+    items: pins.length ? mergeTopics(pins, items) : items,
     errors: {},
     hasMore: scan.hasMore,
     nextPage: scan.hasMore ? page + 1 : null

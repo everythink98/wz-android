@@ -56,7 +56,13 @@ export function readAccountStatus(
     }
   };
   return read().catch((error) => {
-    if (!error || typeof error !== 'object' || (error as { reason?: unknown }).reason !== 'http-401') throw error;
+    if (
+      source === 'linuxdo' ||
+      !error ||
+      typeof error !== 'object' ||
+      (error as { reason?: unknown }).reason !== 'http-401'
+    )
+      throw error;
     return {
       session: siteSessionStateFromEvents(source, [{ type: 'login-expired', message: '登录状态已失效' }])
     };

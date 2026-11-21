@@ -71,7 +71,8 @@ export function useLinuxDoVerificationPage({
   const { stage, needsRemount } = pageSnapshot;
   const publishPage = useCallback(() => setPageSnapshot(document.snapshot), [document]);
   const current = useCommittedRef({ key, visible, web });
-  const isCurrent = () => current.current.key === key && current.current.visible && current.current.web;
+  const isCurrent = () =>
+    current.current.key === key && current.current.visible && current.current.web && !document.snapshot.needsRemount;
   const record = useCallback(
     (
       action: LinuxDoVerificationPageEvent['verificationAction'],
@@ -137,8 +138,9 @@ export function useLinuxDoVerificationPage({
       uri: loginFormMode ? LOGIN_FORM_ADAPTERS.linuxdo.loginUrl : stage === 'challenge' ? CHALLENGE_URL : FORUM_URL
     },
     onShouldStartLoadWithRequest: (request) => {
+      if (!isCurrent()) return false;
       const allowed = handleLinuxDoNavigation(request);
-      if (allowed && request.isTopFrame !== false && isCurrent()) onDocumentNavigation?.(key);
+      if (allowed && request.isTopFrame !== false) onDocumentNavigation?.(key);
       return allowed;
     },
     onLoadProgress: (event) => {

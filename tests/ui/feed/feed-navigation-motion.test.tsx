@@ -149,7 +149,8 @@ describe('Feed navigation motion', () => {
     const pager = view.getByTestId('native-feed-pager');
 
     expect(view.getAllByTestId(/^feed-secondary-/, { includeHiddenElements: true })).toHaveLength(2);
-    expect(view.getAllByText('加载中', { includeHiddenElements: true })).toHaveLength(2);
+    expect(view.getAllByLabelText('加载中', { includeHiddenElements: true })).toHaveLength(5);
+    expect(view.queryByText('加载中', { includeHiddenElements: true })).toBeNull();
     expect(view.queryByTestId('feed-secondary-linuxdo', { includeHiddenElements: true })).toBeNull();
     expect(view.queryByTestId('feed-secondary-nodeseek', { includeHiddenElements: true })).toBeNull();
     expect(onFeedSourceChange).not.toHaveBeenCalled();

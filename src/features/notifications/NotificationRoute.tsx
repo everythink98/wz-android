@@ -697,6 +697,7 @@ export function NotificationsRoute({
   }, [retrySource, runtime, source]);
   return (
     <NotificationsScreen
+      active={isFocused}
       initializationError={runtime.initializationError}
       storageReady={runtime.ready}
       onRetryInitialization={() => void runtime.retryInitialization()}

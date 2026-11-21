@@ -5,13 +5,20 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated from 'react-native-reanimated';
 import { useScrollActionVisibility } from '@/ui/hooks/useScrollActionVisibility';
 import type { FlashListRef } from '@shopify/flash-list';
-import { ChevronLeft, MoreHorizontal, SquarePen, Star } from 'lucide-react-native';
+import { ChevronDown, ChevronLeft, MoreHorizontal, SquarePen, Star } from 'lucide-react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { sourceLabel } from '@/domain/forum/presentation';
 import { topicWithAuthorFallback } from '@/domain/forum/userNavigation';
 import { isDiscourseSource, type DiscourseSource } from '@/domain/forum/sourceCatalog';
-import type { TopicLocationTarget, SourceErrorInfo, Topic, TopicDetail, UserReference } from '@/domain/forum/models';
+import type {
+  ReplyLocationTarget,
+  TopicLocationTarget,
+  SourceErrorInfo,
+  Topic,
+  TopicDetail,
+  UserReference
+} from '@/domain/forum/models';
 import type { ForumImagePreviewDescriptor } from '@/domain/forum/forumContentMedia';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import { authNoticeForSourceError } from '@/domain/session/siteSessionPrompts';
@@ -26,6 +33,7 @@ import { NavigationBackdropProvider, NavigationBackdropTarget, NavigationGlass }
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { createTopicStyles } from './styles';
 import { ReplyComposerSheet } from './components/ReplyComposerSheet';
+import { ReplyFloorMenu } from './components/ReplyFloorMenu';
 import { TopicContentList } from './components/TopicContentList';
 import { TopicMenu } from './components/TopicMenu';
 import { LinuxDoPostInteractionsProvider } from './components/LinuxDoPostInteractions';
@@ -33,7 +41,7 @@ import { readableTopicError } from './model/topicError';
 import { isTopicAccessNotice } from './model/topicOpeningPresentation';
 import type { TopicActionsController } from './actions/useTopicActionsController';
 import type { useHtmlRenderingController } from './rendering/useHtmlRenderingController';
-import type { TopicListItem } from './model/topicListModel';
+import type { TopicListItem, TopicViewportFloor } from './model/topicListModel';
 import type { useTopicController } from './useTopicController';
 import type { TopicSessionController } from './useTopicSessionController';
 
@@ -101,19 +109,34 @@ export const TopicScreen = memo(function TopicScreen({
   const { state, commands } = session;
   const { actionBusy, decisionFor } = actions;
   const { error: topicError, topic } = article;
-  const canRefreshReplies = !topic || !isTopicAccessNotice(topic);
+  const canRefreshReplies = Boolean(topic && !isTopicAccessNotice(topic));
+  const canJumpToReply = Boolean(
+    canRefreshReplies &&
+    ((topic?.replyCount ?? 0) > 0 || read.topicReplies.length || read.replyHasMore || read.replyHasPrevious)
+  );
   const selectedTopic = state.selectedTopic;
   const { styles, theme } = useReaderThemeStyles(createTopicStyles);
   const item = topicWithAuthorFallback(topic, selectedTopic) || selectedTopic;
   const itemSource = topic?.source;
+  const topicKey = `${item?.source}:${item?.id}`;
   const [refresh, setRefresh] = useState<{ section: 'topic' | 'replies' } | null>(null);
   const refreshFlight = useRef<typeof refresh>(null);
   const [topicMenuOpen, setTopicMenuOpen] = useState(false);
   const [topBarHeight, setTopBarHeight] = useState(0);
   const [replyActionHeight, setReplyActionHeight] = useState(0);
+  const [jumpAnchor, setJumpAnchor] = useState<{ x: number; top: number; width: number } | null>(null);
+  const [viewportFloor, setViewportFloor] = useState<{ topicKey: string; floor: TopicViewportFloor }>();
+  const jumpTrigger = useRef<View>(null);
+  const jumpRequest = useRef(0);
+  const replyLocationRef = useRef<((target: ReplyLocationTarget) => void) | null>(null);
   const [commentSearchFocused, setCommentSearchFocused] = useState(false);
   const replyComposerIntent = state.replyComposerIntent;
   const replyComposerOpen = replyComposerIntent.kind !== 'closed';
+  const entryPositionReady = read.readingEntry?.ready !== false && read.readingEntry?.positionReady !== false;
+  const showReplyJump = active && entryPositionReady && canJumpToReply && jumpAnchor !== null && !replyComposerOpen;
+  const currentFloor = entryPositionReady && viewportFloor?.topicKey === topicKey ? viewportFloor.floor : undefined;
+  const floorLabel =
+    currentFloor === 'opening' ? '主楼' : currentFloor === undefined ? '楼层' : `第 ${currentFloor} 楼`;
   const {
     hidden: replyActionHidden,
     animatedStyle: replyActionAnimation,
@@ -121,8 +144,25 @@ export const TopicScreen = memo(function TopicScreen({
   } = useScrollActionVisibility({
     active,
     paused: replyComposerOpen,
-    resetKey: `${item?.source}:${item?.id}`
+    resetKey: topicKey
   });
+  const onViewportFloorChange = useCallback((key: string, floor: TopicViewportFloor) => {
+    setViewportFloor((current) =>
+      current?.topicKey === key && current.floor === floor ? current : { topicKey: key, floor }
+    );
+  }, []);
+  const closeReplyJump = useCallback(() => {
+    jumpRequest.current += 1;
+    setJumpAnchor(null);
+  }, []);
+  const openReplyJump = useCallback(() => {
+    const request = ++jumpRequest.current;
+    jumpTrigger.current?.measureInWindow((x, y, width, height) => {
+      if (request === jumpRequest.current && width > 0 && height > 0) {
+        setJumpAnchor({ x, top: y, width });
+      }
+    });
+  }, []);
   const discourseEmojiSource = active && isDiscourseSource(itemSource) ? itemSource : null;
   const { data: discourseEmojiData, refetch: refetchDiscourseEmojiUrls } = useQuery({
     queryKey: forumQueryKeys.emojiUrls(discourseEmojiSource),
@@ -140,6 +180,20 @@ export const TopicScreen = memo(function TopicScreen({
   useEffect(() => {
     setTopicMenuOpen(false);
   }, [active, item?.id, item?.source]);
+  useLayoutEffect(() => {
+    closeReplyJump();
+    return () => {
+      jumpRequest.current += 1;
+    };
+  }, [
+    active,
+    canJumpToReply,
+    closeReplyJump,
+    entryPositionReady,
+    html.mediaSessionIdentity,
+    replyComposerOpen,
+    topicKey
+  ]);
 
   const runTopicMenuAction = useCallback((action: () => void) => {
     setTopicMenuOpen(false);
@@ -183,6 +237,7 @@ export const TopicScreen = memo(function TopicScreen({
   }
 
   const canWrite = Boolean(topic && decisionFor({ action: 'reply' }).allowed);
+  const showReplyActions = canJumpToReply || canWrite;
   const canOpenReplyComposer =
     canWrite ||
     Boolean(
@@ -265,8 +320,8 @@ export const TopicScreen = memo(function TopicScreen({
             actions={actions}
             article={article}
             bodyMediaPaused={bodyMediaPaused}
-            readingPaused={topicMenuOpen || state.replyComposerIntent.kind !== 'closed'}
-            bottomContentInset={canWrite ? replyActionHeight + styles.replyActionPosition.bottom + 16 : 0}
+            readingPaused={topicMenuOpen || replyComposerOpen || showReplyJump}
+            bottomContentInset={showReplyActions ? replyActionHeight + styles.replyActionPosition.bottom + 16 : 0}
             commentSearchFocused={commentSearchFocused}
             currentNodeSeekUser={currentNodeSeekUser}
             discourseEmojiUrls={discourseEmojiUrls}
@@ -277,8 +332,10 @@ export const TopicScreen = memo(function TopicScreen({
             onCommentSearchFocusChange={setCommentSearchFocused}
             onOpenTopic={chrome.openTopic}
             onOpenUser={chrome.openUser}
-            onScrollProgress={canWrite ? updateReplyActionForScroll : undefined}
+            onScrollProgress={showReplyActions ? updateReplyActionForScroll : undefined}
+            onViewportFloorChange={canJumpToReply ? onViewportFloorChange : undefined}
             read={read}
+            replyLocationRef={replyLocationRef}
             session={session}
             location={location}
             locationRequestId={locationRequestId}
@@ -286,30 +343,67 @@ export const TopicScreen = memo(function TopicScreen({
           />
         </NavigationBackdropTarget>
       </KeyboardAvoidingView>
-      {canWrite ? (
+      {showReplyActions ? (
         <AnimatedSafeAreaView
+          testID="topic-reply-actions"
           edges={['bottom']}
           needsOffscreenAlphaCompositing
           pointerEvents={replyActionHidden ? 'none' : 'box-none'}
           style={[styles.replyActionPosition, replyActionAnimation]}
           onLayout={(event) => setReplyActionHeight(event.nativeEvent.layout.height)}
         >
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="写回复"
-            accessibilityHint="打开回复编辑器"
-            accessibilityState={{ disabled: replyActionHidden }}
-            accessibilityElementsHidden={replyActionHidden}
-            importantForAccessibility={replyActionHidden ? 'no-hide-descendants' : 'auto'}
-            disabled={replyActionHidden}
-            style={styles.replyAction}
-            onPress={() => commands.composer.toggle(true)}
-          >
-            <NavigationGlass accent />
-            <SquarePen size={20} color={theme.dark ? theme.primary : theme.primaryStrong} strokeWidth={1.8} />
-            <Text style={styles.replyActionText}>回复</Text>
-          </Pressable>
+          {canJumpToReply ? (
+            <View ref={jumpTrigger} collapsable={false}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="跳到楼层"
+                accessibilityValue={{ text: floorLabel }}
+                accessibilityState={{ disabled: replyActionHidden || !entryPositionReady, expanded: showReplyJump }}
+                accessibilityElementsHidden={replyActionHidden}
+                importantForAccessibility={replyActionHidden ? 'no-hide-descendants' : 'auto'}
+                disabled={replyActionHidden || !entryPositionReady}
+                style={[styles.replyAction, styles.replyJumpAction]}
+                onPress={openReplyJump}
+              >
+                <NavigationGlass variant="control" />
+                <Text numberOfLines={1} style={[styles.replyActionText, styles.replyJumpActionText]}>
+                  {floorLabel}
+                </Text>
+                <ChevronDown size={14} color={theme.muted} strokeWidth={1.8} accessible={false} />
+              </Pressable>
+            </View>
+          ) : null}
+          {canWrite ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="写回复"
+              accessibilityHint="打开回复编辑器"
+              accessibilityState={{ disabled: replyActionHidden }}
+              accessibilityElementsHidden={replyActionHidden}
+              importantForAccessibility={replyActionHidden ? 'no-hide-descendants' : 'auto'}
+              disabled={replyActionHidden}
+              style={[styles.replyAction, styles.replyWriteAction]}
+              onPress={() => commands.composer.toggle(true)}
+            >
+              <NavigationGlass accent />
+              <SquarePen size={20} color={theme.dark ? theme.primary : theme.primaryStrong} strokeWidth={1.8} />
+              <Text style={styles.replyActionText}>回复</Text>
+            </Pressable>
+          ) : null}
         </AnimatedSafeAreaView>
+      ) : null}
+      {showReplyJump && topic ? (
+        <ReplyFloorMenu
+          anchor={jumpAnchor}
+          currentFloor={typeof currentFloor === 'number' ? currentFloor : undefined}
+          topic={topic}
+          replies={read.topicReplies}
+          onClose={closeReplyJump}
+          onJump={(floor) => {
+            closeReplyJump();
+            replyLocationRef.current?.({ floor });
+          }}
+        />
       ) : null}
       <TopicMenu
         onEditTopic={chrome.editTopic}

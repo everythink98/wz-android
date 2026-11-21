@@ -414,26 +414,27 @@ describe('notification runtime', () => {
     try {
       await waitFor(() => expect(account.read.sessionsReady).toBe(true));
       await waitFor(() => expect(fetcher.mock.calls.filter(([url]) => url.includes('/t/201'))).toHaveLength(1));
-      if (outcome === 'expired') {
-        await waitFor(() => expect(account.read.accountSessionViewModels.linuxdo.isLoggedIn).toBe(false));
-        expect(probes()).toHaveLength(0);
-      } else {
-        await waitFor(() => expect(probes()).toHaveLength(1));
-        await act(async () => {
-          // Concurrent reads share the real Account controller's in-flight probe.
-          account.write.requestAccountRecheck('linuxdo', account.read.forumSessionEpochs.linuxdo);
+      await waitFor(() => expect(probes()).toHaveLength(1));
+      await act(async () => {
+        // Concurrent reads share the real Account controller's in-flight probe.
+        account.write.requestAccountRecheck('linuxdo', account.read.forumSessionEpochs.linuxdo);
+        if (outcome === 'expired') {
+          accountResponse.resolve(new Response('', { status: 404 }));
+        } else {
           accountResponse.resolve(
             outcome === 'unknown'
               ? new Response('{"errors":["您需要登录才能执行此操作。"]}', { status: 403 })
               : new Response(JSON.stringify({ current_user: outcome === 'anonymous' ? null : { username: 'alice' } }))
           );
-          await accountResponse.promise;
-        });
-        await waitFor(() => expect(account.read.accountSessionViewModels.linuxdo.isVerifying).toBe(false));
-        expect(probes()).toHaveLength(1);
-        expect(account.read.accountSessionViewModels.linuxdo.isLoggedIn).toBe(outcome !== 'anonymous');
-        if (outcome === 'unknown') expect(account.read.accountSessionViewModels.linuxdo.lastError).toBeTruthy();
-      }
+        }
+        await accountResponse.promise;
+      });
+      await waitFor(() => expect(account.read.accountSessionViewModels.linuxdo.isVerifying).toBe(false));
+      expect(probes()).toHaveLength(1);
+      expect(account.read.accountSessionViewModels.linuxdo.isLoggedIn).toBe(
+        outcome !== 'anonymous' && outcome !== 'expired'
+      );
+      if (outcome === 'unknown') expect(account.read.accountSessionViewModels.linuxdo.lastError).toBeTruthy();
       await waitFor(() => expect(view.getByText('去登录')).toBeTruthy());
       await fireEvent.press(view.getByText('去登录'));
       await waitFor(() => expect(view.getByTestId('notification-login-webview')).toBeTruthy());

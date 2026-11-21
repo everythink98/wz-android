@@ -1088,7 +1088,7 @@ describe('Android release evidence guards', () => {
     const moreReplay = readFileSync(path.join(deviceDir, 'more-readonly.ad'), 'utf8');
     const notificationsReplay = readFileSync(path.join(deviceDir, 'notifications-readonly.ad'), 'utf8');
     const libraryReplay = readFileSync(path.join(deviceDir, 'library-return.ad'), 'utf8');
-    expect(accountReplay).not.toMatch(/服务器代理|问题诊断|备份 \/ 恢复|外观/);
+    expect(accountReplay).not.toMatch(/网络设置|问题诊断|备份 \/ 恢复|外观/);
     expect(moreReplay).not.toMatch(/查看等级|刷新等级|linuxdo-level-settled/);
     for (const site of ['nodeseek', 'linuxdo', 'yaohuo']) {
       expect(moreReplay).toContain(
@@ -1097,7 +1097,7 @@ describe('Android release evidence guards', () => {
     }
     expect(moreReplay.match(/press label="站点设置"/g)).toHaveLength(6);
     expect(moreReplay).toMatch(
-      /内容源[\s\S]*content-source-drag-v2ex[\s\S]*服务器代理[\s\S]*问题诊断[\s\S]*备份 \/ 恢复[\s\S]*外观/
+      /内容源[\s\S]*content-source-drag-v2ex[\s\S]*网络设置[\s\S]*问题诊断[\s\S]*备份 \/ 恢复[\s\S]*外观/
     );
     expect(moreReplay).toContain('press "label=\\"展开内容源\\""');
     expect(moreReplay).toContain('wait id="more-diagnostics" 10000');
@@ -1368,7 +1368,7 @@ describe('Android release evidence guards', () => {
           if (
             (outcome === 'selector-failure' &&
               args[0] === 'wait' &&
-              args[1] === (suite === 'logged-out' ? '8000' : 'text="使用代理"')) ||
+              args[1] === (suite === 'logged-out' ? '8000' : 'text="网络模式"')) ||
             (outcome === 'cleanup-failure' &&
               args[0] === 'close' &&
               args[args.indexOf('--session') + 1].endsWith(`-${failureJourney}`))

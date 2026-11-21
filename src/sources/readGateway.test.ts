@@ -1005,6 +1005,37 @@ describe('source gateway reads', () => {
     }
   });
 
+  it('retries a LinuxDo read once after Account confirms the same session', async () => {
+    const fetcher = vi
+      .fn<Fetcher>()
+      .mockResolvedValueOnce(new Response('unauthorized', { status: 401 }))
+      .mockResolvedValueOnce(Response.json({ categories: [{ id: 5, name: 'Recovered category' }] }));
+    const requestAccountRecheck = vi.fn(async () => true);
+    const onSessionExpired = vi.fn();
+    const gateway = createReadGateway({
+      fetcher,
+      anonymousFetcher: fetcher,
+      getEnabledSources: () => ['linuxdo'],
+      linuxDoUserAgent: () => 'saved',
+      nodeSeekUserAgent: () => 'saved',
+      requestAccountRecheck,
+      onSessionExpired,
+      readSessionRuntimeSnapshot: (source) => ({
+        source,
+        authenticated: true,
+        authSurfaceOpen: false,
+        identityTrust: 'confirmed',
+        sourceEnabled: true,
+        identityKey: `${source}:7`,
+        sessionEpoch: 4
+      })
+    });
+    await expect(gateway.getCategories({ source: 'linuxdo' })).resolves.toMatchObject({ items: [{ id: '5' }] });
+    expect(requestAccountRecheck).toHaveBeenCalledTimes(1);
+    expect(onSessionExpired).not.toHaveBeenCalled();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
   it('requests one account recheck for a parsed search login failure', async () => {
     const requestAccountRecheck = vi.fn();
     const onSessionExpired = vi.fn();
@@ -1107,12 +1138,16 @@ function accountFailureFixture(fetcher: Fetcher, enabledSources: readonly Source
 const loginNotice = { errors: ['您需要登录才能执行此操作。'] };
 
 describe('read authentication failures through the production gateway', () => {
-  it('preserves aggregate content before reporting both expired sources even when the first event changes its read plan', async () => {
+  it('preserves aggregate content before reporting account failures even when the first event changes its read plan', async () => {
     const epochs = { linuxdo: 110, nodeseek: 110 };
     const preserve = vi.fn();
     const onSessionExpired = vi.fn((source: SessionSource) => {
       expect(preserve).toHaveBeenCalledOnce();
       if (source === 'linuxdo' || source === 'nodeseek') epochs[source]++;
+    });
+    const requestAccountRecheck = vi.fn(() => {
+      expect(preserve).toHaveBeenCalledOnce();
+      epochs.linuxdo++;
     });
     const fetcher = vi.fn(async (input: string) =>
       input.includes('nodeseek') || input.endsWith('/site.json')
@@ -1129,6 +1164,7 @@ describe('read authentication failures through the production gateway', () => {
       getEnabledSources: () => ['linuxdo', 'nodeseek'],
       nodeSeekUserAgent: () => 'test',
       onSessionExpired,
+      requestAccountRecheck,
       readSessionRuntimeSnapshot: (source) => ({
         source,
         authenticated: true,
@@ -1142,13 +1178,8 @@ describe('read authentication failures through the production gateway', () => {
     await expect(gateway.getFeed({ source: 'all' }, { onBeforeSessionChange: preserve })).rejects.toThrow('请求已取消');
     expect(preserve).toHaveBeenCalledOnce();
     expect(preserve.mock.calls[0][0]).toMatchObject({ items: [{ source: 'linuxdo', title: 'readable' }] });
-    expect(onSessionExpired).toHaveBeenCalledTimes(2);
-    expect(onSessionExpired.mock.calls).toEqual(
-      expect.arrayContaining([
-        ['linuxdo', 110],
-        ['nodeseek', 110]
-      ])
-    );
+    expect(onSessionExpired).toHaveBeenCalledExactlyOnceWith('nodeseek', 110);
+    expect(requestAccountRecheck).toHaveBeenCalledExactlyOnceWith('linuxdo', 110, expect.any(String));
   });
 
   it.each(['cancel', 'epoch', 'disabled', 'surface'] as const)(
@@ -1193,7 +1224,7 @@ describe('read authentication failures through the production gateway', () => {
       });
       const abort = new AbortController();
       const result = gateway.getFeed({ source: 'linuxdo', signal: abort.signal }).catch((error: unknown) => error);
-      await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+      await vi.waitFor(() => expect(fetcher.mock.calls.some(([url]) => url.endsWith('/site.json'))).toBe(true));
       if (change === 'cancel') abort.abort();
       else if (change === 'epoch') epoch++;
       else if (change === 'disabled') enabled = false;
@@ -1220,17 +1251,20 @@ describe('read authentication failures through the production gateway', () => {
             }
           })
     );
-    const { gateway, onSessionExpired } = accountFailureFixture(fetcher);
+    const { gateway, onSessionExpired, requestAccountRecheck } = accountFailureFixture(fetcher);
     const canceled = new AbortController();
     const first = gateway.getFeed({ source: 'linuxdo', signal: canceled.signal }).catch((error: unknown) => error);
-    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(fetcher.mock.calls.some(([url]) => url.endsWith('/site.json'))).toBe(true));
     const second = gateway.getFeed({ source: 'linuxdo' });
-    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3));
+    await vi.waitFor(() => {
+      expect(fetcher.mock.calls.filter(([url]) => new URL(url).pathname === '/latest.json')).toHaveLength(2);
+    });
     canceled.abort();
     complete(new Response('expired', { status: 401 }));
     await expect(first).resolves.toMatchObject({ items: [{ title: 'readable' }] });
     await expect(second).resolves.toMatchObject({ items: [{ title: 'readable' }] });
-    expect(onSessionExpired).toHaveBeenCalledTimes(1);
+    expect(onSessionExpired).not.toHaveBeenCalled();
+    expect(requestAccountRecheck).toHaveBeenCalledOnce();
   });
   it.each([403, 404])(
     'rechecks confirmed linux.do identity when topic HTTP %s explicitly requires login',
@@ -1268,9 +1302,13 @@ describe('read authentication failures through the production gateway', () => {
       const { gateway, requestAccountRecheck, onSessionExpired } = accountFailureFixture(fetcher);
       const result = await gateway.getFeed({ source: 'linuxdo', limit: 1 }).catch((error: unknown) => error);
       expect.soft(result).toMatchObject({ items: [{ id: '1', category: '未分类' }], errors: {} });
-      expect(fetcher).toHaveBeenCalledTimes(2);
-      if (status === 401) expect(onSessionExpired).toHaveBeenCalledTimes(1);
-      else expect(requestAccountRecheck).toHaveBeenCalledTimes(1);
+      expect(fetcher.mock.calls.map(([url]) => new URL(url).pathname).sort()).toEqual([
+        '/filter.json',
+        '/latest.json',
+        '/site.json'
+      ]);
+      expect(onSessionExpired).not.toHaveBeenCalled();
+      expect(requestAccountRecheck).toHaveBeenCalledTimes(1);
     }
   );
 
@@ -1284,8 +1322,8 @@ describe('read authentication failures through the production gateway', () => {
     const result = await gateway.searchTopics({ source: 'linuxdo', query: 'AI' }).catch((error: unknown) => error);
     expect.soft(result).toMatchObject({ items: [], errors: {} });
     expect(fetcher).toHaveBeenCalledTimes(2);
-    if (status === 401) expect(onSessionExpired).toHaveBeenCalledTimes(1);
-    else expect(requestAccountRecheck).toHaveBeenCalledTimes(1);
+    expect(onSessionExpired).not.toHaveBeenCalled();
+    expect(requestAccountRecheck).toHaveBeenCalledTimes(1);
   });
 
   it('does not recheck ordinary missing topic HTTP 404', async () => {
@@ -1311,10 +1349,9 @@ describe('read authentication failures through the production gateway', () => {
     expect(onSessionExpired).not.toHaveBeenCalled();
   });
 
-  it('does not recheck Cloudflare challenge HTTP 403', async () => {
+  it.each([401, 403])('does not recheck Cloudflare challenge HTTP %s', async (status) => {
     const { gateway, requestAccountRecheck, onSessionExpired } = accountFailureFixture(
-      async () =>
-        new Response('<title>Just a moment...</title>', { status: 403, headers: { 'Content-Type': 'text/html' } })
+      async () => new Response('<title>Just a moment...</title>', { status, headers: { 'Content-Type': 'text/html' } })
     );
     await expect(gateway.getTopic({ source: 'linuxdo', id: '1' })).rejects.toMatchObject({
       kind: 'verification-required'
@@ -1419,8 +1456,8 @@ describe('read authentication failures through the production gateway', () => {
       const result = await gateway.getTopic({ source: 'linuxdo', id: '900' });
       expect.soft(result).toMatchObject({ id: '900', title: 'normal topic', replies: [{ commentId: 1002 }] });
       expect(fetcher).toHaveBeenCalledTimes(2);
-      if (status === 401) expect(onSessionExpired).toHaveBeenCalledTimes(1);
-      else expect(requestAccountRecheck).toHaveBeenCalledTimes(1);
+      expect(onSessionExpired).not.toHaveBeenCalled();
+      expect(requestAccountRecheck).toHaveBeenCalledTimes(1);
     }
   );
 });

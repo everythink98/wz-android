@@ -122,7 +122,7 @@ export function TopicShareOptions({
             accessibilityState={{ disabled: disabled || busy !== 'idle', busy: busy === key }}
             disabled={disabled || busy !== 'idle'}
             onPress={onPress}
-            style={[styles.action, (disabled || busy !== 'idle') && styles.disabled]}
+            style={[styles.action, busy !== key && (disabled || busy !== 'idle') && styles.disabled]}
           >
             <View style={styles.icon}>
               {busy === key ? (

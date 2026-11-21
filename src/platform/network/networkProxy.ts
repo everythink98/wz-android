@@ -4,6 +4,13 @@ import type { Source } from '@/domain/forum/sourceCatalog';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import type { DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import { getReadNetworkRuntimeSnapshot, publishReadNetworkRuntimeRotation } from './readNetworkRuntime';
+import {
+  encryptedDnsProviderLabel,
+  encryptedDnsRoute,
+  normalizeEncryptedDnsSettings,
+  type EncryptedDnsRoute,
+  type EncryptedDnsSettings
+} from './encryptedDns';
 
 export const NETWORK_PROXY_STORAGE_KEY = 'network-proxy-settings';
 export const MAX_NETWORK_PROXY_PROFILES = 10;
@@ -37,7 +44,12 @@ export type NetworkProxyState = {
   enabled: boolean;
   activeId: string | null;
   profiles: NetworkProxyProfile[];
+  mode?: 'doh';
+  encryptedDns?: EncryptedDnsSettings;
 };
+
+export type NetworkMode = 'system' | 'doh' | 'proxy';
+export type ActiveNetworkRoute = NetworkProxyProfile | EncryptedDnsRoute;
 
 export type NetworkProxyApplyStatus = 'loading' | 'disabled' | 'applying' | 'applied' | 'failed';
 
@@ -45,6 +57,9 @@ export type NetworkProxyStatus = {
   ok: boolean;
   port?: number;
   latencyMs?: number;
+  httpStatus?: number;
+  siteChallenge?: boolean;
+  dnsProvider?: string;
   message?: string;
 };
 
@@ -55,7 +70,7 @@ export type NativeNetworkProxyModule = {
     previousGeneration: number,
     generation: number
   ) => Promise<boolean>;
-  applyProxy?: (profile: NetworkProxyProfile | null) => Promise<NetworkProxyStatus>;
+  applyProxy?: (profile: ActiveNetworkRoute | null) => Promise<NetworkProxyStatus>;
   clearManagedLoginCookies?: (source: string) => Promise<unknown>;
   readManagedCookieHeader?: (exactUrl: string) => Promise<unknown>;
   recoverForumReadChannel?: (
@@ -66,6 +81,7 @@ export type NativeNetworkProxyModule = {
   releaseReadNetworkGeneration?: (generation: number) => Promise<boolean>;
   retainReadNetworkGeneration?: (generation: number) => Promise<ReadNetworkGenerationLease>;
   testProxy?: (profile: NetworkProxyProfile) => Promise<NetworkProxyStatus>;
+  testEncryptedDns?: (route: EncryptedDnsRoute) => Promise<NetworkProxyStatus>;
 };
 
 const readNetworkRuntimeRecoveries = new Map<number, Promise<ReadNetworkRuntimeRecoveryResult>>();
@@ -136,10 +152,14 @@ export function normalizeNetworkProxyState(value: unknown): NetworkProxyState {
     .slice(0, MAX_NETWORK_PROXY_PROFILES);
   const activeId = cleanText(input.activeId);
   const hasActive = activeId && profiles.some((profile) => profile.id === activeId);
+  const encryptedDns = input.encryptedDns === undefined ? undefined : normalizeEncryptedDnsSettings(input.encryptedDns);
+  const doh = input.mode === 'doh' && encryptedDns !== undefined;
   return {
-    enabled: Boolean(input.enabled && hasActive),
+    enabled: Boolean(input.enabled && hasActive && !doh),
     activeId: hasActive ? activeId : null,
-    profiles
+    profiles,
+    ...(doh ? { mode: 'doh' } : {}),
+    ...(encryptedDns ? { encryptedDns } : {})
   };
 }
 
@@ -185,9 +205,20 @@ export function activeNetworkProxyProfile(state: NetworkProxyState) {
   return state.activeId ? state.profiles.find((profile) => profile.id === state.activeId) || null : null;
 }
 
+export function networkMode(state: NetworkProxyState): NetworkMode {
+  if (state.mode === 'doh') return 'doh';
+  return state.enabled ? 'proxy' : 'system';
+}
+
+export function activeNetworkRoute(state: NetworkProxyState): ActiveNetworkRoute | null {
+  if (state.mode === 'doh' && state.encryptedDns) return encryptedDnsRoute(state.encryptedDns);
+  return state.enabled ? activeNetworkProxyProfile(state) : null;
+}
+
 export function removeNetworkProxyProfile(state: NetworkProxyState, id: string) {
   const deletingActive = state.activeId === id;
   return normalizeNetworkProxyState({
+    ...state,
     enabled: deletingActive ? false : state.enabled,
     activeId: deletingActive ? null : state.activeId,
     profiles: state.profiles.filter((profile) => profile.id !== id)
@@ -199,6 +230,7 @@ export function networkProxySummary(state: NetworkProxyState, applyError = '') {
   if (applyError) {
     return '代理异常';
   }
+  if (state.mode === 'doh') return '加密 DNS';
   if (!state.enabled || !active) {
     return '未启用';
   }
@@ -276,7 +308,7 @@ export async function loadNetworkProxyState() {
     )
       throw new Error();
     const state = normalizeNetworkProxyState(input);
-    if (input.enabled && !state.enabled) throw new Error();
+    if ((input.enabled && !state.enabled) || (input.mode !== undefined && state.mode !== input.mode)) throw new Error();
     return state;
   } catch {
     throw new InvalidSavedNetworkProxyStateError();
@@ -289,7 +321,7 @@ export async function saveNetworkProxyState(state: NetworkProxyState) {
   return clean;
 }
 
-export async function applyNetworkProxy(profile: NetworkProxyProfile | null, module = networkProxyNativeModule()) {
+export async function applyNetworkProxy(profile: ActiveNetworkRoute | null, module = networkProxyNativeModule()) {
   if (!module?.applyProxy) {
     if (profile) {
       throw new Error('当前安装包不支持服务器代理。');
@@ -300,6 +332,21 @@ export async function applyNetworkProxy(profile: NetworkProxyProfile | null, mod
   if (!result?.ok) {
     throw new Error(result?.message || '代理启动失败');
   }
+  return result;
+}
+
+export async function testEncryptedDns(settings: EncryptedDnsSettings, module = networkProxyNativeModule()) {
+  if (!module?.testEncryptedDns) throw new Error('当前安装包不支持加密 DNS 测试。');
+  const result = await module.testEncryptedDns(encryptedDnsRoute(normalizeEncryptedDnsSettings(settings)));
+  const provider = encryptedDnsProviderLabel(result.dnsProvider ?? settings.provider);
+  const via = provider ? ` · ${provider}` : '';
+  if (result.siteChallenge) {
+    return { ...result, ok: false, message: `已直连 LINUX DO，需完成站点验证（HTTP ${result.httpStatus}）${via}` };
+  }
+  if (result.httpStatus !== undefined && (result.httpStatus < 200 || result.httpStatus >= 300)) {
+    return { ...result, ok: false, message: `已直连 LINUX DO，首页返回 HTTP ${result.httpStatus}${via}` };
+  }
+  if (!result.ok) throw new Error(result.message || '加密 DNS 测试失败。');
   return result;
 }
 

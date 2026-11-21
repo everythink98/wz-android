@@ -391,7 +391,7 @@ object DiagnosticJournal {
       "cookieEndpoint" to setOf("auth", "connect", "site-config", "categories", "notifications", "topic", "feed", "other"),
       "cookieTransport" to setOf("okhttp", "cronet", "webview"),
       "cookieBarrierReason" to setOf("startup", "source-change", "surface-open", "surface-close", "identity-change", "explicit-clear"),
-      "cookieResult" to setOf("settled", "persisted", "flush_failed", "redirect_denied", "barrier_blocked", "epoch_changed", "callback_timeout", "pending_write", "absent", "applied", "source_denied", "stale", "canceled", "baseline_changed", "write_failed"),
+      "cookieResult" to setOf("settled", "persisted", "flush_failed", "redirect_denied", "barrier_blocked", "epoch_changed", "login_superseded", "callback_timeout", "pending_write", "absent", "applied", "source_denied", "stale", "canceled", "baseline_changed", "write_failed"),
       "phase" to setOf("request-config", "request-headers-start", "request-headers-end", "request-failed", "connection-write-stalled", "call-start", "image-lease-released", "image-call-failed", "response-body-end", "response-failed", "dns-start", "dns-end", "connect-start", "tls-start", "tls-end", "connect-end", "connect-failed", "connection-acquired", "connection-released", "response-start", "response-headers", "call-end", "call-failed", "call-canceled", "intent", "publish", "cancel", "drain", "finish"),
       "source" to setOf("v2ex", "nodeseek", "linuxdo", "yaohuo", "anonymous"),
       "lane" to setOf("forum", "media"), "method" to setOf("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"),

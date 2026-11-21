@@ -2,7 +2,7 @@ import { recordUserInteraction } from '@/platform/network/userPresence';
 import { useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, type TextInput as RNTextInput, View } from 'react-native';
 import { CalendarCheck, Check, ChevronDown, Dices } from 'lucide-react-native';
-import { Button, Divider, List, Menu } from 'react-native-paper';
+import { Divider, List, Menu } from 'react-native-paper';
 import type { NodeSeekAttendanceBoard, NodeSeekCheckInState } from '@/domain/forum/accountData';
 import { AppButton } from '@/ui/controls/ButtonControls';
 import { AppTextInput } from '@/ui/controls/InputControls';
@@ -58,25 +58,21 @@ export function NodeSeekServicesPanel({
   const expanded = expansion === 'expanded';
   const manualEntry = manualExpansion === 'expanded';
   const openThresholdMenu = () => {
-    recordUserInteraction();
     keyInput.current?.blur();
     setThresholdMenuOpen(true);
   };
   const thresholdButton = (
-    <Button
-      mode="outlined"
+    <AppButton
+      variant={thresholdMenuOpen ? 'primary' : 'default'}
       compact
+      label={`${recoveryThreshold} 次`}
       accessibilityLabel="读取通道自愈阈值"
-      accessibilityState={{ expanded: thresholdMenuOpen }}
+      expanded={thresholdMenuOpen}
       accessibilityHint={`当前 ${recoveryThreshold} 次，点按选择`}
-      icon={({ color, size }) => <ChevronDown color={color} size={size} />}
-      style={settingStyles.button}
-      contentStyle={settingStyles.buttonContent}
-      labelStyle={settingStyles.buttonLabel}
+      icon={ChevronDown}
+      trailingIcon
       onPress={openThresholdMenu}
-    >
-      {recoveryThreshold} 次
-    </Button>
+    />
   );
 
   // Paper's dismiss listener does not consume Android Back.

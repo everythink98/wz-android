@@ -11,7 +11,7 @@ type SvgRendererNativeModule = {
     headers: Record<string, string>,
     timeoutMs: number
   ) => Promise<BoundedSvgDocumentResult | null>;
-  renderPoster?: (svgBase64: string, cacheKey: string, timeoutMs: number) => Promise<SvgPosterRenderResult>;
+  renderPoster?: (svgBase64: string, cacheKey: string | null, timeoutMs: number) => Promise<SvgPosterRenderResult>;
 };
 
 export async function fetchBoundedSvgDocument(
@@ -42,7 +42,7 @@ export async function fetchBoundedSvgDocument(
 
 export async function renderSvgPoster(
   svgBase64: string,
-  cacheKey: string,
+  cacheKey: string | null,
   timeoutMs: number
 ): Promise<SvgPosterRenderResult> {
   const module = NativeModules.SvgRendererModule as SvgRendererNativeModule | undefined;

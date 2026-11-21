@@ -392,8 +392,111 @@ describe('linux.do reader', () => {
     expect(plan.rows.some((row) => row.networkMediaCount > 0)).toBe(true);
   });
 
+  it('includes the latest list pins in their original scope without shifting the created-order pages', async () => {
+    const pin = (id: number, category_id: number, global: boolean, unpinned = false) => ({
+      ...topic(id),
+      category_id,
+      pinned: !unpinned,
+      unpinned,
+      pinned_globally: global
+    });
+    const regular = Array.from({ length: 30 }, (_, index) => topic(index + 1));
+    const fetcher = vi.fn(async (url: string) => {
+      const params = new URL(url).searchParams;
+      const category = params.get('category');
+      return jsonResponse({
+        categories: [
+          { id: 2, name: '公告' },
+          { id: 4, name: '技术' }
+        ],
+        topic_list: {
+          topics: params.has('order')
+            ? params.has('page')
+              ? [topic(31), topic(32)]
+              : regular
+            : category
+              ? [pin(72, 4, false), pin(74, 2, false)]
+              : [pin(71, 2, true), pin(73, 2, true, true), pin(72, 4, false)],
+          more_topics_url: params.has('page') ? null : '/latest?page=1'
+        }
+      });
+    });
+    const site = await getLinuxDoFeed({ fetcher });
+    const category = await getLinuxDoFeed({ fetcher, category: '4' });
+    const next = await getLinuxDoFeed({ fetcher, page: 2 });
+
+    expect(site.items.map(({ id }) => id)).toEqual(['71', ...regular.map(({ id }) => String(id))]);
+    expect(site.items[0]?.pinned).toBe(true);
+    expect(category.items.map(({ id }) => id)).toEqual(['72', ...regular.map(({ id }) => String(id))]);
+    expect(category.items[0]?.pinned).toBe(true);
+    expect(next.items.map(({ id }) => id)).toEqual(['31', '32']);
+    expect(
+      fetcher.mock.calls
+        .map(([url]) => new URL(url).searchParams)
+        .filter((params) => !params.has('order'))
+        .map((params) => params.get('category'))
+    ).toEqual([null, '4']);
+  });
+
+  it('reads guest announcements even when the main latest request took longer than the pin timeout', async () => {
+    let now = 100;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      const fetcher = vi.fn(async (input: string) => {
+        if (new URL(input).searchParams.has('order')) {
+          now += 2_000;
+          return jsonResponse({ topic_list: { topics: [topic(1)] } });
+        }
+        return jsonResponse({ topic_list: { topics: [{ ...topic(71), pinned: true, pinned_globally: true }] } });
+      });
+      const latest = await getLinuxDoFeed({ fetcher });
+      expect(latest.items.map(({ id }) => id)).toEqual(['71', '1']);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it('shows active announcements omitted from a signed-in latest page after reading them', async () => {
+    const globalPin = { ...topic(71), category_id: 2, pinned_globally: true, pinned: false, unpinned: true };
+    const localPin = { ...topic(72), category_id: 4, pinned_globally: false, pinned: false, unpinned: true };
+    const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
+      const url = new URL(input);
+      if (url.pathname === '/filter.json') {
+        expect(new Headers(init?.headers).get('Discourse-Logged-In')).toBe('true');
+        expect(url.searchParams.get('q')).toContain('in:pinned');
+        const next = url.searchParams.has('page');
+        return jsonResponse({
+          topic_list: {
+            topics: next ? [localPin, globalPin] : [localPin],
+            more_topics_url: next ? null : '/filter?q=in%3Apinned&page=1'
+          }
+        });
+      }
+      return jsonResponse({
+        categories: [
+          { id: 2, name: '公告' },
+          { id: 4, name: '技术', slug: 'dev' }
+        ],
+        topic_list: { topics: [topic(1), topic(2)] }
+      });
+    });
+    const options = { fetcher, linuxDoAccess: { authenticated: true } };
+    const site = await getLinuxDoFeed(options);
+    expect(site.items.map(({ id, pinned }) => [id, Boolean(pinned)])).toEqual([
+      ['71', true],
+      ['1', false],
+      ['2', false]
+    ]);
+    const category = await getLinuxDoFeed({ ...options, category: '4' });
+    expect(category.items.map(({ id }) => id)).toEqual(['72', '1', '2']);
+    expect(category.items[0]?.pinned).toBe(true);
+    expect(fetcher.mock.calls.some(([url]) => new URL(url).searchParams.get('q') === 'in:pinned =category:dev')).toBe(
+      true
+    );
+  });
+
   it('trusts the server cursor instead of probing one extra list page', async () => {
-    const fetcher = vi.fn(async () =>
+    const fetcher = vi.fn(async (_url: string) =>
       jsonResponse({
         topic_list: {
           topics: Array.from({ length: 30 }, (_, index) => topic(index + 1)),
@@ -406,7 +509,7 @@ describe('linux.do reader', () => {
 
     expect(result.items).toHaveLength(30);
     expect(result).toMatchObject({ hasMore: true, nextPage: 2 });
-    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls.map(([url]) => new URL(url).searchParams.has('page'))).toEqual([false, false]);
   });
 
   it('continues a nonempty malformed feed page and retains overflow from the final upstream window', async () => {
@@ -435,6 +538,20 @@ describe('linux.do reader', () => {
       nextPage: null
     });
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the created-order feed usable when the optional pin read fails', async () => {
+    const fetcher = vi.fn(async (url: string) =>
+      new URL(url).searchParams.has('order')
+        ? jsonResponse({ topic_list: { topics: [topic(1)] } })
+        : new Response(null, { status: 503 })
+    );
+
+    await expect(getLinuxDoFeed({ fetcher })).resolves.toMatchObject({
+      items: [expect.objectContaining({ id: '1' })],
+      errors: {},
+      hasMore: false
+    });
   });
 
   it('shares one category request across catalog and feed in the same read scope', async () => {

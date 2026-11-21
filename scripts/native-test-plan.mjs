@@ -48,6 +48,7 @@ export const nativeTestTasks = {
     classes: [
       'DiagnosticLogStoreTest',
       'ManagedCookieResponsesTest',
+      'AppEncryptedDnsTest',
       'NetworkProxyRuntimeTest',
       'NetworkProxyProfileTest',
       'NetworkUserAgentTest',

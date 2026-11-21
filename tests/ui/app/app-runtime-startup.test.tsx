@@ -161,7 +161,7 @@ jest.mock('@/platform/network/useNetworkProxyRuntime', () => ({
       networkProxyFetcher: mockNetworkFetcher,
       proxyState: { enabled: false, activeId: null, profiles: [] },
       selectProxyProfile: jest.fn(),
-      setProxyEnabled: jest.fn(),
+      setNetworkMode: jest.fn(),
       summary: '代理状态读取中',
       testProxyProfile: jest.fn(),
       upsertProxyProfile: jest.fn(),

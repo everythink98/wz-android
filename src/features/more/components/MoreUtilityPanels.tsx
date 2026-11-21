@@ -4,14 +4,12 @@ import { Bug, DatabaseBackup, Download, History, RotateCcw, Server, Settings, St
 import type { LibraryTab } from '@/domain/forum/feed';
 import type { ReaderSettings } from '@/domain/reader/readerData';
 import type { ReaderSettingsUpdate } from '@/domain/reader/readerRecordState';
-import type { NetworkProxyProfile, NetworkProxyState, NetworkProxyStatus } from '@/platform/network/networkProxy';
 import { AppButton } from '@/ui/controls/ButtonControls';
 import { ExpandablePanel, MenuButton } from '@/ui/controls/ExpandableControls';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { createMoreScreenStyles } from '../styles';
 import type { DocumentOperation } from '../useDocumentOperation';
 import { AppearancePanel } from './AppearancePanel';
-import { NetworkProxyModal } from './NetworkProxyModal';
 import { ContentSourcesPanel } from './ContentSourcesPanel';
 
 function appearanceSummary(settings: ReaderSettings) {
@@ -35,19 +33,8 @@ export type MoreUtilityCapabilities = {
     exportLog: () => void;
   };
   proxy: {
-    activeProfile: NetworkProxyProfile | null;
-    applyError: string;
-    applyStatus: string;
-    state: NetworkProxyState;
     summary: string;
-    visible: boolean;
-    close: () => void;
     open: () => void;
-    deleteProfile: (id: string) => Promise<void>;
-    selectProfile: (id: string) => Promise<void>;
-    setEnabled: (enabled: boolean) => Promise<void>;
-    testProfile: (profile: NetworkProxyProfile) => Promise<NetworkProxyStatus>;
-    upsertProfile: (profile: NetworkProxyProfile) => Promise<void>;
   };
   settings: {
     value: ReaderSettings;
@@ -121,17 +108,16 @@ export function MoreUtilityPanels({
             onUpdateSettings={runtime.settings.update}
           />
         </ExpandablePanel>
-      </View>
-      <View style={styles.settingsSection}>
         <View style={styles.groupList}>
           <MenuButton
             testID="more-proxy"
             icon={Server}
-            label="服务器代理"
+            label="网络设置"
             value={runtime.proxy.summary}
             onPress={runtime.proxy.open}
           />
-          <View style={styles.utilityDivider} />
+        </View>
+        <View style={styles.groupList}>
           <MenuButton
             testID="more-diagnostics"
             accessibilityLabel={runtime.diagnostics.busy ? '问题诊断，正在生成' : '问题诊断'}
@@ -142,21 +128,6 @@ export function MoreUtilityPanels({
             onPress={runtime.diagnostics.exportLog}
           />
         </View>
-        <NetworkProxyModal
-          activeProfile={runtime.proxy.activeProfile}
-          applyError={runtime.proxy.applyError}
-          applyStatus={runtime.proxy.applyStatus}
-          proxyState={runtime.proxy.state}
-          styles={styles}
-          theme={theme}
-          visible={runtime.proxy.visible}
-          onClose={runtime.proxy.close}
-          onDeleteProfile={runtime.proxy.deleteProfile}
-          onSelectProfile={runtime.proxy.selectProfile}
-          onSetEnabled={runtime.proxy.setEnabled}
-          onTestProfile={runtime.proxy.testProfile}
-          onUpsertProfile={runtime.proxy.upsertProfile}
-        />
         {runtime.backup.recovery ? (
           <Text accessibilityRole="alert" style={styles.meta}>
             本机资料读取失败，来源访问已暂停。请导入备份恢复；原设置、凭据和通知意图会保留。

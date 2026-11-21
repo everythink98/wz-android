@@ -15,6 +15,7 @@ import { TOUCH_HIT_SLOP } from './touchTarget';
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontFamily = fontFamilyValue(settings.fontFamily);
   const fontSize = createReaderFontSizer(settings);
+  const selectedColor = theme.dark ? theme.primary : theme.primaryStrong;
   return StyleSheet.create({
     pillRail: { gap: 2, paddingRight: 0, paddingVertical: 0 },
     pill: {
@@ -46,7 +47,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       includeFontPadding: false,
       fontWeight: '500'
     },
-    pillTextActive: { color: theme.primary, fontWeight: '600' },
+    pillTextActive: { color: selectedColor, fontWeight: '600' },
     subtabRail: { gap: 0, paddingRight: 0, paddingVertical: 0 },
     wrappingRail: { flexDirection: 'row', flexWrap: 'wrap', paddingRight: 0, rowGap: 4 },
     subtab: {
@@ -60,7 +61,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       paddingTop: 3,
       paddingBottom: 5
     },
-    subtabActive: { borderBottomColor: theme.primary },
+    subtabActive: { borderBottomColor: selectedColor },
     subtabText: {
       color: theme.muted,
       fontFamily,
@@ -69,7 +70,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       includeFontPadding: false,
       fontWeight: '500'
     },
-    subtabTextActive: { color: theme.primary, fontWeight: '600' },
+    subtabTextActive: { color: selectedColor, fontWeight: '600' },
     tabRail: {
       gap: 22,
       paddingRight: 0
@@ -84,7 +85,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       paddingBottom: 4
     },
     compactTab: { minWidth: undefined, minHeight: 40 },
-    tabActive: { borderBottomColor: theme.primary },
+    tabActive: { borderBottomColor: selectedColor },
     tabText: {
       color: theme.muted,
       fontFamily,
@@ -94,7 +95,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       fontWeight: '500',
       textAlign: 'center'
     },
-    tabTextActive: { color: theme.primary, fontWeight: '600' },
+    tabTextActive: { color: selectedColor, fontWeight: '600' },
     settingGroup: { gap: 7 },
     panelTitle: { color: theme.ink, fontFamily, fontSize: fontSize(15), fontWeight: '600' }
   });

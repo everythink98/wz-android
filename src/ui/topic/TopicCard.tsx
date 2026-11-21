@@ -1,7 +1,7 @@
 import { memo, useCallback, useMemo, useRef, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, type StyleProp, type TextStyle, View } from 'react-native';
 import { useMappingHelper } from '@shopify/flash-list';
-import { Eye, MessageCircle } from 'lucide-react-native';
+import { Eye, MessageCircle, Pin } from 'lucide-react-native';
 import type { Topic } from '@/domain/forum/models';
 import { forumAccessRequirementText, sourceLabel, topicListDisplayTimeText } from '@/domain/forum/presentation';
 import { highlightTextParts } from '@/ui/text/highlight';
@@ -17,6 +17,7 @@ import {
 } from '@/ui/theme/tokens';
 import type { TopicListItemState } from '@/domain/forum/topicListItemState';
 import { Avatar } from '@/ui/avatar/Avatar';
+import { ContentLoadingPlaceholder, SkeletonBlock } from '@/ui/controls/ContentLoadingPlaceholder';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { topicKey } from '@/domain/reader/readerData';
 
@@ -26,6 +27,7 @@ const TOPIC_OPEN_GUARD_MS = 500;
 type TopicCardProps = {
   highlightQuery?: string;
   hideReplyCount?: boolean;
+  showPinned?: boolean;
   showSource?: boolean;
   renderTrailingAction?: (topic: Topic) => ReactNode;
   topic: Topic;
@@ -38,6 +40,7 @@ function topicCardPropsAreEqual(previous: TopicCardProps, next: TopicCardProps) 
   return (
     previous.highlightQuery === next.highlightQuery &&
     previous.hideReplyCount === next.hideReplyCount &&
+    previous.showPinned === next.showPinned &&
     (previous.showSource ?? true) === (next.showSource ?? true) &&
     previous.renderTrailingAction === next.renderTrailingAction &&
     previous.onOpenTopic === next.onOpenTopic &&
@@ -78,6 +81,7 @@ function HighlightedText({
 export function TopicCard({
   highlightQuery = '',
   hideReplyCount = false,
+  showPinned = false,
   showSource = true,
   renderTrailingAction,
   topic,
@@ -111,8 +115,9 @@ export function TopicCard({
   const hiddenTopicTagCount = distinctTags.length - visibleTopicTags.length;
   const accessRequirementText = forumAccessRequirementText(topic.accessRequirement);
   const time = topicListDisplayTimeText(topic);
+  const pinned = showPinned && topic.pinned === true;
   const showMetadata = Boolean(
-    showSource || topic.isAiGenerated || category || accessRequirementText || distinctTags.length
+    showSource || pinned || topic.isAiGenerated || category || accessRequirementText || distinctTags.length
   );
   const showReplyCount = !hideReplyCount && typeof topic.replyCount === 'number';
   const showStats = Boolean(readerState.hasNewReplies || showReplyCount || topic.viewCount);
@@ -167,7 +172,7 @@ export function TopicCard({
     </View>
   );
   return (
-    <View style={styles.topicRowShell}>
+    <View style={[styles.topicRowShell, styles.topicRowSurface]}>
       <Pressable testID={testID} accessibilityRole="button" style={styles.topicCardPressable} onPress={openTopicPress}>
         <HighlightedText
           style={[styles.cardTitle, readerState.read && styles.cardTitleRead]}
@@ -178,6 +183,12 @@ export function TopicCard({
         />
         {showMetadata ? (
           <View style={styles.topicMetadata}>
+            {pinned ? (
+              <View style={styles.topicPinnedBadge}>
+                <Pin size={12} color={styles.topicPinnedLabel.color} strokeWidth={1.9} accessible={false} />
+                <Text style={[styles.topicSourceBadge, styles.topicPinnedLabel]}>置顶</Text>
+              </View>
+            ) : null}
             {showSource ? (
               <Text style={[styles.topicSourceBadge, sourceBadgeColorStyle(topic.source, theme)]} numberOfLines={1}>
                 {sourceLabel(topic.source)}
@@ -240,6 +251,70 @@ export function TopicListSeparator() {
   return <View testID="topic-list-separator" style={styles.topicListSeparator} />;
 }
 
+const placeholderTitleWidths = ['88%', '69%', '93%'] as const;
+
+export function TopicListPlaceholder({
+  animating,
+  label,
+  fillHeight
+}: {
+  animating: boolean;
+  label: string;
+  fillHeight?: number;
+}) {
+  const { styles } = useReaderThemeStyles(createStyles);
+  const rowHeight =
+    styles.topicCardPressable.paddingTop +
+    styles.topicCardPressable.paddingBottom +
+    styles.topicCardPressable.gap * 2 +
+    styles.placeholderTitleSlot.height +
+    styles.placeholderTag.height +
+    styles.placeholderAvatar.height +
+    styles.topicListSeparator.height;
+  const rowCount =
+    fillHeight === undefined ? placeholderTitleWidths.length : Math.max(1, Math.ceil(fillHeight / rowHeight));
+  return (
+    <ContentLoadingPlaceholder
+      key={`${rowCount}:${rowHeight}`}
+      animating={animating}
+      label={label}
+      style={styles.topicRowSurface}
+    >
+      {Array.from({ length: rowCount }, (_, index) => (
+        <View key={index} style={styles.topicRowShell}>
+          {index > 0 ? <View style={styles.topicListSeparator} /> : null}
+          <View style={styles.topicCardPressable}>
+            <View style={styles.placeholderTitleSlot}>
+              <SkeletonBlock
+                style={[
+                  styles.placeholderTitle,
+                  { width: placeholderTitleWidths[index % placeholderTitleWidths.length] }
+                ]}
+              />
+            </View>
+            <View style={styles.topicMetadata}>
+              <SkeletonBlock style={[styles.placeholderTag, { width: 42 }]} />
+              <SkeletonBlock style={[styles.placeholderTag, { width: 58 }]} />
+              <SkeletonBlock style={[styles.placeholderTag, { width: 36 }]} />
+            </View>
+            <View style={styles.topicFooterRow}>
+              <View style={styles.topicAuthorChip}>
+                <SkeletonBlock style={styles.placeholderAvatar} />
+                <SkeletonBlock style={[styles.placeholderByline, { width: '40%' }]} />
+                <SkeletonBlock style={[styles.placeholderByline, { width: '20%' }]} />
+              </View>
+              <View style={styles.topicStatGroup}>
+                <SkeletonBlock style={[styles.placeholderByline, { width: 30 }]} />
+                <SkeletonBlock style={[styles.placeholderByline, { width: 30 }]} />
+              </View>
+            </View>
+          </View>
+        </View>
+      ))}
+    </ContentLoadingPlaceholder>
+  );
+}
+
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontFamily = fontFamilyValue(settings.fontFamily);
   const fontSize = createReaderFontSizer(settings);
@@ -247,7 +322,13 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const densityGap = settings.listDensity === 'compact' ? 6 : settings.listDensity === 'loose' ? 10 : 8;
   return StyleSheet.create({
     topicListSeparator: { height: StyleSheet.hairlineWidth, backgroundColor: theme.line },
-    topicRowShell: { position: 'relative', overflow: 'hidden', width: '100%', backgroundColor: theme.surface },
+    placeholderTitleSlot: { height: fontSize(23), justifyContent: 'center' },
+    placeholderTitle: { height: fontSize(14) },
+    placeholderTag: { height: fontSize(16) },
+    placeholderAvatar: { width: 24, height: 24, borderRadius: 12 },
+    placeholderByline: { height: fontSize(9), flexShrink: 1 },
+    topicRowShell: { position: 'relative', overflow: 'hidden', width: '100%' },
+    topicRowSurface: { backgroundColor: theme.surface },
     topicCardPressable: {
       gap: densityGap,
       paddingHorizontal: 16,
@@ -271,6 +352,16 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       includeFontPadding: false,
       lineHeight: fontSize(16)
     },
+    topicPinnedBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: readerRadii.badge,
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.16 : 0.08)
+    },
+    topicPinnedLabel: { color: theme.dark ? theme.primary : theme.primaryStrong },
     topicCategoryBadge: {
       maxWidth: '100%',
       overflow: 'hidden',

@@ -20,8 +20,25 @@ android {
   }
 }
 
+def okhttpVersion = '5.5.1'
+def conscryptVersion = '2.9.0'
+configurations.configureEach {
+  if (name.endsWith('UnitTestRuntimeClasspath')) {
+    // Plain JVM tests load the public-suffix list from the classpath.
+    resolutionStrategy.dependencySubstitution {
+      substitute module('com.squareup.okhttp3:okhttp') using module("com.squareup.okhttp3:okhttp-jvm:${okhttpVersion}")
+      substitute module('org.conscrypt:conscrypt-android') using module("org.conscrypt:conscrypt-openjdk-uber:${conscryptVersion}")
+    }
+  }
+}
+
 dependencies {
   implementation('com.facebook.react:react-android')
+  implementation(platform("com.squareup.okhttp3:okhttp-bom:${okhttpVersion}"))
+  implementation('com.squareup.okhttp3:okhttp')
+  implementation('com.squareup.okhttp3:okhttp-dnsoverhttps')
+  implementation("org.conscrypt:conscrypt-android:${conscryptVersion}")
+  implementation('com.squareup.okhttp3:okhttp-urlconnection')
   implementation project(':expo-image')
   implementation project(':expo-video')
   def notifications = new groovy.json.JsonSlurper().parse(file('../../../node_modules/expo-notifications/expo-module.config.json')).android.publication
@@ -39,6 +56,6 @@ dependencies {
   testImplementation('org.robolectric:robolectric:4.16')
   testImplementation('androidx.media3:media3-common:1.9.0')
   testImplementation('io.github.lukmccall.pika:pika-api:0.3.2')
-  testImplementation('com.squareup.okhttp3:mockwebserver:4.12.0')
-  testImplementation('com.squareup.okhttp3:okhttp-tls:4.12.0')
+  testImplementation('com.squareup.okhttp3:mockwebserver')
+  testImplementation('com.squareup.okhttp3:okhttp-tls')
 }

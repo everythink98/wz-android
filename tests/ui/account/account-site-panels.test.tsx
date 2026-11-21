@@ -335,6 +335,13 @@ describe('Account site panels', () => {
         backgroundColor: theme.surface
       });
       expect(view.root?.queryAll((node) => String(node.type) === 'Modal')[0]?.props.backdropColor).toBe(theme.surface);
+      for (const name of ['填入已保存登录信息', '清除登录']) {
+        expect(view.getByRole('button', { name })).toHaveStyle({ backgroundColor: 'transparent' });
+      }
+      expect(view.getByText('清除登录')).toHaveStyle({ color: theme.danger });
+      expect(view.getByRole('button', { name: '检测登录' })).toHaveStyle({
+        backgroundColor: theme.dark ? theme.primary : theme.primaryStrong
+      });
       await view.unmount();
     }
   });
@@ -1203,9 +1210,13 @@ describe('Account site panels', () => {
     expect(mockLoginWebViewProps.userAgent).toBeUndefined();
   });
 
-  it.each([false, true])(
-    'unmounts a timed-out linux.do WebView until explicit refresh, recovery: %s',
-    async (dedicated) => {
+  it.each([
+    ['timeout', false],
+    ['timeout', true],
+    ['renderer-gone', true]
+  ] satisfies ['timeout' | 'renderer-gone', boolean][])(
+    'keeps the linux.do WebView unmounted after %s until explicit refresh, recovery: %s',
+    async (failure, dedicated) => {
       jest.useFakeTimers();
       try {
         const onResetLinuxDoWebView = jest.fn();
@@ -1214,13 +1225,23 @@ describe('Account site panels', () => {
           : undefined;
         const props = linuxDoVerifyProps({ onResetLinuxDoWebView, recoveryPanel });
         const view = await render(<LinuxDoVerifyModal {...props} />);
+        const expiredWebView = mockLoginWebViewProps;
 
         expect(view.getByTestId('mock-login-webview')).toBeTruthy();
         await act(async () => {
-          jest.advanceTimersByTime(12_000);
+          if (failure === 'timeout') jest.advanceTimersByTime(12_000);
+          else expiredWebView.onRenderProcessGone();
         });
 
         expect(view.queryByTestId('mock-login-webview')).toBeNull();
+        jest.mocked(props.onSetLinuxDoWebViewError).mockClear();
+        await act(() => {
+          expiredWebView.onLoadStart({ nativeEvent: { url: 'https://linux.do/latest', loading: true } });
+          expiredWebView.onLoadEnd({ nativeEvent: { url: 'https://linux.do/latest' } });
+        });
+        expect(view.queryByTestId('mock-login-webview')).toBeNull();
+        expect(props.onSetLinuxDoWebViewError).not.toHaveBeenCalled();
+        expect(expiredWebView.onShouldStartLoadWithRequest({ url: 'https://linux.do/latest' })).toBe(false);
         await fireEvent.press(view.getByLabelText('刷新页面'));
         expect(onResetLinuxDoWebView).toHaveBeenCalledTimes(1);
         await view.rerender(

@@ -143,6 +143,11 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       gap: 10
     },
     readingEntryStatus: { alignSelf: 'center', width: '100%' },
+    placeholderParagraph: { gap: Math.round(10 * fontScale), paddingBottom: 10 },
+    placeholderLine: { height: Math.round(12 * fontScale) },
+    placeholderMeta: { height: Math.round(8 * fontScale) },
+    placeholderReplyAvatar: { width: 32, height: 32, borderRadius: 16 },
+    placeholderAuthor: { gap: 5 },
     topicTagPill: {
       alignItems: 'center',
       backgroundColor: 'transparent',
@@ -179,8 +184,12 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     replyActionPosition: {
       position: 'absolute',
+      left: 16,
       right: 16,
-      bottom: 16
+      bottom: 16,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between'
     },
     replyAction: {
       minHeight: 56,
@@ -200,6 +209,17 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       shadowOpacity: 0.16,
       shadowRadius: 4
     },
+    replyJumpAction: {
+      minWidth: 84,
+      minHeight: 48,
+      gap: 6,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderColor: alphaColor(theme.ink, theme.dark ? 0.2 : 0.12),
+      borderTopColor: alphaColor('#FFFFFF', theme.dark ? 0.34 : 0.9)
+    },
+    replyJumpActionText: { color: theme.ink, fontVariant: ['tabular-nums'] },
+    replyWriteAction: { marginLeft: 'auto' },
     replyActionText: {
       flexShrink: 1,
       color: theme.dark ? theme.primary : theme.primaryStrong,

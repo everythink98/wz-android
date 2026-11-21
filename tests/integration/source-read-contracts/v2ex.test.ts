@@ -192,6 +192,23 @@ describe('Android local sources', () => {
     );
   });
 
+  it('reads V2EX pin decoration from the topic row rather than ordinary background graphics', async () => {
+    const fetcher = vi.fn(async () =>
+      html(`
+      <div class="cell item" style="background-image: url(//cdn.v2ex.com/static/img/corner_star.png); background-repeat: no-repeat; background-size: 20px 20px;">
+        <a class="topic-link" href="/t/802">临时置顶主题</a>
+      </div>
+      <div class="cell item" style="background-image: url(/background.png);">
+        <a class="topic-link" href="/t/803">普通主题</a>
+      </div>`)
+    );
+    const feed = await getFeed({ source: 'v2ex', fetcher });
+    expect(feed.items.map(({ id, pinned }) => [id, pinned === true])).toEqual([
+      ['802', true],
+      ['803', false]
+    ]);
+  });
+
   it('reads the V2EX all feed from the origin all tab instead of the latest API', async () => {
     const fetcher = routeFetcher([
       [

@@ -1,4 +1,5 @@
 import { ActivityIndicator } from 'react-native-paper';
+import { isLinuxDoPacketCover } from '@/domain/forum/linuxDoPacket';
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
@@ -83,7 +84,7 @@ function shareImageDecodeSize(imageCount: number): ImageProgress['decodeSize'] {
   return { maxWidth, maxHeight: Math.min(MAX_SHARE_IMAGE_HEIGHT, Math.floor(pixelsPerImage / maxWidth)) };
 }
 
-type ShareImageAsset = { image: ImageRef; dimensions?: { width: number; height: number } };
+type ShareImageAsset = { image: ImageRef | ImageURISource; dimensions?: { width: number; height: number } };
 
 async function decodeShareImage(
   source: ImageURISource & { uri: string },
@@ -95,6 +96,7 @@ async function decodeShareImage(
   if (!artifact && declaredSvg && Platform.OS === 'android') {
     artifact = await recoverCompatibleSvgArtifact(source, { signal }).catch(() => null);
     if (signal.aborted) throw new Error('图片加载已取消');
+    if (!artifact && isLinuxDoPacketCover(source.uri)) throw new Error('无法读取最新的红包封面');
   }
   if (!artifact) {
     try {
@@ -105,6 +107,7 @@ async function decodeShareImage(
       if (!artifact || signal.aborted) throw error;
     }
   }
+  if (artifact.noStore) return { image: artifact.posterSource, dimensions: artifact.dimensions };
   try {
     return { image: await Image.loadAsync(artifact.posterSource, decodeSize), dimensions: artifact.dimensions };
   } catch (error) {
@@ -124,7 +127,8 @@ function ShareImage({ tnode }: { tnode: TNode }) {
   const [enabled, setEnabled] = useState(false);
   const index = Number(tnode.attributes['data-share-image-index']);
   const uri = tnode.attributes.src;
-  const declaredSvg = tnode.attributes['data-share-svg'] === 'true' || /\.svg(?:[?#]|$)/i.test(uri);
+  const declaredSvg =
+    tnode.attributes['data-share-svg'] === 'true' || /\.svg(?:[?#]|$)/i.test(uri) || isLinuxDoPacketCover(uri);
   const referrerPolicy = normalizeMediaReferrerPolicy(tnode.attributes.referrerpolicy);
   const mediaContext = progress?.mediaContext;
   const decodeSize = progress?.decodeSize;
@@ -148,9 +152,9 @@ function ShareImage({ tnode }: { tnode: TNode }) {
       controller.signal
     ).then(
       (loaded) => {
-        if (controller.signal.aborted) loaded.image.release();
+        decoded = 'release' in loaded.image ? loaded.image : undefined;
+        if (controller.signal.aborted) decoded?.release();
         else {
-          decoded = loaded.image;
           setAsset(loaded);
         }
       },
@@ -185,6 +189,7 @@ function ShareImage({ tnode }: { tnode: TNode }) {
     <Image
       accessibilityLabel={tnode.attributes.alt || '正文图片'}
       source={asset?.image ?? null}
+      cachePolicy={asset && !('release' in asset.image) ? 'none' : 'disk'}
       style={{ width, height }}
       contentFit="contain"
       transition={0}

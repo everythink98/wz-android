@@ -28,12 +28,13 @@ export type MoreUpdateCapabilities = {
 export function MoreUpdatePanel({ runtime }: { runtime: MoreUpdateCapabilities }) {
   const { styles, theme } = useReaderThemeStyles(createMoreScreenStyles);
   const busy = runtime.phase !== 'idle';
+  const checking = runtime.phase === 'checking';
   const target = runtime.artifact?.update ?? runtime.info;
   const differentUpdate = runtime.artifact && runtime.info && !sameAppUpdate(runtime.artifact.update, runtime.info);
   const phaseText = {
     idle: '',
-    restoring: '正在恢复下载记录',
-    checking: '正在检查更新',
+    restoring: '',
+    checking: '',
     downloading: '',
     pausing: '正在暂停下载',
     verifying: '正在校验安装包',
@@ -91,17 +92,19 @@ export function MoreUpdatePanel({ runtime }: { runtime: MoreUpdateCapabilities }
   const mainDisabled = busy && !isDownloading;
   const progressWidth =
     progress?.percent !== null && progress?.percent !== undefined ? (`${progress.percent}%` as `${number}%`) : null;
-  const versionMeta = runtime.info
-    ? `${CURRENT_APP_VERSION} → ${runtime.info.version}`
-    : isUpToDateMessage
-      ? runtime.message
-      : `版本 ${CURRENT_APP_VERSION}`;
-  const hasCard = Boolean(target || status || progress || runtime.restoreFailed);
+  const versionMeta =
+    runtime.phase === 'restoring'
+      ? '正在恢复下载记录'
+      : runtime.info
+        ? `${CURRENT_APP_VERSION} → ${runtime.info.version}`
+        : isUpToDateMessage
+          ? runtime.message
+          : `版本 ${CURRENT_APP_VERSION}`;
   const accentText = theme.dark ? theme.primary : theme.primaryStrong;
   const showFooterStatus = Boolean(status && (!actionLoading || !progress));
 
   return (
-    <View style={[styles.updatePanel, hasCard && styles.updateCard]}>
+    <View testID="more-update-section" style={styles.updatePanel}>
       <View style={styles.updateHeaderRow}>
         <View style={styles.updateIdentity}>
           <View style={styles.updateIconBadge}>
@@ -122,102 +125,96 @@ export function MoreUpdatePanel({ runtime }: { runtime: MoreUpdateCapabilities }
           iconOnly
           icon={RefreshCw}
           iconSize={17}
-          label={runtime.phase === 'checking' ? '检查中' : '检查更新'}
-          loading={runtime.phase === 'checking' && !progress}
-          disabled={busy}
+          label={checking ? '检查中' : '检查更新'}
+          loading={checking}
+          disabled={busy && !checking}
           onPress={runtime.check}
         />
       </View>
-      {hasCard ? (
-        <View style={styles.updateDetails}>
-          {showLocalArtifactMeta ? (
-            <Text style={styles.meta}>
-              本地安装包 {runtime.artifact!.update.version}
-              {isReady ? ' · 已就绪' : ''}
-            </Text>
-          ) : null}
-          {notes ? <Text style={styles.updateNotes}>{notes}</Text> : null}
-          {progress ? (
-            <Pressable
-              testID="more-update-action"
-              accessibilityRole="button"
-              accessibilityLabel={label}
-              accessibilityState={{ disabled: mainDisabled, busy: actionLoading }}
-              accessibilityValue={{
-                min: 0,
-                max: 100,
-                now: progress.percent ?? undefined,
-                text: progress.percentLabel ? `${progress.sizeLabel}，${progress.percentLabel}` : progress.sizeLabel
-              }}
-              disabled={mainDisabled}
-              hitSlop={TOUCH_HIT_SLOP}
-              style={[styles.updateIntegratedBar, mainDisabled && !actionLoading && styles.updateBarDisabled]}
-              onPress={() => {
-                recordUserInteraction();
-                mainAction();
-              }}
-            >
-              <View
-                pointerEvents="none"
-                style={[styles.updateIntegratedFill, { width: progressWidth ?? (actionLoading ? '100%' : '0%') }]}
-              />
-              <View style={styles.updateIntegratedContent}>
-                <View style={styles.updateIntegratedLeft}>
-                  {actionLoading ? (
-                    <ActivityIndicator accessible={false} size={14} color={accentText} />
-                  ) : isDownloading ? (
-                    <Pause accessible={false} size={13} color={accentText} fill={accentText} strokeWidth={0} />
-                  ) : (
-                    <Play accessible={false} size={13} color={accentText} fill={accentText} strokeWidth={0} />
-                  )}
-                  <Text style={styles.updateIntegratedActionText} numberOfLines={1}>
-                    {actionLoading ? phaseText : label}
-                  </Text>
-                </View>
-                <View style={styles.updateIntegratedRight}>
-                  <Text style={styles.updateProgressMeta} numberOfLines={1}>
-                    {progress.sizeLabel}
-                  </Text>
-                  {progress.percentLabel ? (
-                    <Text style={styles.updateProgressPercent}>{progress.percentLabel}</Text>
-                  ) : null}
-                </View>
-              </View>
-            </Pressable>
-          ) : target || runtime.restoreFailed ? (
-            <View style={styles.updatePrimarySlot}>
-              <AppButton
-                testID="more-update-action"
-                size="lg"
-                icon={actionIcon}
-                variant="solid"
-                label={label}
-                loading={actionLoading}
-                disabled={mainDisabled}
-                onPress={mainAction}
-              />
-            </View>
-          ) : null}
-          {differentUpdate ? (
-            <View style={styles.updateSecondaryRow}>
-              <Text style={[styles.meta, styles.flex]}>
-                下载新版将替换本地 {runtime.artifact!.update.version} 的下载任务。
+      {showLocalArtifactMeta ? (
+        <Text style={styles.meta}>
+          本地安装包 {runtime.artifact!.update.version}
+          {isReady ? ' · 已就绪' : ''}
+        </Text>
+      ) : null}
+      {notes ? <Text style={styles.updateNotes}>{notes}</Text> : null}
+      {progress ? (
+        <Pressable
+          testID="more-update-action"
+          accessibilityRole="button"
+          accessibilityLabel={label}
+          accessibilityState={{ disabled: mainDisabled, busy: actionLoading }}
+          accessibilityValue={{
+            min: 0,
+            max: 100,
+            now: progress.percent ?? undefined,
+            text: progress.percentLabel ? `${progress.sizeLabel}，${progress.percentLabel}` : progress.sizeLabel
+          }}
+          disabled={mainDisabled}
+          hitSlop={TOUCH_HIT_SLOP}
+          style={[styles.updateIntegratedBar, mainDisabled && !actionLoading && styles.updateBarDisabled]}
+          onPress={() => {
+            recordUserInteraction();
+            mainAction();
+          }}
+        >
+          <View
+            pointerEvents="none"
+            style={[styles.updateIntegratedFill, { width: progressWidth ?? (actionLoading ? '100%' : '0%') }]}
+          />
+          <View style={styles.updateIntegratedContent}>
+            <View style={styles.updateIntegratedLeft}>
+              {actionLoading ? (
+                <ActivityIndicator accessible={false} size={14} color={accentText} />
+              ) : isDownloading ? (
+                <Pause accessible={false} size={13} color={accentText} fill={accentText} strokeWidth={0} />
+              ) : (
+                <Play accessible={false} size={13} color={accentText} fill={accentText} strokeWidth={0} />
+              )}
+              <Text style={styles.updateIntegratedActionText} numberOfLines={1}>
+                {actionLoading ? phaseText : label}
               </Text>
-              <AppButton
-                compact
-                icon={Download}
-                label={`下载新版 ${runtime.info!.version}`}
-                disabled={busy}
-                onPress={runtime.start}
-              />
             </View>
-          ) : null}
-          {showFooterStatus ? (
-            <Text accessibilityLiveRegion="polite" style={styles.meta}>
-              {status}
-            </Text>
-          ) : null}
+            <View style={styles.updateIntegratedRight}>
+              <Text style={styles.updateProgressMeta} numberOfLines={1}>
+                {progress.sizeLabel}
+              </Text>
+              {progress.percentLabel ? <Text style={styles.updateProgressPercent}>{progress.percentLabel}</Text> : null}
+            </View>
+          </View>
+        </Pressable>
+      ) : target || runtime.restoreFailed ? (
+        <View style={styles.updatePrimarySlot}>
+          <AppButton
+            testID="more-update-action"
+            size="lg"
+            icon={actionIcon}
+            variant="solid"
+            label={label}
+            loading={actionLoading}
+            disabled={mainDisabled}
+            onPress={mainAction}
+          />
         </View>
+      ) : null}
+      {differentUpdate ? (
+        <View style={styles.updateSecondaryRow}>
+          <Text style={[styles.meta, styles.flex]}>
+            下载新版将替换本地 {runtime.artifact!.update.version} 的下载任务。
+          </Text>
+          <AppButton
+            compact
+            icon={Download}
+            label={`下载新版 ${runtime.info!.version}`}
+            disabled={busy}
+            onPress={runtime.start}
+          />
+        </View>
+      ) : null}
+      {showFooterStatus ? (
+        <Text accessibilityLiveRegion="polite" style={styles.meta}>
+          {status}
+        </Text>
       ) : null}
     </View>
   );

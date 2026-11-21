@@ -46,9 +46,8 @@ import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/
 import { type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { AuthNoticeBox, EmptyText, LoadingState, RecoverableEmptyState } from '@/ui/controls/FeedbackStates';
-import { ContentLoadingPlaceholder } from '@/ui/controls/ContentLoadingPlaceholder';
 import { PillRail } from '@/ui/controls/SelectionControls';
-import { MemoizedTopicCard, TopicListSeparator } from '@/ui/topic/TopicCard';
+import { MemoizedTopicCard, TopicListPlaceholder, TopicListSeparator } from '@/ui/topic/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 
@@ -653,8 +652,8 @@ export const SearchScreen = memo(function SearchScreen({
       }
       if (item.type === 'groupLoading') {
         const text = item.group.items.length ? '刷新中' : `${item.group.label} 搜索中`;
-        return active && visibleSearchSource !== 'all' && !item.group.items.length ? (
-          <ContentLoadingPlaceholder layout="list" text={text} />
+        return visibleSearchSource !== 'all' && !item.group.items.length ? (
+          <TopicListPlaceholder label={text} animating={active} />
         ) : (
           <LoadingState compact text={text} animating={active} />
         );
@@ -860,7 +859,7 @@ export const SearchScreen = memo(function SearchScreen({
               onAction={onManageContentSources}
             />
           ) : showSearchGroups ? null : searchBusy && hasSubmittedQuery ? (
-            <ContentLoadingPlaceholder layout="list" text="搜索中" />
+            <TopicListPlaceholder label="搜索中" animating={active} />
           ) : !hasSubmittedQuery ? null : (
             <EmptyText text="暂无搜索结果" />
           )

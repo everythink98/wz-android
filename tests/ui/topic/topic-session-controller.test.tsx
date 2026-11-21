@@ -148,6 +148,7 @@ function renderTopicController({
   getIdentityBarriers = () => [],
   getIdentityTrust,
   getSourceEnabled = () => true,
+  isSoleTopicRoute,
   getSessionEpochs = () => initialForumSessionEpochs,
   notify = jest.fn(),
   onRetryIdentityStatus = jest.fn(),
@@ -169,6 +170,7 @@ function renderTopicController({
   getIdentityBarriers?: () => SessionSource[];
   getIdentityTrust?: (source: SessionRuntimeSnapshot['source']) => SessionRuntimeSnapshot['identityTrust'];
   getSourceEnabled?: (source: Source) => boolean;
+  isSoleTopicRoute?: () => boolean;
   getSessionEpochs?: () => ForumSessionEpochs;
   notify?: (message: string) => void;
   onRetryIdentityStatus?: (source: Source) => Promise<unknown> | unknown;
@@ -204,6 +206,7 @@ function renderTopicController({
       );
       const controller = useTopicController({
         focused: getActive(),
+        isSoleTopicRoute,
         appActive: getAppActive(),
         commitReaderData,
         sessionEpochs: getSessionEpochs(),
@@ -229,6 +232,84 @@ function renderTopicController({
 }
 
 describe('topic query controller', () => {
+  it('reloads an evicted detail when returning to the retained topic without registering the visit twice', async () => {
+    let focused = true;
+    let appActive = true;
+    const topic = { ...firstTopic, source: 'linuxdo' as const, url: 'https://linux.do/t/1' };
+    const detail = { ...firstDetail, ...topic };
+    const getTopic = jest.fn<TestGetTopic>().mockResolvedValue(detail);
+    const hook = await renderTopicController({
+      topic,
+      getActive: () => focused,
+      getAppActive: () => appActive,
+      readGateway: { getTopic }
+    });
+    await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(detail));
+    const topicQueryKey = hook.result.current.controller.topicQueryKey;
+
+    focused = false;
+    appActive = false;
+    await hook.rerender(undefined);
+    expect(appQueryClient.getQueryCache().find({ queryKey: topicQueryKey })?.getObserversCount()).toBe(0);
+    appQueryClient.removeQueries({ queryKey: topicQueryKey, exact: true });
+    expect(appQueryClient.getQueryState(topicQueryKey)).toBeUndefined();
+
+    appActive = true;
+    await hook.rerender(undefined);
+    expect(getTopic).toHaveBeenCalledTimes(1);
+    focused = true;
+    await hook.rerender(undefined);
+    await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(detail));
+    expect(getTopic.mock.calls.map(([request]) => request.trackVisit)).toEqual([true, false]);
+  });
+
+  it.each(['newest', 'target'] as const)(
+    'reloads an evicted %s LinuxDo reply window when the retained topic returns',
+    async (entry) => {
+      let focused = true;
+      const topic = { ...firstTopic, source: 'linuxdo' as const, replyCount: 99 };
+      const target = { floor: 80 };
+      const reply = { ...firstReply, ...target, commentId: 80 };
+      const getTopic = jest.fn<TestGetTopic>(async () => ({ ...firstDetail, ...topic, replyHasMore: true }));
+      const getReplies = jest.fn<TestGetReplies>(async () => ({
+        currentPage: 3,
+        items: [reply],
+        hasMore: false,
+        nextPage: null
+      }));
+      const hook = await renderTopicController({
+        getActive: () => focused,
+        location: entry === 'target' ? { kind: 'reply', target } : undefined,
+        topic,
+        readGateway: { getTopic, getReplies }
+      });
+      if (entry === 'newest') {
+        await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([firstReply]));
+        await act(async () => hook.result.current.session.commands.view.changeReplyOrder('newest'));
+      }
+      await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([reply]));
+      const { topicQueryKey, replyWindowOwner } = hook.result.current.controller;
+      const repliesKey = forumQueryKeys.replies(
+        topicQueryKey,
+        entry === 'target' ? 'oldest' : 'newest',
+        'authenticated:0',
+        entry === 'target' ? replyWindowOwner : undefined
+      );
+      expect(appQueryClient.getQueryData(repliesKey)).toBeDefined();
+      focused = false;
+      await hook.rerender(undefined);
+      expect(appQueryClient.getQueryCache().find({ queryKey: repliesKey })?.getObserversCount()).toBe(0);
+      appQueryClient.removeQueries({ queryKey: repliesKey, exact: true });
+      expect(appQueryClient.getQueryState(repliesKey)).toBeUndefined();
+      focused = true;
+      await hook.rerender(undefined);
+      await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([reply]));
+      const expectedPosition = entry === 'target' ? { kind: 'target', target } : { kind: 'start' };
+      expect(getReplies.mock.calls.map(([request]) => request.position)).toEqual([expectedPosition, expectedPosition]);
+      expect(getTopic).toHaveBeenCalledTimes(1);
+    }
+  );
+
   it('does not render an unchanged production reply while the reply draft changes', async () => {
     const getTopic = jest.fn<TestGetTopic>(async () => firstDetail);
     const hook = await renderTopicController({ readGateway: { getTopic } });
@@ -866,6 +947,307 @@ describe('topic query controller', () => {
       }
       await act(async () => hook.unmount());
       reading.dispose();
+    }
+  );
+
+  it.each(['completed', 'failed'] as const)(
+    'releases pending reading positioning when a manual reply refresh is %s',
+    async (outcome) => {
+      const topic = { ...firstTopic, source: 'linuxdo' as const };
+      const reading = createDiscourseReadingRuntime({
+        queryClient: appQueryClient,
+        scope: () => 'alice',
+        send: async () => undefined
+      });
+      const pending = Promise.withResolvers<RepliesResponse>();
+      const page = { items: [{ ...firstReply, floor: 2 }], currentPage: 1, hasMore: false, nextPage: null };
+      const getReplies = jest.fn<TestGetReplies>(async ({ position }) => {
+        if (position.kind === 'target') return pending.promise;
+        if (outcome === 'failed') throw new Error('offline');
+        return page;
+      });
+      const getTopic = jest.fn<TestGetTopic>(async () => {
+        reading.observe([{ topicId: '1', lastReadPostNumber: 180, highestPostNumber: 200 }], reading.startRequest());
+        return { ...firstDetail, ...topic, replies: [], replyCount: 199 };
+      });
+      const hook = await renderTopicController({ topic, readGateway: { reading, getTopic, getReplies } });
+      try {
+        await waitFor(() => expect(getReplies).toHaveBeenCalledTimes(1));
+        expect(hook.result.current.controller.readingEntry.positionReady).toBe(false);
+        await act(async () => {
+          await expect(hook.result.current.controller.refreshTopicReplies()).resolves.toBe(outcome);
+        });
+        expect(hook.result.current.controller.readingEntry.positionReady).toBe(true);
+        await act(async () => pending.resolve({ ...page, items: [{ ...firstReply, floor: 181 }] }));
+        expect(hook.result.current.controller.readingEntry.location).toBeUndefined();
+        expect(hook.result.current.controller.topicReplies[0]?.floor).toBe(outcome === 'completed' ? 2 : undefined);
+      } finally {
+        await act(async () => hook.unmount());
+        reading.dispose();
+      }
+    }
+  );
+
+  it('opens a confirmed local floor from its cached window while visit registration is pending', async () => {
+    const topic = { ...firstTopic, source: 'linuxdo' as const };
+    let now = 0;
+    const reading = createDiscourseReadingRuntime({
+      queryClient: appQueryClient,
+      scope: () => 'alice',
+      send: async () => undefined,
+      now: () => now
+    });
+    const registration = Promise.withResolvers<void>();
+    const getTopic = jest.fn<TestGetTopic>(async () => ({
+      ...firstDetail,
+      ...topic,
+      replies: [{ ...firstReply, floor: 12 }],
+      replyCompleteness: 'complete'
+    }));
+    const getTopicReading = jest.fn<ReadGateway['getTopicReading']>(async () => {
+      const request = reading.startRequest();
+      await registration.promise;
+      const snapshot = { topicId: topic.id, lastReadPostNumber: 30, highestPostNumber: 40 };
+      reading.observe([snapshot], request);
+      return snapshot;
+    });
+    const getReplies = jest.fn<TestGetReplies>();
+    const gateway = { reading, getTopic, getTopicReading, getReplies };
+    const first = await renderTopicController({ topic, readGateway: gateway });
+    await waitFor(() => expect(first.result.current.controller.topicReplies[0]?.floor).toBe(12));
+    const session = reading.begin(topic.id);
+    session.active(true);
+    const anchor = { floor: 12, rowKey: 'seen-row', revision: 'v1', offset: 23 };
+    session.visible([12], anchor);
+    now = 1200;
+    session.end();
+    expect(reading.state()[topic.id].anchor).toEqual(anchor);
+    await act(async () => first.unmount());
+    const second = await renderTopicController({ topic, readGateway: gateway });
+    try {
+      expect(getTopicReading).toHaveBeenCalledTimes(1);
+      expect(second.result.current.controller.readingEntry).toMatchObject({
+        ready: true,
+        windowReady: true,
+        positionReady: false,
+        anchor
+      });
+      await act(async () => registration.resolve());
+      expect(second.result.current.controller.readingEntry.anchor).toEqual(anchor);
+      expect(reading.state()[topic.id].server.lastReadPostNumber).toBe(30);
+      expect(getTopic).toHaveBeenCalledTimes(1);
+      expect(getReplies).not.toHaveBeenCalled();
+    } finally {
+      registration.resolve();
+      await act(async () => second.unmount());
+      reading.dispose();
+    }
+  });
+
+  it.each([true, false])(
+    'preserves the right reading window after a manual jump with a sole topic route=%s',
+    async (sole) => {
+      let now = 0;
+      const topic = { ...firstTopic, source: 'linuxdo' as const, replyCount: 100 };
+      const reading = createDiscourseReadingRuntime({
+        queryClient: appQueryClient,
+        scope: () => 'alice',
+        send: async () => undefined,
+        now: () => now
+      });
+      const getTopic = jest.fn<TestGetTopic>(async () => ({
+        ...firstDetail,
+        ...topic,
+        replies: [{ ...firstReply, floor: 2 }],
+        replyCompleteness: 'complete'
+      }));
+      const getReplies = jest.fn<TestGetReplies>(async () => ({
+        items: [{ ...firstReply, floor: 58 }],
+        currentPage: 3,
+        previousPage: 2,
+        previousOffset: 30,
+        currentOffset: 50,
+        nextPage: null,
+        hasMore: false
+      }));
+      const registration = Promise.withResolvers<undefined>();
+      const gateway = {
+        reading,
+        getTopic,
+        getReplies,
+        getTopicReading: jest.fn<ReadGateway['getTopicReading']>().mockReturnValue(registration.promise)
+      };
+      const first = await renderTopicController({ topic, readGateway: gateway, isSoleTopicRoute: () => sole });
+      await waitFor(() => expect(first.result.current.controller.topicReplies[0]?.floor).toBe(2));
+      const key = forumQueryKeys.replies(first.result.current.controller.topicQueryKey, 'oldest', 'authenticated:0');
+      await act(async () => {
+        await expect(first.result.current.controller.locateReply({ floor: 58 })).resolves.toBe('completed');
+      });
+      const session = reading.begin(topic.id);
+      session.active(true);
+      session.visible([58], { floor: 58 });
+      now = 1200;
+      session.end();
+      await act(async () => first.unmount());
+      try {
+        expect(appQueryClient.getQueryData(key)).toMatchObject({
+          pages: [{ items: [{ floor: sole ? 58 : 2 }] }]
+        });
+        if (sole) {
+          const second = await renderTopicController({ topic, readGateway: gateway, isSoleTopicRoute: () => true });
+          try {
+            expect(second.result.current.controller.readingEntry).toMatchObject({
+              ready: true,
+              windowReady: true,
+              anchor: { floor: 58 }
+            });
+            expect(second.result.current.controller.topicReplies[0]?.floor).toBe(58);
+            expect(getReplies).toHaveBeenCalledTimes(1);
+          } finally {
+            await act(async () => second.unmount());
+          }
+        }
+      } finally {
+        registration.resolve(undefined);
+        reading.dispose();
+      }
+    }
+  );
+
+  it('shows the cached opening immediately when there is no signed-in reading identity', async () => {
+    const topic = { ...firstTopic, source: 'linuxdo' as const };
+    const reading = createDiscourseReadingRuntime({
+      queryClient: appQueryClient,
+      scope: () => null,
+      send: async () => undefined
+    });
+    const registration = Promise.withResolvers<undefined>();
+    const gateway = {
+      reading,
+      getTopic: jest.fn<TestGetTopic>(async () => ({ ...firstDetail, ...topic, replyCompleteness: 'complete' })),
+      getTopicReading: jest.fn<ReadGateway['getTopicReading']>().mockReturnValue(registration.promise)
+    };
+    const first = await renderTopicController({ topic, readGateway: gateway });
+    await waitFor(() => expect(first.result.current.controller.topicDetail).toBeTruthy());
+    await act(async () => first.unmount());
+    const second = await renderTopicController({ topic, readGateway: gateway });
+    try {
+      expect(second.result.current.controller.readingEntry).toMatchObject({ ready: true, positionReady: true });
+      expect(gateway.getTopicReading).toHaveBeenCalledTimes(1);
+      expect(gateway.getTopic).toHaveBeenCalledTimes(1);
+    } finally {
+      registration.resolve(undefined);
+      await act(async () => second.unmount());
+      reading.dispose();
+    }
+  });
+
+  it('retries an interrupted cached visit on focus without reloading the topic', async () => {
+    const topic = { ...firstTopic, source: 'linuxdo' as const };
+    let focused = true;
+    const reading = createDiscourseReadingRuntime({
+      queryClient: appQueryClient,
+      scope: () => 'alice',
+      send: async () => undefined
+    });
+    const getTopic = jest.fn<TestGetTopic>(async () => ({ ...firstDetail, ...topic, replyCompleteness: 'complete' }));
+    const registration = Promise.withResolvers<Awaited<ReturnType<ReadGateway['getTopicReading']>>>();
+    const getTopicReading = jest.fn<ReadGateway['getTopicReading']>().mockReturnValue(registration.promise);
+    const gateway = { reading, getTopic, getTopicReading };
+    const first = await renderTopicController({ topic, readGateway: gateway });
+    await waitFor(() => expect(first.result.current.controller.readingEntry.ready).toBe(true));
+    await act(async () => first.unmount());
+    const second = await renderTopicController({ topic, readGateway: gateway, getActive: () => focused });
+    try {
+      expect(getTopicReading).toHaveBeenCalledTimes(1);
+      focused = false;
+      await second.rerender(undefined);
+      expect(getTopicReading.mock.calls[0][1]?.signal?.aborted).toBe(true);
+      focused = true;
+      await second.rerender(undefined);
+      expect(getTopicReading).toHaveBeenCalledTimes(2);
+      await act(async () => registration.resolve(undefined));
+      expect(second.result.current.controller.readingEntry.ready).toBe(true);
+      focused = false;
+      await second.rerender(undefined);
+      focused = true;
+      await second.rerender(undefined);
+      expect(getTopicReading).toHaveBeenCalledTimes(2);
+      expect(getTopic).toHaveBeenCalledTimes(1);
+    } finally {
+      registration.resolve(undefined);
+      await act(async () => second.unmount());
+      reading.dispose();
+    }
+  });
+
+  it.each(['topic', 'replies'] as const)(
+    'keeps a manual %s refresh in control when the initial server decision arrives',
+    async (section) => {
+      const topic = { ...firstTopic, source: 'linuxdo' as const };
+      const detail = {
+        ...firstDetail,
+        ...topic,
+        replies: [{ ...firstReply, floor: 2 }],
+        replyCompleteness: 'complete' as const
+      };
+      const reading = createDiscourseReadingRuntime({
+        queryClient: appQueryClient,
+        scope: () => 'alice',
+        send: async () => undefined
+      });
+      const registration = Promise.withResolvers<void>();
+      const refreshed = Promise.withResolvers<void>();
+      const getTopic = jest
+        .fn<TestGetTopic>()
+        .mockResolvedValueOnce(detail)
+        .mockImplementation(async () => {
+          await refreshed.promise;
+          return detail;
+        });
+      const getTopicReading = jest.fn<ReadGateway['getTopicReading']>(async () => {
+        const request = reading.startRequest();
+        await registration.promise;
+        const snapshot = { topicId: topic.id, lastReadPostNumber: 19, highestPostNumber: 25 };
+        reading.observe([snapshot], request);
+        return snapshot;
+      });
+      const getReplies = jest.fn<TestGetReplies>(async ({ position }) => {
+        if (position.kind !== 'target') await refreshed.promise;
+        return {
+          items: [{ ...firstReply, floor: position.kind === 'target' ? 20 : 2 }],
+          currentPage: 1,
+          nextPage: null,
+          hasMore: false
+        };
+      });
+      const gateway = { reading, getTopic, getTopicReading, getReplies };
+      const first = await renderTopicController({ topic, readGateway: gateway });
+      await waitFor(() => expect(first.result.current.controller.readingEntry.ready).toBe(true));
+      await act(async () => first.unmount());
+      const second = await renderTopicController({ topic, readGateway: gateway });
+      try {
+        expect(second.result.current.controller.readingEntry.ready).toBe(false);
+        const controller = second.result.current.controller;
+        let refresh!: ReturnType<typeof controller.refreshWholeTopic>;
+        await act(async () => {
+          refresh = section === 'topic' ? controller.refreshWholeTopic() : controller.refreshTopicReplies();
+        });
+        await act(async () => registration.resolve());
+        expect(getReplies.mock.calls.map(([request]) => request.position.kind)).not.toContain('target');
+        await act(async () => {
+          refreshed.resolve();
+          await expect(refresh).resolves.toBe('completed');
+        });
+        expect(second.result.current.controller.readingEntry.location).toBeUndefined();
+        expect(second.result.current.controller.topicReplies[0]?.floor).toBe(2);
+        expect(reading.state()[topic.id].server.lastReadPostNumber).toBe(19);
+      } finally {
+        refreshed.resolve();
+        registration.resolve();
+        await act(async () => second.unmount());
+        reading.dispose();
+      }
     }
   );
 

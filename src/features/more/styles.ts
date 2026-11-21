@@ -42,16 +42,10 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       flex: 1
     },
     groupList: {
-      backgroundColor: 'transparent',
       borderBottomColor: theme.line,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderRadius: 0,
-      marginTop: 0,
-      paddingHorizontal: 0,
-      paddingVertical: 6
+      borderBottomWidth: StyleSheet.hairlineWidth
     },
-    settingsSection: { marginTop: 16 },
-    utilityDivider: { backgroundColor: theme.line, height: StyleSheet.hairlineWidth, marginLeft: 38 },
+    settingsSection: { marginTop: 6 },
     libraryShortcuts: {
       borderTopColor: theme.line,
       borderTopWidth: StyleSheet.hairlineWidth,
@@ -176,17 +170,7 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     },
     updatePanel: {
       gap: 12,
-      paddingVertical: 12
-    },
-    updateCard: {
-      backgroundColor: theme.surface2,
-      borderColor: alphaColor(theme.ink, theme.dark ? 0.1 : 0.06),
-      borderRadius: readerRadii.surface,
-      borderWidth: StyleSheet.hairlineWidth,
-      marginVertical: 8,
-      paddingBottom: 16,
-      paddingHorizontal: 16,
-      paddingTop: 12
+      paddingVertical: 8
     },
     updateHeaderRow: {
       alignItems: 'center',
@@ -196,12 +180,6 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       marginRight: -8
     },
     updateTitleRow: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8
-    },
-    updateHeader: {
       alignItems: 'center',
       flexDirection: 'row',
       flexWrap: 'wrap',
@@ -229,9 +207,6 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       fontSize: fontSize(12),
       fontVariant: ['tabular-nums'],
       lineHeight: fontSize(17)
-    },
-    updateDetails: {
-      gap: 12
     },
     updateNotes: {
       color: theme.ink,
@@ -394,7 +369,7 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       includeFontPadding: false
     },
     appearanceSegmentTextActive: {
-      color: theme.primary,
+      color: theme.dark ? theme.primary : theme.primaryStrong,
       fontWeight: '600'
     },
     appearanceFontScaleBlock: {
@@ -419,26 +394,6 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       alignItems: 'center',
       flexDirection: 'row',
       gap: 12
-    },
-    appearanceStepButton: {
-      alignItems: 'center',
-      justifyContent: 'center',
-      width: 48,
-      height: 48,
-      backgroundColor: theme.surface2,
-      borderColor: theme.line,
-      borderRadius: readerRadii.control,
-      borderWidth: StyleSheet.hairlineWidth
-    },
-    appearanceStepButtonText: {
-      color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 20,
-      fontWeight: '500',
-      includeFontPadding: false
-    },
-    appearanceControlDisabled: {
-      opacity: 0.38
     },
     contentSourceRow: {
       alignItems: 'center',

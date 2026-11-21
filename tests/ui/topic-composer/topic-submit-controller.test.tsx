@@ -320,6 +320,7 @@ async function setupAccountChain(source: TopicCreationSource, failureStatus: num
     ) {
       probes++;
       if (probeOutcome === 'unknown') return new Response('{"errors":["请先登录"]}', { status: 403 });
+      if (source === 'linuxdo' && probeOutcome === 'expired' && probes === 1) return new Response('', { status: 404 });
       if (source === 'linuxdo')
         return new Response(
           JSON.stringify({ current_user: probeOutcome === 'anonymous' ? null : { id, username: id } })
@@ -433,7 +434,7 @@ describe('写入账号恢复接线', () => {
   it.each(['nodeseek', 'linuxdo', 'yaohuo'] as const)(
     'preserves a %s failed draft through expiry, real login host detection and an explicit second submit',
     async (source) => {
-      const test = await setupAccountChain(source, 401);
+      const test = await setupAccountChain(source, 401, 'expired');
       const originalEpoch = test.chain().runtime.sessionEpochs[source];
       await act(async () => {
         await test.chain().controller.submit();
@@ -577,6 +578,25 @@ describe('创建主题发布控制器', () => {
       await test.unmount();
     }
   );
+  it('keeps a LINUX DO post draft when the server returns a verification page with HTTP 401', async () => {
+    const test = await setup('linuxdo');
+    await ready(test);
+    test.response(
+      async () =>
+        new Response('<title>Just a moment...</title>', { status: 401, headers: { 'content-type': 'text/html' } })
+    );
+    await act(async () => {
+      await test.result.current.submit();
+    });
+    expect(test.posts()).toHaveLength(1);
+    expect(await loadTopicDraft('linuxdo', siteSessionIdentityKey(test.runtime.sessions.linuxdo))).toMatchObject({
+      body: '这是长度足够的正文，用来验证发布之前的保存、检查和结果处理。'
+    });
+    expect(test.runtime.onSessionExpired).not.toHaveBeenCalled();
+    expect(test.runtime.requestAccountRecheck).not.toHaveBeenCalled();
+    await test.unmount();
+  });
+
   it.each([401, 404])(
     'ignores a stale linux.do publishing HTTP %s response while retaining its rejected receipt',
     async (status) => {

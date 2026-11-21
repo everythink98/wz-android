@@ -102,7 +102,7 @@ export function createFeedStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     linuxDoFilterButton: {
       minWidth: 48,
       maxWidth: '44%',
-      minHeight: 34,
+      minHeight: 48,
       alignItems: 'center',
       flexDirection: 'row',
       flexShrink: 0,
@@ -114,7 +114,7 @@ export function createFeedStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     },
     linuxDoFilterButtonText: {
       flexShrink: 1,
-      color: theme.primary,
+      color: theme.dark ? theme.primary : theme.primaryStrong,
       fontFamily: appFontFamily,
       fontSize: fontSize(12),
       fontWeight: '500',

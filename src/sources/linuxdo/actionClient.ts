@@ -4,7 +4,8 @@ import { discourseActionResponseMessage, type DiscourseActionRequest } from '@/s
 import {
   isCloudflareChallengeResponse,
   LinuxDoCloudflareError,
-  cloudflareChallengeDiagnostics
+  cloudflareChallengeDiagnostics,
+  responseRetryAfterMs
 } from '@/platform/network/cloudflareChallenge';
 import { diagnosticUserAgentHash } from '@/platform/android/userAgent';
 import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
@@ -45,11 +46,7 @@ function linuxDoActionError(data: Record<string, unknown> | unknown[], response:
   const error = linuxDoRequestError(message, status, payload);
   Object.assign(error, { serverRejected: true });
   if (status === 429) {
-    const retry = response.headers.get('Retry-After');
-    const seconds = Number(retry);
-    const retryAfterMs =
-      retry && !Number.isFinite(seconds) ? Math.max(0, Date.parse(retry) - Date.now()) : seconds * 1000;
-    Object.assign(error, { safeToRetry: true, retryAfterMs: Number.isFinite(retryAfterMs) ? retryAfterMs : 0 });
+    Object.assign(error, { safeToRetry: true, retryAfterMs: responseRetryAfterMs(response.headers) ?? 0 });
   }
   return error;
 }

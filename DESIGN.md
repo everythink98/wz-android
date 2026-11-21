@@ -11,6 +11,8 @@
 | [Vercel design.md](https://vercel.com/design.md) | 作为主要设计参考，学习信息层级、对齐、留白、克制的色彩和现有组件复用。 | 该文档面向 Vercel 品牌网页与报告；阅坛保留自己的蓝色、字体设置、原生导航和组件，不导入品牌 CSS 或营销页结构。 |
 | 用户提供的 X 移动端截图 | 学习连续阅读、轻分隔线、统一图标线条和导航材质。 | 阅坛按论坛的主题、回复、引用和多站账号组织内容，不复制社交信息流或品牌外观。截图不作为运行时资源。 |
 | [Radix Colors](https://www.radix-ui.com/colors/docs/palette-composition/understanding-the-scale) | 学习按背景、边线、强调与文字职责选取色阶，统一浅深主题和 Tag。 | 通过现有主题 token 映射，不在页面各自挑颜色，也不把所有 Tag 改成一种颜色。 |
+| [React Native Reusables](https://github.com/founded-labs/react-native-reusables) 和 [Animate UI](https://animate-ui.com/docs/primitives/radix-ui/checkbox) | 参考 shadcn 的开源衍生项目。普通按钮用少量变体区分主次和危险操作，复选反馈集中在勾号。 | 沿用阅坛现有原生控件和色彩。 |
+| [Android 移动端设计](https://developer.android.com/design/ui/mobile) 和 [Mobbin](https://mobbin.com/) | 参考小屏页面和完整流程，检查操作位置与信息层级。 | 使用 Android 的触控、排版和系统设置核对阅坛控件。 |
 | [Apple 材质指南](https://developer.apple.com/design/human-interface-guidelines/materials)、[Android 模糊指南](https://source.android.com/docs/core/display/window-blurs) | 区分内容层与导航、控制层，结合 Android 实现保证可读性。 | 毛玻璃按下文的区域清单应用；返回与普通顶栏图标的最终取舍以本项目约定为准。Android 窗口模糊与本项目页面内的背景采样不是同一种 API。 |
 | [taste-skill](https://github.com/leonxlnx/taste-skill) | 学习先确定内容与层级，再检查真实画面、删除无意义装饰的做法。 | 保留阅坛已经确认的设计，不为追求差异重新抽取配色、字体或布局。外部网页工具和示例不自动成为项目依赖。 |
 | [gsap-skills](https://github.com/greensock/gsap-skills) 及曾讨论的 Motion、react-resizable-panels、dnd-kit | 作为动效、布局和拖拽选型的补充线索。 | 讨论过不等于已经采用。先查现有实现、目标运行环境与实际需求；当前原生界面继续复用已有动画和手势能力，不为统一风格并列引入新技术栈。 |
@@ -19,15 +21,15 @@
 
 搜索框参考 Android Material 的布局。放大镜、关键词、清空和提交共用一条输入栏，下面选来源和筛选。Gmail Android 与 GitHub Mobile 的筛选均能就近查看当前条件。阅坛在入口显示实际已选值，在面板内优先放常用条件。[Android 搜索栏](https://developer.android.com/develop/ui/compose/components/search-bar) · [Gmail Android 搜索](https://support.google.com/mail/answer/6593?co=GENIE.Platform%3DAndroid&hl=en) · [GitHub Mobile 筛选实图](https://github.blog/changelog/2021-05-25-new-filtering-and-metadata-experience-on-github-mobile/)
 
-筛选面板共用一条标题与字段名的左边线。每行的值从第二列起，清除、勾选和箭头有独立位置。两个短选项共用分段控件，较长的候选列表在面板内打开，返回后保留草稿。选中、切换输入焦点或收起键盘时仍按相同列对齐。[Android 分段按钮](https://developer.android.com/develop/ui/compose/components/segmented-button) · [Material Android 列表](https://github.com/material-components/material-components-android/blob/master/docs/components/List.md)
+筛选面板共用一条标题与字段名的左边线。每行的值从第二列起，清除、勾选和箭头有独立位置。两个短选项共用分段控件，默认值与手选值用同一套选中样式，采用浅蓝底、主题蓝文字和勾号。较长的候选列表在面板内打开。选择单个值后直接回到总览，多选、日期和范围在子页确认后写入总览草稿。取消或返回只放弃当前子页编辑，总览的「确认筛选」才更新搜索。选中、切换输入焦点或收起键盘时仍按相同列对齐。[Android 分段按钮](https://developer.android.com/develop/ui/compose/components/segmented-button) · [Material Android 列表](https://github.com/material-components/material-components-android/blob/master/docs/components/List.md)
 
-长候选页沿用 Bencho 多选列表的固定勾选位，行文字在选中时保持原位。复选项在原框内打勾，单选项使用同位置的中性勾选标记，行底色和文字颜色保持原样。分段选项用字段名提供语境，避免重复长文案挤占窄屏空间。字段校验参考它的表单错误示例，从面板任意一页确认，都能回到出错输入，直接看到原因并修改。[Bencho 多选列表](https://bencho.dev/blocks/picker) · [Bencho 表单反馈](https://bencho.dev/blocks/form-error)
+长候选页为勾号留固定位置，选中时只用主题蓝强调勾号。复选项即时更新，勾号用约 110 毫秒淡入或淡出，并尊重系统的减少动态效果设置。行底色和文字颜色保持原样。分段选项用字段名提供语境，避免重复长文案挤占窄屏空间。总览确认时发现错误，会打开对应字段并显示原因。[Bencho 多选列表](https://bencho.dev/blocks/roster) · [Bencho 表单反馈](https://bencho.dev/blocks/form-error) · [Animate UI 复选框](https://animate-ui.com/docs/primitives/radix-ui/checkbox)
 
 列表刷新参考 Now in Android。首次进入时在内容区提示加载；已有结果时保留阅读位置，下拉刷新只显示系统进度。翻页失败时把原因和重试放在列表末尾，成功后从同一处继续阅读。[Now in Android 信息流](https://github.com/android/nowinandroid/blob/main/feature/foryou/impl/src/main/kotlin/com/google/samples/apps/nowinandroid/feature/foryou/impl/ForYouScreen.kt)
 
-详情页先画列表已知的标题、作者和标签。V2EX 仅标题帖沿用同一标题字号和换行方式，紧凑间距放在回复区前。正文准备好时沿用同一组文字的位置，等待不足 300 毫秒时省去进度提示，内容与可操作的错误随时可以出现。续读只在确实定位楼层时提示。刷新、重试与字段错误的反馈紧贴对应操作。[Vibe Design 界面连续性](https://vibedesign.tips/015-ui-continuity/) · [加载状态](https://vibedesign.tips/017-loading-states/) · [提示与通知](https://vibedesign.tips/016-toast-or-notification/)
+详情页先画列表已知的标题、作者和标签。V2EX 仅标题帖沿用同一标题字号和换行方式，紧凑间距放在回复区前。正文准备好时沿用同一组文字的位置。初次读取正文和续读定位共用同一份骨架，进入时直接开始从左向右扫光。缓存起点已知时直接绘制正文。内容与可操作的错误随时可以出现。刷新、重试与字段错误的反馈紧贴对应操作。[Vibe Design 界面连续性](https://vibedesign.tips/015-ui-continuity/) · [加载状态](https://vibedesign.tips/017-loading-states/) · [提示与通知](https://vibedesign.tips/016-toast-or-notification/)
 
-首次读取且缺少内容时，首页和搜索显示少量静态列表占位，主题正文和用户主页在已知标题或身份下方补上对应区域的占位。已有内容在刷新时继续显示。楼层定位、其他来源读取和翻页进度仍标在对应区域，内容与错误按实际结算接入。[Apple 加载指南](https://developer.apple.com/design/human-interface-guidelines/loading?changes=_4_8) · [Carbon 加载模式](https://www.carbondesignsystem.com/building-blocks/core/patterns/loading)
+首次读取且缺少内容时，骨架沿用该区域真实的排版。首页、搜索和收藏的帖子占位沿用标题、标签、头像与元信息的位置。正文使用段落线条，主楼可读后只在缺少评论的区域显示头像、作者行和回复段落。用户主页保留已知身份，在统计和活动区各用对应的结构。消息列表沿用通知行的头像与文字布局。当前页面的骨架使用低对比度亮带，由左向右扫过占位区域，加载状态只由读屏播报。首页来源预铺时和系统减少动态效果开启时，骨架保持静止。已有内容在刷新时继续显示，其他来源读取和翻页进度标在对应区域。[Apple 加载指南](https://developer.apple.com/design/human-interface-guidelines/loading?changes=_4_8) · [Carbon 加载模式](https://www.carbondesignsystem.com/building-blocks/core/patterns/loading)
 
 ## 品牌风格
 
@@ -68,6 +70,8 @@
 
 复用组件时检查最终生效的内边距、文字行高与最小尺寸，不能在页面留白之外再叠加组件默认留白。列表内容与图标作为一组上下居中；左右内边距使用明确的方向值覆盖库默认值，避免 `padding: 0` 留下原有的 `paddingVertical` 或 `paddingRight`。按钮内边距由内容层负责，不在外框和内容层重复设置。
 
+操作名优先简短单行。窄屏或系统大字号下允许长操作名完整换行。文字、图标和忙碌指示在同一个按钮内居中，等待期间保留图标槽和文字。主题蓝用于主操作，中性填充用于次要操作，危险操作使用独立功能色。[React Native Reusables](https://github.com/founded-labs/react-native-reusables) · [Vibe Design 中英文排版](https://vibedesign.tips/zh/007-type-switches/)
+
 搜索主输入使用轻实底、细边线与适中圆角，左侧保留一个搜索图标；清除和提交复用共用按钮，右侧明确显示「搜索」，不叠放两个搜索图标。空输入不暴露清除按钮；输入、清除和提交在同一行居中，字体跟随阅读字号，来源 Tab 继续保持紧凑实底。
 
 帖子内查找沿用相同的轻量搜索材质，使用 Paper Searchbar，不套用表单的浮动标签。可见框体在点击区域内上下各收进 2 dp，默认约 48 dp 高，输入与占位文字使用 16 sp / 24 sp 行高、图标使用 18 dp。图标与文字间隔约 8 dp，文字起点距框边约 36 dp；通过收紧内部横向留白保持紧凑，不再压低框体高度。保留至少 48 dp 点击区域并随大字号增高。保留输入后即时筛选，不另加提交按钮；点按正文、空白或筛选排序、开始滑动时退出输入状态，保留关键词，清除按钮位于输入框内部。
@@ -104,6 +108,7 @@
 - 来源与普通分类优先使用文字层级，保留来源识别色，减少无意义的描边和底色。
 - 主题 Tag 使用 Radix 的 Blue、Pink、Teal、Violet、Orange、Cyan、Crimson、Indigo 配对色阶。按名称稳定分配底色，同一主题的标签不超过 8 个时避开撞色，列表与详情使用完整标签组保持一致，重排与大小写不影响配色。底色使用第 3 阶、文字参考第 11 阶；浅色文字按需略微加深，保证两种主题下对比度均至少 4.5:1。
 - 标签使用轻底色、适度内边距和中等字重；权限、错误、警告和选中状态仍保留各自语义，不能以随机 Tag 颜色代替。
+- 首页的原站置顶主题在元信息区使用浅蓝底的图钉徽标，保留「置顶」文字。徽标沿用卡片的字号和换行规则。
 
 ## 无障碍与适配
 
@@ -115,6 +120,7 @@
 
 - 普通点击沿用静默反馈，不增加水波纹、按压变暗或振动。通过选中、忙碌、完成与失败状态表达实际变化；加载中阻止重复提交，并向无障碍节点提供对应状态。同一任务的互斥阶段（如下载与暂停、发送与配置重试、可投票与终态结果）合并为单一状态控件切换文案与动作，不用禁用态假按钮充当状态标签再并列第二个操作按钮；安装包下载进度内嵌于全宽更新主控件的进度填充层，不拆成悬浮小框加僵硬按钮。
 - 刷新和切换来源时尽量保持已有内容、控件位置和容器高度；首次加载、刷新与分页各在对应区域反馈。通用 `LoadingState` 采用无底色、无描边的轻量居中指示行与精炼短词（如「加载中」「搜索中」），不堆叠色块框体、装饰假骨架条或冗长描述句；已有列表或头部数据时不在其上方条件插入大块占位，按钮进入忙碌态保持前置图标槽尺寸与最小宽度稳定，动态数字统一启用 `tabular-nums`，避免上下跳动与水平抖动。看到闪现先检查挂载、状态与计算来源，不用淡入淡出掩盖重复渲染。
+- 「关于阅坛」保持连续的页面区块。检查期间在原按钮显示忙碌反馈，版本行和既有更新内容原位保留。确认有新版或取得本地下载任务后，才显示相应操作或进度。
 - 动效只辅助导航、展开和手势，保持轻量，并尊重减少动态效果的设置。大列表滚动与毛玻璃不引入逐帧 JS 布局计算。
 - 下拉和选择菜单以触发控件的实际窗口位置定位，先完成测量再显示；考虑状态栏、Modal、滚动、键盘和安全区域。临近边缘时向可用空间展开，不用固定向下偏移量补偿。
 - 登录失效、检测中、验证完成、部分恢复和失败分别使用真实文案与可执行操作。不能把未完成的恢复显示成成功，也不把真实状态问题掩盖为样式调整。
@@ -122,6 +128,8 @@
 ## 材质与层次
 
 - 参考 [Apple 材质指南](https://developer.apple.com/design/human-interface-guidelines/materials)对内容层与导航、控制层的区分，并借鉴 [Android 模糊指南](https://source.android.com/docs/core/display/window-blurs)对浮动窗口、半透明底色和可读性的建议。阅坛保留现有蓝色、Radix 色阶与适中圆角，不照搬平台品牌或 Liquid Glass 的折射、形变动画。
+- 玻璃叠在图片或滚动内容上时，分别在亮背景和暗背景检查图标与文字能否读清。文字较密的面板用较厚的底色，浮层内控件共用外层材质。[Vibe Design 液态玻璃](https://vibedesign.tips/zh/010-liquid-glass/)
+- 详情页在左下显示当前楼层，右下保留「回复」。两个控件共用正文模糊采样和显隐动效。楼层入口用中性半透明底和高光边线，上方的窄浮层显示可滚动的楼层列表，底行可输入数字跳转。
 - 毛玻璃用于导航与控制层：四个主 Tab 底栏、首页发帖与详情回复悬浮入口、我的固定顶栏、浮动菜单、临时底部选项面板，以及图片上的浮动控件。顶栏的返回、关闭、收藏、更多和其他普通图标使用无底色、无描边、无阴影的样式，不加圆形或成组玻璃外框。底栏维持当前材质参数；文字较多的菜单和面板使用更厚底色，全屏看图使用深色底与白色文字。玻璃面板内的普通按钮不重复叠加毛玻璃。
 - 首页、搜索和消息的筛选栏、我的站点 Tab、资料、统计、等级、正文、回复、列表、Tag、输入框与编辑正文保持实底。固定占位的普通标题栏保留实底，导航按钮保持普通图标；不为了展示模糊扩大空白、改变阅读视口或添加装饰卡片。
 - 模糊只采样当前页面的内容，悬浮控件不进入被采样的内容树；顶部采样背景扩展至导航范围，内容视口保持原位置，导航层始终绘制在内容采样层上方。看图使用独立目标，收起控件时释放模糊。没有可用背景时使用清晰的同色实底回退，保留一致边线，不创建空的模糊视图。复用已有原生实现，不新增每帧 JS 计算或软件模糊；Android 12 之前保留底色回退。导航避让与图片、输入法、返回和页面状态的契约不变。
@@ -159,9 +167,13 @@
 ## 我的
 
 - 底栏使用「我的」与 Lucide 用户轮廓图标。上半区横向铺满屏幕；标题、登录汇总和刷新同行，作为固定毛玻璃顶栏覆盖滚动内容，内部保留 20 dp 左右边距，首屏按实际顶栏高度避让。站点 Tab 与身份区保留实底，Tab 位于身份区上方并等分屏宽。身份区采用左侧 56 dp 头像、右侧 20 sp 昵称与登录状态的紧凑横向布局，点按进入个人主页或登录；统计紧接身份区，以 18 sp 数字沿整屏等宽网格排布，并响应大字号换行。低频资料和站点设置在统计下方并列，避免单独右对齐的空行。站点设置在按钮下方原位展开，登录信息、站点选项可直接操作，再次点击收起；切换站点或账号后移除旧表单；内部列表、按钮、输入框和下拉菜单复用 React Native Paper 与统一主题，次数选择默认仅显示当前值。主账号区不提供展开、收起。保留蓝色选中态和可点击统计标签。
-- 账号下方以一排等宽图标入口组织本机收藏、关注和历史，直接打开对应的 Library tab。低频资料、等级、快捷入口、设置列表和页尾独立沿用 20 dp 左右边距；等级卡片和进度条铺满此内容宽度，卡片文字保留内部留白，分隔线与下方列表对齐。等级标题采用 18 sp / 600，进度条采用 4 dp，保持从属层级。下方设置使用连续列表与分组留白，减少重复标题，不逐项包成独立胶囊卡片；「外观」内直接按分隔线排列六项控件，「问题诊断」作为单行直达入口触发日志生成与分享。关于与更新保留在页尾。
+- 账号下方以一排等宽图标入口组织本机收藏、关注和历史，直接打开对应的 Library tab。低频资料、等级、快捷入口、设置列表和页尾独立沿用 20 dp 左右边距。等级卡片和进度条铺满此内容宽度，卡片文字保留内部留白，分隔线与下方列表对齐。等级标题采用 18 sp / 600，进度条采用 4 dp。下方设置使用连续的 Paper 列表，一级入口至少 60 dp 高，图标、标题和箭头垂直居中。当前值在右侧对齐，大字号时移到标题下方。「外观」内用分隔线排列六项控件，「问题诊断」单行直达日志生成与分享。关于与更新保留在页尾。
 - 底栏与其他主 Tab 保持相同的背景模糊，滚动时透出当前页面的内容。普通按钮按动作层级复用共用组件，使用适中圆角；不因为页面有玻璃顶栏而给每个按钮、设置行再套玻璃。发布页的设置、附件入口减轻灰底，正文保持清晰实底。沿用主题蓝色和现有 Tag 色板。
 - LDC 余额放在账号统计之后、低频资料操作之前，采用两行紧凑入口：可用余额与金额同行，待到账和收支入口作为辅助行；整块点击进入明细，刷新由明细页下拉操作承接。收支页使用连续实底，事项左对齐、金额右对齐，单位集中标注；类型、对方、状态和时间降为辅助信息。大金额和大字号可换行，不省略金额。
+
+## 网络设置
+
+「网络设置」入口显示实际网络状态。设置总览以细分隔线组织当前网络、模式单选和当前配置，使用主题蓝勾号表达选中。切换提示与当前网络同行，确认新模式后同时更新勾选和配置区。再次测试时保留上一次结果。服务商与代理管理使用原生返回，未改动的服务商表单直接完成，失败原因放在对应区域。[Android 设置设计](https://developer.android.com/design/ui/mobile/guides/patterns/settings) · [Vibe Design 中英文排版](https://vibedesign.tips/zh/007-type-switches/)
 
 ## 用户资料页
 

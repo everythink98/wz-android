@@ -4,7 +4,7 @@ import React from 'react';
 import { Alert, Keyboard, StyleSheet } from 'react-native';
 import { createEmptyNetworkProxyState, type NetworkProxyProfile } from '@/platform/network/networkProxy';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { NetworkProxyModal } from '@/features/more/components/NetworkProxyModal';
+import { NetworkProxyScreen } from '@/features/more/components/NetworkProxyScreen';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from '../styleFixture';
 
@@ -48,24 +48,22 @@ const backupProfile: NetworkProxyProfile = {
   port: 8080
 };
 
-function proxyModal(overrides: Partial<React.ComponentProps<typeof NetworkProxyModal>> = {}) {
-  const props: React.ComponentProps<typeof NetworkProxyModal> = {
-    activeProfile: null,
+function proxyScreen(overrides: Partial<React.ComponentProps<typeof NetworkProxyScreen>> = {}) {
+  const props: React.ComponentProps<typeof NetworkProxyScreen> = {
     applyError: '',
     applyStatus: 'idle',
     proxyState: createEmptyNetworkProxyState(),
     styles,
     theme,
-    visible: true,
+    active: true,
     onClose: jest.fn(),
     onDeleteProfile: jest.fn(async () => undefined),
     onSelectProfile: jest.fn(async () => undefined),
-    onSetEnabled: jest.fn(async () => undefined),
     onTestProfile: jest.fn(async () => ({ ok: true, latencyMs: 10 })),
     onUpsertProfile: jest.fn(async () => undefined),
     ...overrides
   };
-  return <NetworkProxyModal {...props} />;
+  return <NetworkProxyScreen {...props} />;
 }
 
 afterEach(() => {
@@ -73,31 +71,19 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-describe('Network proxy modal', () => {
+describe('Network proxy settings', () => {
   it.each(['light', 'dark'] as const)('matches the %s page background throughout its transition', async (mode) => {
     const theme = createTheme({ theme: mode });
-    const view = await render(proxyModal({ theme }));
-    expect(view.root?.queryAll((node) => String(node.type) === 'Modal')[0]?.props.backdropColor).toBe(theme.background);
-  });
-
-  it('exposes an explicit direct-connection reset after proxy recovery fails', async () => {
-    const onSetEnabled = jest.fn(async (_enabled: boolean) => undefined);
-    const view = await render(
-      proxyModal({
-        applyError: '代理配置读取失败，已阻止网络请求',
-        applyStatus: 'failed',
-        onSetEnabled
-      })
+    const view = await render(proxyScreen({ theme }));
+    expect(view.root?.queryAll((node) => String(node.type) === 'Modal' && node.props.visible)).toHaveLength(0);
+    expect(StyleSheet.flatten(view.getByTestId('network-proxy-settings').props.style).backgroundColor).toBe(
+      theme.background
     );
-
-    await fireEvent.press(view.getByLabelText('重置为直连'));
-
-    await waitFor(() => expect(onSetEnabled).toHaveBeenCalledWith(false));
   });
 
   it('shows field errors and does not save an empty proxy profile', async () => {
     const onUpsertProfile = jest.fn(async (_profile: NetworkProxyProfile) => undefined);
-    const view = await render(proxyModal({ onUpsertProfile }));
+    const view = await render(proxyScreen({ onUpsertProfile }));
 
     await fireEvent.press(view.getByText('添加代理'));
     await fireEvent.press(view.getByLabelText('确定'));
@@ -113,7 +99,7 @@ describe('Network proxy modal', () => {
       throw new Error('代理保存失败');
     });
     const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
-    const view = await render(proxyModal({ onUpsertProfile }));
+    const view = await render(proxyScreen({ onUpsertProfile }));
 
     await fireEvent.press(view.getByText('添加代理'));
     await fireEvent.changeText(view.getByLabelText('名称'), '公司代理');
@@ -147,7 +133,7 @@ describe('Network proxy modal', () => {
       const saving = Promise.withResolvers<void>();
       const onUpsertProfile = jest.fn<(_profile: NetworkProxyProfile) => Promise<void>>(() => saving.promise);
       const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
-      const view = await render(proxyModal({ onUpsertProfile }));
+      const view = await render(proxyScreen({ onUpsertProfile }));
 
       await fireEvent.press(view.getByText('添加代理'));
       await fireEvent.changeText(view.getByLabelText('名称'), '旧表单');
@@ -156,8 +142,8 @@ describe('Network proxy modal', () => {
       await fireEvent.press(view.getByLabelText('确定'));
       expect(onUpsertProfile).toHaveBeenCalledTimes(1);
 
-      await view.rerender(proxyModal({ visible: false, onUpsertProfile }));
-      await view.rerender(proxyModal({ visible: true, onUpsertProfile }));
+      await view.rerender(proxyScreen({ active: false, onUpsertProfile }));
+      await view.rerender(proxyScreen({ active: true, onUpsertProfile }));
       await fireEvent.press(view.getByText('添加代理'));
       await fireEvent.changeText(view.getByLabelText('名称'), '新表单草稿');
       await act(async () => {
@@ -180,7 +166,7 @@ describe('Network proxy modal', () => {
       .fn<(_profile: NetworkProxyProfile) => Promise<void>>()
       .mockImplementationOnce(() => oldSave.promise)
       .mockImplementation(() => currentSave.promise);
-    const view = await render(proxyModal({ onUpsertProfile }));
+    const view = await render(proxyScreen({ onUpsertProfile }));
     try {
       await fireEvent.press(view.getByText('添加代理'));
       await fireEvent.changeText(view.getByLabelText('名称'), '旧表单');
@@ -188,8 +174,8 @@ describe('Network proxy modal', () => {
       await fireEvent.changeText(view.getByLabelText('端口'), '1080');
       await fireEvent.press(view.getByLabelText('确定'));
 
-      await view.rerender(proxyModal({ visible: false, onUpsertProfile }));
-      await view.rerender(proxyModal({ visible: true, onUpsertProfile }));
+      await view.rerender(proxyScreen({ active: false, onUpsertProfile }));
+      await view.rerender(proxyScreen({ active: true, onUpsertProfile }));
       await fireEvent.press(view.getByText('添加代理'));
       await fireEvent.changeText(view.getByLabelText('名称'), '本次表单');
       await fireEvent.changeText(view.getByLabelText('服务器'), '127.0.0.2');
@@ -216,48 +202,38 @@ describe('Network proxy modal', () => {
     }
   });
 
-  it.each(['test', 'enable'] as const)(
-    'keeps rejected same-commit %s actions from displaying an operation that never started',
-    async (action) => {
-      const selection = Promise.withResolvers<void>();
-      const onSelectProfile = jest.fn<(_id: string) => Promise<void>>(() => selection.promise);
-      const onTestProfile = jest.fn(async (_profile: NetworkProxyProfile) => ({ ok: true, latencyMs: 42 }));
-      const onSetEnabled = jest.fn(async (_enabled: boolean) => undefined);
-      const view = await render(
-        proxyModal({
-          activeProfile: primaryProfile,
-          proxyState: { activeId: primaryProfile.id, enabled: false, profiles: [primaryProfile, backupProfile] },
-          onSelectProfile,
-          onTestProfile,
-          onSetEnabled
-        })
-      );
-      try {
-        await act(async () => {
-          await fireEvent.press(view.getByText('备用代理'));
-          if (action === 'test') await fireEvent.press(view.getAllByLabelText('测试代理连通性')[0]);
-          else await fireEvent(view.getByRole('switch'), 'change', { nativeEvent: { value: true } });
-        });
-        expect(onSelectProfile).toHaveBeenCalledTimes(1);
-        expect(onTestProfile).not.toHaveBeenCalled();
-        expect(onSetEnabled).not.toHaveBeenCalled();
-        await act(async () => selection.resolve());
-
-        expect(view.queryByText(/正在测试连通性/)).toBeNull();
-        expect(view.queryByText(/正在开启代理/)).toBeNull();
-        expect(view.getByRole('switch').props.value).toBe(false);
-        expect(view.getAllByLabelText('测试代理连通性')).toHaveLength(2);
+  it('keeps a rejected test from displaying an operation that never started', async () => {
+    const selection = Promise.withResolvers<void>();
+    const onSelectProfile = jest.fn<(_id: string) => Promise<void>>(() => selection.promise);
+    const onTestProfile = jest.fn(async (_profile: NetworkProxyProfile) => ({ ok: true, latencyMs: 42 }));
+    const view = await render(
+      proxyScreen({
+        proxyState: { activeId: primaryProfile.id, enabled: false, profiles: [primaryProfile, backupProfile] },
+        onSelectProfile,
+        onTestProfile
+      })
+    );
+    try {
+      await act(async () => {
+        await fireEvent.press(view.getByText('备用代理'));
         await fireEvent.press(view.getAllByLabelText('测试代理连通性')[0]);
-        expect(onTestProfile).toHaveBeenCalledTimes(1);
-        await waitFor(() => expect(view.getByText(/连通性: 42 ms/)).toBeTruthy());
-      } finally {
-        await act(async () => selection.resolve());
-      }
+      });
+      expect(onSelectProfile).toHaveBeenCalledTimes(1);
+      expect(onTestProfile).not.toHaveBeenCalled();
+      await act(async () => selection.resolve());
+
+      expect(view.queryByText(/正在测试连通性/)).toBeNull();
+      expect(view.getAllByLabelText('测试代理连通性')).toHaveLength(2);
+      await fireEvent.press(view.getAllByLabelText('测试代理连通性')[0]);
+      expect(onTestProfile).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(view.getByText(/连通性: 42 ms/)).toBeTruthy());
+    } finally {
+      await act(async () => selection.resolve());
     }
-  );
+  });
 
   it('gives proxy passwords secure input semantics', async () => {
-    const view = await render(proxyModal());
+    const view = await render(proxyScreen());
 
     await fireEvent.press(view.getByText('添加代理'));
     const password = view.getByLabelText('密码');
@@ -271,8 +247,7 @@ describe('Network proxy modal', () => {
     const onSelectProfile = jest.fn(async (_id: string) => undefined);
     const onUpsertProfile = jest.fn(async (_profile: NetworkProxyProfile) => undefined);
     const view = await render(
-      proxyModal({
-        activeProfile: primaryProfile,
+      proxyScreen({
         proxyState: {
           activeId: primaryProfile.id,
           enabled: false,
@@ -308,9 +283,8 @@ describe('Network proxy modal', () => {
     });
   });
 
-  it('shows full connectivity results and optimistically reflects proxy enable requests', async () => {
+  it('shows full connectivity results on an explicit test', async () => {
     const onSelectProfile = jest.fn(async (_id: string) => undefined);
-    const onSetEnabled = jest.fn(async (_enabled: boolean) => undefined);
     const onTestProfile = jest.fn(async (_profile: NetworkProxyProfile) => ({ ok: true, latencyMs: 42 }));
     const proxyState = {
       activeId: primaryProfile.id,
@@ -318,11 +292,9 @@ describe('Network proxy modal', () => {
       profiles: [primaryProfile]
     };
     const view = await render(
-      proxyModal({
-        activeProfile: primaryProfile,
+      proxyScreen({
         proxyState,
         onSelectProfile,
-        onSetEnabled,
         onTestProfile
       })
     );
@@ -333,13 +305,24 @@ describe('Network proxy modal', () => {
       expect(view.getByText(/连通性: 42 ms/)).toBeTruthy();
     });
     expect(onSelectProfile).not.toHaveBeenCalled();
+  });
 
-    const proxySwitch = view.getByRole('switch');
-    expect(proxySwitch.props.onChange).toEqual(expect.any(Function));
-    expect(proxySwitch.props.value).toBe(false);
-    await fireEvent(proxySwitch, 'change', { nativeEvent: { value: true } });
-    expect(onSetEnabled).toHaveBeenCalledWith(true);
-    expect(view.getByRole('switch').props.value).toBe(true);
+  it('keeps the connectivity action in place while applying a proxy change', async () => {
+    const onTestProfile = jest.fn(async () => ({ ok: true, latencyMs: 42 }));
+    const props = {
+      proxyState: { activeId: primaryProfile.id, enabled: false, profiles: [primaryProfile] },
+      onTestProfile
+    };
+    const view = await render(proxyScreen(props));
+    const testAction = () => view.getByLabelText('测试代理连通性');
+    expect(testAction()).toBeEnabled();
+
+    await view.rerender(proxyScreen({ ...props, applyStatus: 'applying' }));
+    expect(testAction()).toBeDisabled();
+    await fireEvent.press(testAction());
+    expect(onTestProfile).not.toHaveBeenCalled();
+    await view.rerender(proxyScreen({ ...props, proxyState: { ...props.proxyState, enabled: true } }));
+    expect(testAction()).toBeEnabled();
   });
 
   it.each([0, 24, 48])(
@@ -353,7 +336,7 @@ describe('Network proxy modal', () => {
         if (event === 'keyboardDidHide') hideKeyboard = listener as typeof hideKeyboard;
         return { remove: jest.fn() } as never;
       });
-      const view = await render(proxyModal());
+      const view = await render(proxyScreen());
 
       await fireEvent.press(view.getByText('添加代理'));
       await act(async () => {
@@ -372,8 +355,7 @@ describe('Network proxy modal', () => {
     const onDeleteProfile = jest.fn(async (_id: string) => undefined);
     const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
     const view = await render(
-      proxyModal({
-        activeProfile: primaryProfile,
+      proxyScreen({
         proxyState: {
           activeId: primaryProfile.id,
           enabled: false,

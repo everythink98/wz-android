@@ -121,6 +121,7 @@ jest.mock('@/ui/topic/TopicCard', () => {
     View: NativeView
   } = require('react-native') as typeof import('react-native');
   return {
+    ...jest.requireActual<typeof import('@/ui/topic/TopicCard')>('@/ui/topic/TopicCard'),
     MemoizedTopicCard: ({
       onOpenTopic,
       renderTrailingAction,
@@ -298,7 +299,8 @@ describe('Library presentation', () => {
 
   it('does not publish a zero count while the collection is still loading', async () => {
     const view = await render(<LibraryHarness loaded={false} favoriteRecords={[]} />);
-    expect(view.getByText('加载中')).toBeTruthy();
+    expect(view.getByRole('status', { name: '加载中', busy: true })).toBeVisible();
+    expect(view.queryByText('加载中')).toBeNull();
     expect(view.queryByText('0 条')).toBeNull();
   });
 

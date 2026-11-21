@@ -3,6 +3,11 @@ package com.wz.reader
 import android.os.Handler
 import android.os.Looper
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.LinkProperties
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.ProxyInfo
 import android.webkit.WebSettings
 import androidx.webkit.ProxyConfig
 import androidx.webkit.ProxyController
@@ -12,6 +17,11 @@ import androidx.webkit.WebViewStartUpConfig
 import androidx.webkit.WebViewStartUpResult
 import androidx.webkit.WebViewStartupException
 import androidx.webkit.WebViewOutcomeReceiver
+import java.io.File
+import java.net.InetAddress
+import java.net.Inet4Address
+import java.net.Inet6Address
+import java.net.Proxy
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.ForkJoinPool
@@ -28,6 +38,12 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.ReentrantLock
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.Call
+import okhttp3.EventListener
+import okhttp3.Handshake
+import okhttp3.OkHttpClient
+import okhttp3.Request
 
 internal fun readDefaultWebViewUserAgentOnMainThread(
   isMainThread: Boolean,
@@ -188,7 +204,7 @@ internal class InvalidatableResourceSlot<T : Any>(
 internal class OwnedProxyServerRegistry {
   private sealed interface WebViewConfirmation {
     data object Unconfirmed : WebViewConfirmation
-    data class Confirmed(val profile: NetworkProxyProfile?) : WebViewConfirmation
+    data class Confirmed(val profile: AppNetworkRoute?) : WebViewConfirmation
   }
   private sealed interface Ownership {
     data object Unowned : Ownership
@@ -204,7 +220,7 @@ internal class OwnedProxyServerRegistry {
   private var stateGeneration = 0L
 
   // The caller holds the shared WebView operation lock through apply and confirmation.
-  fun apply(owner: Long, profile: NetworkProxyProfile?, operation: () -> Int?): Int? {
+  fun apply(owner: Long, profile: AppNetworkRoute?, operation: () -> Int?): Int? {
     synchronized(lock) {
       check(owner == latestOwner) { "代理 bridge 已失效" }
       val current = ownership
@@ -217,7 +233,7 @@ internal class OwnedProxyServerRegistry {
     return operation()
   }
 
-  fun confirmWebView(owner: Long, profile: NetworkProxyProfile?, expectedGeneration: Long): Boolean = synchronized(lock) {
+  fun confirmWebView(owner: Long, profile: AppNetworkRoute?, expectedGeneration: Long): Boolean = synchronized(lock) {
     val current = ownership
     if (current !is Ownership.Owned || current.owner != owner || latestOwner != owner ||
       stateGeneration != expectedGeneration || (profile == null) != (current.server == null)) {
@@ -305,14 +321,79 @@ internal fun restoreWebViewProxyIfStateChanged(
   }
 }
 
+internal fun includeIpv6Dns(addresses: List<InetAddress>, vpn: Boolean?): Boolean {
+  if (vpn != false) return true
+  val usable = addresses.filterNot { it.isAnyLocalAddress || it.isLinkLocalAddress || it.isLoopbackAddress }
+  return usable.any { it is Inet6Address } || usable.none { it is Inet4Address }
+}
+
+private enum class DohTestPhase { DNS, TCP, TLS, HTTP }
+
+private data class DefaultDnsNetwork(
+  val network: Network?, val proxy: ProxyInfo?, val servers: List<InetAddress>, val includeIpv6: Boolean, val vpn: Boolean?
+)
+
+private fun ConnectivityManager.dnsNetwork(): DefaultDnsNetwork {
+  val active = activeNetwork
+  val link = active?.let(::getLinkProperties)
+  val vpn = active?.let(::getNetworkCapabilities)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+  return DefaultDnsNetwork(active, defaultProxy, link?.dnsServers.orEmpty(),
+    includeIpv6Dns(link?.linkAddresses.orEmpty().map { it.address }, vpn), vpn)
+}
+
+private val dnsResultListener = AtomicReference<((DnsRouteResult, String?) -> Unit)?>(null)
+
+private fun observedEncryptedDns(config: EncryptedDnsConfig, cache: File, connectivity: ConnectivityManager): AppEncryptedDns {
+  var route = connectivity.dnsNetwork()
+  lateinit var dns: AppEncryptedDns
+  val callback = object : ConnectivityManager.NetworkCallback() {
+    override fun onAvailable(network: Network) = refresh()
+    override fun onLost(network: Network) = refresh()
+    override fun onLinkPropertiesChanged(network: Network, properties: LinkProperties) = refresh()
+    override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) = refresh()
+
+    private fun refresh() = NetworkProxyRuntime.refreshEncryptedDns(dns) {
+      val next = connectivity.dnsNetwork()
+      (next != route).also { route = next }
+    }
+  }
+  var registered = false
+  dns = AppEncryptedDns(config, cache, onResult = { result, provider ->
+    if (NetworkProxyRuntime.currentEncryptedDns() === dns) dnsResultListener.get()?.invoke(result, provider)
+  }, includeIpv6 = { route.includeIpv6 }, onClose = {
+    if (registered) connectivity.unregisterNetworkCallback(callback)
+  })
+  try {
+    connectivity.registerDefaultNetworkCallback(callback)
+    registered = true
+    return dns
+  } catch (error: Exception) {
+    dns.close()
+    throw error
+  }
+}
+
 class NetworkProxyModule(private val reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
   private val worker = Executors.newSingleThreadExecutor()
   private val owner = ownerIds.incrementAndGet()
   private val probes = InvalidatableResourceSlot<LocalNetworkProxyServer> { probe -> probe.stop() }
   @Volatile private var invalidated = false
+  private val loginDeletionListener: () -> Unit = {
+    if (!invalidated && reactContext.hasActiveReactInstance())
+      reactContext.emitDeviceEvent("linuxDoLoginCookieDeleted", null)
+  }
+  private val connectivity = reactContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+  private val onDnsResult: (DnsRouteResult, String?) -> Unit = { result, provider ->
+    if (!invalidated && reactContext.hasActiveReactInstance())
+      reactContext.emitDeviceEvent("readerEncryptedDnsResult", if (provider == null) result.value else {
+        Arguments.createMap().apply { putString("provider", provider) }
+      })
+  }
 
   init {
     proxyServers.register(owner)
+    LinuxDoCookieResponses.loginDeletionListener.set(loginDeletionListener)
+    dnsResultListener.set(onDnsResult)
   }
 
   override fun getName(): String = "NetworkProxyModule"
@@ -343,7 +424,9 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
       try {
         val appliedPort = webViewProxyOperations.run {
           check(!invalidated) { "代理 bridge 已销毁" }
-          val parsed = profile?.let { parseProfile(it) }
+          val parsed = profile?.let {
+            if (it.hasKey("endpoint") || it.hasKey("providers")) parseEncryptedDns(it) else parseProfile(it)
+          }
           NetworkProxyRuntime.install(reactContext)
           proxyServers.apply(owner, parsed) {
             // ProxyController can load the provider without starting Chromium. Newer
@@ -359,6 +442,9 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
             )
             webViewReady.get(10, TimeUnit.SECONDS)
             check(!invalidated) { "代理 bridge 已销毁" }
+            if (parsed != null && !WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
+              throw UnsupportedOperationException("当前 WebView 不支持此网络模式")
+            }
             beginTransition()
             transitionStarted = true
             val port = if (parsed == null) {
@@ -368,10 +454,21 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
               }
               null
             } else {
-              val server = LocalNetworkProxyServer(parsed)
+              val server = when (parsed) {
+                is NetworkProxyProfile -> LocalNetworkProxyServer(parsed)
+                is EncryptedDnsConfig -> {
+                  val dns = observedEncryptedDns(parsed, File(reactContext.cacheDir, "encrypted-dns"), connectivity)
+                  try {
+                    LocalNetworkProxyServer(null, dns = dns)
+                  } catch (error: Exception) {
+                    dns.close()
+                    throw error
+                  }
+                }
+              }
               nextServer = server
               server.start()
-              applyWebViewProxy(server.port)
+              applyWebViewProxy(server.port, server.dns != null)
               if (!commitServer(server)) {
                 throw IllegalStateException("代理 bridge 已被替换")
               }
@@ -524,6 +621,107 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
   }
 
   @ReactMethod
+  fun testEncryptedDns(profile: ReadableMap, promise: Promise) {
+    worker.execute {
+      val phase = AtomicReference(DohTestPhase.DNS)
+      var initialNetwork: DefaultDnsNetwork? = null
+      try {
+        val network = connectivity.dnsNetwork()
+        initialNetwork = network
+        if (network.vpn != false) {
+          promise.reject("dns_test_network", if (network.vpn == true) "当前网络经过 VPN。请关闭 VPN 后再测试直连。" else "无法确认当前网络，请连接网络后重试。")
+          return@execute
+        }
+        val config = parseEncryptedDns(profile).copy(allowFallback = false)
+        val started = System.nanoTime()
+        val selectedProvider = AtomicReference<String?>(null)
+        val result = AppEncryptedDns(config, null, includeIpv6 = { network.includeIpv6 },
+          onResult = { observation, provider ->
+            if (observation == DnsRouteResult.ENCRYPTED) {
+              phase.accumulateAndGet(DohTestPhase.TCP, ::maxOf)
+              selectedProvider.set(provider)
+            }
+          }).use { dns ->
+          val request = Request.Builder().url("https://linux.do/").get().build()
+          val page = dns.measureForumSelection(request.url) ?: run {
+            val client = OkHttpClient.Builder().proxy(Proxy.NO_PROXY).dns(dns)
+              .addInterceptor(dns::interceptForumRequest)
+              .eventListener(object : EventListener() {
+                override fun secureConnectStart(call: Call) { phase.accumulateAndGet(DohTestPhase.TLS, ::maxOf) }
+                override fun secureConnectEnd(call: Call, handshake: Handshake?) { phase.set(DohTestPhase.HTTP) }
+              })
+              .connectTimeout(3, TimeUnit.SECONDS).callTimeout(12, TimeUnit.SECONDS)
+              .followRedirects(false).build().withDohTls(dns::echFor)
+            try {
+              client.newCall(request).execute().use { it.forumDohResponse() }
+            } finally {
+              client.connectionPool.evictAll()
+            }
+          }
+          statusMap(page.open, null).apply {
+            putDouble("latencyMs", TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started).toDouble())
+            putInt("httpStatus", page.code)
+            putBoolean("siteChallenge", page.challenge)
+            selectedProvider.get()?.let { putString("dnsProvider", it) }
+          }
+        }
+        if (network == connectivity.dnsNetwork()) promise.resolve(result)
+        else promise.reject("dns_test_network", "测试期间网络已切换，请重新测试直连。")
+      } catch (error: Exception) {
+        val message = when {
+          initialNetwork != null && initialNetwork != connectivity.dnsNetwork() -> "测试期间网络已切换，请重新测试直连。"
+          error is EncryptedDnsFailure -> error.message
+          else -> when (phase.get()) {
+            DohTestPhase.HTTP -> "已与 LINUX DO 完成 TLS 握手，未收到首页响应"
+            DohTestPhase.TLS -> "DoH 解析通过，LINUX DO 的 TLS 握手失败"
+            DohTestPhase.TCP -> "DoH 解析通过，无法与 LINUX DO 建立 TCP 连接"
+            else -> "加密 DNS 解析失败"
+          }
+        }
+        promise.reject("dns_test_failed", message)
+      }
+    }
+  }
+
+  private fun parseEncryptedDns(profile: ReadableMap): EncryptedDnsConfig {
+    val servers = if (!profile.hasKey("providers")) listOf(parseEncryptedDnsServer(profile)) else {
+      val providers = requireNotNull(profile.getArray("providers")) { "请选择公共加密 DNS 服务商" }
+      val supported = setOf("dnspod", "cloudflare", "google", "dnssb", "360", "18bit", "onedns", "cfluxdo")
+      require(providers.size() in 2..supported.size) { "公共加密 DNS 服务商数量无效" }
+      List(providers.size()) { index ->
+        val entry = requireNotNull(providers.getMap(index)) { "加密 DNS 服务商配置无效" }
+        val id = requireNotNull(entry.getString("id")) { "缺少加密 DNS 服务商" }
+        require(id in supported) { "加密 DNS 服务商无效" }
+        parseEncryptedDnsServer(entry, id)
+      }.also { list ->
+        require(list.map { it.id }.distinct().size == list.size && list.map { it.endpoint }.distinct().size == list.size) {
+          "加密 DNS 服务商重复"
+        }
+      }
+    }
+    return EncryptedDnsConfig(servers, profile.getBoolean("allowFallback"))
+  }
+
+  private fun parseEncryptedDnsServer(profile: ReadableMap, id: String? = null): EncryptedDnsServer {
+    val endpoint = profile.getString("endpoint")?.toHttpUrlOrNull()
+    require(endpoint != null && endpoint.isHttps && endpoint.username.isEmpty() && endpoint.password.isEmpty() &&
+      endpoint.fragment == null && "dns" !in endpoint.queryParameterNames) { "请输入有效的 HTTPS DNS 地址" }
+    val bootstrap = profile.getArray("bootstrap")?.let { array ->
+      require(array.size() <= 8) { "最多填写 8 个引导地址" }
+      List(array.size()) { index ->
+        val address = array.getString(index).orEmpty()
+        val ipv4 = address.split('.')
+        require(
+          if (':' in address) address.matches(Regex("[0-9a-fA-F:.]{2,45}"))
+          else ipv4.size == 4 && ipv4.all { it.length in 1..3 && it.all(Char::isDigit) && it.toIntOrNull() in 0..255 }
+        ) { "引导地址必须是 IP" }
+        InetAddress.getByName(address)
+      }
+    }.orEmpty()
+    return EncryptedDnsServer(endpoint, bootstrap, id)
+  }
+
+  @ReactMethod
   fun testProxy(profile: ReadableMap, promise: Promise) {
     worker.execute {
       try {
@@ -562,35 +760,35 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
     return NetworkProxyProfile(protocol, host, port, username?.ifBlank { null }, password)
   }
 
-  private fun applyWebViewProxy(port: Int) {
+  private fun applyWebViewProxy(port: Int, encrypted: Boolean) {
     if (!WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
       throw UnsupportedOperationException("当前 WebView 不支持应用内代理")
     }
     webViewProxyOperations.run {
       proxyServers.requireCurrent(owner)
-      awaitWebViewProxySet(port)
+      awaitWebViewProxySet(port, encrypted)
     }
   }
 
-  private fun awaitWebViewProxySet(port: Int) {
+  private fun awaitWebViewProxySet(port: Int, encrypted: Boolean = NetworkProxyRuntime.currentEncryptedDns() != null) {
     awaitWebViewProxyOperation(
       "WebView 代理设置超时",
       onTimeoutOrLateCompletion = ::restoreWebViewProxyFromRuntime
     ) { complete ->
-      ProxyController.getInstance().setProxyOverride(webViewProxyConfig(port), { runnable -> runnable.run() }) {
+      ProxyController.getInstance().setProxyOverride(webViewProxyConfig(port, encrypted), { runnable -> runnable.run() }) {
         complete()
       }
     }
   }
 
-  private fun webViewProxyConfig(port: Int) = ProxyConfig.Builder()
+  private fun webViewProxyConfig(port: Int, encrypted: Boolean = NetworkProxyRuntime.currentEncryptedDns() != null) = ProxyConfig.Builder()
     .addProxyRule("http://127.0.0.1:" + port)
     .addBypassRule("localhost")
     .addBypassRule("*.localhost")
-    .addBypassRule("127.*")
+    .addBypassRule("127.0.0.1")
     .addBypassRule("10.0.2.2")
     .addBypassRule("[::1]")
-    .bypassSimpleHostnames()
+    .apply { if (!encrypted) addBypassRule("127.*").bypassSimpleHostnames() }
     .build()
 
   private fun clearWebViewProxy() {
@@ -689,7 +887,7 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
 
   private fun commitServer(next: LocalNetworkProxyServer?): Boolean = webViewProxyOperations.run {
     proxyServers.commit(owner, next) {
-      NetworkProxyRuntime.setLocalProxyPort(next?.port)
+      NetworkProxyRuntime.setNetworkRoute(next?.port, next?.dns)
     }
   }
 
@@ -707,6 +905,8 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
 
   override fun invalidate() {
     invalidated = true
+    dnsResultListener.compareAndSet(onDnsResult, null)
+    LinuxDoCookieResponses.loginDeletionListener.compareAndSet(loginDeletionListener, null)
     val activeProbe = probes.invalidate()
     worker.shutdownNow()
     activeProbe?.stop()

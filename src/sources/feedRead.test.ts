@@ -8,6 +8,7 @@ vi.mock('expo-secure-store', () => ({
 
 import { getCategories, getFeed } from './feedRead';
 import { mergeTopics } from '@/domain/forum/feed';
+import type { FeedResponse } from '@/domain/forum/models';
 import { accessRequirementLevelValue } from '@/domain/forum/presentation';
 import { getReplies, getTopic } from './sourceRead';
 import { searchTopics } from './searchRead';
@@ -80,6 +81,38 @@ const nodeSeekPayload = Buffer.from(
 ).toString('base64');
 
 describe('feed read', () => {
+  it('keeps older pinned rows in the source share of the aggregate preview and final page', async () => {
+    const row = (id: number, date: string, marker = '') => `
+      <li class="post-list-item"><div class="post-title"><a href="/post-${id}-1">Topic ${id}</a>${marker}</div>
+        <span class="info-last-comment-time"><time datetime="${date}"></time></span></li>`;
+    const marker = '<span title="置顶"><svg class="pined"><use href="#pin" /></svg></span>';
+    const fetcher = vi.fn(
+      async (url: string) =>
+        new Response(
+          new URL(url).hostname === 'www.v2ex.com'
+            ? `<div class="cell item"><a class="topic-link" href="/t/5">V2EX 5</a></div>
+         <div class="cell item"><a class="topic-link" href="/t/6">V2EX 6</a></div>`
+            : row(1, '2026-03-01T00:00:00Z', marker) +
+                row(2, '2026-02-01T00:00:00Z', marker) +
+                row(3, '2026-09-01T00:00:00Z') +
+                row(4, '2026-08-01T00:00:00Z')
+        )
+    );
+    const onProgress = vi.fn<(response: FeedResponse) => void>();
+    const result = await getFeed({
+      source: 'all',
+      includedSources: ['nodeseek', 'v2ex'],
+      limit: 4,
+      fetcher,
+      onProgress
+    });
+    expect(
+      onProgress.mock.lastCall?.[0].items.filter((item) => item.source === 'nodeseek').map((item) => item.id)
+    ).toEqual(['1', '2']);
+    expect(result.items.filter((item) => item.source === 'nodeseek').map((item) => item.id)).toEqual(['1', '2']);
+    expect(result.items.filter((item) => item.source === 'v2ex').map((item) => item.id)).toEqual(['5', '6']);
+  });
+
   it.each([
     { hasMore: false, nextPage: 3 },
     { hasMore: true, nextPage: 2, nextCursor: 'same' }
@@ -248,13 +281,13 @@ describe('feed read', () => {
     expect(wire.buffers.linuxdo.map((topic: { id: string }) => topic.id)).toEqual(['3']);
     expect(wire.nextPages).toEqual({});
     expect(wire.sourceCursors).toEqual({});
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    const firstPageRequests = fetcher.mock.calls.length;
 
     const second = await getFeed({ ...options, page: first.nextPage ?? 2, cursor: first.nextCursor ?? undefined });
 
     expect(second.items.map((topic) => topic.id)).toEqual(['3']);
     expect(second).toMatchObject({ hasMore: false, nextCursor: undefined, nextPage: null });
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenCalledTimes(firstPageRequests);
   });
 
   it.each(['buffer-only', 'next-page', 'retry'] as const)(

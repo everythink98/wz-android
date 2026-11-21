@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { renderHook } from '@testing-library/react-native';
-import { AppState, NativeModules } from 'react-native';
+import { AppState, NativeModules, StyleSheet } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, render, waitFor } from '../render';
 import appConfig from '../../../app.json';
@@ -907,10 +907,12 @@ describe('recoverable app updates', () => {
     expect(mockReceivedOffsets).toEqual([0]);
   });
 
-  it('explains recovery and checking while their actions are disabled', async () => {
+  it('keeps the about row stable while checking and shows download controls after finding an update', async () => {
     const recovery = Promise.withResolvers<string | null>();
     jest.mocked(AsyncStorage.getItem).mockReturnValueOnce(recovery.promise);
     const view = await render(<RuntimePanel />);
+    const sectionStyle = () => StyleSheet.flatten(view.getByTestId('more-update-section').props.style);
+    const restoringStyle = sectionStyle();
     try {
       expect(view.getByText('正在恢复下载记录')).toBeTruthy();
       expect(view.getByLabelText('检查更新').props.accessibilityState.disabled).toBe(true);
@@ -918,6 +920,7 @@ describe('recoverable app updates', () => {
     } finally {
       await act(async () => recovery.resolve(null));
     }
+    const idleStyle = sectionStyle();
     const checked = Promise.withResolvers<AppUpdateInfo | null>();
     mockCheck.mockReturnValueOnce(checked.promise);
     await act(async () => {
@@ -925,10 +928,18 @@ describe('recoverable app updates', () => {
     });
     try {
       expect(view.getByLabelText('检查中').props.accessibilityState.disabled).toBe(true);
-      expect(view.getByText('正在检查更新')).toBeTruthy();
+      expect(sectionStyle()).toEqual(idleStyle);
+      expect(view.queryByText('正在检查更新')).toBeNull();
+      expect(view.queryByTestId('more-update-action')).toBeNull();
     } finally {
-      await act(async () => checked.resolve(update()));
+      await act(async () => checked.resolve(null));
     }
+    expect(view.getByText(`已是最新版 ${appConfig.expo.version}`)).toBeTruthy();
+    expect(sectionStyle()).toEqual(restoringStyle);
+    await fireEvent.press(view.getByLabelText('检查更新'));
+    expect(view.getByText('更新说明')).toBeTruthy();
+    expect(view.getByLabelText('下载并安装')).toBeEnabled();
+    expect(sectionStyle()).toEqual(idleStyle);
   });
 
   it('shows verification and installer stages instead of stale downloading progress', async () => {

@@ -1199,6 +1199,12 @@ describe('Topic real child components', () => {
 
     expect(view.getByText('@bob')).toBeTruthy();
     expect(view.queryByLabelText('回复')).toBeNull();
+
+    const unquoted = { ...reply, replyTarget: undefined };
+    await view.rerender(
+      <ReplyItem {...replyProps({ reply: unquoted, section: { ...startSection, reply: unquoted } })} />
+    );
+    expect(view.queryByTestId('reply-content-area')).toBeNull();
   });
 
   it('shows the reply policy once at its virtualized tail and disables submitted stale actions', async () => {

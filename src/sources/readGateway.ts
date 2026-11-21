@@ -503,7 +503,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         available.publish(available.result);
       }
       accountFailures.set(planSource, { phase: 'reported', reason });
-      if (reason === 'account-recheck-required') {
+      if (planSource === 'linuxdo' || reason === 'account-recheck-required') {
         dependencies.requestAccountRecheck?.(planSource, session.sessionEpoch, trace.traceId);
       } else {
         dependencies.onSessionExpired?.(planSource, session.sessionEpoch);
@@ -535,6 +535,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       const localFetcher: Fetcher = async () => {
         throw new Error('本地读取不得发起网络请求');
       };
+      let linuxDoRecheck: Promise<boolean | void> | undefined;
       const sourcePlanFetcher = (planSource: Source): Fetcher => {
         const plan = planFor(planSource);
         if (!plan || plan.state === 'blocked' || plan.transport === 'none') return localFetcher;
@@ -551,9 +552,28 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
           const response = await dependencies.fetcher(input, init);
           const failure = await forumResponseAccountFailure(planSource, input, response, activeSignal);
           if (failure) recordAccountFailure(planSource, failure);
+          const linuxDoSession = sessionSnapshots.get('linuxdo');
+          if (
+            failure === 'http-401' &&
+            source === 'linuxdo' &&
+            linuxDoAuthenticated &&
+            linuxDoSession?.identityTrust === 'confirmed' &&
+            dependencies.requestAccountRecheck &&
+            !init?.signal?.aborted &&
+            recoveryCommitIsEligible() &&
+            /^(GET|HEAD)$/i.test(init?.method ?? 'GET')
+          ) {
+            accountFailures.set('linuxdo', { phase: 'reported', reason: failure });
+            linuxDoRecheck ??= Promise.resolve(
+              dependencies.requestAccountRecheck('linuxdo', linuxDoSession.sessionEpoch, trace.traceId)
+            );
+            if ((await linuxDoRecheck) && !init?.signal?.aborted && recoveryCommitIsEligible()) {
+              return dependencies.fetcher(input, init);
+            }
+          }
           return response;
         };
-        const forumFetcher = rejectUnauthorizedResponse(managedFetcher);
+        const forumFetcher = rejectUnauthorizedResponse(managedFetcher, planSource === 'linuxdo');
         return (input, init) =>
           planSource === 'linuxdo' && new URL(input).origin === LINUXDO_CREDIT_URL
             ? managedFetcher(input, init)

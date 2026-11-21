@@ -134,6 +134,25 @@ describe('Android direct yaohuo API', () => {
     expect(result.items[0]).toMatchObject({ source: 'yaohuo', id: '123', title: '妖火主题' });
   });
 
+  it('keeps explicitly pinned Yaohuo topics ahead of newer topics without classifying their titles as badges', async () => {
+    const yaohuoFetcher = vi.fn(
+      async () =>
+        new Response(`
+      <ul class="post-items">
+        <li class="post-item"><a class="post-title" href="/bbs-125.html">论坛公告<span class="post-flag">置顶</span></a>
+          <span class="post-time" title="2026-05-01 08:00:00">5月1日</span></li>
+        <li class="post-item"><a class="post-title" href="/bbs-126.html">【置顶】这是标题<span class="post-flag">赏</span></a>
+          <span class="post-time" title="2026-08-01 08:00:00">8月1日</span></li>
+      </ul>`)
+    );
+    const feed = await getYaohuoFeedDirect({ category: '288', yaohuoFetcher });
+
+    expect(feed.items.map(({ title, pinned }) => [title, pinned === true])).toEqual([
+      ['论坛公告', true],
+      ['【置顶】这是标题', false]
+    ]);
+  });
+
   it('uses the all-category yaohuo feed when category is blank', async () => {
     const yaohuoFetcher = vi.fn(
       async () => new Response('<div class="listdata"><a href="/bbs-123.html">妖火主题</a>/alice/阅1/05-20 10:00</div>')

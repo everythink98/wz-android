@@ -4234,10 +4234,10 @@ it.each([
   { source: 'linuxdo', entry: 'topic', status: 404, outcome: 'same' },
   { source: 'linuxdo', entry: 'topic', status: 403, outcome: 'changed' },
   { source: 'linuxdo', entry: 'topic', status: 404, outcome: 'unknown' },
-  { source: 'linuxdo', entry: 'category', status: 401, outcome: 'expired' },
+  { source: 'linuxdo', entry: 'category', status: 401, outcome: 'anonymous' },
   { source: 'linuxdo', entry: 'category', status: 403, outcome: 'anonymous' },
   { source: 'linuxdo', entry: 'csrf', status: 403, outcome: 'anonymous' },
-  { source: 'linuxdo', entry: 'editable-reply', status: 401, outcome: 'expired' },
+  { source: 'linuxdo', entry: 'editable-reply', status: 401, outcome: 'anonymous' },
   { source: 'linuxdo', entry: 'editable-reply', status: 403, outcome: 'anonymous' },
   { source: 'nodeseek', entry: 'vote', status: 401, outcome: 'expired' },
   { source: 'yaohuo', entry: 'favorite', status: 401, outcome: 'expired' }
@@ -4362,6 +4362,7 @@ it.each([
     };
     try {
       let failedRead!: Awaited<ReturnType<typeof read>>;
+      if (source === 'linuxdo' && status === 401) probe.resolve(json({ current_user: null }));
       await act(async () => {
         if (status === 401) await expect(read()).rejects.toThrow(REQUEST_CANCELED_MESSAGE);
         else failedRead = await read();
@@ -4398,7 +4399,7 @@ it.each([
                 })
           );
         });
-      } else expect(probes()).toHaveLength(0);
+      } else expect(probes()).toHaveLength(source === 'linuxdo' ? 1 : 0);
       await waitFor(() => expect(runtime().read.accountSessionViewModels[source].isVerifying).toBe(false));
       const loggedOut = outcome === 'anonymous' || outcome === 'expired';
       expect(runtime().read.accountSessionViewModels[source]).toMatchObject(

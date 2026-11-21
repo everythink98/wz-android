@@ -17,6 +17,25 @@ function poster(width: number, height: number, uri: string, documentWidth = widt
 }
 
 describe('compatible remote image sources', () => {
+  it('fetches a fresh no-store SVG on the next visit and keeps its poster out of the disk cache', async () => {
+    const source = { uri: 'https://images.example.com/packet-status.svg' };
+    let reads = 0;
+    const fetcher = async () =>
+      new Response(`<svg><desc>${++reads}</desc></svg>`, {
+        headers: { 'content-type': 'image/svg+xml', 'cache-control': 'private, No-Store, max-age=0' }
+      });
+    const renderPoster = vi.fn(async () => poster(10, 10, 'data:image/png;base64,AA=='));
+    const first = await recoverCompatibleSvgArtifact(source, { fetcher, renderPoster });
+    expect(first).toBeTruthy();
+    const second = await recoverCompatibleSvgArtifact(source, { fetcher, renderPoster });
+    expect(reads).toBe(2);
+    expect(second?.documentDataUri).not.toBe(first?.documentDataUri);
+    expect(cachedCompatibleSvgArtifact(source)).toBeNull();
+    expect(renderPoster).toHaveBeenCalledWith(expect.any(String), null, expect.any(Number));
+    await refreshCompatibleSvgPoster(second!, { renderPoster });
+    expect(cachedCompatibleSvgArtifact(source)).toBeNull();
+  });
+
   it('preserves the original complex SVG document while producing a poster artifact', async () => {
     const source = { uri: 'https://images.example.com/report.svg' };
     const fetcher = vi.fn<Fetcher>(
@@ -375,7 +394,8 @@ describe('compatible remote image sources', () => {
   });
 
   it('keeps render-safe reads pure while recovery promotes the 32-entry LRU', async () => {
-    const renderPoster = async (_svgBase64: string, cacheKey: string) => poster(1, 1, `file:///cache/${cacheKey}.png`);
+    const renderPoster = async (_svgBase64: string, cacheKey: string | null) =>
+      poster(1, 1, `file:///cache/${cacheKey}.png`);
     const recover = (uri: string) =>
       recoverCompatibleSvgArtifact(
         { uri },

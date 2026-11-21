@@ -1,4 +1,5 @@
 import { createElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { DeviceEventEmitter } from 'react-native';
 import { CancelledError, isCancelledError } from '@tanstack/react-query';
 import type { WebView } from 'react-native-webview';
 import { markAccountSessionHandoffPending, saveAccountSessionSnapshot } from '@/platform/storage/accountSessionStore';
@@ -477,8 +478,42 @@ export function useAccountRuntime({
   const handleSiteSessionEvent = useCallback((event: ScopedSiteSessionEvent) => {
     applyAccountSessionEventRef.current(event);
   }, []);
+  const requestAccountRecheck = useCallback<RequestAccountRecheck>(
+    async (source, requestSessionEpoch, parentTraceId) => {
+      const current = readSessionRuntimeSnapshot(source);
+      if (
+        (source !== 'linuxdo' && source !== 'nodeseek') ||
+        !current.authenticated ||
+        current.authSurfaceOpen ||
+        current.identityTrust !== 'confirmed' ||
+        current.sessionEpoch !== requestSessionEpoch ||
+        current.sourceEnabled === false
+      )
+        return false;
+      try {
+        const result = await reconcileAccountStatusRef.current(source, { parentTraceId });
+        const confirmed = readSessionRuntimeSnapshot(source);
+        return (
+          result.status === 'same' &&
+          confirmed.sessionEpoch === requestSessionEpoch &&
+          confirmed.identityKey === current.identityKey &&
+          !confirmed.authSurfaceOpen &&
+          confirmed.sourceEnabled !== false
+        );
+      } catch {
+        notify(`${sourceCatalog[source].label} 登录状态暂时无法确认，请稍后重试账号核对`);
+        return false;
+      }
+    },
+    [notify, readSessionRuntimeSnapshot]
+  );
+
   const handleSessionExpired = useCallback(
     (source: SessionSite, requestSessionEpoch: number) => {
+      if (source === 'linuxdo') {
+        void requestAccountRecheck(source, requestSessionEpoch);
+        return;
+      }
       const current = readSessionRuntimeSnapshot(source);
       if (
         !current.authenticated ||
@@ -491,27 +526,14 @@ export function useAccountRuntime({
       }
       applyAccountSessionEventRef.current({ site: source, type: 'login-expired', message: '登录状态已失效' });
     },
-    [readSessionRuntimeSnapshot]
+    [readSessionRuntimeSnapshot, requestAccountRecheck]
   );
-
-  const requestAccountRecheck = useCallback<RequestAccountRecheck>(
-    (source, requestSessionEpoch, parentTraceId) => {
-      const current = readSessionRuntimeSnapshot(source);
-      if (
-        (source !== 'linuxdo' && source !== 'nodeseek') ||
-        !current.authenticated ||
-        current.authSurfaceOpen ||
-        current.identityTrust !== 'confirmed' ||
-        current.sessionEpoch !== requestSessionEpoch ||
-        current.sourceEnabled === false
-      )
-        return;
-      void reconcileAccountStatusRef.current(source, { parentTraceId }).catch(() => {
-        notify(`${sourceCatalog[source].label} 登录状态暂时无法确认，请稍后重试账号核对`);
-      });
-    },
-    [notify, readSessionRuntimeSnapshot]
-  );
+  useEffect(() => {
+    const subscription = DeviceEventEmitter.addListener('linuxDoLoginCookieDeleted', () => {
+      void requestAccountRecheck('linuxdo', readSessionRuntimeSnapshot('linuxdo').sessionEpoch);
+    });
+    return () => subscription.remove();
+  }, [readSessionRuntimeSnapshot, requestAccountRecheck]);
 
   const session = useSessionController({
     commitLinuxDoWebViewUserAgent,

@@ -17,16 +17,6 @@ export function createMoreSiteSettingStyles(theme: ReaderTheme, settings: Reader
     rowContent: { paddingLeft: 0, paddingRight: 12, minWidth: 0 },
     title: { color: theme.ink, fontFamily, fontSize: fontSize(14), fontWeight: '500', lineHeight: fontSize(20) },
     description: { color: theme.muted, fontFamily, fontSize: fontSize(12), lineHeight: fontSize(18) },
-    button: { alignSelf: 'center', borderRadius: readerRadii.control, minWidth: 0 },
-    buttonContent: { minHeight: 44, flexDirection: 'row-reverse' },
-    buttonLabel: {
-      fontFamily,
-      fontSize: fontSize(13),
-      fontWeight: '500',
-      letterSpacing: 0,
-      marginHorizontal: 12,
-      marginVertical: 8
-    },
     input: { backgroundColor: theme.surface, fontFamily, fontSize: fontSize(14) },
     divider: { backgroundColor: theme.line, marginVertical: 4 },
     actions: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingVertical: 4 },

@@ -1,6 +1,7 @@
 import { useRef } from 'react';
 import { Pressable, Text, TextInput, View, type TextInputProps } from 'react-native';
 import { Check, ChevronRight, Search, X } from 'lucide-react-native';
+import Animated, { ReduceMotion, useAnimatedStyle, withTiming } from 'react-native-reanimated';
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import { IconButton } from '@/ui/controls/ButtonControls';
 import type { ReaderTheme } from '@/ui/theme/tokens';
@@ -168,12 +169,25 @@ export function FilterSegments<Value extends string>({
                   <Check size={14} color={styles.searchFilterActiveText.color} strokeWidth={2} accessible={false} />
                 ) : null}
               </View>
-              <Text style={styles.searchFilterSegmentText}>{item.label}</Text>
+              <Text style={[styles.searchFilterSegmentText, selected && styles.searchFilterActiveText]}>
+                {item.label}
+              </Text>
             </Pressable>
           );
         })}
       </View>
     </View>
+  );
+}
+
+function FilterCheckboxMark({ checked, color }: { checked: boolean; color: string }) {
+  const style = useAnimatedStyle(() => ({
+    opacity: withTiming(checked ? 1 : 0, { duration: 110, reduceMotion: ReduceMotion.System })
+  }));
+  return (
+    <Animated.View style={style}>
+      <Check size={12} color={color} strokeWidth={2.3} accessible={false} />
+    </Animated.View>
   );
 }
 
@@ -196,6 +210,7 @@ export function FilterOptionRow({
   title?: string;
   onPress: () => void;
 }) {
+  const checkColor = theme.dark ? theme.primary : theme.primaryStrong;
   return (
     <Pressable
       testID={testID}
@@ -212,11 +227,11 @@ export function FilterOptionRow({
       </View>
       <View style={styles.searchFilterTrailing}>
         {role === 'checkbox' ? (
-          <View style={[styles.searchFilterCheckbox, checked && styles.searchFilterCheckboxChecked]}>
-            {checked ? <Check size={12} color={theme.ink} strokeWidth={2} accessible={false} /> : null}
+          <View style={styles.searchFilterCheckbox}>
+            <FilterCheckboxMark checked={checked} color={checkColor} />
           </View>
         ) : checked ? (
-          <Check size={18} color={theme.ink} strokeWidth={2} accessible={false} />
+          <Check size={18} color={checkColor} strokeWidth={2} accessible={false} />
         ) : null}
       </View>
     </Pressable>

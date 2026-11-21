@@ -23,6 +23,7 @@ let nextPosterRevision = 1;
 
 export type CompatibleSvgArtifact = Readonly<{
   animated: boolean;
+  noStore?: boolean;
   dimensions: Readonly<{ height: number; width: number }>;
   documentDataUri: string;
   posterRevision: number;
@@ -34,7 +35,7 @@ type CompatibleSvgArtifactWithoutPoster = Omit<CompatibleSvgArtifact, 'posterRev
 
 type CompatibleSvgArtifactOptions = Readonly<{
   fetcher?: Fetcher;
-  renderPoster?: (svgBase64: string, cacheKey: string, timeoutMs: number) => Promise<SvgPosterRenderResult>;
+  renderPoster?: (svgBase64: string, cacheKey: string | null, timeoutMs: number) => Promise<SvgPosterRenderResult>;
   signal?: AbortSignal;
 }>;
 
@@ -108,7 +109,7 @@ export function recoverCompatibleSvgArtifact(
     return Promise.resolve(cached);
   }
   const pending = compatibleSvgArtifactRequests.get(requestIdentity);
-  if (pending) {
+  if (pending && !pending.settlement) {
     return subscribeCompatibleSvgRequest(pending, options.signal, () => null);
   }
   let request!: CompatibleSvgSharedRequest<CompatibleSvgArtifact | null>;
@@ -154,8 +155,11 @@ export function refreshCompatibleSvgPoster(
   if (options.signal?.aborted) {
     return Promise.reject(new Error('SVG 海报重建已取消'));
   }
-  const pending = compatibleSvgPosterRefreshes.get(artifact.requestIdentity);
-  if (pending) {
+  const refreshKey = artifact.noStore
+    ? `${artifact.requestIdentity}\u0000${artifact.posterRevision}`
+    : artifact.requestIdentity;
+  const pending = compatibleSvgPosterRefreshes.get(refreshKey);
+  if (pending && !pending.settlement) {
     return subscribeCompatibleSvgRequest(pending, options.signal, () => {
       throw new Error('SVG 海报重建已取消');
     });
@@ -164,8 +168,8 @@ export function refreshCompatibleSvgPoster(
   request = {
     consumers: new Set(),
     onEmpty: () => {
-      if (compatibleSvgPosterRefreshes.get(artifact.requestIdentity) === request) {
-        compatibleSvgPosterRefreshes.delete(artifact.requestIdentity);
+      if (compatibleSvgPosterRefreshes.get(refreshKey) === request) {
+        compatibleSvgPosterRefreshes.delete(refreshKey);
       }
       request.cancelWork?.();
     }
@@ -173,7 +177,7 @@ export function refreshCompatibleSvgPoster(
   const subscription = subscribeCompatibleSvgRequest(request, options.signal, () => {
     throw new Error('SVG 海报重建已取消');
   });
-  compatibleSvgPosterRefreshes.set(artifact.requestIdentity, request);
+  compatibleSvgPosterRefreshes.set(refreshKey, request);
   const work = scheduleCompatibleSvgWork(async (deadlineAt, signal) => {
     if (signal.aborted) {
       return null;
@@ -185,7 +189,7 @@ export function refreshCompatibleSvgPoster(
     }
     const poster = await (options.renderPoster || renderSvgPoster)(
       svgBase64,
-      stableSvgPosterKey(artifact.requestIdentity),
+      artifact.noStore ? null : stableSvgPosterKey(artifact.requestIdentity),
       remainingMs
     );
     return artifactWithPoster(artifact, poster);
@@ -199,7 +203,7 @@ export function refreshCompatibleSvgPoster(
       if (!refreshed) {
         throw new Error('SVG 海报重建超时');
       }
-      if (request.consumers.size > 0 && compatibleSvgPosterRefreshes.get(artifact.requestIdentity) === request) {
+      if (request.consumers.size > 0 && compatibleSvgPosterRefreshes.get(refreshKey) === request) {
         rememberCompatibleSvgArtifact(artifact.requestIdentity, refreshed);
       }
       return refreshed;
@@ -209,8 +213,8 @@ export function refreshCompatibleSvgPoster(
       (error: unknown) => settleCompatibleSvgRequest(request, { error })
     )
     .finally(() => {
-      if (compatibleSvgPosterRefreshes.get(artifact.requestIdentity) !== request) return;
-      compatibleSvgPosterRefreshes.delete(artifact.requestIdentity);
+      if (compatibleSvgPosterRefreshes.get(refreshKey) !== request) return;
+      compatibleSvgPosterRefreshes.delete(refreshKey);
     });
   return subscription;
 }
@@ -238,10 +242,11 @@ async function loadCompatibleSvgArtifact(
   if (signal.aborted) {
     return null;
   }
-  const bytes =
+  const document =
     nativeDocument === undefined
       ? await fetchCompatibleSvgBytes(uri, headers, options.fetcher || fetch, fetchTimeoutMs, signal)
-      : nativeDocument && decodeLooseBase64(nativeDocument.base64);
+      : nativeDocument && { bytes: decodeLooseBase64(nativeDocument.base64), noStore: nativeDocument.noStore === true };
+  const bytes = document?.bytes;
   if (signal.aborted || !bytes || bytes.length > MAX_COMPATIBLE_SVG_BYTES) {
     return null;
   }
@@ -256,12 +261,13 @@ async function loadCompatibleSvgArtifact(
   }
   const poster = await (options.renderPoster || renderSvgPoster)(
     svgBase64,
-    stableSvgPosterKey(requestIdentity),
+    document.noStore ? null : stableSvgPosterKey(requestIdentity),
     remainingMs
   );
   return artifactWithPoster(
     {
       animated: isAnimatedSvg(svg),
+      noStore: document.noStore,
       dimensions: { height: poster.documentHeight, width: poster.documentWidth },
       documentDataUri: `data:image/svg+xml;base64,${svgBase64}`,
       requestIdentity
@@ -293,7 +299,10 @@ async function fetchCompatibleSvgBytes(
   if (contentLength > MAX_COMPATIBLE_SVG_BYTES) {
     return null;
   }
-  return boundedResponseBytes(response);
+  return {
+    bytes: await boundedResponseBytes(response),
+    noStore: /(?:^|,)\s*no-store\s*(?:,|$)/i.test(response.headers.get('cache-control') || '')
+  };
 }
 
 function artifactWithPoster(
@@ -307,7 +316,7 @@ function artifactWithPoster(
     dimensions: { height: poster.documentHeight, width: poster.documentWidth },
     posterRevision,
     posterSource: {
-      cacheKey: `wz-svg-poster:${poster.uri}:${posterRevision}`,
+      cacheKey: `wz-svg-poster:${artifact.noStore ? 'transient' : poster.uri}:${posterRevision}`,
       height: poster.height,
       uri: poster.uri,
       width: poster.width
@@ -474,6 +483,7 @@ function svgBase64FromDocumentDataUri(value: string) {
 
 function rememberCompatibleSvgArtifact(identity: string, artifact: CompatibleSvgArtifact) {
   compatibleSvgArtifactCache.delete(identity);
+  if (artifact.noStore) return;
   if (compatibleSvgArtifactCache.size >= COMPATIBLE_SVG_ARTIFACT_CACHE_LIMIT) {
     const oldestIdentity = compatibleSvgArtifactCache.keys().next().value;
     if (oldestIdentity) {

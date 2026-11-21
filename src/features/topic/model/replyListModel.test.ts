@@ -167,6 +167,7 @@ describe('topic reply list model', () => {
     });
 
     expect(items[0]?.type).toBe('replyStart');
+    expect(topicListItemSpacing(items[0]!, items[1]!)).toBe(8);
     expect(items.at(-1)?.type).toBe('replyEnd');
     const bodyRows = items.filter((item) => item.type === 'replyContent');
     expect(bodyRows).toHaveLength(500);

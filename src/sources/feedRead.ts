@@ -5,7 +5,7 @@ import { getV2exCategories, getV2exFeed } from '@/sources/v2ex/reader';
 import { getYaohuoFeedDirect } from '@/sources/yaohuo/reader';
 import { getLinuxDoCategories, getLinuxDoFeed, type LinuxDoReadAuth } from '@/sources/linuxdo/reader';
 import { isDiscourseSource, sourceValues } from '@/domain/forum/sourceCatalog';
-import { balanceTopicsBySource, mergeTopics } from '@/domain/forum/feed';
+import { balanceTopicsBySource, mergeTopics, sortFeedTopicsByTime } from '@/domain/forum/feed';
 import { nextPagePosition, pagePosition, type PagePosition } from '@/domain/forum/pagination';
 import type {
   CategoriesResponse,
@@ -22,7 +22,7 @@ import { DEFAULT_REQUEST_TIMEOUT_MS, REQUEST_CANCELED_MESSAGE, type Fetcher } fr
 import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
 import { markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
-import { isRecord, sortTopicsByTime } from '@/domain/forum/html';
+import { isRecord } from '@/domain/forum/html';
 import { mergeSourceDiagnosticSummaries } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { runForumSourceReadAggregateAttempt, runForumSourceReadAttempt } from './forumSourceReadAttempt';
 import {
@@ -224,7 +224,7 @@ export async function getFeed({
                   // Reserve each source's share so already visible posts survive the final balanced page.
                   visibleItems = mergeTopics(
                     visibleItems,
-                    sortTopicsByTime(mergeTopics([], value.items)).slice(0, previewLimit)
+                    sortFeedTopicsByTime(mergeTopics([], value.items)).slice(0, previewLimit)
                   );
                   onProgress({ items: visibleItems, errors: {} });
                 }
@@ -259,7 +259,7 @@ export async function getFeed({
         if (signal?.aborted) throw new Error(REQUEST_CANCELED_MESSAGE);
         const items = mergeTopics(
           [],
-          sortTopicsByTime([
+          sortFeedTopicsByTime([
             ...bufferedItems,
             ...results.flatMap((result) => (result.status === 'fulfilled' ? result.value.items : []))
           ])

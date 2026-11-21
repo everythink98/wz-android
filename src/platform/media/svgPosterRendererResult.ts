@@ -8,13 +8,14 @@ export type SvgPosterRenderResult = Readonly<{
 
 export type BoundedSvgDocumentResult = Readonly<{
   base64: string;
+  noStore?: boolean;
 }>;
 
 export function assertSvgPosterRenderResult(result: SvgPosterRenderResult): SvgPosterRenderResult {
   if (
     !result ||
     typeof result.uri !== 'string' ||
-    !result.uri.startsWith('file://') ||
+    !(result.uri.startsWith('file://') || /^data:image\/png;base64,[A-Za-z0-9+/]+=*$/u.test(result.uri)) ||
     !Number.isFinite(result.documentWidth) ||
     result.documentWidth <= 0 ||
     !Number.isFinite(result.documentHeight) ||

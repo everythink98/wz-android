@@ -161,13 +161,17 @@ describe('LinuxDo reading runtime owned lifetime', () => {
     }
   });
 
-  it.each([401, 403])(
-    'ignores a retired response body with status %s while the current owner still reports it',
-    async (status) => {
+  it.each<[number, boolean]>([
+    [401, false],
+    [401, true],
+    [403, true]
+  ])(
+    'ignores a retired response body with status %s and challenge=%s while the current owner still reports it',
+    async (status, challenge) => {
       const makeResponse = () =>
-        new Response('', {
+        new Response(challenge ? '<title>Just a moment...</title>' : '', {
           status,
-          headers: status === 403 ? { 'cf-mitigated': 'challenge' } : { 'content-type': 'application/json' }
+          headers: { 'content-type': challenge ? 'text/html' : 'application/json' }
         });
       const held = Promise.withResolvers<string>();
       const response = makeResponse();
@@ -186,7 +190,7 @@ describe('LinuxDo reading runtime owned lifetime', () => {
         await retired.unmount();
         unmounted = true;
         expect(jest.getTimerCount()).toBe(0);
-        held.resolve(status === 403 ? '<html>Cloudflare challenge</html>' : '{}');
+        held.resolve(challenge ? '<title>Just a moment...</title>' : '{}');
         await advance(1000);
         expect(retired.onSessionExpired).not.toHaveBeenCalled();
         expect(retired.requestAccountRecheck).not.toHaveBeenCalled();
@@ -203,8 +207,9 @@ describe('LinuxDo reading runtime owned lifetime', () => {
         session.visible([1]);
         session.active(true);
         await advance(1000);
-        expect(current.onSessionExpired).toHaveBeenCalledTimes(status === 401 ? 1 : 0);
-        expect(current.requestVerification).toHaveBeenCalledTimes(status === 403 ? 1 : 0);
+        expect(current.onSessionExpired).toHaveBeenCalledTimes(challenge ? 0 : 1);
+        expect(current.requestAccountRecheck).not.toHaveBeenCalled();
+        expect(current.requestVerification).toHaveBeenCalledTimes(challenge ? 1 : 0);
       } finally {
         await current.unmount();
         jest.useRealTimers();

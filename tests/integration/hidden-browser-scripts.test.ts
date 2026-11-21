@@ -16,7 +16,7 @@ import { getCurrentUserIdentity } from '@/sources/sourceRead';
 import { normalizeCategories, parseHtmlTopics } from '@/sources/nodeseek/feedParser';
 import { requirePreparedForumContent } from '@/domain/forum/topicContentSplit';
 import { loadLinuxDoTopicCreationContext } from '@/sources/linuxdo/topicCreation';
-import { linuxDoBrowserResponse, nodeSeekBrowserResponse } from '@/features/account/browserFetchQueue';
+import { forumBrowserResponse } from '@/features/account/browserFetchQueue';
 import type { BrowserFetchOwner } from '@/platform/network/browserFetchIntent';
 
 function runNodeSeekBrowserFetchScript(url: string, html: string, owner?: BrowserFetchOwner, title = '') {
@@ -181,9 +181,7 @@ describe('hidden browser fetch scripts', () => {
       const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
       expect(payload.html).toContain('/signIn.html');
       expect(payload.html).toContain('/register.html');
-      const fetcher = vi.fn(async () =>
-        nodeSeekBrowserResponse(payload.html, payload.challenge, undefined, payload.url)
-      );
+      const fetcher = vi.fn(async () => forumBrowserResponse(payload.html, payload.challenge, undefined, payload.url));
       await expect(
         getCurrentUserIdentity({ source: 'nodeseek', fetcher, nodeSeekAuthenticated: true })
       ).rejects.toMatchObject({ reason: 'expired' });
@@ -211,7 +209,7 @@ describe('hidden browser fetch scripts', () => {
       const payload = JSON.parse(postMessage.mock.calls[0]![0]);
       const fetcher = vi.fn(async (url: string) =>
         new URL(url).pathname === '/'
-          ? nodeSeekBrowserResponse(payload.html, payload.challenge, undefined, payload.url)
+          ? forumBrowserResponse(payload.html, payload.challenge, undefined, payload.url)
           : new Response('<a class="Username" href="/space/7">测试账号</a>')
       );
       await expect(
@@ -312,7 +310,7 @@ describe('hidden browser fetch scripts', () => {
 
     expect(postMessage).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(postMessage.mock.calls[0]![0]);
-    const fetcher = async () => nodeSeekBrowserResponse(payload.html, payload.challenge, undefined, payload.url);
+    const fetcher = async () => forumBrowserResponse(payload.html, payload.challenge, undefined, payload.url);
     await expect(getNodeSeekAccountOverview({ userId: '7', fetcher })).resolves.toMatchObject({
       userId: '7',
       coin: scenario.coin,
@@ -351,7 +349,7 @@ describe('hidden browser fetch scripts', () => {
       await expect(
         getNodeSeekAccountOverview({
           userId: '7',
-          fetcher: async () => nodeSeekBrowserResponse(payload.html, payload.challenge, undefined, payload.url)
+          fetcher: async () => forumBrowserResponse(payload.html, payload.challenge, undefined, payload.url)
         })
       ).resolves.toMatchObject({ userId: '7', coin: 4, stardust: 2 });
       expect(prematureMessages).toBe(0);
@@ -383,7 +381,7 @@ describe('hidden browser fetch scripts', () => {
           userId: '7',
           fetcher: async () => {
             if (payload.error) throw new Error(payload.error);
-            return nodeSeekBrowserResponse(payload.html, payload.challenge, undefined, payload.url);
+            return forumBrowserResponse(payload.html, payload.challenge, undefined, payload.url);
           }
         })
       ).rejects.toThrow(user === null ? '身份不匹配' : '账号资料没有加载完成');
@@ -451,7 +449,7 @@ describe('hidden browser fetch scripts', () => {
       getCurrentUserIdentity({
         source: 'nodeseek',
         nodeSeekAuthenticated: true,
-        fetcher: async () => nodeSeekBrowserResponse(payload.html, payload.challenge, undefined, payload.url)
+        fetcher: async () => forumBrowserResponse(payload.html, payload.challenge, undefined, payload.url)
       })
     ).rejects.toMatchObject({ source: 'nodeseek', reason: 'cloudflare' });
     evaluateAgain();
@@ -588,7 +586,7 @@ describe('hidden browser fetch scripts', () => {
       vi.advanceTimersByTime(500);
       expect(postMessage).toHaveBeenCalledTimes(1);
       const payload = JSON.parse(postMessage.mock.calls[0]![0]);
-      expect(nodeSeekBrowserResponse(payload.html, payload.challenge).status).toBe(403);
+      expect(forumBrowserResponse(payload.html, payload.challenge).status).toBe(403);
       expect(payload).toMatchObject({ challenge: true, html: '' });
       expect(stop).toHaveBeenCalledTimes(1);
     } finally {
@@ -1196,7 +1194,7 @@ describe('hidden browser fetch scripts', () => {
       expect(payload).toMatchObject({ type: 'linuxdo-browser-fetch', id: 9, challenge: false });
       const fetcher = vi.fn(async (url: string) =>
         url.endsWith('/latest')
-          ? linuxDoBrowserResponse(payload.body)
+          ? forumBrowserResponse(payload.body, false)
           : Response.json(
               url.endsWith('/site.json')
                 ? { categories: [{ id: 4, name: '技术', permission: 1 }] }

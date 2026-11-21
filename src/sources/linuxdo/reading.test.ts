@@ -165,9 +165,13 @@ describe('LinuxDo reading transport', () => {
     });
     await expect(sender(batch, 'alice', new AbortController().signal)).resolves.toBeUndefined();
   });
-  it.each([true, false])(
-    'preserves CSRF challenge cooldown after hidden fallback fails (header=%s)',
-    async (header) => {
+  it.each([
+    [true, '60'],
+    [false, 'Sat, 01 Jan 2000 00:01:00 GMT']
+  ] as const)(
+    'honors the original CSRF challenge cooldown without repeating the request (header=%s)',
+    async (header, retryAfter) => {
+      const browser = vi.fn(async () => new Response('unexpected retry'));
       const fetcher = createLinuxDoWebViewFallbackFetcher({
         defaultFetcher: async () =>
           new Response('<title>Just a moment...</title>', {
@@ -175,13 +179,12 @@ describe('LinuxDo reading transport', () => {
             headers: {
               'content-type': 'text/html',
               ...(header ? { 'cf-mitigated': 'challenge' } : {}),
-              'Retry-After': '60',
+              Date: 'Sat, 01 Jan 2000 00:00:00 GMT',
+              'Retry-After': retryAfter,
               'cf-ray': '0123456789abcdef-HKG'
             }
           }),
-        webViewFetcher: async () => {
-          throw new Error('hidden browser unavailable');
-        }
+        webViewFetcher: browser
       });
       const sender = createLinuxDoReadingSender({ fetcher, scope: () => 'alice', userAgent: () => 'fixture-agent' });
       await expect(sender(batch, 'alice', new AbortController().signal)).rejects.toMatchObject({
@@ -192,6 +195,7 @@ describe('LinuxDo reading transport', () => {
         hasCfMitigatedChallenge: header,
         hasCfChallengeBody: true
       });
+      expect(browser).not.toHaveBeenCalled();
     }
   );
 

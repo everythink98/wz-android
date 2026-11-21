@@ -835,7 +835,7 @@ describe('source gateway read contract', () => {
   });
 
   it.each(['http-first', 'recheck-first'] as const)(
-    'reports one raw HTTP 401 instead of an account recheck in the same read: %s',
+    'reports one account recheck for concurrent LinuxDo login errors: %s',
     async (order) => {
       const onSessionExpired = vi.fn();
       const requestAccountRecheck = vi.fn();
@@ -855,8 +855,8 @@ describe('source gateway read contract', () => {
       });
 
       await expect(gateway.getEmojiUrls({ source: 'linuxdo' })).resolves.toEqual({});
-      expect(onSessionExpired).toHaveBeenCalledExactlyOnceWith('linuxdo', 0);
-      expect(requestAccountRecheck).not.toHaveBeenCalled();
+      expect(onSessionExpired).not.toHaveBeenCalled();
+      expect(requestAccountRecheck).toHaveBeenCalledExactlyOnceWith('linuxdo', 0, expect.any(String));
     }
   );
 

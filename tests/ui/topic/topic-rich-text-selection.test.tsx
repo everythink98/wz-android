@@ -616,6 +616,7 @@ function ProductionContentList({
       topicScrollRef={scrollRef || topicScrollRef}
       read={{
         isReadRecoveryCurrent: () => true,
+        wholeTopicRevision: 0,
         readingRuntime,
         readingEntry: {
           ready: true,
@@ -728,6 +729,42 @@ describe('topic rich-text selection', () => {
     } finally {
       await view.unmount();
     }
+  });
+
+  it('renders the LINUX DO packet cover in its own browser session, outside the shared image cache', async () => {
+    const packet = `https://hb.lafi.sh/${encodeURIComponent('🧧')}/${encodeURIComponent('🍎'.repeat(13) + '☕')}`;
+    const cover = `${packet}/${encodeURIComponent('🖼️')}.svg`;
+    const onOpenExternalUrl = jest.fn();
+    const topic = prepareTopicContent({
+      ...selectionTopic,
+      source: 'linuxdo',
+      url: 'https://linux.do/t/42',
+      contentHtml: sanitizeContentHtml(
+        `<a href="${packet}"><picture><source type="image/svg+xml" srcset="${cover} 1x"><img width="300" height="400" alt="红包封面"></picture></a>`,
+        'https://linux.do/'
+      )
+    });
+    const view = await render(
+      <QueryTestWrapper>
+        <ProductionContentList
+          topic={topic}
+          quotedReplies={{}}
+          contentWidth={360}
+          onOpenExternalUrl={onOpenExternalUrl}
+        />
+      </QueryTestWrapper>
+    );
+    await act(async () => {
+      mockReadingList.onViewableItemsChanged({
+        viewableItems: mockReadingList.data.map((item, index) => ({ item, index, isViewable: true }))
+      });
+      mockReadingList.onLoad();
+    });
+    expect(view.getByTestId('linuxdo-packet-cover')).toHaveProp('cacheMode', 'LOAD_NO_CACHE');
+    expect(view.getByTestId('topic-image-frame')).toHaveStyle({ width: 300, height: 400 });
+    expect(mockReadingImages.has(cover)).toBe(false);
+    await fireEvent.press(view.getByRole('link', { name: '红包封面' }));
+    expect(onOpenExternalUrl).toHaveBeenCalledWith(packet);
   });
 
   it.each(['page', 'image'] as const)('opens the %s target of a linked cover at its authored size', async (kind) => {

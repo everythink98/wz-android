@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import { PixelRatio, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { ActivityIndicator, List } from 'react-native-paper';
 import { ChevronDown, ChevronRight, type LucideIcon } from 'lucide-react-native';
 import Animated, {
@@ -33,23 +33,29 @@ function createExpandableStyles(theme: ReaderTheme, settings: ReaderStyleSetting
     },
     groupList: {
       backgroundColor: 'transparent',
-      borderBottomColor: theme.line,
-      borderBottomWidth: StyleSheet.hairlineWidth,
       borderRadius: 0,
-      marginTop: 0,
       paddingHorizontal: 0,
-      paddingVertical: 6
+      borderBottomColor: theme.line,
+      borderBottomWidth: StyleSheet.hairlineWidth
     },
     menuButton: {
       alignItems: 'center',
-      paddingVertical: 0,
+      paddingVertical: 10,
       paddingLeft: 0,
       paddingRight: 0,
       justifyContent: 'center',
-      minHeight: 48,
+      minHeight: 60,
       borderRadius: readerRadii.control
     },
-    menuIcon: { alignItems: 'center', justifyContent: 'center', width: 30, height: 30 },
+    nestedButton: { minHeight: 48, paddingVertical: 6 },
+    menuIcon: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: 32,
+      height: 32,
+      borderRadius: 9,
+      backgroundColor: theme.primarySoft
+    },
     menuLabel: {
       color: theme.ink,
       fontFamily,
@@ -59,14 +65,8 @@ function createExpandableStyles(theme: ReaderTheme, settings: ReaderStyleSetting
       fontWeight: '500'
     },
     menuChevron: { alignItems: 'center', justifyContent: 'center', width: 24, height: 24, opacity: 0.6 },
-    header: {
-      paddingVertical: 0,
-      paddingLeft: 0,
-      paddingRight: 0,
-      justifyContent: 'center',
-      minHeight: 48,
-      borderRadius: readerRadii.control
-    },
+    trailing: { flexDirection: 'row', alignItems: 'center', gap: 6, maxWidth: '52%' },
+    trailingValue: { flexShrink: 1, textAlign: 'right' },
     row: { marginVertical: 0, alignItems: 'center', gap: 10 },
     content: { paddingLeft: 0, paddingVertical: 0, minWidth: 0 },
     body: { gap: 10, paddingTop: 8 },
@@ -149,6 +149,7 @@ export function MenuButton({
   icon,
   label,
   nested = false,
+  prominent = false,
   testID,
   value = '',
   expanded,
@@ -157,15 +158,17 @@ export function MenuButton({
   accessibilityLabel?: string;
   busy?: boolean;
   disabled?: boolean;
-  icon: LucideIcon;
+  icon?: LucideIcon;
   label: string;
   nested?: boolean;
+  prominent?: boolean;
   testID?: string;
   value?: string;
   expanded?: boolean;
   onPress: () => void;
 }) {
-  const { styles, theme } = useReaderThemeStyles(createExpandableStyles);
+  const { styles, theme, settings } = useReaderThemeStyles(createExpandableStyles);
+  const inlineValue = Boolean(value) && !nested && PixelRatio.getFontScale() * settings.fontScale <= 1.25;
   const Icon = icon;
   const nestedActionColor = theme.primary;
   const isDisabled = disabled || busy;
@@ -176,17 +179,17 @@ export function MenuButton({
       accessibilityLabel={accessibilityLabel}
       accessibilityState={{ disabled: isDisabled, expanded, busy }}
       disabled={isDisabled}
-      style={[styles.menuButton, isDisabled && styles.disabled]}
+      style={[styles.menuButton, nested && styles.nestedButton, isDisabled && styles.disabled]}
       containerStyle={styles.row}
       contentStyle={styles.content}
       title={label}
-      titleStyle={[styles.menuLabel, nested && { color: nestedActionColor }]}
+      titleStyle={[prominent ? styles.panelTitle : styles.menuLabel, nested && { color: nestedActionColor }]}
       titleNumberOfLines={0}
-      description={value || undefined}
+      description={inlineValue ? undefined : value || undefined}
       descriptionStyle={styles.meta}
       descriptionNumberOfLines={2}
       left={
-        nested
+        nested || !Icon
           ? undefined
           : () => (
               <View style={styles.menuIcon}>
@@ -195,19 +198,26 @@ export function MenuButton({
             )
       }
       right={() => (
-        <View style={styles.menuChevron}>
-          {busy ? (
-            <ActivityIndicator size={16} color={theme.primary} accessible={false} />
-          ) : expanded === undefined ? (
-            <ChevronRight
-              size={18}
-              color={nested ? nestedActionColor : theme.muted}
-              strokeWidth={1.8}
-              accessible={false}
-            />
-          ) : (
-            <DisclosureChevron expanded={expanded} color={nested ? nestedActionColor : theme.muted} />
-          )}
+        <View style={styles.trailing}>
+          {inlineValue ? (
+            <Text numberOfLines={2} style={[styles.meta, styles.trailingValue]}>
+              {value}
+            </Text>
+          ) : null}
+          <View style={styles.menuChevron}>
+            {busy ? (
+              <ActivityIndicator size={16} color={theme.primary} accessible={false} />
+            ) : expanded === undefined ? (
+              <ChevronRight
+                size={18}
+                color={nested ? nestedActionColor : theme.muted}
+                strokeWidth={1.8}
+                accessible={false}
+              />
+            ) : (
+              <DisclosureChevron expanded={expanded} color={nested ? nestedActionColor : theme.muted} />
+            )}
+          </View>
         </View>
       )}
       onPress={onPress}
@@ -234,39 +244,18 @@ export function ExpandablePanel({
   title: string;
   onExpandedChange: (expanded: boolean) => void;
 }) {
-  const { styles, theme } = useReaderThemeStyles(createExpandableStyles);
-  const Icon = icon;
+  const { styles } = useReaderThemeStyles(createExpandableStyles);
 
   return (
     <View style={quiet ? styles.groupList : styles.group}>
-      <List.Item
+      <MenuButton
         testID={testID}
         accessibilityLabel={expanded ? `收起${title}` : `展开${title}`}
-        accessibilityRole="button"
-        accessibilityState={{ expanded }}
-        style={styles.header}
-        containerStyle={styles.row}
-        contentStyle={styles.content}
-        title={title}
-        titleStyle={quiet ? styles.menuLabel : styles.panelTitle}
-        titleNumberOfLines={0}
-        description={meta || undefined}
-        descriptionStyle={styles.meta}
-        descriptionNumberOfLines={2}
-        left={
-          Icon
-            ? () => (
-                <View style={styles.menuIcon}>
-                  <Icon size={19} color={theme.primary} strokeWidth={1.8} accessible={false} />
-                </View>
-              )
-            : undefined
-        }
-        right={() => (
-          <View style={styles.menuChevron}>
-            <DisclosureChevron expanded={expanded} color={theme.muted} />
-          </View>
-        )}
+        expanded={expanded}
+        icon={icon}
+        label={title}
+        prominent={!quiet}
+        value={meta}
         onPress={() => onExpandedChange(!expanded)}
       />
       <ExpandableContent expanded={expanded} style={styles.body}>

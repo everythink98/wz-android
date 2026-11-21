@@ -1,7 +1,7 @@
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import type { ReactNode } from 'react';
-import { StyleSheet, View } from 'react-native';
-import { ActivityIndicator, Button, IconButton as PaperIconButton } from 'react-native-paper';
+import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { ActivityIndicator, IconButton as PaperIconButton, TouchableRipple } from 'react-native-paper';
 import type { LucideIcon } from 'lucide-react-native';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import {
@@ -23,24 +23,34 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       margin: 0,
       borderRadius: readerRadii.pill,
       backgroundColor: theme.dark ? theme.primary : theme.primaryStrong,
-      borderColor: alphaColor(theme.primary, 0.22),
+      borderColor: alphaColor(theme.ink, theme.dark ? 0.16 : 0.1),
       borderWidth: StyleSheet.hairlineWidth,
-      elevation: 3,
+      elevation: 2,
       shadowColor: theme.primaryStrong,
       shadowOffset: { width: 0, height: 3 },
-      shadowOpacity: 0.16,
+      shadowOpacity: 0.12,
       shadowRadius: 8
     },
     button: {
+      minWidth: 36,
+      flexShrink: 1,
       borderRadius: readerRadii.control,
       borderWidth: StyleSheet.hairlineWidth,
-      borderColor: alphaColor(theme.ink, theme.dark ? 0.09 : 0.06),
+      borderColor: alphaColor(theme.ink, theme.dark ? 0.16 : 0.1),
       backgroundColor: theme.surface2
     },
-    content: { minHeight: 36, paddingHorizontal: 15 },
+    content: {
+      minHeight: 36,
+      paddingHorizontal: 15,
+      paddingVertical: 5,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6
+    },
     largeContent: { minHeight: 42, paddingHorizontal: 18 },
     compactContent: { minHeight: 32, paddingHorizontal: 13 },
-    iconContent: { columnGap: 6 },
+    trailingIconContent: { flexDirection: 'row-reverse' },
     iconOnly: { width: 48, height: 48, margin: 0, borderRadius: 0, backgroundColor: 'transparent' },
     tiny: { alignSelf: 'flex-start', backgroundColor: theme.mist, borderColor: 'transparent' },
     ghost: { backgroundColor: 'transparent', borderColor: 'transparent' },
@@ -58,8 +68,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     },
     active: { backgroundColor: theme.mist, borderColor: 'transparent' },
     disabled: { opacity: 0.5 },
-    disabledNeutral: { backgroundColor: theme.surface2, borderColor: 'transparent', opacity: 0.78 },
-    loadingBusy: { opacity: 0.88 },
+    disabledNeutral: { backgroundColor: theme.surface2 },
     text: {
       fontFamily: fontFamilyValue(settings.fontFamily),
       fontSize: fontSize(13),
@@ -67,13 +76,13 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       lineHeight: fontSize(18),
       includeFontPadding: false,
       letterSpacing: 0,
-      marginHorizontal: 0,
-      marginVertical: 0
+      flexShrink: 1,
+      textAlign: 'center'
     },
     textEmphasis: { fontWeight: '600' },
     textLarge: { fontSize: fontSize(14), lineHeight: fontSize(20), fontWeight: '600' },
     textCompact: { fontSize: fontSize(12), lineHeight: fontSize(16), marginVertical: 0 },
-    iconSlot: { alignItems: 'center', justifyContent: 'center', marginLeft: -6 },
+    iconSlot: { alignItems: 'center', justifyContent: 'center' },
     backdrop: { borderRadius: readerRadii.control, overflow: 'hidden' },
     floatingBackdrop: { width: 52, height: 52, borderRadius: readerRadii.pill, overflow: 'hidden' },
     transparent: { backgroundColor: 'transparent' }
@@ -154,8 +163,7 @@ export function IconButton({
   onPress: () => void;
 }) {
   const { styles, theme } = useReaderThemeStyles(createStyles);
-  const color = active ? activeColor || theme.primary : theme.ink;
-  const labelColor = active ? theme.primary : tiny ? theme.muted : theme.ink;
+  const color = active ? activeColor || (theme.dark ? theme.primary : theme.primaryStrong) : theme.ink;
   const size = iconSize ?? (tiny ? 16 : iconOnly ? 20 : 18);
   const press = () => {
     recordUserInteraction();
@@ -177,108 +185,101 @@ export function IconButton({
         icon={icon}
         iconColor={color}
         size={size}
-        hitSlop={TOUCH_HIT_SLOP}
         style={[styles.iconOnly, disabled && styles.disabled]}
         onPress={press}
       />
     );
   return (
-    <Button
+    <TextButton
       testID={testID}
-      collapsableChildren={false}
-      accessibilityLabel={label}
-      accessibilityState={state}
-      disabled={state.disabled}
+      label={label}
+      icon={Icon}
+      iconSize={size}
+      activeColor={activeColor}
+      selected={active}
+      disabled={disabled}
       loading={loading}
-      mode="text"
-      compact
-      icon={icon}
-      textColor={labelColor}
-      hitSlop={compact || tiny ? COMPACT_BUTTON_HIT_SLOP : TOUCH_HIT_SLOP}
-      style={[
-        styles.button,
-        tiny && styles.tiny,
-        ghost && styles.ghost,
-        active && styles.active,
-        disabled && styles.disabled
-      ]}
-      contentStyle={[styles.content, (compact || tiny) && styles.compactContent, styles.iconContent]}
-      labelStyle={[styles.text, (compact || tiny) && styles.textCompact, { color: labelColor }]}
-      onPress={press}
-    >
-      {label}
-    </Button>
+      compact={compact}
+      tiny={tiny}
+      variant={ghost ? 'ghost' : 'default'}
+      onPress={onPress}
+    />
   );
 }
 
-export function AppButton({
-  accessibilityLabel,
-  backdrop,
-  compact = false,
-  disabled = false,
-  icon: Icon,
-  label,
-  loading = false,
-  minWidth,
-  size = 'md',
-  testID,
-  tiny = false,
-  variant = 'default',
-  onPress
-}: {
+type AppButtonProps = {
+  accessibilityHint?: string;
   accessibilityLabel?: string;
   backdrop?: ReactNode;
   compact?: boolean;
   disabled?: boolean;
+  expanded?: boolean;
   icon?: LucideIcon;
   label: string;
   loading?: boolean;
   minWidth?: number;
+  selected?: boolean;
   size?: 'md' | 'lg';
+  style?: StyleProp<ViewStyle>;
   testID?: string;
   tiny?: boolean;
+  trailingIcon?: boolean;
   variant?: 'default' | 'danger' | 'ghost' | 'primary' | 'solid';
   onPress: () => void;
-}) {
+};
+
+export function AppButton(props: AppButtonProps) {
+  return <TextButton {...props} />;
+}
+
+function TextButton({
+  accessibilityHint,
+  accessibilityLabel,
+  activeColor,
+  backdrop,
+  compact = false,
+  disabled = false,
+  expanded,
+  icon: Icon,
+  iconSize,
+  label,
+  loading,
+  minWidth,
+  selected,
+  size = 'md',
+  style,
+  testID,
+  tiny = false,
+  trailingIcon = false,
+  variant = 'default',
+  onPress
+}: AppButtonProps & { activeColor?: string; iconSize?: number }) {
   const { styles, theme } = useReaderThemeStyles(createStyles);
-  const isDisabled = disabled || loading;
-  const mutedDisabled = disabled && !loading && !backdrop && (variant === 'solid' || variant === 'primary');
-  const color = mutedDisabled
-    ? theme.muted
-    : variant === 'solid'
-      ? theme.onPrimary
-      : variant === 'danger'
-        ? theme.danger
-        : variant === 'primary'
-          ? theme.dark
-            ? theme.primary
-            : theme.primaryStrong
-          : theme.ink;
-  const iconSize = compact || tiny ? 14 : size === 'lg' ? 17 : 15;
-  const hasLeading = Boolean(Icon || loading);
+  const busy = loading === true;
+  const isDisabled = disabled || busy;
+  const mutedDisabled = disabled && !busy;
+  const accent = theme.dark ? theme.primary : theme.primaryStrong;
+  const color =
+    mutedDisabled || (tiny && variant === 'default' && !selected)
+      ? theme.muted
+      : variant === 'solid'
+        ? theme.onPrimary
+        : variant === 'danger'
+          ? theme.danger
+          : variant === 'primary' || selected
+            ? accent
+            : theme.ink;
+  const glyphSize = iconSize ?? (compact || tiny ? 14 : size === 'lg' ? 17 : 15);
+  const glyphColor = selected && activeColor && !mutedDisabled ? activeColor : color;
   const button = (
-    <Button
+    <TouchableRipple
       testID={testID}
       collapsableChildren={false}
-      accessibilityLabel={accessibilityLabel || label}
-      accessibilityState={{ disabled: isDisabled, busy: loading }}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel ?? label}
+      accessibilityHint={accessibilityHint}
+      accessibilityState={{ disabled: isDisabled, busy, selected, expanded }}
       disabled={isDisabled}
-      icon={
-        hasLeading
-          ? () => (
-              <View style={[styles.iconSlot, { width: iconSize, height: iconSize }]}>
-                {loading ? (
-                  <ActivityIndicator accessible={false} size={iconSize} color={color} />
-                ) : Icon ? (
-                  <Icon size={iconSize} color={color} strokeWidth={1.8} accessible={false} />
-                ) : null}
-              </View>
-            )
-          : undefined
-      }
-      mode="text"
-      compact
-      textColor={color}
       hitSlop={compact || tiny ? COMPACT_BUTTON_HIT_SLOP : TOUCH_HIT_SLOP}
       style={[
         styles.button,
@@ -288,29 +289,54 @@ export function AppButton({
         variant === 'solid' && styles.solid,
         variant === 'danger' && styles.danger,
         variant === 'ghost' && styles.ghost,
+        selected && styles.active,
+        mutedDisabled &&
+          (variant === 'solid' || variant === 'primary' || variant === 'danger') &&
+          styles.disabledNeutral,
         backdrop ? styles.transparent : undefined,
-        mutedDisabled ? styles.disabledNeutral : loading ? styles.loadingBusy : isDisabled && styles.disabled
-      ]}
-      contentStyle={[
-        styles.content,
-        size === 'lg' && styles.largeContent,
-        (compact || tiny) && styles.compactContent,
-        hasLeading && styles.iconContent
-      ]}
-      labelStyle={[
-        styles.text,
-        (variant === 'solid' || variant === 'primary') && styles.textEmphasis,
-        size === 'lg' && styles.textLarge,
-        (compact || tiny) && styles.textCompact,
-        { color }
+        style
       ]}
       onPress={() => {
         recordUserInteraction();
         onPress();
       }}
     >
-      {label}
-    </Button>
+      <View
+        style={[
+          styles.content,
+          size === 'lg' && styles.largeContent,
+          (compact || tiny) && styles.compactContent,
+          trailingIcon && styles.trailingIconContent
+        ]}
+      >
+        {Icon || loading !== undefined ? (
+          <View style={[styles.iconSlot, { width: glyphSize, height: glyphSize }]}>
+            {busy ? (
+              <ActivityIndicator accessible={false} size={glyphSize} color={color} />
+            ) : Icon ? (
+              <Icon
+                size={glyphSize}
+                color={glyphColor}
+                fill={selected ? glyphColor : 'none'}
+                strokeWidth={1.8}
+                accessible={false}
+              />
+            ) : null}
+          </View>
+        ) : null}
+        <Text
+          style={[
+            styles.text,
+            (variant === 'solid' || variant === 'primary') && styles.textEmphasis,
+            size === 'lg' && styles.textLarge,
+            (compact || tiny) && styles.textCompact,
+            { color }
+          ]}
+        >
+          {label}
+        </Text>
+      </View>
+    </TouchableRipple>
   );
   return backdrop ? (
     <View>

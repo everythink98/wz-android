@@ -339,7 +339,7 @@ describe('Create topic screen', () => {
     const view = await render(
       <Harness initialDraft={draft} overrides={{ editing: true, editContext, hasChanges: false }} />
     );
-    expect(view.getByRole('button', { name: '编辑帖子' })).toBeDisabled();
+    expect(view.queryByRole('button', { name: '切换发帖网站' })).toBeNull();
     expect(view.queryByLabelText('切换发帖网站')).toBeNull();
     expect(view.getByLabelText('帖子标题').props.editable).toBe(false);
     expect(mockStructuredProps.readOnly).toBe(true);

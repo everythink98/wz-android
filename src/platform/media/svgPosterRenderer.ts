@@ -10,7 +10,7 @@ export async function fetchBoundedSvgDocument(
 
 export async function renderSvgPoster(
   _svgBase64: string,
-  _cacheKey: string,
+  _cacheKey: string | null,
   _timeoutMs: number
 ): Promise<SvgPosterRenderResult> {
   throw new Error('SVG 海报渲染器不可用');

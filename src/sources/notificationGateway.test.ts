@@ -518,6 +518,21 @@ describe('notification gateway', () => {
     expect(onSessionExpired).toHaveBeenCalledTimes(1);
   });
 
+  it('ends a body-only LINUX DO verification response without retrying the private read or probing the account', async () => {
+    const requestAccountRecheck = vi.fn(async () => true);
+    const fetcher = vi.fn(
+      async () =>
+        new Response('<title>Just a moment...</title>', { status: 401, headers: { 'content-type': 'text/html' } })
+    );
+    const gateway = createNotificationGateway({
+      requestAccountRecheck,
+      readAccess: () => ({ identityKey: 'linuxdo:7', userId: '7', fetcher })
+    });
+    await expect(gateway.listPage('linuxdo')).rejects.toMatchObject({ reason: 'cloudflare' });
+    expect(requestAccountRecheck).not.toHaveBeenCalled();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it.each([403, 404])('requests account reconciliation for an explicit login-required HTTP %s', async (status) => {
     const requestAccountRecheck = vi.fn();
     const onSessionExpired = vi.fn();

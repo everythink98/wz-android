@@ -245,10 +245,22 @@ export async function getLinuxDoUserReplies(
   );
 }
 
+export class LinuxDoLoggedOutError extends Error {
+  readonly source = 'linuxdo';
+  readonly kind = 'login-expired';
+  readonly loginRequired = true;
+  readonly reason = 'expired';
+
+  constructor(readonly accountEvidence: 'session-404' | 'null-user' | 'server-logged-out') {
+    super('linux.do 登录已失效，请重新登录');
+  }
+}
+
 export async function getLinuxDoCurrentUserIdentity(options: LinuxDoCurrentUserOptions = {}): Promise<UserIdentity> {
   options = withDefaultBrowserFetchIntent(options, 'account', 'background');
+  const currentSessionUrl = `${BASE_URL}/session/current.json`;
   const response = await fetchWithTimeout(
-    `${BASE_URL}/session/current.json`,
+    currentSessionUrl,
     withBrowserFetchIntent(
       {
         headers: {
@@ -266,7 +278,8 @@ export async function getLinuxDoCurrentUserIdentity(options: LinuxDoCurrentUserO
   const text = await response.text();
   const accountTrace = beginDiagnosticTrace('session', 'check', { source: 'linuxdo', status: response.status });
   const accountEvidence = (
-    evidence: 'current-user' | 'session-404' | 'null-user' | 'challenge' | 'http-error' | 'invalid-response'
+    evidence:
+      LinuxDoLoggedOutError['accountEvidence'] | 'current-user' | 'challenge' | 'http-error' | 'invalid-response'
   ) => {
     finishDiagnosticTrace(accountTrace, evidence === 'current-user' ? 'success' : 'blocked', {
       source: 'linuxdo',
@@ -274,21 +287,22 @@ export async function getLinuxDoCurrentUserIdentity(options: LinuxDoCurrentUserO
       accountEvidence: evidence
     });
   };
+  const noUser = (evidence: LinuxDoLoggedOutError['accountEvidence']) => {
+    accountEvidence(evidence);
+    return new LinuxDoLoggedOutError(evidence);
+  };
   const data = await proveForumReadResponse(response, () => {
     if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
       accountEvidence('challenge');
-      throw new LinuxDoCloudflareError();
+      throw new LinuxDoCloudflareError(response);
     }
-    if (response.status === 404) {
-      accountEvidence('session-404');
-      throw Object.assign(new Error('linux.do 登录已失效，请重新登录'), {
-        source: 'linuxdo' as const,
-        kind: 'login-expired' as const,
-        accountEvidence: 'session-404' as const,
-        loginRequired: true,
-        reason: 'expired' as const
-      });
+    if (response.url && response.url.split(/[?#]/, 1)[0] !== currentSessionUrl) {
+      accountEvidence('invalid-response');
+      throw new Error('linux.do 当前用户响应地址与账号接口不符');
     }
+    if (response.status === 404 && !text.trim()) throw noUser('session-404');
+    const unauthorized = response.status === 401 || response.status === 403 || response.status === 404;
+    if (unauthorized && response.headers.get('Discourse-Logged-Out')?.trim() === '1') throw noUser('server-logged-out');
     let parsed: unknown;
     try {
       parsed = text ? JSON.parse(text) : {};
@@ -297,20 +311,14 @@ export async function getLinuxDoCurrentUserIdentity(options: LinuxDoCurrentUserO
       throw new Error('linux.do 当前用户返回内容格式不正确');
     }
     if (!response.ok) {
+      if (unauthorized && isRecord(parsed) && parsed.error_type === 'not_logged_in') throw noUser('server-logged-out');
       accountEvidence('http-error');
       throw new Error(linuxDoErrorText(parsed, `HTTP ${response.status}`));
     }
     return parsed;
   });
   if (isRecord(data) && (data.current_user === null || data.user === null)) {
-    accountEvidence('null-user');
-    throw Object.assign(new Error('linux.do 登录已失效，请重新登录'), {
-      source: 'linuxdo' as const,
-      kind: 'login-expired' as const,
-      accountEvidence: 'null-user' as const,
-      loginRequired: true,
-      reason: 'expired' as const
-    });
+    throw noUser('null-user');
   }
   const currentUser = isRecord(data) && isRecord(data.current_user) ? data.current_user : {};
   const user = isRecord(data) && isRecord(data.user) ? data.user : {};

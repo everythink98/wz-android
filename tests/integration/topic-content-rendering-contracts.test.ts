@@ -5,6 +5,7 @@ import type { Reply } from '@/domain/forum/models';
 import {
   compileForumContent,
   prepareForumContentHtml,
+  prepareSanitizedForumContent,
   requirePreparedForumContent
 } from '@/domain/forum/topicContentSplit';
 import { imagePreviewDescriptorsForReplies } from '@/features/topic/model/replyListModel';
@@ -66,6 +67,57 @@ describe('topic content rendering contracts', () => {
         });
       }
     }
+  });
+
+  it.each(['opening', 'reply'] as const)(
+    'keeps consecutive Discourse lightboxes a single block break apart in %s',
+    (role) => {
+      const lightbox = (name: string) =>
+        `<div class="lightbox-wrapper"><a class="lightbox" href="https://img.example/${name}-original.jpg">` +
+        `<img src="https://img.example/${name}.jpg" alt="${name}" width="640" height="360"></a></div>`;
+      const prepare = (html: string) => prepareLinuxDoContent(html, [], { role, topicId: '42' }).preparedContent;
+      const markup = (separator: string) => `<p>${lightbox('first')}${separator}${lightbox('second')}</p>`;
+      const adjacent = prepare(markup(''));
+      const singleBreak = prepare(markup('\n<br>\n'));
+
+      expect(singleBreak.contentPlan.rows).toEqual(adjacent.contentPlan.rows);
+      expect(singleBreak.contentPlan.previewImages).toEqual(adjacent.contentPlan.previewImages);
+      expect(singleBreak.contentPlan.previewImages).toHaveLength(2);
+
+      for (const separator of ['<br><br>', '<br id="image-break">', '<p>配图说明</p><br>']) {
+        const rendered = prepare(markup(separator)).contentPlan.rows.flatMap((row) =>
+          'html' in row ? [row.html] : []
+        );
+        expect(rendered.join('')).toContain(separator);
+      }
+    }
+  );
+
+  it.each([
+    ['nodeseek', 'opening', false],
+    ['v2ex', 'reply', false],
+    ['yaohuo', 'reply', true]
+  ] as const)('keeps %s stacked images on separate blocks without an extra blank line', (source, role, linked) => {
+    const image = (name: string) => {
+      const src = `https://img.example/${name}.jpg`;
+      const markup = `<img src="${src}" alt="${name}" width="400" height="240">`;
+      return linked ? `<a href="${src}">${markup}</a>` : markup;
+    };
+    const render = (separator: string) => {
+      const prepared = prepareSanitizedForumContent(`<p>${image('first')}${separator}${image('second')}</p>`, {
+        baseUrl: 'https://forum.example/',
+        role,
+        source
+      });
+      return parseForumContentHtml(
+        prepared.contentPlan.rows.flatMap((row) => ('html' in row ? [row.html] : [])).join('')
+      );
+    };
+    const adjacent = render('<br>');
+    expect(adjacent.querySelectorAll('img').map((element) => element.getAttribute('alt'))).toEqual(['first', 'second']);
+    expect(adjacent.querySelectorAll('br')).toHaveLength(0);
+    expect(render('<br><br>').querySelectorAll('br')).toHaveLength(2);
+    expect(render('说明文字<br>').querySelectorAll('br')).toHaveLength(1);
   });
 
   it.each(['opening', 'reply'] as const)('preserves authored paragraph spacing and breaks in %s content', (role) => {

@@ -1680,7 +1680,8 @@ describe('Search state', () => {
     const onSearch = jest.fn<(queryOverride?: string) => void>();
     const view = await renderSearchScreen({ busy: true, onSearch });
 
-    expect(view.getByText('搜索中')).toBeTruthy();
+    expect(view.getByRole('status', { name: '搜索中', busy: true })).toBeTruthy();
+    expect(view.queryByText('搜索中')).toBeNull();
     expect(view.getByTestId('search-list').props.accessibilityLiveRegion).toBe('polite');
     expect(view.getByTestId('search-list').props.accessibilityState.busy).toBe(true);
     expect(view.getByLabelText('提交搜索').props.accessibilityState.disabled).toBe(true);
@@ -2061,6 +2062,9 @@ describe('Search state', () => {
       width: 48,
       height: 48
     });
+    const selectedSegment = view.getByRole('radio', { name: '最新', checked: true });
+    expect(selectedSegment).toHaveStyle({ backgroundColor: 'rgba(22, 119, 255, 0.10)' });
+    expect(within(selectedSegment).getByText('最新')).toHaveStyle({ color: '#0958D9' });
     await fireEvent.press(view.getByText('相关'));
     await fireEvent.press(view.getByText('确认筛选'));
     expect(view.getByLabelText('打开搜索筛选，当前相关').props.accessibilityState.selected).toBe(true);
@@ -2147,7 +2151,7 @@ describe('Search state', () => {
     await fireEvent.press(view.getByLabelText('选择标签'));
     await waitFor(() => expect(view.getByLabelText('标签 人工智能')).toBeTruthy());
     await fireEvent.press(view.getByLabelText('标签 人工智能'));
-    await fireEvent.press(view.getByLabelText('返回筛选'));
+    await fireEvent.press(view.getByRole('button', { name: '确认标签' }));
     await fireEvent.press(view.getByLabelText('展开更多筛选'));
     await fireEvent.press(view.getByLabelText('选择作者'));
     await fireEvent.changeText(view.getByLabelText('搜索作者'), 'alice');
@@ -2178,7 +2182,7 @@ describe('Search state', () => {
     expect(view.getByLabelText('打开搜索筛选，当前标题 · 开发调优 · 人工智能 · 山月 · 7天')).toBeTruthy();
   });
 
-  it('returns from a filter picker with draft values and applies only on confirmation', async () => {
+  it('completes picker edits locally and applies them only on the filter overview', async () => {
     const onSearchFilterApply = jest.fn<(source: Source, filter: SourceSearchFilter) => void>();
     const view = await renderSearchScreen({
       searchSource: 'linuxdo',
@@ -2191,18 +2195,27 @@ describe('Search state', () => {
     await fireEvent.press(view.getByLabelText('选择标签'));
     expect(view.getAllByTestId('modal-sheet')).toHaveLength(1);
     expect(view.queryByText('搜索范围')).toBeNull();
-    expect(view.getByText('确认筛选')).toBeTruthy();
-    expect(view.getByText('重置')).toBeTruthy();
+    expect(view.queryByRole('button', { name: '确认筛选' })).toBeNull();
+    expect(view.queryByRole('button', { name: '重置' })).toBeNull();
     await waitFor(() => expect(view.getByLabelText('标签 人工智能')).toBeTruthy());
     await fireEvent.press(view.getByLabelText('标签 人工智能'));
-    await fireEvent.press(view.getByLabelText('返回筛选'));
+    await fireEvent.press(view.getByRole('button', { name: '确认标签' }));
 
     expect(view.getByLabelText('选择标签').props.accessibilityValue.text).toBe('人工智能');
+    await fireEvent.press(view.getByLabelText('选择标签'));
+    await fireEvent.press(view.getByRole('checkbox', { name: '标签 人工智能', checked: true }));
+    await fireEvent.press(view.getByRole('button', { name: '取消' }));
+    expect(view.getByLabelText('选择标签').props.accessibilityValue.text).toBe('人工智能');
+
+    await fireEvent.press(view.getByLabelText('选择时间范围'));
+    expect(view.queryByRole('button', { name: '确认筛选' })).toBeNull();
+    expect(view.queryByRole('button', { name: '取消' })).toBeNull();
+    await fireEvent.press(view.getByRole('radio', { name: '7天' }));
     expect(onSearchFilterApply).not.toHaveBeenCalled();
-    await fireEvent.press(view.getByText('确认筛选'));
+    await fireEvent.press(view.getByRole('button', { name: '确认筛选' }));
     expect(onSearchFilterApply).toHaveBeenCalledWith(
       'linuxdo',
-      expect.objectContaining({ scope: 'title', tags: ['人工智能'] })
+      expect.objectContaining({ scope: 'title', tags: ['人工智能'], timeRange: 'week' })
     );
   });
 
@@ -2281,6 +2294,7 @@ describe('Search state', () => {
     expect(view.getByRole('radio', { name: '节点 冷门节点', checked: true })).toBeTruthy();
     expect(view.getByLabelText('搜索节点').props.value).toBe('');
     expect(onLoadV2exNodes).toHaveBeenCalledTimes(2);
+    await fireEvent.press(view.getByTestId('search-filter-back'));
     await fireEvent.press(view.getByText('确认筛选'));
     expect(onSearchFilterApply).toHaveBeenCalledWith('v2ex', expect.objectContaining({ node: 'rare_slug' }));
   });
@@ -2294,7 +2308,7 @@ describe('Search state', () => {
     await fireEvent.changeText(view.getByLabelText('搜索标签'), '任意手打');
     await waitFor(() => expect(view.getByLabelText('标签 人工智能')).toBeTruthy());
     await fireEvent.press(view.getByLabelText('标签 人工智能'));
-    await fireEvent.press(view.getByLabelText('返回筛选'));
+    await fireEvent.press(view.getByRole('button', { name: '确认标签' }));
     await fireEvent.press(view.getByText('确认筛选'));
 
     expect(view.getByLabelText('打开搜索筛选，当前人工智能')).toBeTruthy();
@@ -2315,7 +2329,7 @@ describe('Search state', () => {
     expect(onSearchDiscourseTags).toHaveBeenCalledTimes(1);
     await fireEvent.press(view.getByRole('checkbox', { name: '标签 OpenAI', checked: false }));
     await fireEvent.press(view.getByRole('checkbox', { name: '标签 软件开发', checked: true }));
-    await fireEvent.press(view.getByLabelText('返回筛选'));
+    await fireEvent.press(view.getByRole('button', { name: '确认标签' }));
     await fireEvent.press(view.getByLabelText('选择标签'));
     expect(await view.findByRole('checkbox', { name: '标签 OpenAI', checked: true })).toBeTruthy();
     expect(await view.findByText('34 个主题')).toBeTruthy();
@@ -2428,7 +2442,7 @@ describe('Search state', () => {
       await fireEvent.press(view.getByLabelText('展开更多筛选'));
       await fireEvent.press(view.getByLabelText('设置帖子数范围'));
       await fireEvent.changeText(view.getByTestId('search-filter-input-minPosts'), '3');
-      await fireEvent.press(view.getByLabelText('返回筛选'));
+      await fireEvent.press(view.getByRole('button', { name: '确认范围' }));
       await fireEvent.press(view.getByLabelText('选择作者'));
       await act(() =>
         DeviceEventEmitter.emit('keyboardDidShow', {
@@ -2449,7 +2463,7 @@ describe('Search state', () => {
       await fireEvent.press(view.getByLabelText('选择标签'));
       await waitFor(() => expect(view.getByLabelText('标签 人工智能')).toBeTruthy());
       await fireEvent.press(view.getByLabelText('标签 人工智能'));
-      await fireEvent.press(view.getByLabelText('返回筛选'));
+      await fireEvent.press(view.getByRole('button', { name: '确认标签' }));
       await fireEvent.press(view.getAllByLabelText('关闭筛选')[1]);
       await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
       expect(view.queryByLabelText('移除标签 人工智能')).toBeNull();
@@ -2637,7 +2651,7 @@ describe('Search state', () => {
     await fireEvent.press(view.getByLabelText('选择标签'));
     await waitFor(() => expect(view.getByLabelText('标签 人工智能')).toBeTruthy());
     await fireEvent.press(view.getByLabelText('标签 人工智能'));
-    await fireEvent.press(view.getByLabelText('返回筛选'));
+    await fireEvent.press(view.getByRole('button', { name: '确认标签' }));
     await fireEvent.press(view.getByLabelText('展开更多筛选'));
     await fireEvent.press(view.getByLabelText('选择作者'));
     await fireEvent.changeText(view.getByLabelText('搜索作者'), 'alice');
@@ -2696,28 +2710,28 @@ describe('Search state', () => {
     await fireEvent.press(view.getByLabelText('标签 人工智能'));
     await waitFor(() => expect(view.getByLabelText('标签 快问快答')).toBeTruthy());
     await fireEvent.press(view.getByLabelText('标签 快问快答'));
-    await fireEvent.press(view.getByLabelText('返回筛选'));
+    await fireEvent.press(view.getByRole('button', { name: '确认标签' }));
     await fireEvent.press(view.getByLabelText('匹配全部标签'));
     await fireEvent.press(view.getByLabelText('展开更多筛选'));
     await fireEvent.press(view.getByLabelText('选择回访范围'));
     await fireEvent.press(view.getByLabelText('我读过'));
     await fireEvent.press(view.getByLabelText('我赞过'));
-    await fireEvent.press(view.getByLabelText('返回筛选'));
+    await fireEvent.press(view.getByRole('button', { name: '确认回访范围' }));
     await fireEvent.press(view.getByLabelText('选择话题状态'));
     await fireEvent.press(view.getByText('已解决'));
     await fireEvent.press(view.getByLabelText('设置精确日期'));
     await fireEvent.press(view.getByText('之前'));
     await fireEvent.press(view.getByLabelText('选择精确日期'));
     await fireEvent.press(view.getByLabelText('确认日期 2026-07-01'));
-    await fireEvent.press(view.getByLabelText('返回筛选'));
+    await fireEvent.press(view.getByRole('button', { name: '完成' }));
     await fireEvent.press(view.getByLabelText('设置帖子数范围'));
     await fireEvent.changeText(view.getByLabelText('帖子数最小值'), '2');
     await fireEvent.changeText(view.getByLabelText('帖子数最大值'), '20');
-    await fireEvent.press(view.getByLabelText('返回筛选'));
+    await fireEvent.press(view.getByRole('button', { name: '确认范围' }));
     await fireEvent.press(view.getByLabelText('设置浏览量范围'));
     await fireEvent.changeText(view.getByLabelText('浏览量最小值'), '100');
     await fireEvent.changeText(view.getByLabelText('浏览量最大值'), '1000');
-    await fireEvent.press(view.getByLabelText('返回筛选'));
+    await fireEvent.press(view.getByRole('button', { name: '确认范围' }));
     await fireEvent.press(view.getByLabelText('有专家回应'));
     await fireEvent.press(view.getByText('确认筛选'));
 
@@ -2750,7 +2764,7 @@ describe('Search state', () => {
     await fireEvent.press(view.getByLabelText('确认日期 2026-07-01'));
 
     expect(view.getByLabelText('选择精确日期').props.accessibilityValue.text).toBe('2026-07-01');
-    await fireEvent.press(view.getByLabelText('返回筛选'));
+    await fireEvent.press(view.getByRole('button', { name: '完成' }));
     expect(view.getByLabelText('选择时间范围').props.accessibilityValue.text).toBe('2026-07-01 之后');
     await fireEvent.press(view.getByLabelText('选择时间范围'));
     expect(view.getByRole('radio', { name: '不限时间' }).props.accessibilityState.checked).toBe(false);
@@ -2779,11 +2793,11 @@ describe('Search state', () => {
   });
 
   it.each([
-    { name: '帖子数', page: 'posts', min: 'minPosts', max: 'maxPosts', confirmFrom: null },
-    { name: '浏览量', page: 'views', min: 'minViews', max: 'maxViews', confirmFrom: '选择话题状态' }
+    { name: '帖子数', page: 'posts', min: 'minPosts', max: 'maxPosts' },
+    { name: '浏览量', page: 'views', min: 'minViews', max: 'maxViews' }
   ] as const)(
     'returns to the invalid $name range and keeps other draft values when correcting it',
-    async ({ name, page, min, max, confirmFrom }) => {
+    async ({ name, page, min, max }) => {
       const onSearchFilterApply = jest.fn<(source: Source, filter: SourceSearchFilter) => void>();
       const view = await renderSearchScreen({ searchSource: 'linuxdo', onSearchFilterApply });
       const minField = `${name}最小值`;
@@ -2798,8 +2812,7 @@ describe('Search state', () => {
       expect(view.getByLabelText(minField).props.value).toBe('');
       await fireEvent.changeText(view.getByLabelText(minField), '20');
       await fireEvent.changeText(view.getByLabelText(maxField), '2');
-      await fireEvent.press(view.getByTestId('search-filter-back'));
-      if (confirmFrom) await fireEvent.press(view.getByLabelText(confirmFrom));
+      await fireEvent.press(view.getByRole('button', { name: '确认范围' }));
       await fireEvent.press(view.getByText('确认筛选'));
 
       expect(view.getByRole('header', { name: `${name}范围` })).toBeTruthy();
@@ -2811,6 +2824,7 @@ describe('Search state', () => {
 
       await fireEvent.changeText(view.getByLabelText(maxField), '30');
       expect(view.queryByRole('alert')).toBeNull();
+      await fireEvent.press(view.getByRole('button', { name: '确认范围' }));
       await fireEvent.press(view.getByText('确认筛选'));
       expect(onSearchFilterApply).toHaveBeenCalledTimes(1);
       expect(onSearchFilterApply).toHaveBeenCalledWith(
@@ -2843,6 +2857,7 @@ describe('Search state', () => {
     await fireEvent.press(view.getByLabelText('选择精确日期'));
     await fireEvent.press(view.getByLabelText('确认日期 2026-07-01'));
     expect(view.queryByRole('alert')).toBeNull();
+    await fireEvent.press(view.getByRole('button', { name: '完成' }));
     await fireEvent.press(view.getByText('确认筛选'));
     expect(onSearchFilterApply).toHaveBeenCalledTimes(1);
     expect(onSearchFilterApply).toHaveBeenCalledWith(
@@ -2985,7 +3000,7 @@ describe('Search state', () => {
           expect(view.getByLabelText(field).props.value).toBe(value);
         }
         if (rangeEntry) {
-          await fireEvent.press(view.getByLabelText('返回筛选'));
+          await fireEvent.press(view.getByRole('button', { name: '确认范围' }));
           expect(mainBody().props.contentOffset).toEqual({ x: 0, y: 120 });
         }
         expect(view.getByLabelText(collapse).props.accessibilityState.expanded).toBe(true);

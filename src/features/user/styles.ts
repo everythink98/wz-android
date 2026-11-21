@@ -1,6 +1,5 @@
 import { StyleSheet } from 'react-native';
 import {
-  alphaColor,
   createReaderFontSizer,
   readerRadii,
   type ReaderStyleSettings,
@@ -121,34 +120,6 @@ export function createUserStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       minWidth: 48,
       justifyContent: 'center'
     },
-    followButton: {
-      alignItems: 'center',
-      justifyContent: 'center',
-      minHeight: 34,
-      minWidth: 48,
-      paddingHorizontal: 15,
-      paddingVertical: 6,
-      borderRadius: readerRadii.control,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: 'transparent',
-      backgroundColor: theme.dark ? theme.primary : theme.primaryStrong
-    },
-    followButtonSelected: {
-      borderColor: alphaColor(theme.ink, theme.dark ? 0.1 : 0.07),
-      backgroundColor: theme.surface2
-    },
-    followButtonText: {
-      color: theme.onPrimary,
-      fontFamily: appFontFamily,
-      fontSize: fontSize(13),
-      fontWeight: '600',
-      includeFontPadding: false,
-      lineHeight: fontSize(18)
-    },
-    followButtonTextSelected: {
-      color: theme.ink,
-      fontWeight: '500'
-    },
     profileIdentityRow: {
       minHeight: 48,
       alignItems: 'center',
@@ -238,10 +209,10 @@ export function createUserStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       position: 'relative',
       overflow: 'hidden',
       width: '100%',
-      backgroundColor: topicRowBackground,
       borderBottomColor: theme.line,
       borderBottomWidth: StyleSheet.hairlineWidth
     },
+    topicRowSurface: { backgroundColor: topicRowBackground },
     topicSourceBadge: {
       overflow: 'hidden',
       color: theme.ink,

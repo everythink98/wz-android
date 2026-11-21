@@ -21,6 +21,7 @@ export type RootStackParamList = {
   Topic: { topic: Topic; location?: TopicLocationTarget; locationRequestId?: number };
   TopicComposer: TopicComposerIntent;
   ReadingSettings: undefined;
+  NetworkSettings: { page: 'dns' | 'proxies' } | undefined;
   NodeSeekCredits: { identityKey: string; userId: string; currency?: NodeSeekCreditCurrency };
   LinuxDoCredit: { identityKey: string; userId: string; username: string };
   User: { user: UserReference; initialTab?: UserActivityTab };

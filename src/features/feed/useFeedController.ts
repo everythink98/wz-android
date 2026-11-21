@@ -268,10 +268,8 @@ export function useFeedController({
     [categoryFilter, enabledSourcesKey, feedFilter, feedReadPlanScope, sessionEpochs, feedSource]
   );
   const feedQueryKey = feedRead.queryKey;
-  const feedEnabled =
-    feedSourceRequestEnabled &&
-    (feedSource !== 'all' || enabledFeedSources.length > 0) &&
-    (readerDataLoaded || !shouldWaitForReaderDataBeforeFeed(feedSource, readingFilter));
+  const waitingForReaderData = !readerDataLoaded && shouldWaitForReaderDataBeforeFeed(feedSource, readingFilter);
+  const feedEnabled = feedSourceRequestEnabled && !waitingForReaderData;
 
   const needsSourceCategories =
     feedSourceRequestEnabled && feedSource !== 'all' && shouldLoadCategoriesForSource(catalogCategories, feedSource);
@@ -508,7 +506,7 @@ export function useFeedController({
   );
   const settledFeedOutcomeKind = !feedSourceRequestEnabled
     ? 'empty'
-    : feedQuery.isPending || feedQuery.isFetching
+    : waitingForReaderData || feedQuery.isPending || feedQuery.isFetching
       ? undefined
       : feedOutcomeKind(
           mergedFeed.items.length,
@@ -741,7 +739,11 @@ export function useFeedController({
     categoryFilter,
     changeFeedSource,
     feedAllowsRemotePagination,
-    feedBusy: feedActive && feedEnabled && feedQuery.isPending && shownFeedItems.length === 0,
+    feedBusy:
+      feedActive &&
+      feedSourceRequestEnabled &&
+      (waitingForReaderData || feedQuery.isPending) &&
+      shownFeedItems.length === 0,
     feedCategories,
     enabledFeedSources,
     feedFilter,

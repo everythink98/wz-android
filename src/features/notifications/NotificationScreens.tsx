@@ -29,6 +29,7 @@ import type { NotificationState } from '@/platform/notifications/notificationSto
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { Avatar } from '@/ui/avatar/Avatar';
 import { AppButton, FloatingIconButton } from '@/ui/controls/ButtonControls';
+import { ContentLoadingPlaceholder, SkeletonBlock } from '@/ui/controls/ContentLoadingPlaceholder';
 import { LoadingState } from '@/ui/controls/FeedbackStates';
 import { PillRail } from '@/ui/controls/SelectionControls';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
@@ -152,7 +153,7 @@ const NotificationRow = memo(function NotificationRow({
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={notificationAccessibilityLabel(item)}
-      style={[styles.row, item.unread && styles.rowUnread]}
+      style={[styles.row, styles.rowSurface, item.unread && styles.rowUnread]}
       onPress={() => onPress(item)}
     >
       <Avatar contentSource={item.source} small name={item.actor.name} uri={item.actor.avatarUrl} />
@@ -184,7 +185,27 @@ const NotificationRow = memo(function NotificationRow({
   );
 });
 
+function NotificationListPlaceholder({ animating, label }: { animating: boolean; label: string }) {
+  const { styles } = useReaderThemeStyles(createNotificationStyles);
+  return (
+    <ContentLoadingPlaceholder animating={animating} label={label} style={styles.rowSurface}>
+      {(['87%', '74%', '92%'] as const).map((width) => (
+        <View key={width} style={styles.row}>
+          <SkeletonBlock style={{ width: 32, height: 32, borderRadius: 16 }} />
+          <View style={styles.rowBody}>
+            <SkeletonBlock style={{ width: '39%', height: styles.actorText.fontSize }} />
+            <SkeletonBlock style={{ width, height: styles.title.fontSize }} />
+            <SkeletonBlock style={{ width: '26%', height: styles.meta.fontSize }} />
+          </View>
+          <View style={styles.rowSeparator} />
+        </View>
+      ))}
+    </ContentLoadingPlaceholder>
+  );
+}
+
 export const NotificationsScreen = memo(function NotificationsScreen({
+  active = true,
   initializationError = '',
   storageReady = true,
   onRetryInitialization,
@@ -216,6 +237,7 @@ export const NotificationsScreen = memo(function NotificationsScreen({
   onRetryAccountStatus,
   onRetrySource
 }: {
+  active?: boolean;
   initializationError?: string;
   storageReady?: boolean;
   onRetryInitialization?: () => void;
@@ -391,17 +413,14 @@ export const NotificationsScreen = memo(function NotificationsScreen({
           />
         </View>
         {showMarkAll ? (
-          <Pressable
+          <AppButton
             testID="notification-mark-all"
-            accessibilityRole="button"
             accessibilityLabel={`将 ${sourceCatalog[source].label} 全部标记为已读`}
-            accessibilityState={{ busy: markAllBusy, disabled: markAllBusy }}
-            disabled={markAllBusy}
-            style={[styles.inlineAction, markAllBusy && styles.disabled]}
+            label="全部已读"
+            variant="primary"
+            loading={markAllBusy}
             onPress={onMarkAll}
-          >
-            <Text style={styles.inlineActionText}>{markAllBusy ? '处理中' : '全部已读'}</Text>
-          </Pressable>
+          />
         ) : null}
       </View>
     </View>
@@ -415,7 +434,7 @@ export const NotificationsScreen = memo(function NotificationsScreen({
         action={onRetryInitialization ? { label: '重试通知初始化', run: onRetryInitialization } : undefined}
       />
     ) : (
-      <LoadingState text="正在恢复通知" />
+      <NotificationListPlaceholder animating={active} label="正在恢复通知" />
     );
   }
   return (
@@ -456,7 +475,7 @@ export const NotificationsScreen = memo(function NotificationsScreen({
         ListEmptyComponent={
           loading && !fetchingMore ? (
             refreshing ? null : (
-              <LoadingState text="加载中" />
+              <NotificationListPlaceholder animating={active} label="加载中" />
             )
           ) : sourceAvailable && errorSources.length ? null : (
             <EmptyState
@@ -1255,15 +1274,13 @@ export function NotificationDetailScreen({
       ) : null}
       {!conversation && canOpenTopic ? (
         <View testID="notification-topic-action-dock" style={[styles.topicActionDock, dockSafeAreaStyle]}>
-          <Pressable
-            accessibilityRole="button"
-            style={[styles.topicActionButton, detail.policy && styles.topicActionSecondary]}
+          <AppButton
+            size="lg"
+            label={replyToTopic ? '前往主题回复' : '查看相关主题'}
+            variant={detail.policy ? 'default' : 'solid'}
+            style={styles.topicActionButton}
             onPress={() => onOpenTopic()}
-          >
-            <Text style={[styles.topicActionText, detail.policy && styles.topicActionSecondaryText]}>
-              {replyToTopic ? '前往主题回复' : '查看相关主题'}
-            </Text>
-          </Pressable>
+          />
         </View>
       ) : null}
       {detail.reply ? (

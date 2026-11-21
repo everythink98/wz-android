@@ -16,7 +16,10 @@ describe('forum platform Android packaging', () => {
 
   it('limits APK URI grants to the private cache and files roots with an application-specific authority', () => {
     const manifest = xml('src/main/AndroidManifest.xml').manifest;
-    expect(manifest['uses-permission']).toEqual({ 'android:name': 'android.permission.REQUEST_INSTALL_PACKAGES' });
+    expect(manifest['uses-permission']).toEqual([
+      { 'android:name': 'android.permission.REQUEST_INSTALL_PACKAGES' },
+      { 'android:name': 'android.permission.ACCESS_NETWORK_STATE' }
+    ]);
     expect(manifest.application.provider).toEqual({
       'android:name': 'androidx.core.content.FileProvider',
       'android:authorities': '${applicationId}.apk_installer_provider',

@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
-import { BackHandler, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import {
+  ActivityIndicator,
+  BackHandler,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  useWindowDimensions
+} from 'react-native';
 import { Portal } from '@gorhom/portal';
 import {
   Bold,
@@ -91,7 +100,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       fontFamily: fontFamilyValue(settings.fontFamily),
       fontSize: Math.round(13 * Math.min(settings.fontScale, 1.15))
     },
-    selectedText: { color: theme.primary },
+    selectedText: { color: theme.dark ? theme.primary : theme.primaryStrong },
     overlay: { ...StyleSheet.absoluteFill, zIndex: 20 },
     menu: {
       position: 'absolute',
@@ -277,14 +286,23 @@ export function ComposerToolbar({
           busy
         }}
         disabled={blocked}
-        style={[styles.button, topic && styles.topicButton, active && styles.selected, blocked && styles.disabled]}
+        style={[
+          styles.button,
+          topic && styles.topicButton,
+          active && styles.selected,
+          unavailable && !busy && styles.disabled
+        ]}
         onPress={() => {
           if (action === 'heading-menu' || action === 'list-menu')
             openMenu(action === 'heading-menu' ? 'heading' : 'list');
           else dispatch(action);
         }}
       >
-        {Icon ? <Icon size={20} strokeWidth={1.8} color={active ? theme.primary : theme.ink} /> : null}
+        {busy ? (
+          <ActivityIndicator accessible={false} size={20} color={styles.selectedText.color} />
+        ) : Icon ? (
+          <Icon size={20} strokeWidth={1.8} color={active ? styles.selectedText.color : theme.ink} />
+        ) : null}
         {text ? <Text style={[styles.text, active && styles.selectedText]}>{text}</Text> : null}
         {menuKind ? <ChevronDown size={14} color={theme.muted} /> : null}
       </Pressable>

@@ -1,9 +1,10 @@
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import { type ReactNode } from 'react';
 import { Modal, ScrollView, Text, View } from 'react-native';
-import { ActivityIndicator, Button, IconButton } from 'react-native-paper';
+import { ActivityIndicator } from 'react-native-paper';
 import { CircleAlert, X, type LucideIcon } from 'lucide-react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { createLoginWebViewStyles } from './loginWebViewStyles';
 
@@ -28,47 +29,32 @@ export function LoginWebViewAction({
   testID?: string;
   onPress: () => void;
 }) {
-  const { styles, theme } = useReaderThemeStyles(createLoginWebViewStyles);
-  const actionColor = displayLabel ? (theme.dark ? theme.primary : theme.primaryStrong) : theme.ink;
-  const color = primary ? theme.onPrimary : danger ? theme.danger : actionColor;
-  const handlePress = () => {
-    recordUserInteraction();
-    onPress();
-  };
   if (!displayLabel) {
     return (
       <IconButton
         testID={testID}
-        accessibilityLabel={label}
-        accessibilityState={{ disabled: disabled || loading, busy: loading }}
-        disabled={disabled || loading}
+        iconOnly
+        label={label}
+        disabled={disabled}
         loading={loading}
-        icon={({ color, size }) => <Icon size={size} strokeWidth={1.8} color={color} accessible={false} />}
-        iconColor={color}
-        size={20}
-        style={styles.iconAction}
-        onPress={handlePress}
+        icon={Icon}
+        onPress={onPress}
       />
     );
   }
   return (
-    <Button
+    <AppButton
       testID={testID}
       accessibilityLabel={label}
-      accessibilityState={{ disabled: disabled || loading, busy: loading }}
-      disabled={disabled || loading}
+      label={displayLabel}
+      disabled={disabled}
       loading={loading}
-      mode={primary ? 'contained' : 'text'}
-      compact
-      icon={({ color }) => <Icon size={16} strokeWidth={1.8} color={color} accessible={false} />}
-      textColor={color}
-      style={[styles.action, primary && styles.actionPrimary]}
-      contentStyle={styles.actionContent}
-      labelStyle={[styles.actionLabel, { color }]}
-      onPress={handlePress}
-    >
-      {displayLabel}
-    </Button>
+      size="lg"
+      style={[{ minHeight: 48, justifyContent: 'center' }, !primary && { backgroundColor: 'transparent' }]}
+      icon={Icon}
+      variant={primary ? 'solid' : danger ? 'danger' : 'primary'}
+      onPress={onPress}
+    />
   );
 }
 

@@ -514,6 +514,7 @@ export function ReplyItem({
   const showStart = !section || section.type === 'replyStart';
   const showQuotes = !section || section.type === 'replyQuoteSummary';
   const showTail = !section || section.type === 'replyEnd';
+  const showReplyTarget = showStart && Boolean(replyTargetName || replyTargetFloor);
   const policy = source === 'linuxdo' ? reply.policy : undefined;
   return (
     <View
@@ -591,9 +592,9 @@ export function ReplyItem({
           </View>
         </>
       ) : null}
-      {showStart || showQuotes || showTail ? (
+      {showReplyTarget || (showQuotes && replyQuotes.length > 0) || showTail ? (
         <View style={styles.replyContentArea} testID="reply-content-area">
-          {showStart && (replyTargetName || replyTargetFloor) ? (
+          {showReplyTarget ? (
             <View style={styles.replyTargetPill}>
               <Text style={styles.replyTargetText}>回复</Text>
               {replyTargetName ? (

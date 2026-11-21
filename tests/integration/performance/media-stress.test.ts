@@ -50,7 +50,7 @@ function normalizedWhitespace(text: string) {
 
 const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="8"><path d="M0 0h16v8z"/></svg>';
 const svgResponse = () => new Response(svg, { headers: { 'content-type': 'image/svg+xml' } });
-const renderPoster = async (_base64: string, key: string) => ({
+const renderPoster = async (_base64: string, key: string | null) => ({
   documentHeight: 8,
   documentWidth: 16,
   height: 8,

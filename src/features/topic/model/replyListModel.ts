@@ -321,7 +321,8 @@ export function buildVirtualizedReplyItems({
 }
 
 export function topicListItemSpacing(leading: TopicReplyListItem, trailing: TopicReplyListItem) {
-  if (leading.type === 'replyStart' && trailing.type === 'replyQuoteSummary') return 8;
+  if (leading.type === 'replyStart' && (trailing.type === 'replyQuoteSummary' || trailing.type === 'replyContent'))
+    return 8;
   if (leading.type === 'replyQuoteSummary') {
     if (leading.hasContent && trailing.type === 'replyQuoteContent') return 0;
     if (trailing.type === 'replyQuoteSummary') return 12;

@@ -33,6 +33,7 @@ import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.module.model.ReactModuleInfo
 import com.facebook.react.module.model.ReactModuleInfoProvider
 import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -111,7 +112,7 @@ internal data class SvgRootAttributes(
 private data class PreparedPoster(
   val dimensions: PosterDimensions,
   val documentDimensions: SvgDocumentDimensions,
-  val outputFile: File,
+  val outputFile: File?,
   val html: String,
   val cacheHit: Boolean
 )
@@ -140,7 +141,7 @@ private class RenderRequest(
   val id: Long,
   val context: Context,
   val svgBase64: String,
-  val cacheKey: String,
+  val cacheKey: String?,
   totalTimeoutMs: Long,
   val promise: Promise
 ) {
@@ -487,7 +488,7 @@ private fun pruneSvgPosterCache(cacheDir: File, protectedName: String?) {
 }
 
 private fun preparePoster(request: RenderRequest): PreparedPoster {
-  validateSvgCacheKey(request.cacheKey)
+  request.cacheKey?.let(::validateSvgCacheKey)
   val svg = canonicalSvg(request.svgBase64)
   val dimensions = computeSvgPosterDimensions(
     request.context.resources.displayMetrics.widthPixels,
@@ -495,6 +496,10 @@ private fun preparePoster(request: RenderRequest): PreparedPoster {
   )
   val documentDimensions = svgDocumentDimensions(svg.rootAttributes)
     ?: SvgDocumentDimensions(dimensions.width.toDouble(), dimensions.height.toDouble())
+  if (request.cacheKey == null) return PreparedPoster(
+    dimensions, documentDimensions, null,
+    buildSvgPosterHtml(svg.base64, dimensions.width, dimensions.height), false
+  )
   val cacheDir = File(request.context.cacheDir, POSTER_CACHE_DIR)
   if (!cacheDir.exists() && !cacheDir.mkdirs()) {
     throw SvgPosterException("svg_cache_failed", "无法创建 SVG 海报缓存目录。")
@@ -635,6 +640,7 @@ private object SvgDocumentFetcherRuntime {
           }
           val result = Arguments.createMap().apply {
             putString("base64", Base64.encodeToString(bytes, Base64.NO_WRAP))
+            putBoolean("noStore", response.cacheControl.noStore)
           }
           mainHandler.post { promise.resolve(result) }
         }
@@ -679,7 +685,7 @@ private object SvgPosterRendererRuntime {
   fun enqueue(
     context: Context,
     svgBase64: String,
-    cacheKey: String,
+    cacheKey: String?,
     timeoutMs: Long,
     promise: Promise
   ) {
@@ -744,7 +750,7 @@ private object SvgPosterRendererRuntime {
               return@post
             }
             if (prepared.cacheHit) {
-              succeed(request, prepared)
+              succeed(request, prepared, Uri.fromFile(checkNotNull(prepared.outputFile)).toString())
             } else {
               loadPoster(request, prepared)
             }
@@ -928,8 +934,16 @@ private object SvgPosterRendererRuntime {
     request.encoding(page)
     workExecutor.execute {
       try {
-        writePosterBitmap(bitmap, prepared.outputFile)
-        mainHandler.post { succeed(request, prepared) }
+        val uri = prepared.outputFile?.let { file ->
+          writePosterBitmap(bitmap, file)
+          Uri.fromFile(file).toString()
+        } ?: ByteArrayOutputStream().use { bytes ->
+          if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, bytes)) {
+            throw SvgPosterException("svg_render_failed", "SVG 海报 PNG 编码失败。")
+          }
+          "data:image/png;base64," + Base64.encodeToString(bytes.toByteArray(), Base64.NO_WRAP)
+        }
+        mainHandler.post { succeed(request, prepared, uri) }
       } catch (error: SvgPosterException) {
         mainHandler.post { fail(request, error.code, error.message ?: "SVG 海报写入失败。", error) }
       } catch (error: Exception) {
@@ -947,13 +961,13 @@ private object SvgPosterRendererRuntime {
     fail(request, "svg_render_timeout", "SVG 海报渲染总超时。", null)
   }
 
-  private fun succeed(request: RenderRequest, prepared: PreparedPoster) {
+  private fun succeed(request: RenderRequest, prepared: PreparedPoster, uri: String) {
     if (!settle(request)) {
       return
     }
     releaseRendererAfterSettle()
     val result = Arguments.createMap()
-    result.putString("uri", Uri.fromFile(prepared.outputFile).toString())
+    result.putString("uri", uri)
     result.putDouble("documentWidth", prepared.documentDimensions.width)
     result.putDouble("documentHeight", prepared.documentDimensions.height)
     result.putInt("width", prepared.dimensions.width)
@@ -1038,7 +1052,7 @@ internal fun hasRetainedSvgPosterWebView(): Boolean =
 internal fun enqueueSvgPosterForTest(
   context: Context,
   svgBase64: String,
-  cacheKey: String,
+  cacheKey: String?,
   promise: Promise,
   timeoutMs: Long = TOTAL_RENDER_TIMEOUT_MS
 ) {
@@ -1062,7 +1076,7 @@ class SvgRendererModule(
   }
 
   @ReactMethod
-  fun renderPoster(svgBase64: String, cacheKey: String, timeoutMs: Double, promise: Promise) {
+  fun renderPoster(svgBase64: String, cacheKey: String?, timeoutMs: Double, promise: Promise) {
     SvgPosterRendererRuntime.enqueue(
       reactContext.applicationContext,
       svgBase64,

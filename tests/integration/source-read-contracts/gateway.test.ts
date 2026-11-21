@@ -16,7 +16,7 @@ import { createNodeSeekWebViewFallbackFetcher } from '@/sources/nodeseek/browser
 import { getNodeSeekCurrentUserIdentity, getNodeSeekReplies } from '@/sources/nodeseek/reader';
 import { nodeSeekNotificationAdapter } from '@/sources/nodeseek/notifications';
 import { getNodeSeekAccountOverview } from '@/sources/nodeseek/accountData';
-import { nodeSeekBrowserResponse } from '@/features/account/browserFetchQueue';
+import { forumBrowserResponse } from '@/features/account/browserFetchQueue';
 import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import {
   beginDiagnosticTrace,
@@ -37,12 +37,18 @@ vi.mock('react-native', () => ({ NativeModules: {} }));
 
 import { createReadGateway, html, nodeSeekPayload } from './fixtures';
 
-function readLinuxDoAccountWith(fetcher: Parameters<typeof readAccountStatus>[1]['fetcher']) {
+function readLinuxDoAccountWith(
+  fetcher: Parameters<typeof readAccountStatus>[1]['fetcher'],
+  readManagedCookieHeader: Parameters<typeof readAccountStatus>[1]['readManagedCookieHeader'] = async () => ({
+    status: 'ok',
+    header: '_t=session'
+  })
+) {
   return readAccountStatus('linuxdo', {
     fetcher,
     linuxDoUserAgent: 'LinuxDo UA',
     nodeSeekUserAgent: 'NodeSeek UA',
-    readManagedCookieHeader: async () => ({ status: 'ok', header: '_t=session' }),
+    readManagedCookieHeader,
     signal: new AbortController().signal
   });
 }
@@ -61,6 +67,39 @@ describe('Android local sources', () => {
   afterEach(() => {
     setDiagnosticWriter(null);
   });
+
+  it('does not expire the LINUX DO identity for a transport rejection without a session response', async () => {
+    const error = Object.assign(new Error('HTTP 401'), { status: 401, reason: 'http-401' });
+    await expect(
+      readLinuxDoAccountWith(async () => {
+        throw error;
+      })
+    ).rejects.toBe(error);
+  });
+
+  it.each(['same', 'anonymous', 'rotates again'] as const)(
+    'rechecks an anonymous result from a superseded LINUX DO login cookie once (%s)',
+    async (next) => {
+      let generation = 0;
+      const readHeader = async () => ({ status: 'ok' as const, header: `_t=fixture-${generation}` });
+      const fetcher = vi.fn(async () => {
+        if (generation === 0 || next === 'rotates again') {
+          generation++;
+          return new Response(null, { status: 404 });
+        }
+        return next === 'anonymous'
+          ? Response.json({ error_type: 'not_logged_in' }, { status: 403 })
+          : Response.json({ current_user: { username: 'alice' } });
+      });
+      const check = readLinuxDoAccountWith(fetcher, readHeader);
+      if (next === 'rotates again') await expect(check).rejects.toThrow('凭据已更新');
+      else
+        await expect(check).resolves.toMatchObject({
+          session: next === 'anonymous' ? { status: 'anonymous' } : { currentUser: { username: 'alice' } }
+        });
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    }
+  );
 
   it('uses rendered NodeSeek guest controls for account probes', async () => {
     const normalFetcher = vi.fn(async () =>
@@ -453,7 +492,7 @@ describe('Android local sources', () => {
         userId: '7',
         userAgent: 'WebView UA',
         fetcher: async () =>
-          nodeSeekBrowserResponse(body, false, 403, 'https://www.nodeseek.com/api/notification/unread-count')
+          forumBrowserResponse(body, false, 403, 'https://www.nodeseek.com/api/notification/unread-count')
       })
     ).rejects.toMatchObject({ loginRequired: true });
   });
@@ -2113,11 +2152,50 @@ describe('Android local sources', () => {
     expect(webViewFetcher).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [429, null],
+    [429, '60'],
+    [503, '60']
+  ] as const)(
+    'returns the original HTTP %i challenge with Retry-After %s without a second request',
+    async (status, wait) => {
+      const direct = new Response('<title>Just a moment...</title>', {
+        status,
+        headers: { 'Content-Type': 'text/html', 'cf-mitigated': 'challenge', ...(wait && { 'Retry-After': wait }) }
+      });
+      const webViewFetcher = vi.fn(async () => new Response('unexpected second request'));
+      const fetcher = createLinuxDoWebViewFallbackFetcher({ defaultFetcher: async () => direct, webViewFetcher });
+
+      expect(await fetcher('https://linux.do/latest.json')).toBe(direct);
+      expect(webViewFetcher).not.toHaveBeenCalled();
+    }
+  );
+
+  it('returns a verification response from the fallback after a direct timeout without reopening the same page', async () => {
+    vi.useFakeTimers();
+    const direct = Promise.withResolvers<Response>();
+    const blocked = new Response('<title>Just a moment...</title>', {
+      status: 403,
+      headers: { 'Content-Type': 'text/html' }
+    });
+    const webViewFetcher = vi.fn(async () => blocked);
+    const fetcher = createLinuxDoWebViewFallbackFetcher({ defaultFetcher: () => direct.promise, webViewFetcher });
+    try {
+      const result = fetcher('https://linux.do/latest.json');
+      await vi.advanceTimersByTimeAsync(8000);
+      expect(await result).toBe(blocked);
+      expect(webViewFetcher).toHaveBeenCalledTimes(1);
+    } finally {
+      direct.resolve(new Response(''));
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps a confirmed direct challenge typed when the hidden renderer cannot inspect it', async () => {
     const normalFetcher = vi.fn(
       async () =>
         new Response('challenge', {
-          status: 429,
+          status: 403,
           headers: { 'cf-mitigated': 'challenge' }
         })
     );
@@ -2138,7 +2216,7 @@ describe('Android local sources', () => {
     const normalFetcher = vi.fn(
       async () =>
         new Response('challenge', {
-          status: 429,
+          status: 403,
           headers: { 'cf-mitigated': 'challenge' }
         })
     );
@@ -2159,7 +2237,7 @@ describe('Android local sources', () => {
     const normalFetcher = vi.fn(
       async () =>
         new Response('challenge', {
-          status: 429,
+          status: 403,
           headers: { 'cf-mitigated': 'challenge' }
         })
     );
@@ -2182,7 +2260,7 @@ describe('Android local sources', () => {
     const normalFetcher = vi.fn(
       async () =>
         new Response('challenge', {
-          status: 429,
+          status: 403,
           headers: { 'cf-mitigated': 'challenge' }
         })
     );

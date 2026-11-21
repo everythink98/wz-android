@@ -90,14 +90,21 @@ export function DetailActionButton({
   const textColor = active && tone === 'favorite' ? theme.ink : color;
   const visibleCount = typeof count === 'number' ? (compact && count > 99 ? '99+' : String(count)) : '';
   const resolvedIconSize = iconSize ?? (compact ? 16 : 18);
+  const longPress = disabled ? undefined : onLongPress;
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       accessibilityState={{ busy: pending, disabled, selected: active }}
-      accessibilityHint={onLongPress ? '长按选择表情反应' : undefined}
-      accessibilityActions={onLongPress ? [{ name: 'longpress', label: '选择表情反应' }] : undefined}
-      onAccessibilityAction={onLongPress ? () => onLongPress() : undefined}
+      accessibilityHint={longPress ? '长按选择表情反应' : undefined}
+      accessibilityActions={longPress ? [{ name: 'longpress', label: '选择表情反应' }] : undefined}
+      onAccessibilityAction={
+        longPress
+          ? ({ nativeEvent }) => {
+              if (nativeEvent.actionName === 'longpress') longPress();
+            }
+          : undefined
+      }
       disabled={disabled}
       style={[
         styles.detailActionButton,
@@ -109,7 +116,7 @@ export function DetailActionButton({
       onPress={() => {
         onPress();
       }}
-      onLongPress={onLongPress}
+      onLongPress={longPress}
       delayLongPress={400}
     >
       <View style={[styles.detailActionIconSlot, compact && styles.replyCompactActionIconSlot]}>

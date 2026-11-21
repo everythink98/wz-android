@@ -92,7 +92,7 @@ describe('source account read', () => {
   it('classifies the documented anonymous linux.do current-session 404 as an expired login', async () => {
     const fetcher = vi.fn(
       async () =>
-        new Response('<html>login required</html>', {
+        new Response(null, {
           status: 404,
           headers: { 'content-type': 'text/html' }
         })
@@ -131,6 +131,45 @@ describe('source account read', () => {
       kind: 'login-expired',
       loginRequired: true,
       reason: 'expired'
+    });
+  });
+
+  it.each(['<title>Not Found</title>', '{"errors":["路由不存在"]}'])(
+    'keeps a generic nonempty LINUX DO account 404 unknown (%s)',
+    async (body) => {
+      const check = getCurrentUserIdentity({
+        source: 'linuxdo',
+        fetcher: async () => new Response(body, { status: 404 })
+      });
+      await expect(check).rejects.toBeInstanceOf(Error);
+      await expect(check).rejects.not.toMatchObject({ kind: 'login-expired' });
+    }
+  );
+
+  it.each([404, 200])('rejects a redirected HTTP %s page as LINUX DO identity evidence', async (status) => {
+    const response = Response.json({ current_user: { username: 'alice' } }, { status });
+    Object.defineProperty(response, 'url', { value: 'https://linux.do/elsewhere' });
+    await expect(getCurrentUserIdentity({ source: 'linuxdo', fetcher: async () => response })).rejects.toThrow(
+      '当前用户响应地址'
+    );
+  });
+
+  it.each(['0', '1'])('requires the Discourse logout flag to be set (header %s)', async (flag) => {
+    const response = new Response(null, { status: 401, headers: { 'Discourse-Logged-Out': flag } });
+    const check = getCurrentUserIdentity({ source: 'linuxdo', fetcher: async () => response });
+    if (flag === '1') await expect(check).rejects.toMatchObject({ accountEvidence: 'server-logged-out' });
+    else await expect(check).rejects.toThrow('HTTP 401');
+  });
+
+  it('preserves the server wait on a challenged LINUX DO account probe', async () => {
+    const response = new Response(null, {
+      status: 403,
+      headers: { 'cf-mitigated': 'challenge', 'retry-after': '12' }
+    });
+    await expect(getCurrentUserIdentity({ source: 'linuxdo', fetcher: async () => response })).rejects.toMatchObject({
+      verificationRequired: true,
+      status: 403,
+      retryAfterMs: 12_000
     });
   });
 

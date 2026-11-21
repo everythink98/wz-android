@@ -50,10 +50,10 @@ describe('Shared action and form controls', () => {
     for (const label of ['展开内容源', /服务器代理/]) {
       const row = view.getByRole('button', { name: label });
       expect(StyleSheet.flatten(row.props.style)).toMatchObject({
-        paddingVertical: 0,
+        paddingVertical: 10,
         paddingRight: 0,
         justifyContent: 'center',
-        minHeight: 48
+        minHeight: 60
       });
     }
   });

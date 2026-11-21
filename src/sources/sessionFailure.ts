@@ -1,7 +1,7 @@
 import { isRecord } from '@/domain/forum/html';
 import { sourceCatalog, type Source } from '@/domain/forum/sourceCatalog';
 import { isCloudflareChallengeResponse } from '@/platform/network/cloudflareChallenge';
-import { withAbortableTimeout } from '@/platform/network/request';
+import { isLinuxDoUnauthorizedChallenge, withAbortableTimeout } from '@/platform/network/request';
 import { discourseActionResponseMessage } from '@/sources/discourse/actionRequest';
 import { linuxDoRequestError } from '@/sources/linuxdo/protocol';
 import { errorRequiresAccountRecheck } from './sourceErrors';
@@ -13,7 +13,13 @@ export async function forumResponseAccountFailure(
   signal?: AbortSignal
 ): Promise<'http-401' | 'account-recheck-required' | undefined> {
   if (signal?.aborted || new URL(input).origin !== new URL(sourceCatalog[source].baseUrl).origin) return;
-  if (response.status === 401) return 'http-401';
+  if (response.status === 401) {
+    const challenge =
+      source === 'linuxdo'
+        ? await isLinuxDoUnauthorizedChallenge(response, signal)
+        : isCloudflareChallengeResponse(response);
+    return challenge || signal?.aborted ? undefined : 'http-401';
+  }
   if (source !== 'linuxdo' || ![403, 404].includes(response.status)) return;
   let body: string;
   try {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
+  hashKey,
   useInfiniteQuery,
   useIsFetching,
   useQueries,
@@ -127,6 +128,7 @@ const readOutcome = sourceReadRecoveryOutcome;
 
 export function useTopicController({
   focused,
+  isSoleTopicRoute,
   appActive,
   commitReaderData,
   sessionEpochs = initialForumSessionEpochs,
@@ -145,6 +147,7 @@ export function useTopicController({
   topicSession
 }: {
   focused: boolean;
+  isSoleTopicRoute?: () => boolean;
   appActive: boolean;
   commitReaderData: (command: ReaderCommand) => void;
   sessionEpochs?: ForumSessionEpochs;
@@ -233,6 +236,7 @@ export function useTopicController({
       ? scopedRepliesQueryKey
       : sharedRepliesQueryKey;
   const entryKey = JSON.stringify(topicQueryKey);
+  const [wholeTopicRevision, setWholeTopicRevision] = useState(0);
   const [entryVisitRef] = useState(() => ({
     current: createTopicEntryVisit(entryKey, Boolean(queryClient.getQueryData(topicQueryKey)))
   }));
@@ -251,7 +255,7 @@ export function useTopicController({
         : undefined;
     return forumQueryKeys.replies(topicQueryKey, order, repliesReadPlan.cacheScope, owner);
   }, [centeredWindowOrders, repliesReadPlan.cacheScope, replyOrder, replyWindowOwner, replyWindowScope, topicQueryKey]);
-  const repliesQueryIdentity = JSON.stringify(repliesQueryKey);
+  const repliesQueryIdentity = hashKey(repliesQueryKey);
   const activeRepliesQueryIdentityRef = useCommittedRef(enabled && !selectedReadBlocked ? repliesQueryIdentity : '');
   const {
     lifecycle: replyWindows,
@@ -321,13 +325,14 @@ export function useTopicController({
     [activeRepliesQueryIdentityRef, queryClient, replyWindows]
   );
 
+  const detailCacheStatus = queryClient.getQueryState(topicQueryKey)?.status ?? 'pending';
   const detailQuery = useQuery({
     queryKey: topicQueryKey,
-    enabled: enabled && (!ordinaryLinuxDoTopic || !entryVisit.settled),
+    enabled: enabled && (!ordinaryLinuxDoTopic || !entryVisit.settled || detailCacheStatus === 'pending'),
     subscribed: focused,
     queryFn: async ({ signal }) => {
       const topic = selectedTopic;
-      const trackVisit = ordinaryLinuxDoTopic && entryVisit.claimVisit();
+      const trackVisit = ordinaryLinuxDoTopic && entryVisit.claimVisit(signal);
       const trace = beginDiagnosticTrace('topic', 'open', {
         source: topic.source,
         topicRef: diagnosticRef('topic', `${topic.source}:${topic.id}`)
@@ -356,10 +361,10 @@ export function useTopicController({
           itemCount: detail.replies?.length || 0,
           hasContent: Boolean(detail.contentHtml?.trim())
         });
-        if (!signal.aborted) entryVisit.settleRequest();
+        entryVisit.settleRequest(signal);
         return detail;
       } catch (error) {
-        if (!signal.aborted && !isCanceledRequest(error)) entryVisit.settleRequest();
+        if (!isCanceledRequest(error)) entryVisit.settleRequest(signal);
         finishDiagnosticTrace(trace, signal.aborted ? 'canceled' : 'failure', {
           source: topic.source,
           reason: signal.aborted ? 'canceled' : normalizeDiagnosticReason(error)
@@ -399,12 +404,26 @@ export function useTopicController({
     },
     [otherRepliesQueryKey, queryClient, topicQueryKey]
   );
+  const topicCacheInvalidated = queryClient.getQueryState(topicQueryKey)?.isInvalidated;
+  const initialReplies = useMemo(
+    () =>
+      enabled && topicDetail && !topicCacheInvalidated && !replyAccessDenied
+        ? firstReplyData(topicDetail, replyOrder)
+        : undefined,
+    [enabled, replyAccessDenied, replyOrder, topicDetail, topicCacheInvalidated]
+  );
+  const replyCache = queryClient.getQueryState<InfiniteData<ReplyPage, ReplyPageParam>>(repliesQueryKey);
+  const cachedReplyPages = replyCache?.data;
   const readingEntry = useTopicReadingEntry({
     active,
     focused,
     topic: selectedTopic,
     detail: topicDetail,
     location: replyAccessDenied ? { kind: 'opening' } : location,
+    hasCachedFloor: (floor) =>
+      !selectedReadBlocked &&
+      !replyCache?.isInvalidated &&
+      Boolean(findReplyLocation(mergedReplyPages(cachedReplyPages ?? initialReplies), { floor })),
     visit: entryVisit,
     gateway: readGateway,
     commit: commitReaderData
@@ -483,18 +502,9 @@ export function useTopicController({
     },
     [canReadReplyWindow, readGateway, selectedSource, repliesReadPlan.cacheScope]
   );
-  const topicCacheInvalidated = queryClient.getQueryState(topicQueryKey)?.isInvalidated;
-  const initialReplies = useMemo(
-    () =>
-      enabled && topicDetail && !topicCacheInvalidated && !replyAccessDenied
-        ? firstReplyData(topicDetail, replyOrder)
-        : undefined,
-    [enabled, replyAccessDenied, replyOrder, topicDetail, topicCacheInvalidated]
-  );
   const replyEntry = useRef({ key: repliesQueryIdentity, settled: false });
   if (replyEntry.current.key !== repliesQueryIdentity)
     replyEntry.current = { key: repliesQueryIdentity, settled: false };
-  const cachedReplyPages = queryClient.getQueryData<InfiniteData<ReplyPage, ReplyPageParam>>(repliesQueryKey);
   const needsOpeningWindow = Boolean(
     enabled &&
     !replyAccessDenied &&
@@ -949,7 +959,27 @@ export function useTopicController({
         queryKey: forumQueryKeys.replies(topicQueryKey, order, repliesReadPlan.cacheScope, replyWindowOwner)
       });
     }
-  }, [focused, queryClient, repliesReadPlan.cacheScope, replyWindowOwner, replyWindows, topicQueryKey]);
+    return queryClient.getQueryCache().subscribe((event) => {
+      if (event.type === 'removed' && event.query.queryHash === replyEntry.current.key) {
+        replyEntry.current.settled = false;
+        replyWindows.forgetRouteWindow(replyOrderScope);
+      }
+    });
+  }, [
+    focused,
+    queryClient,
+    repliesReadPlan.cacheScope,
+    replyOrderScope,
+    replyWindowOwner,
+    replyWindows,
+    topicQueryKey
+  ]);
+
+  const releaseEntryForManualRefresh = useCallback(() => {
+    if (readingEntry.positionReady) return;
+    replyEntry.current.settled = true;
+    readingEntry.failed();
+  }, [readingEntry.failed, readingEntry.positionReady]);
 
   const refreshWholeTopic = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
     if (!interactionActiveRef.current) return 'stale';
@@ -971,6 +1001,7 @@ export function useTopicController({
       }
       return 'stale';
     }
+    releaseEntryForManualRefresh();
     const runAttempt = async (notifySuccess: boolean): Promise<LinuxDoReadResumeOutcome> => {
       const windowRun = replyWindows.beginRead(repliesQueryIdentity);
       const ownsWindow = windowRun.isCurrent;
@@ -985,6 +1016,7 @@ export function useTopicController({
         if (!(await rebuildReplyWindow(detailResult.data, windowRun, 'topic'))) {
           return 'stale';
         }
+        setWholeTopicRevision((revision) => revision + 1);
         if (notifySuccess) notify('主题已更新');
         return 'completed';
       } catch (error) {
@@ -1000,12 +1032,6 @@ export function useTopicController({
           onNodeSeekTopicVerificationRequired(sourceError.message, candidate)
         );
         return readOutcome(selectedTopic.source, error);
-      } finally {
-        // This refresh owns either its new window or the existing content and retry affordance.
-        if (ownsWindow() && targetReply?.readingResume && !readingEntry.positionReady) {
-          replyEntry.current.settled = true;
-          readingEntry.failed();
-        }
       }
     };
     return runAttempt(true);
@@ -1017,8 +1043,7 @@ export function useTopicController({
     onRetryIdentityStatus,
     onNodeSeekTopicVerificationRequired,
     rebuildReplyWindow,
-    readingEntry.failed,
-    readingEntry.positionReady,
+    releaseEntryForManualRefresh,
     repliesQueryKey,
     repliesReadPlan,
     selectedReadBlocked,
@@ -1028,7 +1053,6 @@ export function useTopicController({
     detailQuery.refetch,
     topicReadBlocked,
     topicReadPlan,
-    targetReply?.readingResume,
     repliesQueryIdentity
   ]);
 
@@ -1059,6 +1083,7 @@ export function useTopicController({
             : Promise.resolve('stale')
       });
       if (command.kind === 'manual') {
+        releaseEntryForManualRefresh();
         try {
           if (!(await rebuildReplyWindow(topicDetail, windowRun, 'replies'))) return 'stale';
           if (!command.silent) notify('评论已更新');
@@ -1361,6 +1386,7 @@ export function useTopicController({
       rebuildReplyWindow,
       rebuildRepliesQueryRoot,
       refreshWholeTopic,
+      releaseEntryForManualRefresh,
       repliesQueryIdentity,
       repliesQueryKey,
       replyOrder,
@@ -1565,9 +1591,12 @@ export function useTopicController({
             (target.readingResume ? findReadingResumeReply(page.items, floor || 1) : undefined);
           if (!resolvedReply) throw new Error('目标楼层未找到或引用不匹配');
           const resolvedOffset = page.currentOffset ?? null;
-          const centered = !ordinaryLinuxDoTopic || !target.readingResume;
+          const reusableReadingWindow =
+            ordinaryLinuxDoTopic &&
+            (target.readingResume || (!silent && readGateway.reading?.scope())) &&
+            (isSoleTopicRoute?.() ?? target.readingResume);
           queryClient.setQueryData<InfiniteData<ReplyPage, ReplyPageParam>>(
-            centered ? scopedRepliesQueryKey : repliesQueryKey,
+            reusableReadingWindow ? repliesQueryKey : scopedRepliesQueryKey,
             {
               pages: [page],
               pageParams: [{ kind: 'cursor', page: resolvedPage, offset: resolvedOffset }]
@@ -1575,7 +1604,7 @@ export function useTopicController({
           );
           commitReplySnapshot(page.totalCount, page.replyWatermark);
           clearReplyWindowErrors(true);
-          if (centered) {
+          if (!reusableReadingWindow) {
             const openingMayBeStale =
               (page.totalCount !== undefined && page.totalCount !== currentDetail.replyCount) ||
               (page.replyWatermark !== undefined && page.replyWatermark !== currentDetail.replyWatermark);
@@ -1628,6 +1657,8 @@ export function useTopicController({
       clearReplyWindowErrors,
       handleReadError,
       commitReplySnapshot,
+      isSoleTopicRoute,
+      readGateway.reading,
       loadReplyPage,
       notify,
       onNodeSeekTopicVerificationRequired,
@@ -1875,6 +1906,7 @@ export function useTopicController({
     openTopic,
     refreshTopicReplies,
     refreshWholeTopic,
+    wholeTopicRevision,
     isReadRecoveryCurrent,
     repliesError: replyAccessDenied
       ? null

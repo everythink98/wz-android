@@ -1,11 +1,9 @@
 package com.wz.reader
 
 import java.io.IOException
-import java.net.InetAddress
 import java.net.Socket
 import java.util.WeakHashMap
 import java.util.concurrent.TimeUnit
-import javax.net.ssl.SSLSocketFactory
 import okhttp3.Connection
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
@@ -14,21 +12,11 @@ import okio.AsyncTimeout
 /** Owns connection health, independently of image mounts and individual Call cancellation. */
 internal class MediaConnectionHealth(private val base: OkHttpClient) {
   private val rawSockets = WeakHashMap<Socket, Socket>()
-  private val delegate = base.sslSocketFactory
-  private val tls = object : SSLSocketFactory() {
-    override fun getDefaultCipherSuites() = delegate.defaultCipherSuites
-    override fun getSupportedCipherSuites() = delegate.supportedCipherSuites
+  private val tls = object : LayeredTlsSocketFactory(base.sslSocketFactory) {
     override fun createSocket(raw: Socket, host: String, port: Int, autoClose: Boolean): Socket =
       delegate.createSocket(raw, host, port, autoClose).also { ssl ->
         synchronized(rawSockets) { rawSockets[ssl] = raw }
       }
-    override fun createSocket() = delegate.createSocket()
-    override fun createSocket(host: String, port: Int) = delegate.createSocket(host, port)
-    override fun createSocket(host: String, port: Int, local: InetAddress, localPort: Int) =
-      delegate.createSocket(host, port, local, localPort)
-    override fun createSocket(host: InetAddress, port: Int) = delegate.createSocket(host, port)
-    override fun createSocket(host: InetAddress, port: Int, local: InetAddress, localPort: Int) =
-      delegate.createSocket(host, port, local, localPort)
   }
 
   fun configure(builder: OkHttpClient.Builder): OkHttpClient.Builder = builder

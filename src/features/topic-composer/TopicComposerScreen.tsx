@@ -246,15 +246,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       minHeight: 48,
       flexGrow: 1,
       flexBasis: 120,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      paddingHorizontal: 12,
-      paddingVertical: 8,
-      gap: 8,
-      borderRadius: readerRadii.content,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: theme.line
+      justifyContent: 'center'
     },
     attachmentDescription: { paddingLeft: 68, gap: 4 },
     emptyMedia: { paddingVertical: 20, alignItems: 'center', gap: 6 },
@@ -737,6 +729,32 @@ export function TopicComposerScreen({
       ) : null}
     </View>
   );
+  const siteIdentity = (
+    <View style={styles.siteIdentity}>
+      <View style={styles.siteName}>
+        <Text numberOfLines={1} style={styles.heading}>
+          {c.source ? sourceCatalog[c.source].label : '发帖'}
+        </Text>
+        {!c.editing ? <ChevronDown color={theme.ink} size={15} accessible={false} /> : null}
+      </View>
+      <Text numberOfLines={1} style={styles.muted}>
+        {c.session?.currentUser?.username || c.session?.statusLabel || '选择发帖账号'}
+        {draft ? ` · ${c.uploading ? '上传中…' : c.saveStatus}` : ''}
+      </Text>
+    </View>
+  );
+  const submitDisabled =
+    !draft ||
+    (c.editing && !c.hasChanges) ||
+    !context ||
+    !editorEnabled ||
+    c.busy ||
+    c.loading ||
+    c.contextLoading ||
+    c.uploading ||
+    unresolved ||
+    !c.session?.canWrite ||
+    !c.enabled;
   return (
     <NavigationBackdropProvider>
       <ComposerKeyboardHost
@@ -771,51 +789,33 @@ export function TopicComposerScreen({
                 onPress={onBack}
                 disabled={c.busy}
               />
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={c.editing ? '编辑帖子' : '切换发帖网站'}
-                accessibilityHint={
-                  c.session?.currentUser?.username
-                    ? `当前发布账号：${c.session.currentUser.username}`
-                    : c.session?.statusLabel
-                }
-                disabled={c.busy || c.editing}
-                style={styles.siteButton}
-                onPress={() => openPanel('sites')}
-              >
-                <View style={styles.siteIdentity}>
-                  <View style={styles.siteName}>
-                    <Text numberOfLines={1} style={styles.heading}>
-                      {c.source ? sourceCatalog[c.source].label : '发帖'}
-                    </Text>
-                    {!c.editing ? <ChevronDown color={theme.ink} size={15} /> : null}
-                  </View>
-                  <Text numberOfLines={1} style={styles.muted}>
-                    {c.session?.currentUser?.username || c.session?.statusLabel || '选择发帖账号'}
-                    {draft ? ` · ${c.uploading ? '上传中…' : c.saveStatus}` : ''}
-                  </Text>
-                </View>
-              </Pressable>
+              {c.editing ? (
+                <View style={styles.siteButton}>{siteIdentity}</View>
+              ) : (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="切换发帖网站"
+                  accessibilityHint={
+                    c.session?.currentUser?.username
+                      ? `当前发布账号：${c.session.currentUser.username}`
+                      : c.session?.statusLabel
+                  }
+                  accessibilityState={{ disabled: c.busy, expanded: panel === 'sites' }}
+                  disabled={c.busy}
+                  style={styles.siteButton}
+                  onPress={() => openPanel('sites')}
+                >
+                  {siteIdentity}
+                </Pressable>
+              )}
               <AppButton
-                backdrop={<NavigationGlass accent />}
+                backdrop={<NavigationGlass accent={!submitDisabled || c.busy} />}
                 minWidth={c.editing ? 84 : 68}
-                label={c.editing ? (c.busy ? '保存中' : '保存修改') : c.busy ? '发布中' : '发布'}
-                accessibilityLabel={c.editing ? '保存修改' : '发布'}
+                label={c.editing ? '保存修改' : '发布'}
+                style={{ minHeight: 48, justifyContent: 'center' }}
                 loading={c.busy}
                 variant="primary"
-                disabled={
-                  !draft ||
-                  (c.editing && !c.hasChanges) ||
-                  !context ||
-                  !editorEnabled ||
-                  c.busy ||
-                  c.loading ||
-                  c.contextLoading ||
-                  c.uploading ||
-                  unresolved ||
-                  !c.session?.canWrite ||
-                  !c.enabled
-                }
+                disabled={submitDisabled}
                 onPress={() => {
                   Keyboard.dismiss();
                   void c.submit();
@@ -1607,30 +1607,24 @@ export function TopicComposerScreen({
                       {panel === 'attachments' ? (
                         <View style={styles.mediaPickers}>
                           {canPickFiles ? (
-                            <Pressable
-                              accessibilityRole="button"
+                            <AppButton
+                              icon={Paperclip}
+                              label="添加附件"
                               accessibilityLabel="选择附件"
-                              accessibilityState={{ disabled: c.busy || c.uploading || preview }}
-                              style={[styles.mediaPicker, (c.busy || c.uploading || preview) && styles.disabled]}
+                              style={styles.mediaPicker}
                               disabled={c.busy || c.uploading || preview}
                               onPress={() => void pickPanelAttachment('attachment')}
-                            >
-                              <Paperclip size={21} color={theme.ink} />
-                              <Text style={styles.text}>添加附件</Text>
-                            </Pressable>
+                            />
                           ) : null}
                           {draft.source === 'yaohuo' && draft.kind === 'files' ? (
-                            <Pressable
-                              accessibilityRole="button"
+                            <AppButton
+                              icon={Paperclip}
+                              label="添加文件"
                               accessibilityLabel="选择本地文件"
-                              accessibilityState={{ disabled: c.busy || c.uploading || !context }}
-                              style={[styles.mediaPicker, (c.busy || c.uploading || !context) && styles.disabled]}
+                              style={styles.mediaPicker}
                               disabled={c.busy || c.uploading || !context}
                               onPress={() => void pickPanelAttachment('yaohuo-file')}
-                            >
-                              <Paperclip size={21} color={theme.ink} />
-                              <Text style={styles.text}>添加文件</Text>
-                            </Pressable>
+                            />
                           ) : null}
                         </View>
                       ) : null}

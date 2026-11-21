@@ -1,6 +1,8 @@
 import Slider from '@react-native-community/slider';
 import { useEffect, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
+import { Minus, Plus } from 'lucide-react-native';
+import { IconButton } from '@/ui/controls/ButtonControls';
 import type { MoreScreenStyles } from '../styles';
 import {
   FONT_SCALE_MAX,
@@ -204,18 +206,13 @@ function FontScaleSetting({
         <Text style={styles.appearanceFontScaleValue}>{percent}%</Text>
       </View>
       <View style={styles.appearanceSliderRow}>
-        <Pressable
-          accessibilityLabel="减小字号"
-          accessibilityRole="button"
-          accessibilityState={{ disabled: draftValue <= FONT_SCALE_MIN }}
+        <IconButton
+          label="减小字号"
+          icon={Minus}
+          iconOnly
           disabled={draftValue <= FONT_SCALE_MIN}
-          style={[styles.appearanceStepButton, draftValue <= FONT_SCALE_MIN && styles.appearanceControlDisabled]}
-          onPress={() => {
-            setStep(-1);
-          }}
-        >
-          <Text style={styles.appearanceStepButtonText}>−</Text>
-        </Pressable>
+          onPress={() => setStep(-1)}
+        />
         <Slider
           accessibilityLabel="字号"
           accessibilityValue={{ min: 85, max: 140, now: percent, text: `字号 ${percent}%` }}
@@ -233,18 +230,13 @@ function FontScaleSetting({
             if (active) setDraftValue(normalizeFontScale(nextValue));
           }}
         />
-        <Pressable
-          accessibilityLabel="增大字号"
-          accessibilityRole="button"
-          accessibilityState={{ disabled: draftValue >= FONT_SCALE_MAX }}
+        <IconButton
+          label="增大字号"
+          icon={Plus}
+          iconOnly
           disabled={draftValue >= FONT_SCALE_MAX}
-          style={[styles.appearanceStepButton, draftValue >= FONT_SCALE_MAX && styles.appearanceControlDisabled]}
-          onPress={() => {
-            setStep(1);
-          }}
-        >
-          <Text style={styles.appearanceStepButtonText}>＋</Text>
-        </Pressable>
+          onPress={() => setStep(1)}
+        />
       </View>
     </View>
   );

@@ -77,6 +77,7 @@ function normalizeTopic(raw: Record<string, unknown>): Topic | null {
     replyCount: nodeSeekEmbeddedReplyCount(raw),
     viewCount: parseViewCount(raw.views || raw.viewCount),
     excerpt: textExcerpt(raw.content || raw.markdown || ''),
+    ...(raw.pined === true || raw.pinned === true ? { pinned: true } : {}),
     ...(accessRequirement ? { accessRequirement } : {})
   };
 }
@@ -122,6 +123,7 @@ export function parseHtmlTopics(document: NodeSeekPageDocument) {
       toIsoString(lastReplyTime?.getAttribute('datetime') || lastReplyTime?.getAttribute('title')) ||
       (/^\d{4}[-/]/.test(visibleTime) ? toIsoString(visibleTime) : '');
     const accessRequirement = nodeSeekAccessRequirementFromListRow(row, title);
+    const pinned = row.querySelector('.post-title span[title="置顶"] svg.pined');
     renderedItems.push({
       source: 'nodeseek',
       id,
@@ -139,6 +141,7 @@ export function parseHtmlTopics(document: NodeSeekPageDocument) {
       replyCount: integerFromElement(row.querySelector('.info-comments-count')),
       viewCount: integerFromElement(row.querySelector('.info-views')),
       excerpt: '',
+      ...(pinned ? { pinned: true } : {}),
       ...(accessRequirement ? { accessRequirement } : {})
     });
   }

@@ -57,36 +57,6 @@ export function createLoginWebViewStyles(theme: ReaderTheme, settings: ReaderSty
       paddingHorizontal: 14,
       paddingBottom: 8
     },
-    action: {
-      minWidth: 48,
-      maxWidth: '100%',
-      borderRadius: 0,
-      backgroundColor: 'transparent'
-    },
-    actionPrimary: {
-      backgroundColor: theme.dark ? theme.primary : theme.primaryStrong,
-      borderRadius: readerRadii.control
-    },
-    iconAction: {
-      width: 48,
-      height: 48,
-      margin: 0,
-      borderRadius: 0,
-      backgroundColor: 'transparent'
-    },
-    actionContent: {
-      minHeight: 48
-    },
-    actionLabel: {
-      fontFamily: appFontFamily,
-      fontSize: Math.round(14 * settings.fontScale),
-      lineHeight: Math.round(20 * settings.fontScale),
-      includeFontPadding: false,
-      fontWeight: '500',
-      letterSpacing: 0,
-      marginHorizontal: 8,
-      marginVertical: 10
-    },
     loginWebViewBody: {
       flex: 1,
       backgroundColor: theme.surface

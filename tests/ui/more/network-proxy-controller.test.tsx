@@ -274,7 +274,7 @@ describe('network proxy controller', () => {
       await expect(hook.result.current.ensureNetworkProxyReady()).rejects.toThrow('代理配置读取失败');
 
       await act(async () => {
-        if (action === 'reset') await hook.result.current.setProxyEnabled(false);
+        if (action === 'reset') await hook.result.current.setNetworkMode('system');
         else await hook.result.current.upsertProxyProfile(profileB);
       });
 
@@ -298,6 +298,24 @@ describe('network proxy controller', () => {
 
     expect(mockLoadNetworkProxyState).toHaveBeenCalledTimes(1);
     expect(mockApplyNetworkProxy.mock.calls).toEqual([[profileA]]);
+  });
+
+  it('restores the profiles read from recovered storage when applying the new mode fails', async () => {
+    const saved = { enabled: true, activeId: profileA.id, profiles: [profileA] };
+    mockLoadNetworkProxyState.mockRejectedValueOnce(new Error('temporarily unavailable')).mockResolvedValue(saved);
+    const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn() }));
+    await waitFor(() => expect(hook.result.current.applyStatus).toBe('failed'));
+    mockApplyNetworkProxy.mockRejectedValueOnce(new Error('cannot apply DNS'));
+
+    await act(async () => {
+      await expect(hook.result.current.setNetworkMode('doh', { provider: 'dnspod', policy: 'strict' })).rejects.toThrow(
+        'cannot apply DNS'
+      );
+    });
+
+    expect(mockSaveNetworkProxyState).toHaveBeenLastCalledWith(saved);
+    expect(mockApplyNetworkProxy).toHaveBeenLastCalledWith(profileA);
+    expect(hook.result.current.effectiveMode).toBe('proxy');
   });
 
   it('restores the saved proxy for a cold notification task without an App owner', async () => {
@@ -326,7 +344,7 @@ describe('network proxy controller', () => {
       const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn() }));
       try {
         await waitFor(() => expect(hook.result.current.applyStatus).toBe('disabled'));
-        await act(() => hook.result.current.setProxyEnabled(true));
+        await act(() => hook.result.current.setNetworkMode('proxy'));
         expect(mockSaveNetworkProxyState).toHaveBeenCalledWith({ ...previous, enabled: true });
         expect(hook.result.current.applyStatus).toBe('applied');
         if (owner === 'retired') await hook.unmount();
@@ -367,7 +385,7 @@ describe('network proxy controller', () => {
 
     await act(async () => {
       await expect(hook.result.current.upsertProxyProfile(profileA)).rejects.toThrow('temporarily unavailable');
-      await expect(hook.result.current.setProxyEnabled(false)).rejects.toThrow('temporarily unavailable');
+      await expect(hook.result.current.setNetworkMode('system')).rejects.toThrow('temporarily unavailable');
     });
 
     expect(mockSaveNetworkProxyState).not.toHaveBeenCalled();
@@ -395,7 +413,7 @@ describe('network proxy controller', () => {
       expect(mockApplyNetworkProxy).not.toHaveBeenCalled();
 
       await act(async () => {
-        await hook.result.current.setProxyEnabled(false);
+        await hook.result.current.setNetworkMode('system');
       });
 
       expect(mockSaveNetworkProxyState).toHaveBeenCalledWith({
@@ -459,7 +477,7 @@ describe('network proxy controller', () => {
       expect(fetchSpy).not.toHaveBeenCalled();
 
       await act(async () => {
-        await hook.result.current.setProxyEnabled(false);
+        await hook.result.current.setNetworkMode('system');
       });
       expect(hook.result.current.applyStatus).toBe('disabled');
 
@@ -551,7 +569,7 @@ describe('network proxy controller', () => {
 
       let reset!: Promise<void>;
       await act(async () => {
-        reset = hook.result.current.setProxyEnabled(false);
+        reset = hook.result.current.setNetworkMode('system');
         await Promise.resolve();
       });
       expect(mockApplyNetworkProxy).toHaveBeenCalledTimes(1);
@@ -912,7 +930,7 @@ describe('network proxy controller', () => {
     setDiagnosticWriter((line) => {
       lines.push(line);
       const event = JSON.parse(line);
-      if (event.operation === 'set-enabled' && event.phase === 'intent')
+      if (event.operation === 'set-mode' && event.phase === 'intent')
         commandOrder.push(event.isEnabled ? 'enable:start' : 'disable:start');
     });
     mockLoadNetworkProxyState.mockResolvedValue({
@@ -930,12 +948,12 @@ describe('network proxy controller', () => {
     let disable!: Promise<void>;
     let observed!: Promise<void>;
     await act(async () => {
-      enable = hook.result.current.setProxyEnabled(true);
+      enable = hook.result.current.setNetworkMode('proxy');
       observed = enable.then(() => {
         commandOrder.push('enable:done');
         queueMicrotask(() => commandOrder.push('observer:microtask'));
       });
-      disable = hook.result.current.setProxyEnabled(false);
+      disable = hook.result.current.setNetworkMode('system');
       await Promise.resolve();
     });
     await waitFor(() => expect(mockApplyNetworkProxy).toHaveBeenCalledTimes(3));
@@ -948,7 +966,7 @@ describe('network proxy controller', () => {
 
     const events = lines.map((line) => JSON.parse(line));
     const enableTraceId = events.find(
-      (event) => event.operation === 'set-enabled' && event.phase === 'intent' && event.isEnabled === true
+      (event) => event.operation === 'set-mode' && event.phase === 'intent' && event.isEnabled === true
     )?.traceId;
     const enableEvents = events.filter((event) => event.traceId === enableTraceId);
     const persistIndex = enableEvents.findIndex((event) => event.phase === 'persist');
@@ -962,7 +980,7 @@ describe('network proxy controller', () => {
     expect(enableEvents[finishIndex]).toEqual(expect.objectContaining({ outcome: 'success', state: 'applied' }));
   });
 
-  it('keeps failed native disable closed and permits a later enable retry', async () => {
+  it('keeps the saved mode and permits retry when both native apply and rollback fail', async () => {
     mockLoadNetworkProxyState.mockResolvedValue({
       enabled: true,
       activeId: profileA.id,
@@ -970,17 +988,19 @@ describe('network proxy controller', () => {
     });
     const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn() }));
     await waitFor(() => expect(hook.result.current.applyStatus).toBe('applied'));
-    mockApplyNetworkProxy.mockRejectedValueOnce(new Error('native disable failed'));
+    mockApplyNetworkProxy
+      .mockRejectedValueOnce(new Error('native disable failed'))
+      .mockRejectedValueOnce(new Error('native rollback failed'));
 
     await act(async () => {
-      await expect(hook.result.current.setProxyEnabled(false)).rejects.toThrow('native disable failed');
+      await expect(hook.result.current.setNetworkMode('system')).rejects.toThrow('native disable failed');
     });
 
-    expect(hook.result.current.proxyState.enabled).toBe(false);
+    expect(hook.result.current.proxyState.enabled).toBe(true);
     expect(hook.result.current.applyStatus).toBe('failed');
-    await expect(hook.result.current.ensureNetworkProxyReady()).rejects.toThrow('native disable failed');
+    await expect(hook.result.current.ensureNetworkProxyReady()).rejects.toThrow('native rollback failed');
     await act(async () => {
-      await hook.result.current.setProxyEnabled(true);
+      await hook.result.current.setNetworkMode('proxy');
     });
     expect(hook.result.current.proxyState.enabled).toBe(true);
     expect(hook.result.current.applyStatus).toBe('applied');
@@ -1001,6 +1021,7 @@ describe('network proxy controller', () => {
       const previousApply = deferred<unknown>();
       const latestApply = deferred<unknown>();
       mockApplyNetworkProxy.mockReturnValueOnce(previousApply.promise).mockReturnValueOnce(latestApply.promise);
+      if (outcome === 'failure') mockApplyNetworkProxy.mockRejectedValueOnce(new Error('latest apply failed'));
       let selection: Promise<void> | undefined;
       let disable: Promise<void> | undefined;
       let request: Promise<Response> | undefined;
@@ -1020,7 +1041,7 @@ describe('network proxy controller', () => {
           }
         );
         await act(async () => {
-          disable = hook.result.current.setProxyEnabled(false);
+          disable = hook.result.current.setNetworkMode('system');
           void disable.catch(() => undefined);
         });
         await waitFor(() => expect(hook.result.current.proxyState.enabled).toBe(false));

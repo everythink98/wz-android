@@ -205,7 +205,7 @@ proof 的 JS/renderer 分支要求异常记录、旧进程归属和系统退出�
 
 fresh prebuild 后，用 `android/gradlew.bat -p android :forum-platform:testDebugUnitTest --tests '*NetworkProxyRuntimeTest' --no-daemon` 执行模块内网络 canonical owner；RN 注入 wiring 使用 `:react-native:packages:react-native:ReactAndroid:testDebugUnitTest --tests '*ReactOkHttpNetworkFetcherTest'`。两份 XML 报告都必须包含非零用例。
 
-HTTP/2 故障子集可用 `--tests '*NetworkProxyRuntimeTest.*Http2*'`。共享 `modules/forum-platform/android/src/testShared/java/com/wz/reader/network/Http2ImageFaultFixture.kt` 使用与实际 OkHttp 4.12.0 对齐的 test-only MockWebServer/TLS、loopback TCP relay 和可关闭的阻塞写 socket；不修改公网、系统网络或用户代理。报告中的 `HTTP2_RECOVERY/RESET/PROGRESS/OFFLINE` 记录实际建连数、请求数、耗时与终态；并发建连可能产生被 OkHttp 丢弃的候选，必须同时断言最终取得的连接身份和旧 runtime 释放。慢响应保留正常 PONG，连续响应体实际传输超过 30 秒。设备 `HTTP2_IMAGES` 必须由已初始化的 Fresco/Glide 实际解码并显示，HTTP 200 不能代替它。原生诊断新增 `request-headers-start/end`、`request-failed`、`connection-write-stalled`，只含脱敏连接标识和阶段。
+HTTP/2 故障子集可用 `--tests '*NetworkProxyRuntimeTest.*Http2*'`。共享 `modules/forum-platform/android/src/testShared/java/com/wz/reader/network/Http2ImageFaultFixture.kt` 模块内单测使用通过 OkHttp BOM 对齐的 MockWebServer/TLS、loopback TCP relay 和可关闭的阻塞写 socket；不修改公网、系统网络或用户代理。报告中的 `HTTP2_RECOVERY/RESET/PROGRESS/OFFLINE` 记录实际建连数、请求数、耗时与终态；并发建连可能产生被 OkHttp 丢弃的候选，必须同时断言最终取得的连接身份和旧 runtime 释放。慢响应保留正常 PONG，连续响应体实际传输超过 30 秒。设备 `HTTP2_IMAGES` 必须由已初始化的 Fresco/Glide 实际解码并显示，HTTP 200 不能代替它。原生诊断新增 `request-headers-start/end`、`request-failed`、`connection-write-stalled`，只含脱敏连接标识和阶段。
 
 设备链路先启动独立 `WZ_ImageRuntime_Test_API35`，执行 `node scripts/run-network-image-instrumented-tests.mjs`。runner 精确匹配该 AVD，以开发签名 Release 同时运行 `ManagedCookieResponsesInstrumentedTest` 的合成 HTTP 轮换、平台 Cookie 属性/定向过期验证，以及真实 RN/Fresco 初始化验证图片、Glide 两种 model、缓存、回收、取消、连续轮换及 SVG。仅该测试构建允许 `127.0.0.1/localhost` HTTP，其他地址仍禁止明文流量；测试后的 finally 移除临时 manifest/resources 并重新构建默认 Release，测试 APK 不用于保留数据设备验收。runner 不创建、清理或重置 AVD；保留数据设备仍按安装身份核对与只读 Live 流程单独验收。
 
@@ -235,11 +235,21 @@ NodeSeek 隐藏脚本另有真实 WebView 专项。先执行 `node scripts/prepa
 
 ### L 站续签与登录态诊断
 
+`cookieResult=login_superseded` 说明请求的登录值已被平台中的当前值替代，该次 `_t` 更新未提交。普通 Cookie 仍按各自的平台结果结算。原站删除当前登录 Cookie 后，按后续账号复核中的 `accountEvidence` 核对用户结果。业务 `401` 和会话接口确认退出分别取证。
+
 沿用上面的隔离 runner；它分两个 instrumentation 进程执行持久型 Cookie 续签并 flush、停止进程、重启后真实 HTTP 认证，断言 PID 改变，并检查原 Native journal 的原因字段仍在且敏感字段已过滤。同一 runner 还分别驱动安装依赖的真实 WebView 正常完成、网络错误和加载提前取消，在独立进程重启后回读平台 Cookie；React 消息传输使用替身，平台 Cookie 与 HTTP 不替换。销毁入口的 flush 由既有 RN WebView patch 提供，不能把该原生探针算作 L 站成功登录或整个 React Host 的端到端验收。会话型 Cookie 只按 Android 实际语义观察，不能把内存接受当作重启持久化证据。多个 Domain/Path 的同名 Cookie、Secure/HttpOnly 与定向删除由同一个平台 owner 验证。
 
 导出先看 `diagnostic-account-summary`：`localSnapshot` 是本地身份，`lastCheckResult/lastCheckAt/checkedInCurrentProcess` 才说明日志中的最近核对。按请求 trace/request/call 与账号隔离 epoch 关联 `cookie-request`（实际发送的登录 Cookie 是否存在）、`cookie-response`（类别、设置/删除/未知、平台逐项接受）、`cookie-persist`（persisted/flush_failed）和 `cookie-barrier`（闭集原因与开启/释放）。`settled/accepted` 不等于已落盘，`flush_failed` 不等于已清除。source_denied、redirect_denied、barrier_blocked、epoch_changed、callback_timeout、pending_write 和平台 rejected 各自处理；旧日志 canceled 表示旧版本丢弃已收到的响应，新版本消费者取消不再丢弃合格 Cookie 更新，旧日志 stale/baseline_changed 只作旧语义读取。`site-config` 单独标识 `/site.json`；`loginCookieCount/storedLoginCookieCount/isLoginCookieCurrent` 仅比较实际发送 Header 与当时准确 URL 的存储，缺字段表示未知；并发写入可能造成比较不一致，不能单凭 false 定性旧凭据。WebView 内部响应不可见；只记录可信页面交接和前后凭据存在、最终协议结果，不推测内部 Set-Cookie。
 
 现场只在按安装身份步骤覆盖安装正常开发包后，用现有登录态进行只读浏览，等至少两次自然登录 Cookie 更新并看到落盘确认，再按保留数据方式结束/重启 App，核对 `/session/current.json` 与账号结果。不得清 Cookie、自动登录或重放写操作来制造条件。无真实登录或观察窗口内没有自然续签记 `NOT_VERIFIED`，缺隔离设备记 `BLOCKED_BY_ENV`。若服务端明确删除，继续追溯此前是否有客户端漏续签；不能只因 stale 消失就关闭 `REG-ACCOUNT-048`。
+
+### 加密 DNS 与网络设置验收
+
+构建需要 Android SDK Platform 37.0。ECH 实机验收分别覆盖 Android 17 及以上的系统 TLS 和较早版本的随包 Conscrypt。打开阅坛 DoH，通过原生直连请求核对目标服务器是否接受 ECH。在无代理的真机上记录默认网络的 VPN 状态、DoH 应答、TLS 握手与站点 HTTP 结果。站点返回验证页时记为已连通、待验证。
+
+原生解析与 Cookie 回写用 `android/gradlew.bat -p android :forum-platform:testDebugUnitTest --tests '*AppEncryptedDnsTest' --tests '*ManagedCookieResponsesTest' --no-daemon`。同来源读取复核用 `src/sources/readGateway.test.ts` 和 `tests/ui/account/account-runtime.test.tsx`，对照实际原站查询和发送次数。
+
+在保留数据的 Android 设备上，先记录安装身份、网络模式与账号显示，再覆盖安装。分别检查系统模式、严格 DoH 和模式冷恢复，将配置还原到验收前状态。真实连通检查按解析、TLS、HTTP 结果记载。受控域名与故障注入只用于隔离设备，用对应请求记录确认组件实际访问。后续自然掉线样本独立按登录态诊断取证。
 
 ### 下拉刷新 Native 验证
 

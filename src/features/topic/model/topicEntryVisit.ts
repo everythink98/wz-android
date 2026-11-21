@@ -1,13 +1,18 @@
 export function createTopicEntryVisit(key: string, initiallyCached: boolean) {
-  let started = false;
+  let request: AbortSignal | undefined;
   let settled = false;
   let cached = initiallyCached;
+  function claimVisit(signal: AbortSignal) {
+    if (settled || (request && !request.aborted)) return false;
+    request = signal;
+    return true;
+  }
   return {
     get key() {
       return key;
     },
     get started() {
-      return started;
+      return Boolean(request);
     },
     get settled() {
       return settled;
@@ -15,19 +20,14 @@ export function createTopicEntryVisit(key: string, initiallyCached: boolean) {
     get cached() {
       return cached;
     },
-    claimVisit() {
-      if (started) return false;
-      started = true;
-      return true;
-    },
-    claimCachedRegistration() {
-      if (started) return false;
+    claimVisit,
+    claimCachedRegistration(signal: AbortSignal) {
+      if (!claimVisit(signal)) return false;
       cached = true;
-      started = true;
       return true;
     },
-    settleRequest() {
-      settled = true;
+    settleRequest(signal: AbortSignal) {
+      if (signal === request && !signal.aborted) settled = true;
     }
   };
 }

@@ -29,6 +29,7 @@ import {
 } from '@/platform/diagnostics/diagnosticPolicy';
 import type { NotificationAdapter, NotificationAdapterAccess } from './notificationAdapter';
 import { errorRequiresAccountRecheck, sourceErrorFromUnknown } from './sourceErrors';
+import { forumResponseAccountFailure } from './sessionFailure';
 import { notificationAdapters } from './notificationAdapters';
 import type { NormalizedReplyImageAsset } from './imageUpload';
 import { replyImageMarkupForSource } from './imageUpload';
@@ -166,13 +167,25 @@ export function createNotificationGateway({
       identityKey = access.identityKey;
       assertCurrent();
       const transport = access.fetcher || fetch;
+      let accountRecheck: Promise<boolean | void> | undefined;
+      const linuxDoTransport: Fetcher = async (input, init) => {
+        const response = await transport(input, init);
+        if ((await forumResponseAccountFailure(source, input, response, signal)) !== 'http-401') return response;
+        assertCurrent();
+        accountRecheck ??= Promise.resolve(requestAccountRecheck?.(source, requestEpoch, trace.traceId));
+        if (/^(GET|HEAD)$/i.test(init?.method ?? 'GET') && (await accountRecheck)) {
+          assertCurrent();
+          return transport(input, init);
+        }
+        return response;
+      };
       const fetcher = withFetchGuard(
         withDiagnosticFetcher(
           trace,
           withRequestBeforeSend(
             source === 'nodeseek' && operation === 'notification-upload'
               ? transport
-              : rejectUnauthorizedResponse(transport),
+              : rejectUnauthorizedResponse(source === 'linuxdo' ? linuxDoTransport : transport, source === 'linuxdo'),
             assertCurrent
           )
         ),
@@ -183,10 +196,12 @@ export function createNotificationGateway({
         result = await run({ ...access, fetcher, ...(signal ? { signal } : {}) }, adapters[source]);
       } catch (error) {
         assertCurrent();
-        if ((source === 'linuxdo' || source === 'nodeseek') && errorRequiresAccountRecheck(error)) {
-          requestAccountRecheck?.(source, requestEpoch, trace.traceId);
-        } else if (sourceErrorFromUnknown(source, error).reason === 'http-401') {
-          onSessionExpired?.(source, requestEpoch);
+        if (!accountRecheck) {
+          if ((source === 'linuxdo' || source === 'nodeseek') && errorRequiresAccountRecheck(error)) {
+            requestAccountRecheck?.(source, requestEpoch, trace.traceId);
+          } else if (sourceErrorFromUnknown(source, error).reason === 'http-401') {
+            onSessionExpired?.(source, requestEpoch);
+          }
         }
         throw error;
       }

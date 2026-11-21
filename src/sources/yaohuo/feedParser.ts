@@ -1,11 +1,11 @@
 import type { HTMLElement } from 'node-html-parser';
 import type { FeedResponse, SearchResponse, Topic } from '@/domain/forum/models';
+import { sortFeedTopicsByTime } from '@/domain/forum/feed';
 import {
   absoluteUrl,
   elementText,
   parseHtml,
   parsePositiveInteger,
-  sortTopicsByTime,
   textExcerptFromPlainText,
   toIsoString
 } from '@/domain/forum/html';
@@ -52,6 +52,9 @@ function parseListItem(
   }
   const text = elementText(element);
   const titleRoot = parseHtml(link?.innerHTML || '');
+  const pinned = element
+    .querySelectorAll('.post-flag')
+    .some((badge) => badge.getAttribute('title') === '置顶' || /^(置顶|顶|置)$/.test(elementText(badge)));
   titleRoot.querySelectorAll('.post-flag').forEach((badge) => badge.remove());
   const title = elementText(titleRoot);
   const resolvedClassId = classId || extractClassIdFromRow(element) || fallbackClassId;
@@ -101,6 +104,7 @@ function parseListItem(
     replyCount,
     viewCount: viewCount || undefined,
     excerpt: textExcerptFromPlainText(text),
+    ...(pinned ? { pinned: true } : {}),
     ...(accessRequirement ? { accessRequirement } : {})
   };
 }
@@ -203,7 +207,7 @@ export function parseYaohuoListDocument(
   }
   const nextPage = nextYaohuoPage(root, page, items.length, limit);
   const result = {
-    items: preserveOrder ? items : sortTopicsByTime(items),
+    items: preserveOrder ? items : sortFeedTopicsByTime(items),
     errors: {},
     hasMore: Boolean(nextPage),
     nextPage

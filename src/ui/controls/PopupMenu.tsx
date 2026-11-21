@@ -1,6 +1,14 @@
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import type { ReactNode } from 'react';
-import { Modal, Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import {
+  Modal,
+  Pressable,
+  StyleSheet,
+  View,
+  type LayoutChangeEvent,
+  type StyleProp,
+  type ViewStyle
+} from 'react-native';
 import { List } from 'react-native-paper';
 import type { LucideIcon } from 'lucide-react-native';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
@@ -73,13 +81,17 @@ export function PopupMenu({
   accessibilityLabel,
   children,
   placementStyle,
+  testID,
   visible,
+  onLayerLayout,
   onRequestClose
 }: {
   accessibilityLabel: string;
   children: ReactNode;
   placementStyle: StyleProp<ViewStyle>;
+  testID?: string;
   visible: boolean;
+  onLayerLayout?: (event: LayoutChangeEvent) => void;
   onRequestClose: () => void;
 }) {
   const { styles } = useReaderThemeStyles(createStyles);
@@ -92,14 +104,19 @@ export function PopupMenu({
       animationType="fade"
       onRequestClose={onRequestClose}
     >
-      <View style={styles.layer} onTouchStart={recordUserInteraction} onTouchMove={recordUserInteraction}>
+      <View
+        style={styles.layer}
+        onLayout={onLayerLayout}
+        onTouchStart={recordUserInteraction}
+        onTouchMove={recordUserInteraction}
+      >
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={accessibilityLabel}
           style={styles.dismiss}
           onPress={onRequestClose}
         />
-        <View style={[styles.menu, placementStyle]}>
+        <View testID={testID} style={[styles.menu, placementStyle]}>
           <NavigationGlass variant="surface" />
           {children}
         </View>

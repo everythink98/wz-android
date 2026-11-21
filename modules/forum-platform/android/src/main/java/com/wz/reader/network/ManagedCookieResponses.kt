@@ -77,7 +77,7 @@ private fun loginCookieValues(header: String?): List<String> = header.orEmpty().
   .map { it.trim().split('=', limit = 2) }
   .filter { it.size == 2 && it[0] == "_t" }.map { it[1] }
 
-internal fun loginCookieValue(header: String?): String? = loginCookieValues(header).firstOrNull()?.takeIf { it.isNotEmpty() }
+internal fun loginCookieValue(header: String?): String? = loginCookieValues(header).firstOrNull { it.isNotEmpty() }
 
 internal fun cookieEndpoint(request: Request): String = when {
   request.url.encodedPath == "/session/current.json" -> "auth"
@@ -110,7 +110,8 @@ private data class PendingCookieWrite(
   val batch: CookieResponseBatch,
   val fields: Map<String, Any>,
   val items: List<Map<String, Any>>,
-  val started: Long
+  val started: Long,
+  val checkLoginDeletionUrl: String?
 )
 
 internal class ManagedCookieResponses(
@@ -120,7 +121,8 @@ internal class ManagedCookieResponses(
   private val timeoutMs: Long = 5000L,
   private val flusher: () -> Unit = {},
   private val background: (() -> Unit) -> Unit = {},
-  private val cookieInfoReader: () -> List<String>? = { null }
+  private val cookieInfoReader: () -> List<String>? = { null },
+  private val onLoginCookieDeleted: () -> Unit = {}
 ) {
   // ponytail: serialize platform writes only; network requests remain concurrent.
   private val lock = Any()
@@ -252,6 +254,10 @@ internal class ManagedCookieResponses(
         "outcome" to if (write.batch.result(index) == "accepted") "success" else "failure",
         "elapsedMs" to TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - write.started)))
     }
+    write.checkLoginDeletionUrl?.let { url ->
+      if (runCatching { loginCookieValue(reader(url)) == null }.getOrDefault(false))
+        background(onLoginCookieDeleted)
+    }
     return true
   }
 
@@ -326,8 +332,8 @@ internal class ManagedCookieResponses(
       val fields = requestFields(response.request, call) + mapOf("cookieCount" to values.size,
         "status" to response.code, "requestCookieEpoch" to scope.epoch, "cookieEpoch" to epoch)
       val items = values.mapIndexed { index, value -> cookieResponseItem(response.request, value, index) }
-      fun record(reason: String, outcome: String = "noop") {
-        (items.ifEmpty { listOf(emptyMap()) }).forEach { item ->
+      fun record(reason: String, outcome: String = "noop", observed: List<Map<String, Any>> = items) {
+        (observed.ifEmpty { listOf(emptyMap()) }).forEach { item ->
           emit(fields + item + mapOf("operation" to "cookie-response", "cookieResult" to reason,
             "cookieWriteSequence" to writeSequence, "outcome" to outcome))
         }
@@ -339,12 +345,24 @@ internal class ManagedCookieResponses(
       if (!settlePending(timeoutMs)) { record("pending_write", "failure"); return }
       if (values.isEmpty()) { flushDirty(); record("absent"); return }
       // A diagnostic observation failure must never suppress a valid platform update.
-      val before = runCatching { loginCookieValue(reader(url)) }
+      val before = runCatching { loginCookieValues(reader(url)).filter(String::isNotEmpty) }
+      val sent = loginCookieValues(response.request.header("Cookie")).filter(String::isNotEmpty)
+      val staleLogin = sent.isNotEmpty() && before.getOrNull()?.none(sent::contains) == true
+      val acceptedIndices = if (staleLogin) {
+        val loginIndices = items.indices.filter { items[it]["cookieKind"] == "login" }
+        if (loginIndices.isNotEmpty()) record("login_superseded", observed = loginIndices.map(items::get))
+        items.indices.filterNot(loginIndices::contains)
+      } else items.indices.toList()
+      if (acceptedIndices.isEmpty()) { flushDirty(); return }
+      val acceptedItems = acceptedIndices.map(items::get)
       try {
-        val batch = writer(url, values)
+        val batch = writer(url, acceptedIndices.map(values::get))
         writeSequence++
         val writeFields = fields + mapOf("cookieWriteSequence" to writeSequence)
-        updatePersistence(PendingCookieWrite(batch, writeFields, items, System.nanoTime()), dirty)
+        val checkingDeletion = before.getOrNull()?.isNotEmpty() == true &&
+          acceptedItems.any { it["cookieKind"] == "login" && it["cookieAction"] == "delete" }
+        updatePersistence(PendingCookieWrite(batch, writeFields, acceptedItems, System.nanoTime(),
+          url.takeIf { checkingDeletion }), dirty)
         if (!settlePending(timeoutMs)) {
           batch.abandoned.set(true)
           batch.whenSettled {
@@ -358,10 +376,10 @@ internal class ManagedCookieResponses(
           record("callback_timeout", "failure")
           return
         }
-        val after = runCatching { loginCookieValue(reader(url)) }
+        val after = runCatching { loginCookieValues(reader(url)).filter(String::isNotEmpty) }
         emit(writeFields + mapOf("operation" to "cookie-response", "cookieResult" to "applied",
           "outcome" to if (batch.successful) "success" else "failure") +
-          (if (after.isSuccess) mapOf("hasLoginCookie" to (after.getOrNull() != null)) else emptyMap()) +
+          (if (after.isSuccess) mapOf("hasLoginCookie" to after.getOrThrow().isNotEmpty()) else emptyMap()) +
           (if (before.isSuccess && after.isSuccess) mapOf("loginCookieChanged" to (before.getOrNull() != after.getOrNull())) else emptyMap()))
         flushDirty()
       } catch (_: Exception) {
@@ -372,6 +390,7 @@ internal class ManagedCookieResponses(
 }
 
 internal object LinuxDoCookieResponses {
+  val loginDeletionListener = AtomicReference<(() -> Unit)?>(null)
   private val completionWorker = Executors.newSingleThreadExecutor { task -> Thread(task, "cookie-completion").apply { isDaemon = true } }
   val store = ManagedCookieResponses(
     reader = { CookieManager.getInstance().getCookie(it) },
@@ -383,7 +402,8 @@ internal object LinuxDoCookieResponses {
       if (WebViewFeature.isFeatureSupported(WebViewFeature.GET_COOKIE_INFO))
         CookieManagerCompat.getCookieInfo(CookieManager.getInstance(), "https://linux.do/")
       else null
-    }
+    },
+    onLoginCookieDeleted = { loginDeletionListener.get()?.invoke() }
   )
 }
 

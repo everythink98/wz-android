@@ -24,7 +24,7 @@ export function TabBarIcon({
 }) {
   const { styles, theme } = useReaderThemeStyles(createNavBarStyles);
   const Icon = icon;
-  const color = focused ? theme.primary : theme.muted;
+  const color = focused ? styles.navTextActive.color : theme.muted;
   return (
     <View style={styles.navItem}>
       <View style={styles.navIconPill}>
@@ -68,6 +68,6 @@ function createNavBarStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       fontWeight: '500',
       letterSpacing: 0
     },
-    navTextActive: { color: theme.primary, fontWeight: '600' }
+    navTextActive: { color: theme.dark ? theme.primary : theme.primaryStrong, fontWeight: '600' }
   });
 }

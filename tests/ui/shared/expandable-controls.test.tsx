@@ -77,12 +77,26 @@ it('updates setting titles and summaries when the reader font scale changes', as
 });
 
 describe('MenuButton', () => {
+  it('centers settings actions and disclosure headers in equally tall touch targets', async () => {
+    const view = await render(
+      <>
+        <MenuButton testID="action" icon={ChevronDown} label="网络设置" value="跟随系统" onPress={jest.fn()} />
+        <ExpandablePanel testID="panel" quiet title="备份" expanded={false} onExpandedChange={jest.fn()}>
+          <Text>备份选项</Text>
+        </ExpandablePanel>
+      </>
+    );
+    for (const id of ['action', 'panel']) {
+      expect(view.getByTestId(id)).toHaveStyle({ minHeight: 60, justifyContent: 'center', paddingVertical: 10 });
+    }
+  });
+
   it('does not reserve a subtitle row for an empty value', async () => {
     const view = await render(<MenuButton icon={ChevronDown} label="收藏" value="" onPress={jest.fn()} />);
     const button = view.getByRole('button', { name: '收藏' });
 
     expect(button.queryAll((node) => node.type === 'Text')).toHaveLength(1);
-    expect(StyleSheet.flatten(button.props.style)).toMatchObject({ alignItems: 'center', minHeight: 48 });
+    expect(StyleSheet.flatten(button.props.style)).toMatchObject({ alignItems: 'center', minHeight: 60 });
   });
 
   it.each(['0', '已连接'])('keeps the visible subtitle %s', async (value) => {

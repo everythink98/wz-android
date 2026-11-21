@@ -39,6 +39,7 @@ import type { MainTabParamList, RootStackParamList } from '@/ui/navigation/appRo
 import { navigationRef } from '@/app/appNavigation';
 import { useAppDeepLinkNavigation } from '@/app/useAppDeepLinkNavigation';
 import { MoreRoute, MoreRouteRuntimeProvider, type MoreRouteRuntimeValue } from '@/features/more/MoreRoute';
+import { NetworkSettingsRoute } from '@/features/more/NetworkSettingsRoute';
 import { useNodeSeekCheckInController } from '@/features/account/useNodeSeekCheckInController';
 import { prepareRequestToSend, type Fetcher } from '@/platform/network/request';
 import {
@@ -306,6 +307,7 @@ jest.mock('lucide-react-native', () => {
     Pencil: Icon,
     Play: Icon,
     Plus: Icon,
+    Minus: Icon,
     RefreshCw: Icon,
     Server: Icon,
     Settings: Icon,
@@ -581,19 +583,8 @@ function moreProps(overrides: MoreScreenOverrides = {}): MoreScreenProps {
         ...overrides.utilities?.diagnostics
       },
       proxy: {
-        activeProfile: null,
-        applyError: '',
-        applyStatus: 'idle',
-        state: createEmptyNetworkProxyState(),
-        summary: '未启用',
-        visible: false,
-        close: jest.fn(),
+        summary: '跟随系统',
         open: jest.fn(),
-        deleteProfile: jest.fn(async () => undefined),
-        selectProfile: jest.fn(async () => undefined),
-        setEnabled: jest.fn(async () => undefined),
-        testProfile: jest.fn(async () => ({ ok: true, latencyMs: 10 })),
-        upsertProfile: jest.fn(async () => undefined),
         ...overrides.utilities?.proxy
       },
       settings: {
@@ -617,14 +608,18 @@ function createMoreRouteRuntime(props = moreProps()): MoreRouteRuntimeValue {
     notify: jest.fn(),
     library: props.utilities.library,
     proxy: {
-      activeProfile: props.utilities.proxy.activeProfile,
+      activeProfile: null,
       applyError: '',
       applyStatus: 'disabled',
-      proxyState: props.utilities.proxy.state,
+      confirmedState: undefined,
+      dnsResult: undefined,
+      effectiveMode: 'system',
+      proxyState: createEmptyNetworkProxyState(),
       summary: props.utilities.proxy.summary,
-      deleteProxyProfile: props.utilities.proxy.deleteProfile,
-      selectProxyProfile: props.utilities.proxy.selectProfile,
-      setProxyEnabled: props.utilities.proxy.setEnabled,
+      deleteProxyProfile: jest.fn(async () => undefined),
+      selectProxyProfile: jest.fn(async () => undefined),
+      setNetworkMode: jest.fn(async () => undefined),
+      testEncryptedDns: jest.fn(async () => ({ ok: true, latencyMs: 10 })),
       testProxyProfile: jest.fn(async () => ({ ok: true, latencyMs: 10 })),
       upsertProxyProfile: jest.fn(async () => undefined)
     },
@@ -651,6 +646,141 @@ function createMoreRouteRuntime(props = moreProps()): MoreRouteRuntimeValue {
     }
   };
 }
+
+const NetworkSettingsStack = createNativeStackNavigator<RootStackParamList>();
+
+function renderNetworkSettings(runtime: MoreRouteRuntimeValue) {
+  return (
+    <MoreRouteRuntimeProvider value={runtime}>
+      <NavigationContainer>
+        <NetworkSettingsStack.Navigator screenOptions={{ headerShown: false }}>
+          <NetworkSettingsStack.Screen name="NetworkSettings" component={NetworkSettingsRoute} />
+        </NetworkSettingsStack.Navigator>
+      </NavigationContainer>
+    </MoreRouteRuntimeProvider>
+  );
+}
+
+describe('network settings transitions', () => {
+  it('can apply a preset after abandoning an invalid custom DNS draft', async () => {
+    const runtime = createMoreRouteRuntime();
+    const saved = {
+      provider: 'custom' as const,
+      policy: 'strict' as const,
+      customEndpoint: 'https://resolver.example/dns-query',
+      customBootstrap: ['2001:db8::1']
+    };
+    runtime.proxy = {
+      ...runtime.proxy,
+      effectiveMode: 'doh',
+      applyStatus: 'applied',
+      proxyState: { ...runtime.proxy.proxyState, mode: 'doh', encryptedDns: saved }
+    };
+    const view = await render(renderNetworkSettings(runtime));
+    try {
+      await fireEvent.press(view.getByText('服务商和保护级别'));
+      await fireEvent.changeText(view.getByLabelText('HTTPS 地址'), 'https:/');
+      await fireEvent.changeText(view.getByLabelText('引导 IP'), 'unfinished');
+      await fireEvent.press(view.getByRole('radio', { name: /CFluxDo 公共加速/ }));
+      await fireEvent.press(view.getByRole('button', { name: '保存并应用' }));
+      expect(runtime.proxy.setNetworkMode).toHaveBeenCalledWith('doh', { ...saved, provider: 'cfluxdo' });
+    } finally {
+      await view.unmount();
+    }
+  });
+
+  it('keeps confirmed mode and actions visible until the native mode change completes', async () => {
+    const runtime = createMoreRouteRuntime();
+    const saved = { ...runtime.proxy.proxyState, encryptedDns: { provider: 'dnspod', policy: 'strict' } as const };
+    const next = { ...saved, mode: 'doh' as const };
+    const applying = Promise.withResolvers<void>();
+    runtime.proxy.proxyState = saved;
+    runtime.proxy.setNetworkMode = jest.fn(() => applying.promise);
+    const view = await render(renderNetworkSettings(runtime));
+
+    try {
+      await fireEvent.press(view.getByText('加密 DNS'));
+      await view.rerender(
+        renderNetworkSettings({
+          ...runtime,
+          proxy: { ...runtime.proxy, proxyState: next, confirmedState: saved, applyStatus: 'applying' }
+        })
+      );
+      expect(view.getByRole('radio', { name: /跟随系统/, checked: true })).toBeTruthy();
+      expect(view.queryByText('测试连接')).toBeNull();
+
+      await act(async () => applying.resolve());
+      await view.rerender(
+        renderNetworkSettings({
+          ...runtime,
+          proxy: {
+            ...runtime.proxy,
+            proxyState: next,
+            confirmedState: next,
+            effectiveMode: 'doh',
+            applyStatus: 'applied'
+          }
+        })
+      );
+      expect(view.getByRole('radio', { name: /加密 DNS/, checked: true })).toBeTruthy();
+      expect(view.getByText('测试连接')).toBeEnabled();
+      expect(runtime.proxy.setNetworkMode).toHaveBeenCalledTimes(1);
+    } finally {
+      applying.resolve();
+      await view.unmount();
+    }
+  });
+
+  it('keeps the last connection result visible while the same configuration is tested again', async () => {
+    const runtime = createMoreRouteRuntime();
+    const saved = {
+      ...runtime.proxy.proxyState,
+      mode: 'doh',
+      encryptedDns: { provider: 'auto', policy: 'strict' }
+    } as const;
+    const second = Promise.withResolvers<{ ok: boolean; latencyMs: number; dnsProvider?: string }>();
+    runtime.proxy = {
+      ...runtime.proxy,
+      effectiveMode: 'doh',
+      applyStatus: 'applied',
+      confirmedState: saved,
+      proxyState: saved,
+      testEncryptedDns: jest
+        .fn(() => second.promise)
+        .mockResolvedValueOnce({ ok: true, latencyMs: 10, dnsProvider: 'dnspod' })
+    };
+    const view = await render(renderNetworkSettings(runtime));
+
+    try {
+      await fireEvent.press(view.getByText('测试连接'));
+      expect(await view.findByText(/通过 · 10 ms · DNSPod/)).toBeTruthy();
+      await fireEvent.press(view.getByText('测试连接'));
+      expect(view.getByText(/通过 · 10 ms · DNSPod/)).toBeTruthy();
+      await act(async () => second.resolve({ ok: true, latencyMs: 20, dnsProvider: 'google' }));
+      expect(await view.findByText(/通过 · 20 ms · Google Public DNS/)).toBeTruthy();
+      expect(runtime.proxy.testEncryptedDns).toHaveBeenCalledTimes(2);
+    } finally {
+      second.resolve({ ok: true, latencyMs: 20 });
+      await view.unmount();
+    }
+  });
+
+  it('returns from unchanged DNS settings without saving or applying again', async () => {
+    const runtime = createMoreRouteRuntime();
+    runtime.proxy = {
+      ...runtime.proxy,
+      applyStatus: 'applied',
+      effectiveMode: 'doh',
+      proxyState: { ...runtime.proxy.proxyState, mode: 'doh', encryptedDns: { provider: 'dnspod', policy: 'strict' } }
+    };
+    const view = await render(renderNetworkSettings(runtime));
+    await fireEvent.press(view.getByText('服务商和保护级别'));
+    await fireEvent.press(await view.findByRole('button', { name: '完成' }));
+    expect(await view.findByText('服务商和保护级别')).toBeTruthy();
+    expect(runtime.proxy.setNetworkMode).not.toHaveBeenCalled();
+    await view.unmount();
+  });
+});
 
 async function renderWarmMore(Provider: React.ComponentType<{ children: React.ReactNode }>) {
   const queryClient = createAppQueryClient();
@@ -885,7 +1015,7 @@ describe('More screen state and actions', () => {
     const view = await render(screen(runtime));
     await fireEvent.press(view.getByLabelText('展开外观'));
     expect(view.getByText('100%')).toBeTruthy();
-    expect(mockWindowDimensionsCalls).toBeGreaterThanOrEqual(2);
+    expect(mockWindowDimensionsCalls).toBe(0);
     const beforeProgress = mockWindowDimensionsCalls;
 
     for (let percent = 10; percent <= 100; percent += 10) {
@@ -1089,17 +1219,10 @@ describe('More screen state and actions', () => {
       const deleteProfile = jest.fn(async (_id: string) => undefined);
       const upsertProfile = jest.fn(async () => undefined);
       const write = mode === 'save' ? upsertProfile : deleteProfile;
-      const runtime = createMoreRouteRuntime(
-        moreProps({
-          utilities: {
-            proxy: {
-              activeProfile: profile,
-              state: { activeId: profile.id, enabled: false, profiles: [profile] },
-              deleteProfile
-            }
-          }
-        })
-      );
+      const runtime = createMoreRouteRuntime();
+      runtime.proxy.activeProfile = profile;
+      runtime.proxy.proxyState = { activeId: profile.id, enabled: true, profiles: [profile] };
+      runtime.proxy.deleteProxyProfile = deleteProfile;
       runtime.proxy.upsertProxyProfile = upsertProfile;
       const queryClient = createAppQueryClient();
       const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
@@ -1127,6 +1250,7 @@ describe('More screen state and actions', () => {
             <Stack.Navigator screenOptions={{ headerShown: false }}>
               <Stack.Screen name="MainTabs" component={Tabs} />
               <Stack.Screen name="Topic">{() => <Text>通过链接打开的主题</Text>}</Stack.Screen>
+              <Stack.Screen name="NetworkSettings" component={NetworkSettingsRoute} />
             </Stack.Navigator>
           </NavigationContainer>
         );
@@ -1139,7 +1263,10 @@ describe('More screen state and actions', () => {
         </QueryClientProvider>
       );
       async function prepareAction() {
-        await fireEvent.press(view.getByTestId('more-proxy'));
+        if (navigationRef.getCurrentRoute()?.name !== 'NetworkSettings') {
+          await fireEvent.press(view.getByTestId('more-proxy'));
+          await fireEvent.press(view.getByText('管理代理'));
+        }
         if (mode === 'save') {
           await fireEvent.press(view.getByText('添加代理'));
           await fireEvent.changeText(view.getByLabelText('名称'), '新代理');
@@ -1211,6 +1338,9 @@ describe('More screen state and actions', () => {
     const slider = view.getByTestId('appearance-font-scale-slider', { includeHiddenElements: true });
     await fireEvent.press(view.getByLabelText('展开外观'));
     expect(view.getByTestId('appearance-font-scale-slider')).toBe(slider);
+    let step = view.getByLabelText('增大字号');
+    while (StyleSheet.flatten(step.props.style)?.width === undefined) step = step.parent!;
+    expect(StyleSheet.flatten(step.props.style)).toMatchObject({ width: 48, height: 48 });
     await fireEvent(slider, 'valueChange', 1.15);
     expect(view.getByText('115%')).toBeTruthy();
     expect(updateSettings).not.toHaveBeenCalled();
@@ -2967,7 +3097,7 @@ describe('More screen state and actions', () => {
     });
     const view = await render(<MoreScreen {...props} />);
 
-    await fireEvent.press(view.getByText('服务器代理'));
+    await fireEvent.press(view.getByText('网络设置'));
     expect(onShowNetworkProxyPanelChange).toHaveBeenCalledWith(true);
 
     await fireEvent.press(view.getByTestId('more-diagnostics'));

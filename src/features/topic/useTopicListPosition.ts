@@ -5,7 +5,6 @@ import type { ReplyLocationTarget, TopicDetail, TopicLocationTarget } from '@/do
 import { resolveTopicLocation } from '@/domain/forum/topicLocation';
 import type { DiagnosticFields } from '@/platform/diagnostics/diagnosticPolicy';
 import type { TopicListItem } from './model/topicListModel';
-import { topicListReadingRevision } from './model/topicListModel';
 import type { useTopicReadingEntry } from './useTopicReadingEntry';
 
 type RecordScroll = (
@@ -82,7 +81,7 @@ type PositionRequest = {
 type PositionState =
   | { phase: 'idle' }
   | { phase: 'handled'; commandKey: string }
-  | { phase: 'awaiting-viewport' | 'positioned'; request: PositionRequest };
+  | { phase: 'awaiting-viewport' | 'interrupted' | 'positioned'; request: PositionRequest };
 
 export function useTopicFloorPositioning({
   active,
@@ -97,6 +96,7 @@ export function useTopicFloorPositioning({
   readingEntry,
   items,
   targetIndex,
+  targetOffset,
   viewport,
   list,
   recordScroll
@@ -113,6 +113,7 @@ export function useTopicFloorPositioning({
   readingEntry?: Pick<ReturnType<typeof useTopicReadingEntry>, 'anchor' | 'positioned'>;
   items: readonly TopicListItem[];
   targetIndex: number;
+  targetOffset: number;
   viewport: RefObject<{ topicKey: string; offset: number; height: number }>;
   list: RefObject<FlashListRef<TopicListItem> | null>;
   recordScroll: RecordScroll;
@@ -137,7 +138,7 @@ export function useTopicFloorPositioning({
     if (
       !active ||
       loadedDetailKey !== topicKey ||
-      pending.phase !== 'awaiting-viewport' ||
+      (pending.phase !== 'awaiting-viewport' && pending.phase !== 'interrupted') ||
       pending.request.topicKey !== topicKey ||
       pending.request.commandKey !== commandKey ||
       native.topicKey !== topicKey ||
@@ -145,21 +146,25 @@ export function useTopicFloorPositioning({
     )
       return;
     const request = pending.request;
+    const topBoundary = PixelRatio.roundToNearestPixel(-1);
     let pixel = -native.offset;
     if (request.rowKey) {
       const index = items.findIndex((item) => item.key === request.rowKey);
       if (index < 0) return;
-      const layout = list.current?.getLayout(index);
+      const host = list.current;
+      const layout = host?.getLayout(index);
       if (!layout?.isHeightMeasured || layout.height <= 0) return;
-      pixel =
-        (list.current?.getFirstItemOffset() || 0) +
-        layout.y +
-        Math.min(request.offset, Math.max(0, layout.height - 1)) -
-        native.offset;
+      const offset = Math.min(request.offset, Math.max(0, layout.height - 1));
+      pixel = (host?.getFirstItemOffset() || 0) + layout.y + offset - native.offset;
+      if (request.offset > layout.height && PixelRatio.roundToNearestPixel(pixel) < topBoundary) {
+        // A saved offset can be past the end of the row after it is measured at a new height.
+        position.current = { ...pending, request: { ...request, offset } };
+        void host?.scrollToIndex({ animated: false, index, viewPosition: 0, viewOffset: offset });
+        return;
+      }
     }
     const rounded = PixelRatio.roundToNearestPixel(pixel);
-    if (rounded < PixelRatio.roundToNearestPixel(-1) || rounded >= PixelRatio.roundToNearestPixel(native.height))
-      return;
+    if (rounded < topBoundary || rounded >= PixelRatio.roundToNearestPixel(native.height)) return;
     position.current = { phase: 'positioned', request };
     if (request.highlight) {
       setHighlightedKey(request.commandKey);
@@ -170,73 +175,55 @@ export function useTopicFloorPositioning({
   const cancel = useCallback(() => {
     position.current = { phase: 'handled', commandKey };
   }, [commandKey]);
-  useEffect(() => {
-    if (!active || loadedDetailKey !== topicKey || !commandKey || !canShowReplies) return;
+  const ownsScroll = useCallback(() => {
     const current = position.current;
+    return (
+      current.phase === 'awaiting-viewport' ||
+      current.phase === 'interrupted' ||
+      (current.phase === 'positioned' && current.request.highlight)
+    );
+  }, []);
+  const endScroll = useCallback(() => {
+    if (position.current.phase === 'positioned') {
+      position.current = { phase: 'handled', commandKey: position.current.request.commandKey };
+    }
+  }, []);
+  useEffect(() => {
+    const current = position.current;
+    if (!active) {
+      if (current.phase === 'awaiting-viewport') position.current = { ...current, phase: 'interrupted' };
+      return;
+    }
+    if (loadedDetailKey !== topicKey || !commandKey || !canShowReplies) return;
     const handled =
       current.phase === 'handled' ? current.commandKey : current.phase === 'idle' ? '' : current.request.commandKey;
     if (handled === commandKey) {
       confirm();
-      return;
+      if (position.current.phase !== 'interrupted') return;
     }
     if (filtersActive) {
       clearFilters();
       return;
     }
-    if (targetIsOpeningPost) {
-      const anchor = readingEntry?.anchor;
-      const index = anchor?.rowKey
-        ? items.findIndex((item) => item.key === anchor.rowKey && topicListReadingRevision(item) === anchor.revision)
-        : -1;
-      position.current = {
-        phase: 'awaiting-viewport',
-        request: {
-          topicKey,
-          commandKey,
-          rowKey: index >= 0 ? items[index].key : undefined,
-          offset: index >= 0 ? anchor?.offset || 0 : 0,
-          highlight: false
-        }
-      };
-      recordScroll(anchor ? 'reading-resume' : 'opening', {
-        ...(index >= 0 ? { targetIndex: index } : {}),
-        offset: index >= 0 ? anchor?.offset || 0 : 0
-      });
-      if (index >= 0) void list.current?.scrollToIndex({ animated: false, index, viewOffset: anchor?.offset || 0 });
-      else
-        void list.current?.scrollToIndex({
-          animated: false,
-          index: 0,
-          viewOffset: 0 - (list.current?.getFirstItemOffset() || 0)
-        });
-      confirm();
-      return;
-    }
-    if (targetIndex < 0) return;
-    const anchor = targetReply?.readingResume ? readingEntry?.anchor : undefined;
-    const rowIndex = anchor?.rowKey
-      ? items.findIndex((item) => item.key === anchor.rowKey && topicListReadingRevision(item) === anchor.revision)
-      : -1;
-    const index = rowIndex >= 0 ? rowIndex : targetIndex;
+    if (targetIndex < 0 && !targetIsOpeningPost) return;
+    const highlight = !targetIsOpeningPost && !targetReply?.readingResume;
+    const rowKey = items[targetIndex]?.key;
     position.current = {
       phase: 'awaiting-viewport',
-      request: {
-        topicKey,
-        commandKey,
-        rowKey: items[index].key,
-        offset: rowIndex >= 0 ? anchor?.offset || 0 : 0,
-        highlight: !targetReply?.readingResume
-      }
+      request: { topicKey, commandKey, rowKey, offset: targetOffset, highlight }
     };
-    recordScroll(targetReply?.readingResume ? 'reading-resume' : 'reply-location', {
-      targetIndex: index,
-      offset: rowIndex >= 0 ? anchor?.offset || 0 : 0
-    });
+    recordScroll(
+      highlight ? 'reply-location' : targetReply?.readingResume || readingEntry?.anchor ? 'reading-resume' : 'opening',
+      {
+        ...(rowKey ? { targetIndex } : {}),
+        offset: targetOffset
+      }
+    );
     void list.current?.scrollToIndex({
-      animated: !targetReply?.readingResume,
-      index,
-      viewPosition: 0,
-      viewOffset: rowIndex >= 0 ? anchor?.offset || 0 : 0
+      animated: highlight,
+      index: rowKey ? targetIndex : 0,
+      ...(targetIsOpeningPost ? {} : { viewPosition: 0 }),
+      viewOffset: rowKey ? targetOffset : 0 - (list.current?.getFirstItemOffset() || 0)
     });
     confirm();
   }, [
@@ -252,11 +239,12 @@ export function useTopicFloorPositioning({
     readingEntry,
     recordScroll,
     targetIndex,
+    targetOffset,
     targetIsOpeningPost,
     targetReply?.readingResume,
     topicKey
   ]);
-  return { confirm, cancel, highlightedKey };
+  return { confirm, cancel, ownsScroll, endScroll, highlightedKey };
 }
 
 export function useTopicAcceptedScroll({

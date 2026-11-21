@@ -10,6 +10,7 @@ import {
 } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack';
 import { TabBarIcon, tabNavItems } from '@/ui/navigation/NavBar';
+import { IconButton } from '@/ui/controls/ButtonControls';
 import { goBackFromFocusedRoute } from '@/ui/navigation/appRouteActions';
 import { NavigationBackdropProvider, NavigationBackdropTarget, NavigationGlass } from '@/ui/navigation/NavigationGlass';
 import type { ReaderTheme } from '@/ui/theme/tokens';
@@ -25,7 +26,6 @@ type NotificationsTabProps = CompositeScreenProps<
   BottomTabScreenProps<MainTabParamList, 'notifications'>,
   NativeStackScreenProps<RootStackParamList>
 >;
-const headerButtonStyle = { width: 48, height: 48, alignItems: 'center', justifyContent: 'center' } as const;
 const tabBarIconStyle = { width: '100%' } as const;
 
 function RouteBackdrop({ children }: { children: ReactNode }) {
@@ -62,8 +62,7 @@ function MainTabsHost({
   getNotificationsRoute,
   getMoreRoute,
   getSearchRoute,
-  styles,
-  theme
+  styles
 }: {
   moreBadgeState: MoreBadgeState;
   FeedRouteComponent: ComponentType;
@@ -71,7 +70,6 @@ function MainTabsHost({
   getMoreRoute: () => ComponentType;
   getSearchRoute: () => ComponentType;
   styles: AppStyles;
-  theme: ReaderTheme;
 }) {
   return (
     <NavigationBackdropProvider>
@@ -124,16 +122,14 @@ function MainTabsHost({
             headerShadowVisible: false,
             title: '消息',
             headerRight: () => (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="消息通知设置"
-                style={headerButtonStyle}
+              <IconButton
+                icon={Settings}
+                iconOnly
+                label="消息通知设置"
                 onPress={() => {
                   if (navigation.isFocused()) navigation.getParent()?.navigate('NotificationSettings');
                 }}
-              >
-                <Settings color={theme.ink} size={20} strokeWidth={1.8} />
-              </Pressable>
+              />
             )
           })}
         />
@@ -153,6 +149,7 @@ export const AppNavigator = memo(function AppNavigator({
   getNotificationSettingsRoute,
   getNotificationsRoute,
   getReadingSettingsRoute,
+  getNetworkSettingsRoute,
   getNodeSeekCreditsRoute,
   getLinuxDoCreditRoute,
   getSearchRoute,
@@ -173,6 +170,7 @@ export const AppNavigator = memo(function AppNavigator({
   getNotificationSettingsRoute: () => ComponentType<NativeStackScreenProps<RootStackParamList, 'NotificationSettings'>>;
   getNotificationsRoute: () => ComponentType<NotificationsTabProps>;
   getReadingSettingsRoute: () => ComponentType;
+  getNetworkSettingsRoute: () => ComponentType<NativeStackScreenProps<RootStackParamList, 'NetworkSettings'>>;
   getNodeSeekCreditsRoute: () => ComponentType<NativeStackScreenProps<RootStackParamList, 'NodeSeekCredits'>>;
   getLinuxDoCreditRoute: () => ComponentType<NativeStackScreenProps<RootStackParamList, 'LinuxDoCredit'>>;
   getSearchRoute: () => ComponentType;
@@ -213,16 +211,15 @@ export const AppNavigator = memo(function AppNavigator({
           screenOptions={({ navigation }) => ({
             headerShown: false,
             headerShadowVisible: false,
-            headerLeft: ({ canGoBack, tintColor }) =>
+            headerLeft: ({ canGoBack }) =>
               canGoBack ? (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="返回"
-                  style={headerButtonStyle}
+                <IconButton
+                  icon={ChevronLeft}
+                  iconOnly
+                  iconSize={24}
+                  label="返回"
                   onPress={() => goBackFromFocusedRoute(navigation)}
-                >
-                  <ChevronLeft color={tintColor || theme.ink} size={24} strokeWidth={1.8} />
-                </Pressable>
+                />
               ) : null,
             animation: 'slide_from_right',
             freezeOnBlur: true,
@@ -238,7 +235,6 @@ export const AppNavigator = memo(function AppNavigator({
                 getMoreRoute={getMoreRoute}
                 getSearchRoute={getSearchRoute}
                 styles={styles}
-                theme={theme}
               />
             )}
           </Stack.Screen>
@@ -259,6 +255,14 @@ export const AppNavigator = memo(function AppNavigator({
             name="ReadingSettings"
             getComponent={getReadingSettingsRoute}
             options={{ headerShown: true, title: '阅读设置' }}
+          />
+          <Stack.Screen
+            name="NetworkSettings"
+            getComponent={getNetworkSettingsRoute}
+            options={({ route }) => ({
+              headerShown: route.params?.page !== 'proxies',
+              title: route.params?.page === 'dns' ? 'DNS 服务商' : '网络设置'
+            })}
           />
           <Stack.Screen name="User" getComponent={getUserRoute} />
           <Stack.Screen

@@ -17,7 +17,8 @@ function appScreenForRouteName(routeName?: string): Screen {
   if (routeName === 'User') return 'user';
   if (routeName === 'Library') return 'library';
   if (routeName === 'NotificationDetail' || routeName === 'NotificationSettings') return 'notifications';
-  if (routeName === 'NodeSeekCredits' || routeName === 'LinuxDoCredit') return 'more';
+  if (routeName === 'NodeSeekCredits' || routeName === 'LinuxDoCredit' || routeName === 'NetworkSettings')
+    return 'more';
   if (routeName === 'search' || routeName === 'more' || routeName === 'notifications') return routeName;
   return 'feed';
 }
@@ -47,7 +48,8 @@ export function isNativeStackScreen() {
     routeName === 'NotificationSettings' ||
     routeName === 'NodeSeekCredits' ||
     routeName === 'LinuxDoCredit' ||
-    routeName === 'ReadingSettings'
+    routeName === 'ReadingSettings' ||
+    routeName === 'NetworkSettings'
   );
 }
 

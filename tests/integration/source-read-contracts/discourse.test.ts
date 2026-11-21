@@ -460,6 +460,7 @@ describe('Android local sources', () => {
               closed: true,
               archived: true,
               pinned: true,
+              pinned_globally: true,
               slow_mode_seconds: 300,
               has_accepted_answer: true,
               tags: [{ name: '人工智能' }, { name: '快问快答' }]
@@ -730,9 +731,7 @@ describe('Android local sources', () => {
 
   it('stops linux.do feed pagination when an empty page still advertises more topics', async () => {
     const fetcher = vi.fn(async (_input: string) => {
-      if (fetcher.mock.calls.length > 1) {
-        throw new Error('unexpected second linux.do feed request');
-      }
+      if (new URL(_input).searchParams.has('page')) throw new Error('unexpected second linux.do feed page');
       return jsonResponse({
         topic_list: {
           topics: [],
@@ -779,8 +778,11 @@ describe('Android local sources', () => {
     }
 
     const urls = (fetcher.mock.calls as unknown as [string][]).map(([input]) => new URL(input));
-    expect(urls.map((url) => url.pathname)).toEqual(cases.map((item) => item.path));
-    urls.forEach((url, index) => {
+    const pinsUrl = urls.find((url) => url.pathname === '/latest.json' && !url.searchParams.has('order'));
+    expect(pinsUrl?.searchParams.get('category')).toBe('11');
+    const sortedUrls = urls.filter((url) => url !== pinsUrl);
+    expect(sortedUrls.map((url) => url.pathname)).toEqual(cases.map((item) => item.path));
+    sortedUrls.forEach((url, index) => {
       expect(url.searchParams.get('category')).toBe('11');
       expect(url.searchParams.get('subset')).toBe(cases[index].subset);
       expect(url.searchParams.get('order')).toBe(cases[index].order ?? null);

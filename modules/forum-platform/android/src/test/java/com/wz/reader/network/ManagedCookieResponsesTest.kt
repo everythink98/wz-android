@@ -413,8 +413,9 @@ class ManagedCookieResponsesTest {
     }
   }
 
-  private fun response(vararg values: String, status: Int = 200): Response = Response.Builder()
-    .request(Request.Builder().url(url).build()).protocol(Protocol.HTTP_1_1).code(status).message("fixture")
+  private fun response(vararg values: String, status: Int = 200, sentCookie: String? = null): Response = Response.Builder()
+    .request(Request.Builder().url(url).apply { sentCookie?.let { header("Cookie", it) } }.build())
+    .protocol(Protocol.HTTP_1_1).code(status).message("fixture")
     .apply { values.forEach { addHeader("Set-Cookie", it) } }.build()
 
   @Test fun preservesRawAttributesAndAcceptsServerExpiryOnFailedResponses() {
@@ -494,22 +495,45 @@ class ManagedCookieResponsesTest {
     assertEquals(0, writes)
   }
 
-  @Test fun sameAccountResponsesApplyInArrivalOrder() {
+  @Test fun lateSuccessCannotDeleteRenewedLoginCookieButCanUpdateOtherCookies() {
     var current = "_t=A"
     val written = mutableListOf<String>()
     val store = ManagedCookieResponses({ current }, { _, values ->
-      written.addAll(values); current = values.last()
-      CookieResponseBatch(1).also { it.complete(true) }
+      written.addAll(values)
+      values.lastOrNull { it.startsWith("_t=") }?.let { current = it.substringBefore(';') }
+      CookieResponseBatch(values.size).also { batch -> values.forEach { batch.complete(true) } }
     })
     store.within {
       store.observed(url, "linuxdo", current)
       store.within {
         store.observed(url, "linuxdo", current)
-        store.receive(response("_t=B"))
+        store.receive(response("_t=B", sentCookie = "_t=A"))
       }
-      store.receive(response("_t=late"))
+      store.receive(response("_t=; Max-Age=0; Path=/", "other=next", sentCookie = "_t=A"))
     }
-    assertEquals(listOf("_t=B", "_t=late"), written)
+    assertEquals(listOf("_t=B", "other=next"), written)
+    assertEquals("_t=B", current)
+    store.within {
+      store.observed(url, "linuxdo", current)
+      store.receive(response("_t=; Max-Age=0; Path=/", sentCookie = "_t=B"))
+    }
+    assertEquals("_t=", current)
+  }
+
+  @Test fun reportsLoginDeletionOnlyAfterEveryApplicableLoginCookieIsGone() {
+    var header = "_t=path; _t=site"
+    var deletions = 0
+    val store = ManagedCookieResponses({ header }, { _, values ->
+      header = if (header.startsWith("_t=path")) "_t=; _t=site" else "_t="
+      CookieResponseBatch(values.size).also { batch -> values.forEach { batch.complete(true) } }
+    }, background = { it() }, onLoginCookieDeleted = { deletions++ })
+    store.within {
+      store.observed(url, "linuxdo", header)
+      store.receive(response("_t=; Max-Age=0; Path=/session", sentCookie = header))
+      assertEquals(0, deletions)
+      store.receive(response("_t=; Max-Age=0; Path=/", sentCookie = header))
+      assertEquals(1, deletions)
+    }
   }
 
   @Test fun platformTimeoutKeepsBarrierClosedUntilCallbacksSettle() {

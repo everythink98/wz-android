@@ -4,7 +4,7 @@ import { getCategories, getFeed } from '@/sources/feedRead';
 import { searchTopics } from '@/sources/searchRead';
 import { getReplies, getTopic } from '@/sources/sourceRead';
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
-import { nodeSeekBrowserResponse } from '@/features/account/browserFetchQueue';
+import { forumBrowserResponse } from '@/features/account/browserFetchQueue';
 import { textContentFromHtml } from '@/domain/forum/html';
 import { requirePreparedForumContent } from '@/domain/forum/topicContentSplit';
 import {
@@ -343,6 +343,44 @@ describe('Android local sources', () => {
     expect(topic.contentHtml).toContain('<iframe');
     expect(topic.contentHtml).toContain('https://player.bilibili.com/player.html?bvid=BV1GUdgBdESz&p=2');
     expect(topic.contentHtml).not.toContain('<img');
+  });
+
+  it('only marks the topics pinned by the current NodeSeek list', async () => {
+    const row = (id: number, category: string, title: string, pinned = false) => `
+      <li class="post-list-item">
+        <div class="post-title"><a href="/post-${id}-1">${title}</a>${
+          pinned
+            ? '<span title="置顶"><svg class="iconpark-icon pined circle-icon"><use href="#pin" /></svg></span>'
+            : ''
+        }</div>
+        <a href="/categories/${category}">${category}</a>
+      </li>`;
+    const fetcher = routeFetcher([
+      ['/categories/promotion/page-2?', html(row(302, 'promotion', '下一页主题'))],
+      ['/categories/promotion?', html(row(200, 'promotion', '推广版规', true) + row(201, 'promotion', '【置顶】活动'))],
+      ['/categories/daily?', html(row(300, 'daily', '日常版规', true))],
+      ['/?sortBy=', html(row(200, 'promotion', '普通展示的推广版规') + row(301, 'tech', '首页公告', true))]
+    ]);
+    const listings = await Promise.all(
+      [
+        { category: 'promotion', page: 1 },
+        { category: 'daily', page: 1 },
+        { page: 1 },
+        { category: 'promotion', page: 2 }
+      ].map((entry) => getFeed({ source: 'nodeseek', ...entry, fetcher }))
+    );
+    expect(listings.map(({ items }) => items.map(({ id, pinned }) => [id, pinned === true]))).toEqual([
+      [
+        ['200', true],
+        ['201', false]
+      ],
+      [['300', true]],
+      [
+        ['200', false],
+        ['301', true]
+      ],
+      [['302', false]]
+    ]);
   });
 
   it('does not infer a NodeSeek next page when the list exactly reaches the limit', async () => {
@@ -3688,7 +3726,7 @@ describe('Android local sources', () => {
 
   it('preserves a NodeSeek search business rejection returned through the browser with status 200', async () => {
     // The captured search response body is reused even when the bridge has no HTTP error status.
-    const response = nodeSeekBrowserResponse('{"success":false,"message":"每隔2秒可以操作一次"}', false);
+    const response = forumBrowserResponse('{"success":false,"message":"每隔2秒可以操作一次"}', false);
     const fetcher = vi.fn(async (_input: string) => response);
     expect(response.status).toBe(200);
 

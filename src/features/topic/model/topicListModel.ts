@@ -21,6 +21,16 @@ export function topicListItemKey(item: TopicListItem) {
   return item.key;
 }
 
+export type TopicViewportFloor = 'opening' | number;
+
+export function topicListViewportFloor(item: TopicListItem): TopicViewportFloor | undefined {
+  if ('reply' in item) {
+    const { floor } = item.reply;
+    return typeof floor === 'number' && Number.isSafeInteger(floor) && floor > 0 ? floor : undefined;
+  }
+  if (item.type.startsWith('topic')) return 'opening';
+}
+
 export function unresolvedLinuxDoAuthorReferences(
   item: TopicListItem,
   topicId: string,

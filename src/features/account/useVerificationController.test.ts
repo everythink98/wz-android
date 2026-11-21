@@ -1049,6 +1049,26 @@ describe('linux.do visible verification coordinator', () => {
     expect(showLinuxDoPanelRef.current).toBe(false);
   });
 
+  it('keeps the open document and its manual check when another action requests verification', async () => {
+    const initialization = Promise.withResolvers<boolean>();
+    vi.mocked(waitForLinuxDoLoginInitialization).mockReturnValueOnce(initialization.promise);
+    const { controller, linuxDoWebViewSessionRef, reconcileAccountStatus, showLinuxDoPanelRef, updateLinuxDoSession } =
+      createController();
+    await controller.showLinuxDoVerification();
+    const originalDocument = linuxDoWebViewSessionRef.current;
+    await controller.showLinuxDoVerification('另一项操作也需要验证');
+    const repeatedDocument = linuxDoWebViewSessionRef.current;
+    const check = controller.checkLinuxDoCookie();
+    await controller.showLinuxDoVerification('检测期间收到迟到的验证提示');
+    initialization.resolve(true);
+    await check;
+
+    expect(repeatedDocument).toBe(originalDocument);
+    expect(updateLinuxDoSession).toHaveBeenCalledTimes(1);
+    expect(reconcileAccountStatus).toHaveBeenCalledTimes(1);
+    expect(showLinuxDoPanelRef.current).toBe(false);
+  });
+
   it.each(['manual', 'recovery', 'challenge-return'] as const)(
     'keeps the %s login document alive until initialization, removal, and cookie handoff finish in order',
     async (entry) => {

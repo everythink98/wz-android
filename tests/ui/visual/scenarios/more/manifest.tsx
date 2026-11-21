@@ -1,18 +1,15 @@
 import { useState, type PropsWithChildren } from 'react';
 import { ScrollView, View } from 'react-native';
+import { SafeAreaInsetsContext } from 'react-native-safe-area-context';
 import { defaultContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { AppearancePanel } from '@/features/more/components/AppearancePanel';
 import { ContentSourcesPanel } from '@/features/more/components/ContentSourcesPanel';
 import { MoreUpdatePanel } from '@/features/more/components/MoreUpdatePanel';
 import { MoreUtilityPanels, type MoreUtilityCapabilities } from '@/features/more/components/MoreUtilityPanels';
-import { NetworkProxyModal } from '@/features/more/components/NetworkProxyModal';
+import { NetworkProxyScreen } from '@/features/more/components/NetworkProxyScreen';
 import { createMoreScreenStyles } from '@/features/more/styles';
-import {
-  createEmptyNetworkProxyState,
-  type NetworkProxyProfile,
-  type NetworkProxyState
-} from '@/platform/network/networkProxy';
+import { type NetworkProxyProfile, type NetworkProxyState } from '@/platform/network/networkProxy';
 import { formatAppUpdateDownloadProgress, type AppUpdateInfo } from '@/platform/update/appUpdate';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import type { VisualScenarioDefinition } from '../../types';
@@ -47,19 +44,8 @@ function UtilityOverviewScenario() {
       exportLog: noop
     },
     proxy: {
-      activeProfile: null,
-      applyError: '',
-      applyStatus: 'idle',
-      state: createEmptyNetworkProxyState(),
-      summary: '未启用',
-      visible: false,
-      close: noop,
-      open: noop,
-      deleteProfile: noopAsync,
-      selectProfile: noopAsync,
-      setEnabled: noopAsync,
-      testProfile: async () => ({ ok: false, message: '视觉场景不执行网络测试' }),
-      upsertProfile: noopAsync
+      summary: '跟随系统',
+      open: noop
     },
     settings: {
       value: { ...createEmptyReaderData().settings, ...settings },
@@ -91,22 +77,23 @@ function ProxyScenario() {
     activeId: profile.id,
     profiles: [profile]
   };
+  if (!visible) return null;
   return (
-    <NetworkProxyModal
-      activeProfile={profile}
-      applyError="代理应用失败，已保持受管请求阻断"
-      applyStatus="failed"
-      proxyState={state}
-      styles={styles}
-      theme={theme}
-      visible={visible}
-      onClose={() => setVisible(false)}
-      onDeleteProfile={noopAsync}
-      onSelectProfile={noopAsync}
-      onSetEnabled={noopAsync}
-      onTestProfile={async () => ({ ok: false, message: '视觉场景不执行网络测试' })}
-      onUpsertProfile={noopAsync}
-    />
+    <SafeAreaInsetsContext.Provider value={{ top: 0, right: 0, bottom: 0, left: 0 }}>
+      <NetworkProxyScreen
+        active
+        applyError="代理应用失败，已保持受管请求阻断"
+        applyStatus="failed"
+        proxyState={state}
+        styles={styles}
+        theme={theme}
+        onClose={() => setVisible(false)}
+        onDeleteProfile={noopAsync}
+        onSelectProfile={noopAsync}
+        onTestProfile={async () => ({ ok: false, message: '视觉场景不执行网络测试' })}
+        onUpsertProfile={noopAsync}
+      />
+    </SafeAreaInsetsContext.Provider>
   );
 }
 
@@ -249,7 +236,7 @@ export const moreVisualScenarios: readonly VisualScenarioDefinition[] = [
     id: 'more.proxy.failed',
     kind: 'rendered',
     tags: ['more', 'proxy', 'failed', 'synthetic'],
-    title: '服务器代理·应用失败',
+    title: '管理代理·应用失败',
     render: () => <ProxyScenario />
   },
   {

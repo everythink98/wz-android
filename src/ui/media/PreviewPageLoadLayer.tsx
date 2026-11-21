@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { isLinuxDoPacketCover } from '@/domain/forum/linuxDoPacket';
 import { StyleSheet, type ImageURISource } from 'react-native';
 import { Image as ExpoImage, type ImageLoadEventData, type ImageProgressEventData } from 'expo-image';
 
@@ -99,7 +100,7 @@ export function PreviewPageLoadLayer({
             ? `preview-continuity-${index}`
             : undefined
         }
-        cachePolicy="disk"
+        cachePolicy={activeAnimatedArtifact.noStore ? 'none' : 'disk'}
         contentFit="contain"
         pointerEvents="none"
         priority="high"
@@ -129,7 +130,7 @@ export function PreviewPageLoadLayer({
         key="static-poster"
         allowDownscaling
         testID={`preview-svg-poster-${index}`}
-        cachePolicy="disk"
+        cachePolicy={knownArtifact.noStore ? 'none' : 'disk'}
         contentFit="contain"
         priority={active ? 'high' : 'low'}
         recyclingKey={`${mediaSessionIdentity}:${sourceIdentity}:${knownArtifact.posterRevision}:poster`}
@@ -153,7 +154,7 @@ export function PreviewPageLoadLayer({
         allowDownscaling
         key="display-underlay"
         testID={displayUnderlayVisible ? `preview-display-underlay-${index}` : `preview-hidden-underlay-owner-${index}`}
-        cachePolicy="disk"
+        cachePolicy={isLinuxDoPacketCover(displayUri) ? 'none' : 'disk'}
         contentFit="contain"
         pointerEvents="none"
         priority={displayUnderlayVisible && active ? 'high' : 'low'}
@@ -169,7 +170,7 @@ export function PreviewPageLoadLayer({
         allowDownscaling
         key="native-raster"
         testID={`preview-image-${index}`}
-        cachePolicy="disk"
+        cachePolicy={isLinuxDoPacketCover(originalUri) ? 'none' : 'disk'}
         contentFit="contain"
         priority={active ? 'high' : 'low'}
         recyclingKey={`${originalSourceIdentity}:${retryVersion}:native`}

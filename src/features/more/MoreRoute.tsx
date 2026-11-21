@@ -18,7 +18,7 @@ import { useDiagnosticLogController } from './useDiagnosticLogController';
 import { useReaderSettingsController } from './useReaderSettingsController';
 import { useCloseOnBack } from './useCloseOnBack';
 
-import type { MainTabParamList } from '@/ui/navigation/appRouteTypes';
+import type { MainTabParamList, RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import type { LibraryTab } from '@/domain/forum/feed';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 import { useMoreRouteRuntime } from './MoreRouteRuntime';
@@ -32,7 +32,6 @@ export function MoreRoute() {
   const route = useRoute<RouteProp<MainTabParamList, 'more'>>();
   const scrollRef = useRef<ScrollView | null>(null);
   const [contentSourcesExpanded, setContentSourcesExpanded] = useState(false);
-  const [showNetworkProxyPanel, setShowNetworkProxyPanel] = useState(false);
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
   useScrollToTop(scrollRef);
   const { updateSettings } = useReaderSettingsController({ commitReaderData: runtime.reader.commit });
@@ -61,7 +60,6 @@ export function MoreRoute() {
     useCallback(
       () => () => {
         closeAccountSurfaces();
-        setShowNetworkProxyPanel(false);
       },
       [closeAccountSurfaces]
     )
@@ -116,19 +114,8 @@ export function MoreRoute() {
         exportLog: whenFocused(exportDiagnosticLogFile)
       },
       proxy: {
-        activeProfile: proxy.activeProfile,
-        applyError: proxy.applyError,
-        applyStatus: proxy.applyStatus,
-        state: proxy.proxyState,
-        summary: proxy.summary,
-        visible: showNetworkProxyPanel,
-        close: () => setShowNetworkProxyPanel(false),
-        open: () => setShowNetworkProxyPanel(true),
-        deleteProfile: proxy.deleteProxyProfile,
-        selectProfile: proxy.selectProxyProfile,
-        setEnabled: proxy.setProxyEnabled,
-        testProfile: proxy.testProxyProfile,
-        upsertProfile: proxy.upsertProxyProfile
+        summary: proxy.effectiveMode === 'system' ? '跟随系统' : proxy.summary,
+        open: whenFocused(() => navigation.getParent<NavigationProp<RootStackParamList>>()?.navigate('NetworkSettings'))
       },
       settings: {
         value: runtime.reader.data.settings,
@@ -148,7 +135,6 @@ export function MoreRoute() {
       diagnosticBusy,
       exportDiagnosticLogFile,
       proxy,
-      showNetworkProxyPanel,
       showSettingsPanel,
       updateSettings,
       whenFocused

@@ -75,7 +75,7 @@ export function createLibraryStyles(theme: ReaderTheme, settings: ReaderStyleSet
       paddingLeft: 8
     },
     categoryFilterButtonText: {
-      color: theme.primary,
+      color: theme.dark ? theme.primary : theme.primaryStrong,
       flexShrink: 1,
       fontFamily: appFontFamily,
       fontSize: fontSize(12),
@@ -113,6 +113,7 @@ export function createLibraryStyles(theme: ReaderTheme, settings: ReaderStyleSet
     },
     libraryInlineAction: {
       alignItems: 'center',
+      backgroundColor: theme.surface2,
       borderColor: theme.line,
       borderRadius: readerRadii.control,
       borderWidth: StyleSheet.hairlineWidth,
@@ -123,7 +124,7 @@ export function createLibraryStyles(theme: ReaderTheme, settings: ReaderStyleSet
       paddingVertical: 6
     },
     libraryInlineActionText: {
-      color: theme.muted,
+      color: theme.ink,
       fontFamily: appFontFamily,
       fontSize: fontSize(12),
       fontWeight: '500'

@@ -45,7 +45,7 @@ class SvgRendererInstrumentedTest {
     var code: String? = null
   }
 
-  private fun enqueuePoster(svg: String, cacheKey: String, timeoutMs: Long = 30_000L): PendingPoster {
+  private fun enqueuePoster(svg: String, cacheKey: String?, timeoutMs: Long = 30_000L): PendingPoster {
     val pending = PendingPoster()
     val promise = PromiseImpl(
       { arguments ->
@@ -88,6 +88,24 @@ class SvgRendererInstrumentedTest {
     val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
     instrumentation.runOnMainSync { view.draw(Canvas(bitmap)) }
     return bitmap
+  }
+
+  @Test
+  fun noStorePosterReturnsAPngWithoutCreatingACachedFile() {
+    val cache = instrumentation.targetContext.cacheDir.resolve("svg-posters")
+    val before = cache.list().orEmpty().toSet()
+    val result = awaitPoster(enqueuePoster(fixture(), null))
+    val uri = checkNotNull(result.getString("uri"))
+    val prefix = "data:image/png;base64,"
+    assertTrue(uri.startsWith(prefix))
+    val png = Base64.decode(uri.substring(prefix.length), Base64.DEFAULT)
+    val decoded = BitmapFactory.decodeByteArray(png, 0, png.size)
+    try {
+      assertEquals(result.getInt("width"), decoded.width)
+    } finally {
+      decoded.recycle()
+    }
+    assertEquals(before, cache.list().orEmpty().toSet())
   }
 
   @Test

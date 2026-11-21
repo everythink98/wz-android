@@ -2,9 +2,13 @@ package com.wz.reader
 
 import com.facebook.react.bridge.BridgeReactContext
 import com.facebook.react.bridge.JavaOnlyMap
+import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReadableMap
 import com.facebook.react.internal.featureflags.ReactNativeFeatureFlagsForTests
 import android.system.ErrnoException
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.net.NetworkInfo
 import android.system.OsConstants
 import java.io.IOException
 import java.io.DataInputStream
@@ -15,6 +19,7 @@ import java.net.Proxy
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.Base64
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import org.junit.After
@@ -28,6 +33,9 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
+import org.robolectric.shadows.ShadowNetworkCapabilities
+import org.robolectric.shadows.ShadowNetworkInfo
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
@@ -77,6 +85,24 @@ class NetworkProxyProfileTest {
 
   @After fun tearDown() {
     module.invalidate()
+  }
+
+  @Test fun aVpnCannotCertifyAProxyFreeDohConnection() {
+    val manager = RuntimeEnvironment.getApplication().getSystemService(ConnectivityManager::class.java)
+    shadowOf(manager).setActiveNetworkInfo(ShadowNetworkInfo.newInstance(
+      NetworkInfo.DetailedState.CONNECTED, ConnectivityManager.TYPE_VPN, 0, true, NetworkInfo.State.CONNECTED))
+    val caps = ShadowNetworkCapabilities.newInstance()
+    shadowOf(caps).addTransportType(NetworkCapabilities.TRANSPORT_VPN)
+    shadowOf(manager).setNetworkCapabilities(requireNotNull(manager.activeNetwork), caps)
+    val rejected = CompletableFuture<List<Any?>>()
+    val promise = java.lang.reflect.Proxy.newProxyInstance(Promise::class.java.classLoader, arrayOf(Promise::class.java)) {
+      _, method, args -> if (method.name == "reject") rejected.complete(args.orEmpty().toList())
+      null
+    } as Promise
+    module.testEncryptedDns(JavaOnlyMap(), promise)
+    val result = rejected.get(5, TimeUnit.SECONDS)
+    assertEquals("dns_test_network", result[0])
+    assertTrue(result[1].toString().contains("VPN"))
   }
 
   @Test fun profileMappingPreservesAbsentNullEmptyAndWhitespacePasswords() {

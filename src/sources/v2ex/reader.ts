@@ -201,6 +201,9 @@ export function normalizeHtmlTopic(
     toV2exHtmlIsoString(timestamp) || (/^\d{4}[-/]/.test(visibleTime) ? toV2exHtmlIsoString(visibleTime) : '');
   const displayTimeText = !createdAt && (visibleTime || elementText(info).match(V2EX_RELATIVE_TIME)?.[0]);
   const accessRequirement = accessRequirementFromText(elementText(element).replace(title, ' '));
+  const pinned = /(?:^|;)\s*background(?:-image)?\s*:[^;]*\burl\([^)]*\/corner_star\.png(?:\?[^)]*)?["']?\s*\)/i.test(
+    element.getAttribute('style') || ''
+  );
   return {
     source: 'v2ex',
     id,
@@ -217,6 +220,7 @@ export function normalizeHtmlTopic(
     ...(displayTimeText ? { displayTimeText } : {}),
     replyCount: Number.parseInt(String(countText || '0'), 10) || 0,
     excerpt: '',
+    ...(pinned ? { pinned: true } : {}),
     ...(accessRequirement ? { accessRequirement } : {})
   };
 }

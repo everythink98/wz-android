@@ -252,6 +252,7 @@ const operationValues = closedValues(
   'searchTopics',
   'searchUserOptions',
   'set-enabled',
+  'set-mode',
   'state-transition',
   'submit',
   'test',
@@ -681,6 +682,7 @@ const categoricalFieldValues = {
     'current-user',
     'session-404',
     'null-user',
+    'server-logged-out',
     'challenge',
     'http-error',
     'invalid-response'

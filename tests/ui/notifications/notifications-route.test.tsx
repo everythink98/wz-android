@@ -386,7 +386,7 @@ async function renderNotificationSettings(openSystemSettings?: NotificationRoute
       getLinuxDoUserAgent: () => 'test',
       getNodeSeekUserAgent: () => 'test',
       onSessionExpired: ignore,
-      requestAccountRecheck: ignore,
+      requestAccountRecheck: jest.fn(() => undefined),
       openSource: () => true,
       privateAccessAllowed: () => false,
       remoteReady: false,
@@ -2327,7 +2327,7 @@ describe('notification routes', () => {
           getLinuxDoUserAgent: () => 'test',
           getNodeSeekUserAgent: () => 'test',
           onSessionExpired: jest.fn(),
-          requestAccountRecheck: jest.fn(),
+          requestAccountRecheck: jest.fn(() => undefined),
           openSource: () => true,
           privateAccessAllowed: () => true,
           remoteReady: true,
@@ -2424,7 +2424,7 @@ describe('notification routes', () => {
         getLinuxDoUserAgent: () => 'test',
         getNodeSeekUserAgent: () => 'test',
         onSessionExpired: jest.fn(),
-        requestAccountRecheck: jest.fn(),
+        requestAccountRecheck: jest.fn(() => undefined),
         openSource: () => true,
         privateAccessAllowed: () => true,
         remoteReady: true,
@@ -2578,7 +2578,7 @@ describe('notification routes', () => {
       getLinuxDoUserAgent: () => 'test',
       getNodeSeekUserAgent: () => 'test',
       onSessionExpired: jest.fn(),
-      requestAccountRecheck: jest.fn(),
+      requestAccountRecheck: jest.fn(() => undefined),
       openSource: () => true,
       privateAccessAllowed: () => true,
       remoteReady: true,
@@ -3573,7 +3573,7 @@ describe('notification routes', () => {
       try {
         await waitFor(() => expect(view.getByText('全部已读')).toBeTruthy());
         await fireEvent.press(view.getByText('全部已读'));
-        await waitFor(() => expect(view.getByText('处理中')).toBeTruthy());
+        await waitFor(() => expect(view.getByTestId('notification-mark-all').props.accessibilityState.busy).toBe(true));
         expect(markAllRead).toHaveBeenCalledTimes(1);
         if (scope === 'source') {
           await fireEvent.press(view.getByTestId('notification-source-all'));
@@ -3593,9 +3593,11 @@ describe('notification routes', () => {
         await waitFor(() => expect(markAllRead).toHaveBeenCalledTimes(2));
         await act(async () => pending.resolve({ confirmed: true }));
         expect(runtime.notify).not.toHaveBeenCalled();
-        expect(view.getByText('处理中')).toBeTruthy();
+        expect(view.getByTestId('notification-mark-all').props.accessibilityState.busy).toBe(true);
         await act(async () => nextPending.resolve({ confirmed: true }));
-        await waitFor(() => expect(view.getByText('全部已读')).toBeTruthy());
+        await waitFor(() =>
+          expect(view.getByTestId('notification-mark-all').props.accessibilityState.busy).toBe(false)
+        );
         expect(runtime.notify).toHaveBeenCalledTimes(1);
       } finally {
         await act(async () => {

@@ -18,7 +18,16 @@ import { createTestStyles as createStyles } from '../styleFixture';
 
 jest.mock('lucide-react-native', () => {
   const Icon = () => null;
-  return { CheckCircle: Icon, ExternalLink: Icon, Image: Icon, RefreshCw: Icon, Settings: Icon, Share2: Icon };
+  return {
+    CheckCircle: Icon,
+    ExternalLink: Icon,
+    Image: Icon,
+    Minus: Icon,
+    Plus: Icon,
+    RefreshCw: Icon,
+    Settings: Icon,
+    Share2: Icon
+  };
 });
 jest.mock('react-native-webview', () => {
   const ReactModule = require('react') as typeof React;
@@ -44,9 +53,7 @@ describe('Topic and More controls', () => {
     const { hitSlop } = view.getByRole('button', { name: '确认' }).props;
     const minHeight = StyleSheet.flatten(view.getByText('确认').parent?.props.style).minHeight;
     expect(minHeight + hitSlop.top + hitSlop.bottom).toBeGreaterThanOrEqual(48);
-    expect(StyleSheet.flatten(view.getByTestId('confirm-container').props.style).backgroundColor).toBe(
-      theme.primaryStrong
-    );
+    expect(StyleSheet.flatten(view.getByTestId('confirm').props.style).backgroundColor).toBe(theme.primaryStrong);
   });
 
   it('keeps the mounted blur target while its screen is suspended and releases it on removal', async () => {

@@ -41,6 +41,8 @@ import {
 import { inlineForumImageAlignmentStyle, inlineForumImageAttachmentSize } from '@/platform/media/inlineMedia';
 import { readerRadii, type ReaderTheme } from '@/ui/theme/tokens';
 import { useForumContentWidth } from '@/ui/content/ForumContentWidth';
+import { isLinuxDoPacketCover } from '@/domain/forum/linuxDoPacket';
+import { LinuxDoPacketCover } from './LinuxDoPacketCover';
 import type { HtmlRenderers } from './types';
 import { createHtmlRendererStyles } from './htmlStyles';
 import { useContentBoundarySpacing, useContentImageMaxHeight } from './TopicContentPresentation';
@@ -550,7 +552,7 @@ function AdmittedPreviewImageBlock({
       {!loadFailed ? (
         <ExpoImage
           allowDownscaling
-          cachePolicy="disk"
+          cachePolicy={activeArtifact?.noStore ? 'none' : 'disk'}
           contentFit="contain"
           priority="normal"
           recyclingKey={imageVisualIdentity}
@@ -621,6 +623,13 @@ function PreviewImageBlock(props: PreviewImageBlockProps) {
       }
     : { height: Math.round(naturalDimensions.height * scale), width: naturalDimensions.width * scale };
   if (bodyMediaLease.admitted) {
+    if (props.hasDestinationLink && props.mediaContext.contentSource === 'linuxdo' && isLinuxDoPacketCover(props.src)) {
+      return (
+        <View style={[{ alignSelf: props.alignment }, props.boundarySpacing]}>
+          <LinuxDoPacketCover cover={props.src} dimensions={dimensions} settle={bodyMediaLease.settle} />
+        </View>
+      );
+    }
     return <AdmittedPreviewImageBlock {...props} bodyMediaLease={bodyMediaLease} />;
   }
   const frameStyle = [

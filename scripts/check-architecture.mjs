@@ -31,6 +31,7 @@ const APP_ROUTES_ALLOWED_INTERNAL_IMPORTS = new Set([
   '@/features/library/LibraryRoute',
   '@/features/library/LibraryRouteRuntime',
   '@/features/more/MoreRoute',
+  '@/features/more/NetworkSettingsRoute',
   '@/features/more/NodeSeekCreditsRoute',
   '@/features/more/LinuxDoCreditRoute',
   '@/features/more/MoreRouteRuntime',

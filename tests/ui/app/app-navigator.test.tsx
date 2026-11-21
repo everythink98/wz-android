@@ -252,6 +252,7 @@ function Navigator({
       getNotificationSettingsRoute={() => NotificationSettingsRoute}
       getNotificationsRoute={() => NotificationsRoute}
       getReadingSettingsRoute={() => ReadingSettingsRoute}
+      getNetworkSettingsRoute={() => ReadingSettingsRoute}
       getNodeSeekCreditsRoute={() => CreditsRoute}
       getLinuxDoCreditRoute={() => LinuxDoCreditTestRoute}
       getSearchRoute={() => SearchTab}

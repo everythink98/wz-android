@@ -4,6 +4,7 @@ import type { Category, Reply, Topic } from './models';
 import { accessRequirementLevelValue, accessRequirementSpecificity, sourceLabel } from './presentation';
 import { isTopicVisited } from './topicListItemState';
 import type { DiscourseVisitedState } from './discourseReading';
+import { sortTopicsByTime } from './html';
 
 export type ReadingFilter = 'all' | 'unread' | 'read' | 'favorite';
 export type SearchSort = 'relevance' | 'time';
@@ -138,6 +139,13 @@ function duplicateExternalUrlKey(topic: Topic) {
     return '';
   }
   return key;
+}
+
+export function sortFeedTopicsByTime(items: Topic[]) {
+  const pinned: Topic[] = [];
+  const regular: Topic[] = [];
+  for (const topic of items) (topic.pinned === true ? pinned : regular).push(topic);
+  return [...pinned, ...sortTopicsByTime(regular)];
 }
 
 export function balanceTopicsBySource(items: Topic[]) {

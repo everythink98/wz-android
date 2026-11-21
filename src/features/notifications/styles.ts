@@ -46,14 +46,6 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
     },
     controlLabel: { color: theme.ink, fontFamily, fontSize: scaled(13), fontWeight: '500', lineHeight: scaled(20) },
     controlMeta: { color: theme.muted, fontFamily, fontSize: scaled(11), lineHeight: scaled(16) },
-    inlineAction: {
-      minHeight: 48,
-      minWidth: 64,
-      alignItems: 'flex-end',
-      justifyContent: 'center',
-      paddingHorizontal: 4
-    },
-    inlineActionText: { color: theme.primary, fontFamily, fontSize: scaled(13), fontWeight: '600' },
     sourceNotice: {
       gap: 6,
       borderBottomColor: theme.line,
@@ -70,10 +62,10 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
       alignItems: 'flex-start',
       flexDirection: 'row',
       gap: 12,
-      backgroundColor: theme.surface,
       paddingHorizontal: 16,
       paddingVertical: settings.listDensity === 'compact' ? 10 : 12
     },
+    rowSurface: { backgroundColor: theme.surface },
     rowUnread: { backgroundColor: alphaColor(theme.primary, theme.dark ? 0.08 : 0.035) },
     rowSeparator: {
       position: 'absolute',
@@ -338,25 +330,8 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
     },
     topicActionButton: {
       minHeight: 48,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: theme.dark ? theme.primary : theme.primaryStrong,
-      borderRadius: readerRadii.control,
-      paddingHorizontal: 16
+      justifyContent: 'center'
     },
-    topicActionText: {
-      color: theme.onPrimary,
-      fontFamily,
-      fontSize: scaled(14),
-      fontWeight: '700',
-      lineHeight: scaled(20)
-    },
-    topicActionSecondary: {
-      backgroundColor: theme.surface,
-      borderColor: theme.line,
-      borderWidth: StyleSheet.hairlineWidth
-    },
-    topicActionSecondaryText: { color: theme.primary },
     disabled: { opacity: 0.45 }
   });
 }

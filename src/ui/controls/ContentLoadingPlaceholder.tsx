@@ -1,63 +1,100 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import SkeletonLoading from 'expo-skeleton-loading';
+import { Animated, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import { useReducedMotion } from 'react-native-reanimated';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import {
-  createReaderFontSizer,
-  fontFamilyValue,
-  readerRadii,
-  type ReaderStyleSettings,
-  type ReaderTheme
-} from '@/ui/theme/tokens';
+import { readerRadii, type ReaderTheme } from '@/ui/theme/tokens';
 
-const paragraphWidths = ['100%', '89%', '64%'] as const;
-const titleWidths = ['86%', '70%', '93%'] as const;
+const REVEAL_MS = 160;
 
-export function ContentLoadingPlaceholder({ text, layout }: { text: string; layout: 'body' | 'list' }) {
-  const { styles } = useReaderThemeStyles(createStyles);
+export function LoadingCover({
+  active,
+  visible,
+  children,
+  style
+}: {
+  active: boolean;
+  visible: boolean;
+  children: ReactNode;
+  style: StyleProp<ViewStyle>;
+}) {
+  const reduceMotion = useReducedMotion();
+  const [opacity] = useState(() => new Animated.Value(1));
+  const [retained, setRetained] = useState(visible);
+  const shownAt = useRef(0);
+  useLayoutEffect(() => {
+    if (visible) {
+      shownAt.current = Date.now();
+      opacity.setValue(1);
+      setRetained(true);
+      return;
+    }
+    if (!retained) return;
+    if (!active || reduceMotion || Date.now() - shownAt.current < REVEAL_MS) {
+      setRetained(false);
+      return;
+    }
+    const fade = Animated.timing(opacity, { toValue: 0, duration: REVEAL_MS, useNativeDriver: true });
+    fade.start(({ finished }) => {
+      if (finished) setRetained(false);
+    });
+    return () => fade.stop();
+  }, [active, opacity, reduceMotion, retained, visible]);
+
+  if (!visible && !retained) return null;
+  return (
+    <Animated.View
+      style={[StyleSheet.absoluteFill, style, { opacity }]}
+      pointerEvents={visible ? 'box-none' : 'none'}
+      accessibilityElementsHidden={!visible}
+      importantForAccessibility={visible ? 'auto' : 'no-hide-descendants'}
+    >
+      {children}
+    </Animated.View>
+  );
+}
+
+export function ContentLoadingPlaceholder({
+  animating,
+  children,
+  label,
+  style
+}: {
+  animating: boolean;
+  children: ReactNode;
+  label: string;
+  style?: StyleProp<ViewStyle>;
+}) {
+  const { theme } = useReaderThemeStyles(createStyles);
+  const reduceMotion = useReducedMotion();
+
   return (
     <View
       testID="content-loading-placeholder"
+      style={style}
       accessible
-      accessibilityLabel={text}
+      accessibilityLabel={label}
       accessibilityLiveRegion="polite"
       accessibilityState={{ busy: true }}
+      pointerEvents="none"
       role="status"
-      style={styles.placeholder}
     >
-      <Text accessible={false} style={styles.label}>
-        {text}
-      </Text>
-      {layout === 'body' ? (
-        <View style={styles.paragraph}>
-          {paragraphWidths.map((width) => (
-            <View key={width} style={[styles.bar, { width }]} />
-          ))}
-        </View>
+      {animating && !reduceMotion ? (
+        <SkeletonLoading background={theme.line} highlight={theme.dark ? theme.lineStrong : theme.surface2}>
+          <View collapsable={false}>{children}</View>
+        </SkeletonLoading>
       ) : (
-        titleWidths.map((width) => (
-          <View key={width} style={styles.row}>
-            <View style={[styles.bar, styles.title, { width }]} />
-            <View style={[styles.bar, styles.byline]} />
-          </View>
-        ))
+        children
       )}
     </View>
   );
 }
 
-function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
-  const size = createReaderFontSizer(settings);
-  return StyleSheet.create({
-    placeholder: { paddingHorizontal: 16, paddingVertical: 14, gap: 8 },
-    label: {
-      color: theme.muted,
-      fontFamily: fontFamilyValue(settings.fontFamily),
-      fontSize: size(12),
-      lineHeight: size(17)
-    },
-    paragraph: { gap: size(10), paddingVertical: 6 },
-    bar: { height: size(10), borderRadius: readerRadii.badge, backgroundColor: theme.line },
-    row: { paddingVertical: 11, gap: size(10) },
-    title: { height: size(14) },
-    byline: { width: '40%' }
-  });
+export function SkeletonBlock({ style }: { style: StyleProp<ViewStyle> }) {
+  const { styles } = useReaderThemeStyles(createStyles);
+  return <View style={[styles.block, style]} />;
+}
+
+function createStyles(theme: ReaderTheme) {
+  return StyleSheet.create({ block: { borderRadius: readerRadii.badge, backgroundColor: theme.line } });
 }

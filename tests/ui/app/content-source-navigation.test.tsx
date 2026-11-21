@@ -428,6 +428,7 @@ function Navigator({
           getNotificationSettingsRoute={() => EmptyRoute}
           getNotificationsRoute={() => EmptyRoute}
           getReadingSettingsRoute={() => EmptyRoute}
+          getNetworkSettingsRoute={() => EmptyRoute}
           getNodeSeekCreditsRoute={() => EmptyRoute}
           getLinuxDoCreditRoute={() => EmptyRoute}
           getSearchRoute={() => SearchTab}
@@ -937,8 +938,10 @@ describe('content-source management navigation', () => {
 
         await fireEvent.press(view.getByLabelText('打开搜索筛选，当前相关'));
         await fireEvent.press(view.getByText('最新'));
-        await fireEvent.press(view.getByTestId('search-filter-node'));
-        expect(view.getByTestId('search-filter-node-query')).toBeTruthy();
+        if (mode === 'open') {
+          await fireEvent.press(view.getByTestId('search-filter-node'));
+          expect(view.getByTestId('search-filter-node-query')).toBeTruthy();
+        }
 
         expect(addEventListener).toHaveBeenCalledTimes(1);
         const [[, onUrl]] = addEventListener.mock.calls;

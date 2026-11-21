@@ -32,11 +32,16 @@ import { createTheme } from '@/ui/theme/tokens';
 import { act, fireEvent, render, waitFor } from '../render';
 
 const mockTopicScreen = jest.fn<(_props: unknown) => ReactNode>(() => null);
-const mockMoreNavigation = { replaceParams: jest.fn() };
+const mockOpenNetworkSettings = jest.fn();
+const mockMoreNavigation = {
+  replaceParams: jest.fn(),
+  getParent: () => ({ navigate: mockOpenNetworkSettings }),
+  isFocused: () => mockMoreFocused
+};
 let mockMoreRouteParams: { intent?: 'manage-content-sources' } | undefined;
 let mockMoreFocused = true;
 let mockMoreUtilities: {
-  proxy: { open: () => void; visible: boolean };
+  proxy: { open: () => void };
   settings: { changeVisible: (visible: boolean) => void; visible: boolean };
 } | null = null;
 
@@ -346,13 +351,15 @@ describe('disabled content source route gates', () => {
       mockMoreUtilities?.proxy.open();
       mockMoreUtilities?.settings.changeVisible(true);
     });
-    expect(mockMoreUtilities?.proxy.visible).toBe(true);
+    expect(mockOpenNetworkSettings).toHaveBeenCalledWith('NetworkSettings');
     expect(mockMoreUtilities?.settings.visible).toBe(true);
 
     mockMoreFocused = false;
     await view.rerender(tree());
     expect(latestCloseAll).toHaveBeenCalledTimes(1);
-    expect(mockMoreUtilities?.proxy.visible).toBe(false);
+    const opens = mockOpenNetworkSettings.mock.calls.length;
+    mockMoreUtilities?.proxy.open();
+    expect(mockOpenNetworkSettings).toHaveBeenCalledTimes(opens);
     expect(mockMoreUtilities?.settings.visible).toBe(true);
   });
 

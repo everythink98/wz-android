@@ -24,12 +24,13 @@ import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/
 import { type ReaderTheme } from '@/ui/theme/tokens';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { AppButton } from '@/ui/controls/ButtonControls';
+import { ContentLoadingPlaceholder, SkeletonBlock } from '@/ui/controls/ContentLoadingPlaceholder';
 import { EmptyText, LoadingState, RecoverableEmptyState } from '@/ui/controls/FeedbackStates';
 import { PopupMenu, PopupMenuItem } from '@/ui/controls/PopupMenu';
 import { PillRail } from '@/ui/controls/SelectionControls';
 import { TOUCH_HIT_SLOP } from '@/ui/controls/touchTarget';
 import { Avatar } from '@/ui/avatar/Avatar';
-import { MemoizedTopicCard } from '@/ui/topic/TopicCard';
+import { MemoizedTopicCard, TopicListPlaceholder } from '@/ui/topic/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 import {
@@ -643,33 +644,59 @@ export const LibraryScreen = memo(function LibraryScreen({
   const favoriteHeader = useMemo(() => renderHeader('favorites'), [renderHeader]);
   const historyHeader = useMemo(() => renderHeader('history'), [renderHeader]);
   const userHeader = useMemo(() => renderHeader('users'), [renderHeader]);
+  const animatedEmptyTab = !loaded && !error && active ? libraryTab : null;
 
   const renderEmpty = useCallback(
-    (viewportTab: LibraryTab, recordCount: number) => (
-      <View
-        style={styles.libraryEmpty}
-        testID={loaded && viewportTab === 'favorites' && !recordCount ? 'library-favorites-empty' : undefined}
-      >
-        {error ? (
-          <RecoverableEmptyState message="本机资料加载失败" actionLabel="重试" onAction={onRetry} />
-        ) : !loaded ? (
-          <LoadingState text="加载中" />
-        ) : enabledSources.length === 0 ? (
-          <RecoverableEmptyState message="尚未启用内容源" actionLabel="管理内容源" onAction={onManageContentSources} />
-        ) : effectiveSourceFilter !== 'all' || effectiveCategoryFilter !== 'all' ? (
-          <RecoverableEmptyState
-            message="当前筛选下没有记录"
-            actionLabel="清除筛选"
-            onAction={() => (effectiveSourceFilter === 'all' ? selectCategory('all') : changeSourceFilter('all'))}
-          />
+    (viewportTab: LibraryTab, recordCount: number) => {
+      if (!loaded && !error) {
+        const animating = viewportTab === animatedEmptyTab;
+        return viewportTab === 'users' ? (
+          <ContentLoadingPlaceholder label="加载中" animating={animating}>
+            {(['43%', '31%', '49%'] as const).map((width) => (
+              <View key={width} style={styles.libraryUserRow}>
+                <SkeletonBlock style={{ width: 42, height: 42, borderRadius: 21 }} />
+                <View style={[styles.flex, { gap: 6 }]}>
+                  <SkeletonBlock style={{ width, height: styles.menuLabel.fontSize }} />
+                  <SkeletonBlock style={{ width: '58%', height: styles.meta.fontSize }} />
+                </View>
+              </View>
+            ))}
+          </ContentLoadingPlaceholder>
         ) : (
-          <EmptyText
-            text={viewportTab === 'users' ? '暂无关注用户' : viewportTab === 'favorites' ? '暂无收藏' : '暂无浏览记录'}
-          />
-        )}
-      </View>
-    ),
+          <TopicListPlaceholder label="加载中" animating={animating} />
+        );
+      }
+      return (
+        <View
+          style={styles.libraryEmpty}
+          testID={loaded && viewportTab === 'favorites' && !recordCount ? 'library-favorites-empty' : undefined}
+        >
+          {error ? (
+            <RecoverableEmptyState message="本机资料加载失败" actionLabel="重试" onAction={onRetry} />
+          ) : enabledSources.length === 0 ? (
+            <RecoverableEmptyState
+              message="尚未启用内容源"
+              actionLabel="管理内容源"
+              onAction={onManageContentSources}
+            />
+          ) : effectiveSourceFilter !== 'all' || effectiveCategoryFilter !== 'all' ? (
+            <RecoverableEmptyState
+              message="当前筛选下没有记录"
+              actionLabel="清除筛选"
+              onAction={() => (effectiveSourceFilter === 'all' ? selectCategory('all') : changeSourceFilter('all'))}
+            />
+          ) : (
+            <EmptyText
+              text={
+                viewportTab === 'users' ? '暂无关注用户' : viewportTab === 'favorites' ? '暂无收藏' : '暂无浏览记录'
+              }
+            />
+          )}
+        </View>
+      );
+    },
     [
+      animatedEmptyTab,
       changeSourceFilter,
       effectiveCategoryFilter,
       effectiveSourceFilter,
@@ -679,7 +706,7 @@ export const LibraryScreen = memo(function LibraryScreen({
       error,
       onRetry,
       selectCategory,
-      styles.libraryEmpty
+      styles
     ]
   );
   const favoriteEmpty = useMemo(

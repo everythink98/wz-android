@@ -51,7 +51,6 @@ export function createLinuxDoVerificationDocument(initialChallenge: boolean) {
       if (loading) receipts.delete('ignored-message');
       const logChallengeEntry = committedStage === 'challenge' && !receipts.has('challenge-entry');
       if (logChallengeEntry) receipts.add('challenge-entry');
-      renderer = 'usable';
       return { logChallengeEntry, clearError: !failedUrl() };
     },
     finished(url: string, syntheticError: boolean) {

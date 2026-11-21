@@ -1,7 +1,8 @@
 import {
   cloudflareChallengeDiagnostics,
   isCloudflareChallengeResponse,
-  LinuxDoCloudflareError
+  LinuxDoCloudflareError,
+  responseRetryAfterMs
 } from '@/platform/network/cloudflareChallenge';
 import { browserFetchIntentFromInit, withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { cancelRequestTimeoutForFallback, withAbortableTimeout, type Fetcher } from '@/platform/network/request';
@@ -360,7 +361,13 @@ export function createLinuxDoWebViewFallbackFetcher({
       }
     }
     const { response } = transport;
-    if (!isLinuxDoRequestUrl(url) || method !== 'GET') {
+    if (
+      transport.channel === 'webview' ||
+      !isIdempotentRead ||
+      method !== 'GET' ||
+      response.status === 429 ||
+      (!response.ok && (responseRetryAfterMs(response.headers) ?? 0) > 0)
+    ) {
       return response;
     }
     if (isCloudflareChallengeResponse(response)) {
@@ -392,7 +399,7 @@ export function createLinuxDoWebViewFallbackFetcher({
         ? fetchLinuxDoThroughWebView(webViewFetcher, url, init, response, bodyText)
         : response;
     }
-    if (response.ok && transport.channel === 'direct') {
+    if (response.ok) {
       registerForumReadResponseEvidence(init, response, {
         commit: async () => {
           if (evidenceWindow.kind === 'unconfirmed' || ordinal > evidenceWindow.ordinal) {

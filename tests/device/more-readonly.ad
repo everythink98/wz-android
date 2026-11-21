@@ -43,8 +43,8 @@ press label="收起内容源"
 wait label="展开内容源" 10000
 scroll bottom
 
-press text="服务器代理"
-wait text="使用代理" 10000
+press text="网络设置"
+wait text="网络模式" 10000
 back --system
 wait text="关于阅坛" 10000
 

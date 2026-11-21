@@ -1,5 +1,6 @@
 import { ActivityIndicator } from 'react-native-paper';
 import { recordUserInteraction } from '@/platform/network/userPresence';
+import { isLinuxDoPacketCover } from '@/domain/forum/linuxDoPacket';
 import {
   useCallback,
   useEffect,
@@ -1588,7 +1589,7 @@ function PreviewPage({
       setRegionState({ scale: 1, sourceIdentity, viewport: FULL_PREVIEW_VIEWPORT });
       return undefined;
     }
-    if (status !== 'loaded' || knownArtifact || !regionEligible) {
+    if (status !== 'loaded' || knownArtifact || !regionEligible || isLinuxDoPacketCover(originalSource.uri || '')) {
       return undefined;
     }
     const cacheKey = originalSource.cacheKey || originalSource.uri;

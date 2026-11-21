@@ -916,7 +916,7 @@ export function useVerificationController({
   const showLinuxDoVerification = useCallback(
     async (message = 'linux.do 需要完成 Cloudflare 验证', recovery?: LinuxDoReadRecovery) => {
       if (!canOpenLinuxDoPanel()) return false;
-      if (!recovery && recoverySessionRef.current) return true;
+      if (!recovery && (recoverySessionRef.current || isLinuxDoSurfaceVisible())) return true;
       if (recovery) {
         if (linuxDoCanceledRecoveriesRef.current.has(recovery) || !isActiveRecoveryQuery(recovery)) return false;
         if ('kind' in recovery && recovery.isExpired?.()) {

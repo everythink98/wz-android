@@ -10,7 +10,7 @@ import {
   transformForumElements,
   textContentFromHtml
 } from './html';
-import { HTMLElement, TextNode } from 'node-html-parser';
+import { HTMLElement, TextNode, type Node } from 'node-html-parser';
 import { isNodeSeekHost } from './sourceCatalog';
 import { normalizeMediaReferrerPolicy, type MediaReferrerPolicy } from './mediaReferrer';
 
@@ -369,6 +369,46 @@ function markStandaloneForumFlowImages(
   });
 }
 
+function isImageLayoutWhitespace(node: Node) {
+  return node instanceof TextNode && /^[\t\n\f\r ]*$/.test(node.rawText);
+}
+
+function isStackedForumImage(node: Node) {
+  if (!(node instanceof HTMLElement)) return false;
+  if (node.tagName === 'DIV' && node.classList.contains('lightbox-wrapper')) return node.querySelector('img') !== null;
+  let image = node;
+  if (node.tagName === 'A') {
+    const children = node.childNodes.filter((child) => !isImageLayoutWhitespace(child));
+    const [linkedImage] = children;
+    if (children.length !== 1 || !(linkedImage instanceof HTMLElement)) return false;
+    image = linkedImage;
+  }
+  return image.tagName === 'IMG' && image.getAttribute(FORUM_FLOW_IMAGE_CONTEXT_ATTRIBUTE) === 'standalone';
+}
+
+function removeRedundantBlockImageBreaks(root: ForumContentMediaRoot) {
+  const parents = new Set(root.querySelectorAll('br').map((node) => node.parentNode));
+  const redundant: HTMLElement[] = [];
+  for (const parent of parents) {
+    if (!parent) continue;
+    const siblings = parent.childNodes.filter((node) => !isImageLayoutWhitespace(node));
+    for (let index = 1; index < siblings.length - 1; index++) {
+      const node = siblings[index]!;
+      if (
+        node instanceof HTMLElement &&
+        node.tagName === 'BR' &&
+        !node.rawAttrs.trim() &&
+        isStackedForumImage(siblings[index - 1]!) &&
+        isStackedForumImage(siblings[index + 1]!)
+      ) {
+        redundant.push(node);
+      }
+    }
+  }
+  // An isolated break would draw another line between images that already occupy separate blocks.
+  if (redundant.length) transformForumElements(root, redundant, () => []);
+}
+
 export function normalizeForumContentMediaNodes(root: ForumContentMediaRoot) {
   const resolveImageUrl = createForumImageUrlResolver();
   const resolveNodeAttributes = createForumImageNodeAttributeResolver();
@@ -403,6 +443,7 @@ export function normalizeForumContentMediaNodes(root: ForumContentMediaRoot) {
     resolveNodeAttributes
   );
   flowForumImages(mediaIndex.images, mediaIndex.explicitImages, resolveNodeAttributes);
+  if (mediaIndex.images.length > 1) removeRedundantBlockImageBreaks(root);
   return { previewImages };
 }
 

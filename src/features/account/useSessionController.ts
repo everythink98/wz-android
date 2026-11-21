@@ -43,8 +43,7 @@ import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import type { ScopedSiteSessionEvent, SessionSite, SiteSessionEvent } from '@/domain/session/siteSessionState';
 import {
   createBrowserFetchQueue,
-  linuxDoBrowserResponse,
-  nodeSeekBrowserResponse,
+  forumBrowserResponse,
   requestHeaderValue,
   type BrowserFetchQueueRequest
 } from './browserFetchQueue';
@@ -373,7 +372,7 @@ export function useSessionController({
           challenge
         );
         current.resolve(
-          nodeSeekBrowserResponse(data.html || '', challenge, data.httpErrorStatus || current.httpErrorStatus, data.url)
+          forumBrowserResponse(data.html || '', challenge, data.httpErrorStatus || current.httpErrorStatus, data.url)
         );
       });
     },
@@ -497,7 +496,7 @@ export function useSessionController({
           challenge
         );
         if (challenge) current.reject(new LinuxDoCloudflareError());
-        else current.resolve(linuxDoBrowserResponse(data.body || '', current.httpErrorStatus));
+        else current.resolve(forumBrowserResponse(data.body || '', false, current.httpErrorStatus, data.url));
       });
     },
     [commitLinuxDoWebViewUserAgent]

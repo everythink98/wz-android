@@ -281,6 +281,7 @@ export function normalizeNativeReadNetworkDiagnosticEvents(value: unknown, maxim
         'redirect_denied',
         'barrier_blocked',
         'epoch_changed',
+        'login_superseded',
         'callback_timeout',
         'pending_write',
         'absent',

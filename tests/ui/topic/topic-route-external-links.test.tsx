@@ -51,7 +51,6 @@ jest.mock('expo-video', () => ({
   VideoView: () => null,
   useVideoPlayer: () => ({ pause: jest.fn(), play: jest.fn(), playing: false })
 }));
-jest.mock('react-native-webview', () => ({ WebView: () => null }));
 
 const topic: Topic = {
   source: 'nodeseek',
@@ -343,6 +342,32 @@ describe('Topic Route external links', () => {
       }
     }
   );
+  it('opens the packet site in the reader and returns to the same topic when closed', async () => {
+    const routeTopic = { ...topic, source: 'linuxdo' as const, url: 'https://linux.do/t/42' };
+    const { element } = setup(null, routeTopic);
+    const view = await render(element());
+    const link = latestScreen().html.htmlRenderersProps.a?.onPress;
+    await act(async () =>
+      link?.({ stopPropagation: jest.fn() } as never, 'https://hb.lafi.sh/', {} as never, {} as never)
+    );
+    expect(view.getByText('红包站')).toBeTruthy();
+    await fireEvent(view.getByTestId('linuxdo-packet-session'), 'message', {
+      nativeEvent: { url: 'https://hb.lafi.sh/', data: 'mismatch' }
+    });
+    expect(view.queryByTestId('linuxdo-packet-page')).toBeNull();
+    await fireEvent.press(view.getByLabelText('关闭'));
+    expect(view.queryByText('红包站')).toBeNull();
+    expect(latestScreen().active).toBe(true);
+    await act(async () =>
+      link?.({ stopPropagation: jest.fn() } as never, 'https://hb.lafi.sh/', {} as never, {} as never)
+    );
+    await fireEvent(view.getByTestId('linuxdo-packet-session'), 'message', {
+      nativeEvent: { url: 'https://hb.lafi.sh/', data: 'matching' }
+    });
+    expect(view.getByTestId('linuxdo-packet-page')).toHaveProp('source', { uri: 'https://hb.lafi.sh/' });
+    expect(view.getByTestId('linuxdo-packet-page').props.onMessage).toBeUndefined();
+  });
+
   it('reports a Custom Tab rejection, keeps original-site opening in the full browser, and stops native content in the background', async () => {
     const { element, notify, runtime } = setup();
     const openBrowserAsync = jest

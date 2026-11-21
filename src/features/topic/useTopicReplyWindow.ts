@@ -55,6 +55,9 @@ function createWindowLifecycle(activeScope: () => string) {
     abandonPendingRoute() {
       if (route.phase === 'pending') route = { phase: 'empty' };
     },
+    forgetRouteWindow(queryIdentity: string) {
+      if (route.phase === 'settled' && route.request.queryIdentity === queryIdentity) route = { phase: 'empty' };
+    },
     beginRoute(key: string, queryIdentity: string) {
       const request = { key, queryIdentity };
       route = { phase: 'pending', request };

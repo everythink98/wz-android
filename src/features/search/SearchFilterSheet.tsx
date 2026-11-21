@@ -40,6 +40,23 @@ const filterErrorPages = {
   maxViews: 'views'
 } as const satisfies Record<DiscourseSearchFilterError['field'], LocalFilterPage>;
 
+const fieldConfirmLabels = {
+  tags: '确认标签',
+  visited: '确认回访范围',
+  date: '完成',
+  posts: '确认范围',
+  views: '确认范围'
+} satisfies Partial<Record<SearchFilterPage, string>>;
+
+type FilterFieldPage = keyof typeof fieldConfirmLabels;
+type FilterEditorState = { draft: SourceSearchFilter } & (
+  { page: Exclude<SearchFilterPage, FilterFieldPage> } | { page: FilterFieldPage; fieldDraft: SourceSearchFilter }
+);
+
+function isFilterFieldPage(page: SearchFilterPage): page is FilterFieldPage {
+  return page in fieldConfirmLabels;
+}
+
 function SearchFilterBody({
   page,
   scrollOffsetsRef,
@@ -140,9 +157,14 @@ export function SearchFilterSheet(props: SearchFilterSheetProps) {
         }}
       >
         <View style={styles.searchFilterEntryIcon}>
-          <SlidersHorizontal size={17} color={theme.primary} strokeWidth={1.9} accessible={false} />
+          <SlidersHorizontal
+            size={17}
+            color={styles.searchFilterActiveText.color}
+            strokeWidth={1.9}
+            accessible={false}
+          />
         </View>
-        <Text style={styles.searchFilterEntryText}>筛选</Text>
+        <Text style={[styles.searchFilterEntryText, styles.searchFilterActiveText]}>筛选</Text>
         {hasAppliedFilter ? (
           <Text numberOfLines={1} style={[styles.searchFilterEntrySummary, styles.searchFilterEntrySummaryActive]}>
             {summary}
@@ -201,9 +223,10 @@ function SearchFilterEditor({
   const { height } = useWindowDimensions();
   const bodyMaxHeight = Math.round(height * 0.55);
   const scrollOffsets = useRef<ScrollOffsets>({});
-  const [page, setPage] = useState<SearchFilterPage>('main');
+  const [editor, setEditor] = useState<FilterEditorState>({ page: 'main', draft: applied });
+  const { page, draft } = editor;
+  const draftFilter = 'fieldDraft' in editor ? editor.fieldDraft : draft;
   const [pickerQuery, setPickerQuery] = useState('');
-  const [draftFilter, setDraftFilter] = useState(applied);
   const [filterError, setFilterError] = useState<DiscourseSearchFilterError | null>(null);
   const [moreVisible, setMoreVisible] = useState(() => hasAdvancedSearchFilters(applied));
   const close = () => {
@@ -233,14 +256,24 @@ function SearchFilterEditor({
   );
 
   useEffect(() => {
-    setDraftFilter(applied);
+    setEditor((current) =>
+      'fieldDraft' in current ? { ...current, draft: applied, fieldDraft: applied } : { ...current, draft: applied }
+    );
     setMoreVisible(hasAdvancedSearchFilters(applied));
     setFilterError(null);
   }, [applied]);
 
-  function updateDraft(partial: Partial<SourceSearchFilter>) {
+  function editDraft(edit: (value: SourceSearchFilter) => SourceSearchFilter) {
     setFilterError(null);
-    setDraftFilter((current) => ({ ...current, ...partial }) as SourceSearchFilter);
+    setEditor((current) =>
+      'fieldDraft' in current
+        ? { ...current, fieldDraft: edit(current.fieldDraft) }
+        : { ...current, draft: edit(current.draft) }
+    );
+  }
+
+  function updateDraft(partial: Partial<SourceSearchFilter>) {
+    editDraft((current) => ({ ...current, ...partial }) as SourceSearchFilter);
   }
 
   const discourseDraft = isDiscourseSearchFilter(draftFilter) ? draftFilter : null;
@@ -255,17 +288,23 @@ function SearchFilterEditor({
     searchDiscourseUsers: onSearchDiscourseUsers
   });
   const onMainPage = page === 'main';
+  const secondaryActionLabel = onMainPage ? '重置' : '取消';
   const hasCandidateInput = page === 'category' || page === 'tags' || page === 'author';
   const categoryTitle = source === 'yaohuo' ? '选择版块' : filterPageTitles.category;
   const title = onMainPage ? '筛选' : page === 'category' ? categoryTitle : filterPageTitles[page];
   const appearance = { styles, theme };
 
-  function changePage(nextPage: SearchFilterPage) {
+  function changePage(nextPage: SearchFilterPage, fieldOutcome: 'cancel' | 'confirm' = 'cancel') {
     if (nextPage === page) return;
     Keyboard.dismiss();
     if (nextPage !== 'main') delete scrollOffsets.current[nextPage];
     setPickerQuery('');
-    setPage(nextPage);
+    setEditor((current) => {
+      const nextDraft = fieldOutcome === 'confirm' && 'fieldDraft' in current ? current.fieldDraft : current.draft;
+      return isFilterFieldPage(nextPage)
+        ? { page: nextPage, draft: nextDraft, fieldDraft: nextDraft }
+        : { page: nextPage, draft: nextDraft };
+    });
   }
 
   function returnToMain() {
@@ -273,26 +312,24 @@ function SearchFilterEditor({
   }
 
   function applyDraft() {
-    const error = discourseDraft && discourseSearchFilterError(discourseDraft);
+    const error = isDiscourseSearchFilter(draft) && discourseSearchFilterError(draft);
     if (error) {
       setFilterError(error);
       changePage(filterErrorPages[error.field]);
       return;
     }
-    if (hashKey([applied]) !== hashKey([draftFilter])) onApply(source, draftFilter);
+    if (hashKey([applied]) !== hashKey([draft])) onApply(source, draft);
     close();
   }
 
   function toggleTag(tag: string) {
-    setFilterError(null);
-    setDraftFilter((current) =>
+    editDraft((current) =>
       isDiscourseSearchFilter(current) ? { ...current, tags: toggleValue(current.tags, tag) } : current
     );
   }
 
   function toggleVisited(value: DiscourseVisitedFilter) {
-    setFilterError(null);
-    setDraftFilter((current) =>
+    editDraft((current) =>
       isDiscourseSearchFilter(current) ? { ...current, visited: toggleValue(current.visited, value) } : current
     );
   }
@@ -406,21 +443,23 @@ function SearchFilterEditor({
           )}
         </SearchFilterBody>
       )}
-      <View style={styles.searchFilterActions}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="重置"
-          style={styles.searchFilterReset}
-          onPress={() => {
-            setFilterError(null);
-            setDraftFilter(defaultSearchFilterForSource(source));
-            if (!onMainPage) returnToMain();
-          }}
-        >
-          <Text style={styles.searchFilterLabel}>重置</Text>
-        </Pressable>
-        <AppButton size="lg" minWidth={108} label="确认筛选" variant="solid" onPress={applyDraft} />
-      </View>
+      {onMainPage || 'fieldDraft' in editor ? (
+        <View style={styles.searchFilterActions}>
+          <AppButton
+            size="lg"
+            label={secondaryActionLabel}
+            variant="ghost"
+            onPress={onMainPage ? () => editDraft(() => defaultSearchFilterForSource(source)) : returnToMain}
+          />
+          <AppButton
+            size="lg"
+            minWidth={108}
+            label={'fieldDraft' in editor ? fieldConfirmLabels[editor.page] : '确认筛选'}
+            variant="solid"
+            onPress={onMainPage ? applyDraft : () => changePage('main', 'confirm')}
+          />
+        </View>
+      ) : null}
     </ModalSheetFrame>
   );
 }

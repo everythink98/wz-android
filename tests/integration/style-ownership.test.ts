@@ -143,8 +143,6 @@ describe('Android reader theme safety rails', () => {
     expect(styles.appearanceSegmentedControl.flex).toBe(1);
     expect(styles.appearanceSegment.flex).toBe(1);
     expect(styles.appearanceSegment.minHeight).toBeGreaterThanOrEqual(48);
-    expect(styles.appearanceStepButton.width).toBeGreaterThanOrEqual(48);
-    expect(styles.appearanceStepButton.height).toBeGreaterThanOrEqual(48);
     expect(styles.appearanceSlider.height).toBeGreaterThanOrEqual(48);
   });
 

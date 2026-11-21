@@ -153,6 +153,7 @@ describe('experimental startup inline requires', () => {
         '@/platform/storage/accountSessionStore': { loadAccountSessionSnapshot: loadAccountSnapshot },
         '@/domain/session/siteSessionState': { accountSessionAccess },
         './networkProxy': {
+          activeNetworkRoute: () => null,
           loadNetworkProxyState: async () => ({ enabled: false }),
           applyNetworkProxy: applyProxy
         },

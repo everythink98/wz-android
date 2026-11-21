@@ -49,7 +49,7 @@ vi.mock('expo-task-manager', () => ({
   })
 }));
 vi.mock('@/platform/network/networkProxy', () => ({
-  activeNetworkProxyProfile: vi.fn(),
+  activeNetworkRoute: vi.fn(() => null),
   applyNetworkProxy: vi.fn(),
   loadNetworkProxyState: vi.fn(async () => ({ enabled: false }))
 }));

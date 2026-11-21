@@ -1,3 +1,10 @@
+import { sourceCatalog } from '@/domain/forum/sourceCatalog';
+import {
+  canContainCloudflareChallengePage,
+  isCloudflareChallengeResponse,
+  LinuxDoCloudflareError
+} from './cloudflareChallenge';
+
 export type Fetcher = (input: string, init?: RequestInit) => Promise<Response>;
 
 // Local request metadata, never an upstream field or HTTP header.
@@ -49,10 +56,25 @@ export function prepareRequestToSend(init?: RequestInit): RequestInit | undefine
   return beforeSend || dispatchState ? transportInit : init;
 }
 
-export function rejectUnauthorizedResponse(fetcher: Fetcher): Fetcher {
+export async function isLinuxDoUnauthorizedChallenge(response: Response, signal?: AbortSignal | null) {
+  if (isCloudflareChallengeResponse(response)) return true;
+  if (!canContainCloudflareChallengePage(response.headers)) return false;
+  const bodyText = await withAbortableTimeout(() => response.clone().text(), { signal }).catch(() => undefined);
+  return isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText });
+}
+
+export function rejectUnauthorizedResponse(fetcher: Fetcher, recheckLinuxDoSession = false): Fetcher {
   return async (input, init) => {
     const response = await fetcher(input, init);
     if (response.status !== 401) return response;
+    if (recheckLinuxDoSession || input.startsWith(`${sourceCatalog.linuxdo.baseUrl}/`)) {
+      if (await isLinuxDoUnauthorizedChallenge(response, init?.signal)) throw new LinuxDoCloudflareError(response);
+      throw Object.assign(new Error('linux.do 登录状态暂时无法确认，请稍后重试'), {
+        status: 401,
+        reason: 'http-401',
+        kind: 'ordinary'
+      });
+    }
     throw Object.assign(new Error('登录状态已失效'), { status: 401, reason: 'http-401' });
   };
 }

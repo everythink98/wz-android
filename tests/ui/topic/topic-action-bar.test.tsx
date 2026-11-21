@@ -27,6 +27,7 @@ async function renderAction({
   disabled = false,
   fontScale = 1,
   iconSize,
+  onLongPress,
   pending = false,
   tone = 'success'
 }: {
@@ -38,6 +39,7 @@ async function renderAction({
   disabled?: boolean;
   fontScale?: number;
   iconSize?: number;
+  onLongPress?: () => void;
   pending?: boolean;
   tone?: DetailActionTone;
 } = {}) {
@@ -60,6 +62,7 @@ async function renderAction({
       styles={styles}
       theme={theme}
       tone={tone}
+      onLongPress={onLongPress}
       onPress={onPress}
     />
   );
@@ -67,6 +70,20 @@ async function renderAction({
 }
 
 describe('topic post action rail', () => {
+  it('offers the reaction accessibility action only while the button can be used', async () => {
+    const onLongPress = jest.fn();
+    const disabled = await renderAction({ disabled: true, onLongPress });
+    expect(disabled.view.getByLabelText('点赞').props.accessibilityActions).toBeUndefined();
+    await disabled.view.unmount();
+
+    const available = await renderAction({ onLongPress });
+    const button = available.view.getByLabelText('点赞');
+    await fireEvent(button, 'accessibilityAction', { nativeEvent: { actionName: 'activate' } });
+    expect(onLongPress).not.toHaveBeenCalled();
+    await fireEvent(button, 'accessibilityAction', { nativeEvent: { actionName: 'longpress' } });
+    expect(onLongPress).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps compact actions labeled, caps their count, and invokes the action once', async () => {
     const { onPress, view } = await renderAction({ compact: true, count: 100 });
 

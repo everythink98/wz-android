@@ -120,6 +120,40 @@ function readerDataWithEnabledSources(enabledSources: readonly Source[]) {
 }
 
 describe('Feed controller sessions', () => {
+  it('keeps a local reading filter pending until reader history is available', async () => {
+    let readerDataLoaded = false;
+    const getFeed = jest.fn(async (): Promise<FeedResponse> => ({ items: [], errors: {}, hasMore: false }));
+    const readGateway = {
+      getFeed,
+      getCategories: jest.fn(async () => ({ items: [], errors: {} }))
+    } as unknown as ReadGateway;
+    const readerData = readerDataWithEnabledSources(['v2ex']);
+    const hook = await renderHook(() =>
+      useFeedRuntime({
+        active: true,
+        linuxDoVerificationActive: false,
+        notify: jest.fn(),
+        readerData,
+        readerDataLoaded,
+        readGateway,
+        showLinuxDoVerification: jest.fn(),
+        showNodeSeekVerification: jest.fn(),
+        showYaohuoLogin: jest.fn()
+      })
+    );
+    await waitFor(() => expect(hook.result.current.feedOutcomeKind).toBe('empty'));
+
+    await act(() => hook.result.current.setReadingFilter('read'));
+    expect(hook.result.current.feedBusy).toBe(true);
+    expect(hook.result.current.feedOutcomeKind).toBeUndefined();
+    expect(getFeed).toHaveBeenCalledTimes(1);
+
+    readerDataLoaded = true;
+    await hook.rerender(undefined);
+    expect(hook.result.current.feedBusy).toBe(false);
+    expect(hook.result.current.feedOutcomeKind).toBe('empty');
+  });
+
   it.each([
     ['focus', 'loadFeed'],
     ['focus', 'refreshFeed'],
@@ -174,13 +208,16 @@ describe('Feed controller sessions', () => {
     const pending: ((response: Response) => void)[] = [];
     let version = 1;
     const fetcher = jest.fn(async (url: string, init?: RequestInit) => {
-      if (url.includes('linux.do'))
+      const request = new URL(url);
+      if (request.hostname === 'linux.do') {
+        if (!request.searchParams.has('order')) return Response.json({ topic_list: { topics: [] } });
         return new Promise<Response>((resolve, reject) => {
           pending.push(resolve);
           init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), {
             once: true
           });
         });
+      }
       return new Response(
         `<div class="cell item"><a class="topic-link" href="/t/${version}#reply0">Ready ${version}</a><a class="node" href="/go/create">create</a><strong><a href="/member/neo">neo</a></strong><span title="2026-05-20 00:00:00 +08:00"></span></div>`
       );
@@ -421,10 +458,11 @@ describe('Feed controller sessions', () => {
     const identities = () => hook.result.current.activeFeedState.items.map((topic) => `${topic.source}:${topic.id}`);
     await waitFor(() => expect(identities()).toEqual(['linuxdo:1']));
     expect(hook.result.current.activeFeedState.hasMore).toBe(false);
+    const initialRequests = fetcher.mock.calls.length;
     await act(async () => {
       await hook.result.current.loadFeed();
     });
-    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledTimes(initialRequests);
 
     await act(async () => {
       authenticated = true;
@@ -2202,6 +2240,7 @@ describe('Feed controller sessions', () => {
       .infiniteQuery({
         queryKey: sourceFeedKey,
         initialPageParam: { page: 1 },
+        getNextPageParam: () => undefined,
         queryFn: async () => {
           throw staleError;
         }

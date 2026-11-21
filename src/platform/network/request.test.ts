@@ -84,6 +84,17 @@ describe('Android request helpers', () => {
     }
   });
 
+  it('retains a body-only LINUX DO verification response on a forum write', async () => {
+    const fetcher = rejectUnauthorizedResponse(
+      async () =>
+        new Response('<title>Just a moment...</title>', { status: 401, headers: { 'content-type': 'text/html' } })
+    );
+    await expect(fetcher('https://linux.do/posts.json', { method: 'POST' })).rejects.toMatchObject({
+      verificationRequired: true,
+      status: 401
+    });
+  });
+
   it('always enables the native read-only cookie jar without changing the request', async () => {
     const fetcher = vi.fn(async () => new Response('{}'));
 

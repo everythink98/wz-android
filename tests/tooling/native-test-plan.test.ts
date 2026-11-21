@@ -62,6 +62,7 @@ describe('Native behavior test selection', () => {
       'PreviewRegionImageMath',
       'TopicShareCapture',
       'NetworkProxyProfile',
+      'AppEncryptedDns',
       'NetworkUserAgent',
       'ForumPlatformPackage'
     ].map((name) => `com.wz.reader.${name}Test`);

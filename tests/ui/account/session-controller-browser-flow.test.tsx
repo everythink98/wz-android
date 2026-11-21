@@ -349,7 +349,7 @@ describe('session controller browser flow', () => {
         const [retired, fresh] = await Promise.all(requests);
 
         expect(retired).toEqual(expect.objectContaining({ message: '请求已取消' }));
-        expect(fresh).toEqual(expect.objectContaining({ status: 200 }));
+        expect(fresh).toEqual(expect.objectContaining({ status: 200, url }));
         const receipts = events.filter(
           (event) => event.phase === 'parse' && event.channel === 'webview' && event.source === site
         );

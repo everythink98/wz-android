@@ -1,7 +1,17 @@
 import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import { createFeedStyles } from './styles';
 import { recordStartupPhase } from '@/platform/diagnostics/startupTiming';
-import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import {
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject
+} from 'react';
 import {
   Pressable,
   Text,
@@ -42,15 +52,15 @@ import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { AppButton, FloatingIconButton } from '@/ui/controls/ButtonControls';
 import { EmptyText, LoadingState, RecoverableEmptyState } from '@/ui/controls/FeedbackStates';
-import { ContentLoadingPlaceholder } from '@/ui/controls/ContentLoadingPlaceholder';
 import { PillRail } from '@/ui/controls/SelectionControls';
-import { TOUCH_HIT_SLOP } from '@/ui/controls/touchTarget';
 import { PopupMenu, PopupMenuItem } from '@/ui/controls/PopupMenu';
-import { MemoizedTopicCard, TopicListSeparator } from '@/ui/topic/TopicCard';
+import { MemoizedTopicCard, TopicListPlaceholder, TopicListSeparator } from '@/ui/topic/TopicCard';
 import { FEED_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import { sourceLabel } from '@/domain/forum/presentation';
 import { isFeedFilterSource } from '@/domain/forum/sourceCatalog';
 import { NavigationBackdropTarget, NavigationGlass } from '@/ui/navigation/NavigationGlass';
+import { LoadingCover } from '@/ui/controls/ContentLoadingPlaceholder';
+import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 
 const AUTO_LOAD_SCROLL_STEP = 80;
 
@@ -126,13 +136,7 @@ export const FeedScreen = memo(function FeedScreen({
   const [secondaryHeaderHeight, setSecondaryHeaderHeight] = useState(48);
   const internalListRef = useRef<FlashListRef<Topic>>(null);
   const listRef = scrollRef || internalListRef;
-  const renderedSourceRef = useRef<{ source: FeedSource; phase: 'waiting' | 'rendered' }>({
-    source: feedSource,
-    phase: 'waiting'
-  });
-  if (renderedSourceRef.current.source !== feedSource)
-    renderedSourceRef.current = { source: feedSource, phase: 'waiting' };
-  const { width: pagerWidth } = useWindowDimensions();
+  const { width: pagerWidth, height: pagerHeight } = useWindowDimensions();
   const [pageRequests] = useState(createFeedPageRequests);
   const {
     hidden: createActionHidden,
@@ -177,6 +181,27 @@ export const FeedScreen = memo(function FeedScreen({
     if (initialContentPhaseRef.current !== 'awaiting-list' && initialContentTerminal) reportInitialContentReady();
   }, [initialContentTerminal, reportInitialContentReady]);
   const visibleFeedItems = useMemo(() => (allSourcesDisabled ? [] : feedItems), [allSourcesDisabled, feedItems]);
+  const waitingForTopics = busy && visibleFeedItems.length === 0;
+  const sourceList = useMemo(() => ({ source: feedSource, mounted: false, painted: false }), [feedSource]);
+  const showList = !waitingForTopics || sourceList.mounted;
+  useLayoutEffect(() => {
+    if (showList) sourceList.mounted = true;
+  }, [showList, sourceList]);
+  const batch = useMemo(() => ({ sourceList, waitingForTopics }), [sourceList, waitingForTopics]);
+  const currentBatch = useCommittedRef(batch);
+  const [paintedBatch, setPaintedBatch] = useState<typeof batch>();
+  const showLoadingCover = waitingForTopics || (visibleFeedItems.length > 0 && paintedBatch !== batch);
+  const onFeedListLoad = useCallback(() => {
+    if (currentBatch.current.sourceList !== sourceList) return;
+    sourceList.painted = true;
+    if (currentBatch.current === batch) setPaintedBatch(batch);
+    handleInitialListLoad();
+  }, [batch, currentBatch, handleInitialListLoad, sourceList]);
+  const onFeedRowsLayout = useCallback(() => {
+    if (sourceList.painted && currentBatch.current === batch && listRef.current?.getLayout(0)?.isHeightMeasured) {
+      setPaintedBatch(batch);
+    }
+  }, [batch, currentBatch, listRef, sourceList]);
   const activeFeedSourceIndex = Math.max(
     0,
     enabledFeedSourceItems.findIndex((item) => item.value === feedSource)
@@ -353,6 +378,7 @@ export const FeedScreen = memo(function FeedScreen({
     ({ index, item: topic }) => (
       <MemoizedTopicCard
         readerState={getTopicListItemStateFromIndex(topicStateIndex, topic)}
+        showPinned
         showSource={feedSource === 'all'}
         testID={index === 0 ? 'feed-topic-first' : undefined}
         topic={topic}
@@ -400,77 +426,69 @@ export const FeedScreen = memo(function FeedScreen({
   const feedEmptyText =
     readingFilter !== 'all' || Boolean(categoryFilter) || feedSource !== 'all' ? '当前筛选没有匹配主题' : '暂无主题';
   const renderFeedLoadingScene = useCallback(
-    (routeSource: FeedSource | undefined) => (
+    ({ route }: { route: { key: string } }) => (
       <View
         testID="feed-loading-scene"
         style={[styles.content, { paddingTop: sourceHeaderHeight + secondaryHeaderHeight }]}
       >
-        {screenActive && routeSource === feedSource ? (
-          <ContentLoadingPlaceholder layout="list" text="加载中" />
-        ) : (
-          <LoadingState text="加载中" animating={false} />
-        )}
+        <TopicListPlaceholder
+          key={pagerWidth}
+          label="加载中"
+          animating={screenActive && route.key === feedSource}
+          fillHeight={pagerHeight - sourceHeaderHeight - secondaryHeaderHeight}
+        />
       </View>
     ),
-    [styles, sourceHeaderHeight, secondaryHeaderHeight, screenActive, feedSource]
+    [styles, sourceHeaderHeight, secondaryHeaderHeight, feedSource, screenActive, pagerWidth, pagerHeight]
   );
   const renderFeedContent = useCallback(
     ({ route }: { route: { key: string } }) => {
-      const routeSource = enabledFeedSourceItems.find((item) => item.value === route.key)?.value;
-      if (!routeSource || routeSource !== feedSource) {
-        return renderFeedLoadingScene(routeSource);
-      }
-      if (visibleFeedItems.length === 0 && busy && renderedSourceRef.current.phase === 'waiting') {
-        return renderFeedLoadingScene(routeSource);
-      }
-      renderedSourceRef.current.phase = 'rendered';
+      const activeSource = route.key === feedSource;
       return (
         <View style={styles.content}>
-          <FlashList
-            renderScrollComponent={ScrollView}
-            testID={
-              !busy && feedOutcomeKind
-                ? `feed-outcome-${feedOutcomeKind}-${feedSource}-${feedFilter ?? 'default'}`
-                : undefined
-            }
-            ref={listRef}
-            style={styles.content}
-            contentContainerStyle={[
-              styles.feedListContentInner,
-              {
-                paddingTop: sourceHeaderHeight + secondaryHeaderHeight,
-                paddingBottom: Math.max(96, bottomBarHeight + 16)
+          {activeSource && showList ? (
+            <FlashList
+              renderScrollComponent={ScrollView}
+              testID={
+                !busy && feedOutcomeKind
+                  ? `feed-outcome-${feedOutcomeKind}-${feedSource}-${feedFilter ?? 'default'}`
+                  : undefined
               }
-            ]}
-            data={visibleFeedItems}
-            keyExtractor={topicKey}
-            keyboardShouldPersistTaps="handled"
-            nestedScrollEnabled={false}
-            refreshControl={
-              allSourcesDisabled ? undefined : (
-                <RefreshControl
-                  enabled={!busy || visibleFeedItems.length > 0}
-                  refreshing={refreshing && !busy}
-                  onRefresh={onRefresh}
-                  colors={[theme.primary]}
-                  tintColor={theme.primary}
-                  progressViewOffset={sourceHeaderHeight + secondaryHeaderHeight}
-                />
-              )
-            }
-            onScroll={handleScroll}
-            onLoad={handleInitialListLoad}
-            onScrollBeginDrag={handleScrollBeginDrag}
-            scrollEventThrottle={64}
-            {...FEED_LIST_PERFORMANCE_PROPS}
-            ListEmptyComponent={
-              busy ? (
-                screenActive ? (
-                  <ContentLoadingPlaceholder layout="list" text="加载中" />
-                ) : (
-                  <LoadingState text="加载中" animating={false} />
+              ref={listRef}
+              accessibilityElementsHidden={showLoadingCover}
+              importantForAccessibility={showLoadingCover ? 'no-hide-descendants' : 'auto'}
+              pointerEvents={showLoadingCover ? 'none' : 'auto'}
+              style={styles.content}
+              contentContainerStyle={[
+                styles.feedListContentInner,
+                {
+                  paddingTop: sourceHeaderHeight + secondaryHeaderHeight,
+                  paddingBottom: Math.max(96, bottomBarHeight + 16)
+                }
+              ]}
+              data={visibleFeedItems}
+              keyExtractor={topicKey}
+              keyboardShouldPersistTaps="handled"
+              nestedScrollEnabled={false}
+              refreshControl={
+                allSourcesDisabled ? undefined : (
+                  <RefreshControl
+                    enabled={!busy || visibleFeedItems.length > 0}
+                    refreshing={refreshing && !busy}
+                    onRefresh={onRefresh}
+                    colors={[theme.primary]}
+                    tintColor={theme.primary}
+                    progressViewOffset={sourceHeaderHeight + secondaryHeaderHeight}
+                  />
                 )
-              ) : (
+              }
+              onScroll={handleScroll}
+              onLoad={onFeedListLoad}
+              onCommitLayoutEffect={showLoadingCover && visibleFeedItems.length ? onFeedRowsLayout : undefined}
+              onScrollBeginDrag={handleScrollBeginDrag}
+              scrollEventThrottle={64}
+              {...FEED_LIST_PERFORMANCE_PROPS}
+              ListEmptyComponent={
                 <View testID="feed-empty-state" onLayout={handleInitialListLoad}>
                   {allSourcesDisabled ? (
                     <RecoverableEmptyState
@@ -488,40 +506,49 @@ export const FeedScreen = memo(function FeedScreen({
                     <EmptyText text={feedEmptyText} />
                   )}
                 </View>
-              )
-            }
-            ListFooterComponent={
-              feedHasMore ? (
-                <View style={styles.feedListFooter}>
-                  {loadMoreErrorMessage && !loadingMore && !refreshing ? (
-                    <Text accessibilityLiveRegion="polite" style={styles.pageErrorText}>
-                      {loadMoreErrorMessage}
+              }
+              ListFooterComponent={
+                feedHasMore ? (
+                  <View style={styles.feedListFooter}>
+                    {loadMoreErrorMessage && !loadingMore && !refreshing ? (
+                      <Text accessibilityLiveRegion="polite" style={styles.pageErrorText}>
+                        {loadMoreErrorMessage}
+                      </Text>
+                    ) : null}
+                    <AppButton
+                      compact
+                      variant="ghost"
+                      label={
+                        loadingMore
+                          ? '加载更多中'
+                          : `${loadMoreFailureSignal ? '重试加载' : '加载'}第 ${feedPage + 1} 页`
+                      }
+                      loading={loadingMore}
+                      disabled={busy || refreshing || loadingMore}
+                      onPress={() => requestFeedLoadMore('button')}
+                    />
+                  </View>
+                ) : visibleFeedItems.length > 0 && !busy && !refreshing ? (
+                  feedOutcomeKind ? (
+                    <Text testID="feed-end-of-list" style={styles.endOfListText}>
+                      已经到底了
                     </Text>
-                  ) : null}
-                  <AppButton
-                    compact
-                    variant="ghost"
-                    label={
-                      loadingMore ? '加载更多中' : `${loadMoreFailureSignal ? '重试加载' : '加载'}第 ${feedPage + 1} 页`
-                    }
-                    loading={loadingMore}
-                    disabled={busy || refreshing || loadingMore}
-                    onPress={() => requestFeedLoadMore('button')}
-                  />
-                </View>
-              ) : visibleFeedItems.length > 0 && !busy && !refreshing ? (
-                feedOutcomeKind ? (
-                  <Text testID="feed-end-of-list" style={styles.endOfListText}>
-                    已经到底了
-                  </Text>
-                ) : feedSource === 'all' ? (
-                  <LoadingState compact text="加载其他来源" animating={screenActive} />
+                  ) : feedSource === 'all' ? (
+                    <LoadingState compact text="加载其他来源" animating={screenActive} />
+                  ) : null
                 ) : null
-              ) : null
-            }
-            ItemSeparatorComponent={TopicListSeparator}
-            renderItem={renderTopicItem}
-          />
+              }
+              ItemSeparatorComponent={TopicListSeparator}
+              renderItem={renderTopicItem}
+            />
+          ) : null}
+          <LoadingCover
+            visible={!activeSource || showLoadingCover}
+            active={screenActive && activeSource}
+            style={styles.content}
+          >
+            {renderFeedLoadingScene({ route })}
+          </LoadingCover>
         </View>
       );
     },
@@ -529,7 +556,6 @@ export const FeedScreen = memo(function FeedScreen({
       busy,
       bottomBarHeight,
       allSourcesDisabled,
-      enabledFeedSourceItems,
       feedEmptyText,
       feedFilter,
       feedHasMore,
@@ -543,6 +569,10 @@ export const FeedScreen = memo(function FeedScreen({
       loadMoreFailureSignal,
       loadingMore,
       handleInitialListLoad,
+      onFeedListLoad,
+      onFeedRowsLayout,
+      showList,
+      showLoadingCover,
       onManageContentSources,
       onRefresh,
       refreshing,
@@ -616,9 +646,8 @@ export const FeedScreen = memo(function FeedScreen({
                     accessibilityRole="button"
                     accessibilityLabel="列表筛选"
                     accessibilityValue={{ text: feedFilterLabel(routeSource, routeFilter) }}
-                    accessibilityState={{ expanded: active && filterMenuOpen }}
+                    accessibilityState={{ disabled: !active, expanded: active && filterMenuOpen }}
                     disabled={!active}
-                    hitSlop={TOUCH_HIT_SLOP}
                     style={styles.linuxDoFilterButton}
                     onPress={() => {
                       if (active) toggleFeedFilterMenu();
@@ -627,7 +656,12 @@ export const FeedScreen = memo(function FeedScreen({
                     <Text style={styles.linuxDoFilterButtonText} numberOfLines={1}>
                       {feedFilterLabel(routeSource, routeFilter)}
                     </Text>
-                    <ChevronDown accessible={false} size={14} color={theme.primary} strokeWidth={1.8} />
+                    <ChevronDown
+                      accessible={false}
+                      size={14}
+                      color={styles.linuxDoFilterButtonText.color}
+                      strokeWidth={1.8}
+                    />
                   </Pressable>
                 ) : null}
               </View>
@@ -651,7 +685,6 @@ export const FeedScreen = memo(function FeedScreen({
       changeCategoryFilter,
       filterMenuOpen,
       toggleFeedFilterMenu,
-      theme,
       renderFeedContent
     ]
   );
@@ -668,7 +701,7 @@ export const FeedScreen = memo(function FeedScreen({
         lazyPreloadDistance={1}
         navigationState={feedNavigationState}
         commonOptions={feedTabOptions}
-        renderLazyPlaceholder={() => <View style={styles.content} />}
+        renderLazyPlaceholder={renderFeedLoadingScene}
         renderScene={renderFeedScene}
         renderTabBar={renderFeedTabBar}
         onSwipeStart={closeFeedFilterMenu}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Platform } from 'react-native';
+import { DeviceEventEmitter, Platform } from 'react-native';
 import { createKeyedSerialRunner } from '@/platform/concurrency/keyedSerialRunner';
 import { setDefaultAvatarFetcher } from '@/platform/media/avatarImages';
 import { withNativeForumReadIntent } from './browserFetchIntent';
@@ -13,8 +13,10 @@ import {
   withNativeDiagnosticRequest
 } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
+import { encryptedDnsResultLabel, normalizeEncryptedDnsSettings, type EncryptedDnsSettings } from './encryptedDns';
 import {
   activeNetworkProxyProfile,
+  activeNetworkRoute,
   applyNetworkProxy,
   createEmptyNetworkProxyState,
   createNetworkProxyProfile,
@@ -22,23 +24,27 @@ import {
   loadNetworkProxyState,
   MAX_NETWORK_PROXY_PROFILES,
   networkProxySummary,
+  networkMode,
   networkProxyWebViewBlockMessage,
   removeNetworkProxyProfile,
   saveNetworkProxyState,
   testNetworkProxy,
+  testEncryptedDns,
   validateNetworkProxyProfile,
   type NetworkProxyApplyStatus,
   type NetworkProxyProfile,
-  type NetworkProxyState
+  type NetworkProxyState,
+  type NetworkMode
 } from './networkProxy';
 
 type SettledApplyStatus = Extract<NetworkProxyApplyStatus, 'disabled' | 'applied'>;
 type ProxyApplyOperation = { owner: AbortController; promise: Promise<void> };
-type ProxyApplyState =
+type ProxyApplyPhase =
   | { kind: 'loading' }
   | { kind: SettledApplyStatus }
   | { kind: 'applying'; operation: ProxyApplyOperation }
   | { kind: 'failed'; cause: 'storage' | 'apply'; error: string };
+type ProxyApplyState = ProxyApplyPhase & { confirmed?: NetworkProxyState };
 const RESOLVED_VOID_PROMISE: Promise<void> = Promise.resolve();
 const NETWORK_PROXY_LOAD_TIMEOUT_MS = 3_000;
 const NETWORK_PROXY_RUNTIME_ENDED_MESSAGE = '代理运行时已结束';
@@ -89,7 +95,8 @@ function sameNetworkProxyProfile(left: NetworkProxyProfile, right: NetworkProxyP
 }
 
 function networkProxyApplyKey(state: NetworkProxyState) {
-  const profile = state.enabled ? activeNetworkProxyProfile(state) : null;
+  const profile = activeNetworkRoute(state);
+  if (profile && 'allowFallback' in profile) return JSON.stringify(profile);
   return profile
     ? JSON.stringify([profile.protocol, profile.host, profile.port, profile.username, profile.password])
     : '';
@@ -104,12 +111,13 @@ export function useNetworkProxyRuntime({
 }) {
   const [proxyState, setProxyState] = useState<NetworkProxyState>(() => createEmptyNetworkProxyState());
   const [applyState, setApplyStateValue] = useState<ProxyApplyState>({ kind: 'loading' });
+  const [dnsResult, setDnsResult] = useState<string>();
   const proxyStateRef = useRef(proxyState);
   const applyStateRef = useRef(applyState);
   const notifyRef = useRef(notify);
   const loadPromiseRef = useRef<Promise<void>>(RESOLVED_VOID_PROMISE);
   const proxyApplyQueueRef = useRef<Promise<void>>(RESOLVED_VOID_PROMISE);
-  const proxyEnabledQueueRef = useRef(createKeyedSerialRunner<null>('after-reaction'));
+  const networkModeQueueRef = useRef(createKeyedSerialRunner<null>('after-reaction'));
   const proxySaveQueueRef = useRef(createKeyedSerialRunner<null>());
   const ownerRef = useRef<AbortController | null>(null);
   const bootstrapReadRef = useRef<Promise<NetworkProxyState> | null>(null);
@@ -118,22 +126,31 @@ export function useNetworkProxyRuntime({
   useEffect(() => {
     notifyRef.current = notify;
   }, [notify]);
+  useEffect(() => {
+    const subscription = DeviceEventEmitter.addListener('readerEncryptedDnsResult', (value: unknown) => {
+      if (networkMode(proxyStateRef.current) === 'doh') setDnsResult(encryptedDnsResultLabel(value));
+    });
+    return () => subscription.remove();
+  }, []);
 
-  const setApplyState = useCallback((state: ProxyApplyState) => {
+  const setApplyState = useCallback((phase: ProxyApplyPhase, confirmed = applyStateRef.current.confirmed) => {
+    const state: ProxyApplyState = { ...phase, confirmed };
     applyStateRef.current = state;
     setApplyStateValue(state);
   }, []);
 
   const applyStatus = applyState.kind;
   const applyError = applyState.kind === 'failed' ? applyState.error : '';
+  const confirmedState = applyState.confirmed;
+  const effectiveMode = confirmedState ? networkMode(confirmedState) : undefined;
   const loaded = applyStatus !== 'loading';
   const activeProfile = useMemo(() => activeNetworkProxyProfile(proxyState), [proxyState]);
-  const summary = useMemo(() => networkProxySummary(proxyState, applyError), [applyError, proxyState]);
+  const summary = networkProxySummary(confirmedState ?? proxyState, applyError);
 
   const applyPersistedProxyState = useCallback(
     (state: NetworkProxyState, parentTrace?: DiagnosticTrace, notifyOnFailure = false) => {
       const owner = requireNetworkProxyOwner(ownerRef.current);
-      const profile = state.enabled ? activeNetworkProxyProfile(state) : null;
+      const profile = activeNetworkRoute(state);
       const trace = parentTrace || beginDiagnosticTrace('proxy', 'apply', diagnosticProxyState(state));
       const ownsTrace = !parentTrace;
       markDiagnosticStage(trace, 'apply', { channel: 'native', state: 'start' });
@@ -146,7 +163,8 @@ export function useNetworkProxyRuntime({
           const status: SettledApplyStatus = profile ? 'applied' : 'disabled';
           const current = applyStateRef.current;
           if (!operation.owner.signal.aborted && current.kind === 'applying' && current.operation === operation) {
-            setApplyState({ kind: status });
+            setDnsResult(undefined);
+            setApplyState({ kind: status }, state);
           }
           markDiagnosticStage(trace, 'apply', { channel: 'native', state: status });
           if (ownsTrace) {
@@ -277,7 +295,7 @@ export function useNetworkProxyRuntime({
         requireNetworkProxyOwner(owner);
         const next = update(base);
         if (next === base && !unreadable) {
-          return { changed: false, requiresApply: false, state: previous };
+          return { previous: base, requiresApply: false, state: previous };
         }
         const trace = parentTrace || beginDiagnosticTrace('proxy', 'save', diagnosticProxyState(next));
         const ownsTrace = !parentTrace;
@@ -286,7 +304,7 @@ export function useNetworkProxyRuntime({
           markDiagnosticStage(trace, 'persist', { store: 'secure-store', ...diagnosticProxyState(saved) });
           if (owner.signal.aborted) {
             if (ownsTrace) finishDiagnosticTrace(trace, 'success', diagnosticProxyState(saved));
-            return { changed: true, requiresApply: false, state: saved };
+            return { previous: base, requiresApply: false, state: saved };
           }
           const requiresApply =
             applyStateRef.current.kind === 'failed' || networkProxyApplyKey(previous) !== networkProxyApplyKey(saved);
@@ -299,7 +317,7 @@ export function useNetworkProxyRuntime({
           if (ownsTrace) {
             finishDiagnosticTrace(trace, 'success', diagnosticProxyState(saved));
           }
-          return { changed: true, requiresApply, state: saved };
+          return { previous: base, requiresApply, state: saved };
         } catch (error) {
           if (!owner.signal.aborted) {
             proxyStateRef.current = previous;
@@ -317,58 +335,56 @@ export function useNetworkProxyRuntime({
     [setApplyState]
   );
 
-  const runSetProxyEnabled = useCallback(
-    async (enabled: boolean) => {
+  const setNetworkMode = useCallback(
+    (mode: NetworkMode, settings?: EncryptedDnsSettings) => {
       const owner = requireNetworkProxyOwner(ownerRef.current);
-      const trace = beginDiagnosticTrace('proxy', 'set-enabled', { isEnabled: enabled });
-      try {
-        const result = await replaceProxyState(
-          (current) => {
-            if (enabled && !activeNetworkProxyProfile(current)) {
-              return current;
-            }
-            if (current.enabled === enabled) {
-              if (!enabled && applyStateRef.current.kind === 'failed') {
-                return { ...current };
+      return networkModeQueueRef.current.run(null, async () => {
+        requireNetworkProxyOwner(owner);
+        const trace = beginDiagnosticTrace('proxy', 'set-mode', { isEnabled: mode !== 'system' });
+        try {
+          const result = await replaceProxyState(
+            (state) => {
+              if (mode === 'proxy' && !activeNetworkProxyProfile(state)) throw new Error('请先选择一个代理。');
+              if (!settings && networkMode(state) === mode && applyStateRef.current.kind !== 'failed') return state;
+              if (mode === 'doh') {
+                const encryptedDns = normalizeEncryptedDnsSettings(settings ?? state.encryptedDns);
+                return { ...state, enabled: false, mode: 'doh', encryptedDns };
               }
-              return current;
+              return { ...state, mode: undefined, enabled: mode === 'proxy' };
+            },
+            trace,
+            mode === 'system'
+          );
+          if (!result.requiresApply) {
+            finishDiagnosticTrace(trace, 'noop');
+            return;
+          }
+          try {
+            const status = await applyPersistedProxyState(result.state, trace);
+            finishDiagnosticTrace(trace, 'success', { state: status });
+          } catch (error) {
+            if (!owner.signal.aborted) {
+              const previous = result.previous;
+              const rollback = await replaceProxyState((current) => {
+                if (networkMode(current) !== mode) return current;
+                return {
+                  ...current,
+                  mode: previous.mode,
+                  enabled: previous.enabled && Boolean(activeNetworkProxyProfile(current)),
+                  encryptedDns: previous.encryptedDns
+                };
+              }).catch(() => undefined);
+              if (rollback?.requiresApply) await applyPersistedProxyState(rollback.state).catch(() => undefined);
             }
-            return { ...current, enabled };
-          },
-          trace,
-          !enabled
-        );
-        requireNetworkProxyOwner(owner);
-        if (enabled && !activeNetworkProxyProfile(result.state)) {
-          if (result.requiresApply) await applyPersistedProxyState(result.state, trace);
-          finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
-          notifyRef.current('请先添加并选择一个代理。');
-          return;
+            throw error;
+          }
+        } catch (error) {
+          finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
+          throw error;
         }
-        if (!result.changed) {
-          finishDiagnosticTrace(trace, 'noop', { isEnabled: enabled });
-          return;
-        }
-        markDiagnosticStage(trace, 'apply', { state: 'pending', isEnabled: enabled });
-        const status = await applyPersistedProxyState(result.state, trace);
-        finishDiagnosticTrace(trace, 'success', { isEnabled: enabled, state: status });
-      } catch (error) {
-        finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
-        throw error;
-      }
-    },
-    [applyPersistedProxyState, replaceProxyState]
-  );
-
-  const setProxyEnabled = useCallback(
-    (enabled: boolean) => {
-      const owner = ownerRef.current;
-      return proxyEnabledQueueRef.current.run(null, () => {
-        requireNetworkProxyOwner(owner);
-        return runSetProxyEnabled(enabled);
       });
     },
-    [runSetProxyEnabled]
+    [applyPersistedProxyState, replaceProxyState]
   );
 
   const upsertProxyProfile = useCallback(
@@ -486,10 +502,10 @@ export function useNetworkProxyRuntime({
           finishDiagnosticTrace(trace, 'blocked', { reason: 'network_error' });
           throw new Error(apply.error || '代理状态不确定，请重新应用代理设置。');
         }
-        if (!current.enabled) {
+        if (networkMode(current) === 'system') {
           return;
         }
-        if (!activeNetworkProxyProfile(current)) {
+        if (!activeNetworkRoute(current)) {
           const trace = beginDiagnosticTrace('proxy', 'guard', { isEnabled: true, hasProxy: false });
           finishDiagnosticTrace(trace, 'blocked', { reason: 'missing_credential' });
           throw new Error('代理未选择。');
@@ -527,7 +543,7 @@ export function useNetworkProxyRuntime({
   const webViewBlockMessage = networkProxyWebViewBlockMessage({
     applyError,
     applyStatus,
-    enabled: proxyState.enabled,
+    enabled: networkMode(proxyState) !== 'system',
     loaded
   });
 
@@ -535,6 +551,9 @@ export function useNetworkProxyRuntime({
     activeProfile,
     applyError,
     applyStatus,
+    confirmedState,
+    dnsResult,
+    effectiveMode,
     ensureNetworkProxyReady,
     loaded,
     networkProxyFetcher,
@@ -543,7 +562,8 @@ export function useNetworkProxyRuntime({
     webViewBlockMessage,
     deleteProxyProfile,
     selectProxyProfile,
-    setProxyEnabled,
+    setNetworkMode,
+    testEncryptedDns,
     testProxyProfile,
     upsertProxyProfile
   };

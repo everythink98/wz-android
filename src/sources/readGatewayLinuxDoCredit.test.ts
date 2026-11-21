@@ -60,10 +60,11 @@ describe('LinuxDo Credit managed reads', () => {
     expect(requestAccountRecheck).not.toHaveBeenCalled();
   });
 
-  it('still expires the forum session for a forum 401', async () => {
-    const { gateway, onSessionExpired } = setup(async () => Response.json({}, { status: 401 }));
+  it('rechecks the forum session for a forum 401', async () => {
+    const { gateway, onSessionExpired, requestAccountRecheck } = setup(async () => Response.json({}, { status: 401 }));
     await expect(gateway.getUserDetails({ source: 'linuxdo', id: 'alice', username: 'alice' })).rejects.toThrow();
-    expect(onSessionExpired).toHaveBeenCalledWith('linuxdo', 4);
+    expect(onSessionExpired).not.toHaveBeenCalled();
+    expect(requestAccountRecheck).toHaveBeenCalledExactlyOnceWith('linuxdo', 4, expect.any(String));
   });
 
   it('keeps forum and Credit verification errors distinct for their recovery buttons', async () => {
@@ -136,9 +137,10 @@ describe('LinuxDo Credit managed reads', () => {
   });
 
   it('reports a forum 401 encountered while verifying the LDC owner', async () => {
-    const { gateway, onSessionExpired } = setup(async () => Response.json({}, { status: 401 }));
+    const { gateway, onSessionExpired, requestAccountRecheck } = setup(async () => Response.json({}, { status: 401 }));
     await expect(gateway.getLinuxDoCreditAccount(options)).rejects.toThrow();
-    expect(onSessionExpired).toHaveBeenCalledWith('linuxdo', 4);
+    expect(onSessionExpired).not.toHaveBeenCalled();
+    expect(requestAccountRecheck).toHaveBeenCalledExactlyOnceWith('linuxdo', 4, expect.any(String));
   });
 
   it('rejects an old Credit session even when a different forum user reuses its username', async () => {

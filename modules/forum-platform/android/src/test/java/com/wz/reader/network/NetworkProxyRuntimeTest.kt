@@ -457,7 +457,7 @@ class NetworkProxyRuntimeTest {
   fun retiredRuntimeCannotReplayStaleHttp2ImageContext() =
     Http2ImageFaultFixture().use { it.assertRetiredRuntimeDoesNotReplay() }
 
-  private class ControllableGlideCall(private val request: Request) : Call {
+  private class ControllableGlideCall(private val request: Request) : Call by OkHttpClient().newCall(request) {
     private var callback: Callback? = null
     private val canceled = AtomicBoolean(false)
     private val executed = AtomicBoolean(false)

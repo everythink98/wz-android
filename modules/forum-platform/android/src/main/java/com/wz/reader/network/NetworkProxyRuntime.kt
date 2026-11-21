@@ -65,6 +65,7 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
+import kotlin.reflect.KClass
 import android.util.Log
 import android.util.Base64
 import okhttp3.ConnectionPool
@@ -100,7 +101,7 @@ data class NetworkProxyProfile(
   val port: Int,
   val username: String?,
   val password: String?
-)
+) : AppNetworkRoute
 
 internal interface ProxyTlsConnection {
   val socket: Socket
@@ -1123,7 +1124,8 @@ internal fun imageDiagnosticRequest(request: Request, imageLane: Boolean): Reque
 internal fun imageNetworkFailure(error: Throwable, canceled: Boolean = false): String {
   var cause: Throwable? = error
   repeat(8) {
-    if (cause is java.util.concurrent.RejectedExecutionException) return "executor_rejected"
+    if (cause is java.util.concurrent.RejectedExecutionException ||
+      (cause is java.io.InterruptedIOException && cause?.message == "executor rejected")) return "executor_rejected"
     cause = cause?.cause
   }
   return when {
@@ -1442,7 +1444,8 @@ private class ReadNetworkEventListenerFactory(
 internal class ReadNetworkGenerationProxySelector(
   private val delegate: ProxySelector
 ) : ProxySelector() {
-  override fun select(uri: URI?): MutableList<Proxy> = delegate.select(uri)
+  override fun select(uri: URI?): MutableList<Proxy> =
+    if (delegate is NetworkProxySelector) delegate.selectManaged(uri) else delegate.select(uri)
 
   override fun connectFailed(uri: URI?, sa: java.net.SocketAddress?, ioe: IOException?) {
     delegate.connectFailed(uri, sa, ioe)
@@ -1456,7 +1459,11 @@ private class ReadNetworkRuntimeGeneration(
   proxySelectorDelegate: ProxySelector
 ) {
   private val baseEventListenerFactory = baseClient.eventListenerFactory
-  private val mediaHealth = MediaConnectionHealth(baseClient)
+  private val baseDns = baseClient.dns
+  private val directTls = baseClient.withDohTls { host, address, port ->
+    NetworkProxyRuntime.currentEncryptedDns()?.echFor(host, address, port)
+  }
+  private val mediaHealth = MediaConnectionHealth(directTls)
   val dispatcher = Dispatcher()
   val forumConnectionPool = ConnectionPool()
   val mediaConnectionPool = ConnectionPool()
@@ -1489,7 +1496,9 @@ private class ReadNetworkRuntimeGeneration(
   }
 
   fun configureManagedClient(builder: OkHttpClient.Builder): OkHttpClient.Builder =
-    configureClient(builder, forumConnectionPool, "forum")
+    configureClient(builder, forumConnectionPool, "forum").apply {
+      sslSocketFactory(directTls.sslSocketFactory, requireNotNull(directTls.x509TrustManager))
+    }
 
   fun configureMediaClient(builder: OkHttpClient.Builder): OkHttpClient.Builder =
     mediaHealth.configure(configureClient(builder, mediaConnectionPool, "media"))
@@ -1623,6 +1632,13 @@ private class ReadNetworkRuntimeGeneration(
     val clientIdentity = Any()
     builder.cookieJar(cookieJar)
     builder.proxySelector(proxySelector)
+    builder.dns(object : okhttp3.Dns {
+      override fun lookup(hostname: String): List<InetAddress> =
+        (NetworkProxyRuntime.currentEncryptedDns() ?: baseDns).lookup(hostname)
+
+      override fun newCall(request: okhttp3.Dns.Request): okhttp3.Dns.Call =
+        NetworkProxyRuntime.currentEncryptedDns()?.newCall(request) ?: super.newCall(request)
+    })
     builder.connectionPool(connectionPool)
     builder.dispatcher(dispatcher)
     builder.eventListenerFactory(
@@ -1639,9 +1655,11 @@ private class ReadNetworkRuntimeGeneration(
     builder.interceptors().removeAll { interceptor -> interceptor is ForumReadRequestInterceptor }
     builder.interceptors().removeAll { interceptor -> interceptor is ForumMediaRequestInterceptor }
     builder.interceptors().removeAll { interceptor -> interceptor is RequestDiagnosticInterceptor }
+    builder.interceptors().removeAll { it === ForumDohFailoverInterceptor }
     builder.addInterceptor(RequestDiagnosticInterceptor())
     builder.addInterceptor(ForumReadRequestInterceptor())
     builder.addInterceptor(ForumMediaRequestInterceptor())
+    builder.addInterceptor(ForumDohFailoverInterceptor)
     builder.interceptors().removeAll { it is CookieResponseContextInterceptor }
     builder.networkInterceptors().removeAll { it is CookieResponseInterceptor }
     builder.networkInterceptors().removeAll { it is ForumReadClearanceInterceptor }
@@ -1662,7 +1680,7 @@ object NetworkProxyRuntime {
   private sealed interface RouteOverride {
     data object Blocked : RouteOverride
     data object NoAppOverride : RouteOverride
-    class LocalRelay(val proxy: Proxy) : RouteOverride
+    class LocalRelay(val proxy: Proxy, val dns: AppEncryptedDns?) : RouteOverride
   }
   @Volatile private var routeOverride: RouteOverride = RouteOverride.Blocked
   private val localProxy: Proxy? get() = when (val current = routeOverride) {
@@ -1718,6 +1736,8 @@ object NetworkProxyRuntime {
     private val execution = AtomicReference<Execution>(Execution.Created)
     private val canceled = AtomicBoolean(false)
     private val failureRecorded = AtomicBoolean(false)
+    private val pendingListeners = mutableListOf<EventListener>()
+    private val pendingTags = mutableMapOf<Class<*>, Any>()
     private val delegate: Call? get() = when (val current = execution.get()) {
       Execution.Created, Execution.Claimed, is Execution.Starting -> null
       is Execution.Started -> current.call
@@ -1733,6 +1753,35 @@ object NetworkProxyRuntime {
     override fun isCanceled(): Boolean = canceled.get() || delegate?.isCanceled() == true
     override fun timeout(): Timeout = callTimeout
     override fun clone(): Call = RuntimeImageCall(originalRequest, imageLane)
+
+    override fun addEventListener(eventListener: EventListener) {
+      synchronized(lock) {
+        val call = delegate
+        if (call == null) pendingListeners.add(eventListener) else call.addEventListener(eventListener)
+      }
+    }
+
+    override fun <T : Any> tag(type: KClass<T>): T? = tag(type.java)
+
+    override fun <T> tag(type: Class<out T>): T? = synchronized(lock) {
+      delegate?.tag(type) ?: type.cast(pendingTags[type]) ?: originalRequest.tag(type)
+    }
+
+    override fun <T : Any> tag(type: KClass<T>, computeIfAbsent: () -> T): T =
+      tag(type.java, computeIfAbsent)
+
+    override fun <T : Any> tag(type: Class<T>, computeIfAbsent: () -> T): T {
+      tag(type)?.let { return it }
+      val value = computeIfAbsent()
+      return synchronized(lock) {
+        delegate?.tag(type) { value } ?: type.cast(pendingTags.getOrPut(type) { value })
+      }
+    }
+
+    private fun <T : Any> copyTag(call: Call, type: Class<T>, value: Any) {
+      call.tag(type) { type.cast(value) }
+    }
+
     override fun cancel() {
       canceled.set(true)
       delegate?.cancel()
@@ -1745,6 +1794,10 @@ object NetworkProxyRuntime {
         execution.set(Execution.Starting(runtime.generation))
         val client = if (imageLane) runtime.imageClient else runtime.mediaClient
         client.newCall(imageDiagnosticRequest(originalRequest, imageLane)).also { call ->
+          pendingListeners.forEach(call::addEventListener)
+          pendingTags.forEach { (type, value) -> copyTag(call, type, value) }
+          pendingListeners.clear()
+          pendingTags.clear()
           val timeout = call.timeout()
           timeout.timeout(callTimeout.timeoutNanos(), TimeUnit.NANOSECONDS)
           if (callTimeout.hasDeadline()) timeout.deadlineNanoTime(callTimeout.deadlineNanoTime())
@@ -1864,10 +1917,32 @@ object NetworkProxyRuntime {
     )
   }
 
-  fun setLocalProxyPort(port: Int?) = synchronized(rotationLock) {
+  fun setLocalProxyPort(port: Int?) = setNetworkRoute(port, null)
+
+  internal fun currentEncryptedDns(): AppEncryptedDns? = (routeOverride as? RouteOverride.LocalRelay)?.dns
+
+  internal fun systemProxyFor(uri: URI): Proxy? = selector.systemProxyFor(uri)
+
+  internal fun refreshEncryptedDns(resolver: AppEncryptedDns, networkChanged: () -> Boolean) {
+    runtimeLifecycleExecutor.execute {
+      synchronized(rotationLock) {
+        if (!networkChanged()) return@synchronized
+        resolver.reset()
+        if (currentEncryptedDns() !== resolver) return@synchronized
+        val generations = synchronized(lock) { allGenerationsLocked() }
+        generations.forEach { generation ->
+          generation.resetCronetMediaTransport()?.retire()
+          generation.forumConnectionPool.evictAll()
+          generation.mediaConnectionPool.evictAll()
+        }
+      }
+    }
+  }
+
+  internal fun setNetworkRoute(port: Int?, dns: AppEncryptedDns?) = synchronized(rotationLock) {
     val next = port?.let { Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", it)) }
     val retired = synchronized(lock) {
-      routeOverride = next?.let { RouteOverride.LocalRelay(it) } ?: RouteOverride.NoAppOverride
+      routeOverride = next?.let { RouteOverride.LocalRelay(it, dns) } ?: RouteOverride.NoAppOverride
       allGenerationsLocked().mapNotNull { generation -> generation.resetCronetMediaTransport() }
     }
     retired.forEach { transport -> transport.retire() }
@@ -2372,6 +2447,14 @@ class NetworkProxySelector : ProxySelector() {
     delegateRoute = next?.let { DelegateRoute.ForwardTo(it) } ?: DelegateRoute.NoDelegate
   }
 
+  internal fun systemProxyFor(uri: URI): Proxy? = delegate?.select(uri)?.firstOrNull()
+
+  internal fun selectManaged(uri: URI?): MutableList<Proxy> {
+    val dns = NetworkProxyRuntime.currentEncryptedDns()
+    if (uri == null || dns == null || isLocalDevHost(uri.host.orEmpty())) return select(uri)
+    return mutableListOf(dns.systemProxy { systemProxyFor(uri) } ?: Proxy.NO_PROXY)
+  }
+
   override fun select(uri: URI?): MutableList<Proxy> {
     val targetHost = uri?.host?.lowercase(Locale.US) ?: return mutableListOf(Proxy.NO_PROXY)
     val proxy = NetworkProxyRuntime.currentLocalProxy()
@@ -2390,14 +2473,15 @@ class NetworkProxySelector : ProxySelector() {
 }
 
 internal class LocalNetworkProxyServer(
-  private val upstream: NetworkProxyProfile,
+  private val upstream: NetworkProxyProfile?,
   maxConnections: Int = MAX_PROXY_CONNECTIONS,
   private val idleTimeoutMs: Int = PROXY_IDLE_TIMEOUT_MS,
   private val socketConnector: (Socket, String, Int) -> Unit = { socket, host, port ->
     socket.connect(InetSocketAddress(host, port), 15_000)
   },
   private val tlsConnectionFactory: (Socket, String, Int) -> ProxyTlsConnection =
-    ::createPlatformProxyTlsConnection
+    ::createPlatformProxyTlsConnection,
+  internal val dns: AppEncryptedDns? = null
 ) {
   private val serverSocket = ServerSocket(0, MAX_PROXY_CONNECTIONS, InetAddress.getByName("127.0.0.1"))
   private val acceptExecutor = Executors.newSingleThreadExecutor()
@@ -2465,6 +2549,7 @@ internal class LocalNetworkProxyServer(
       } else emptyList()
     }
     Log.i(LOG_TAG, "local proxy stopped")
+    dns?.close()
     try {
       serverSocket.close()
     } catch (_: IOException) {
@@ -2521,8 +2606,9 @@ internal class LocalNetworkProxyServer(
           local.soTimeout = 30_000
           val header = readHeaderBlock(local.getInputStream())
           val request = parseLocalProxyRequest(header)
+          val selectedProxy = upstream ?: systemProxyForRequest(request)
           if (request.method == "CONNECT") {
-            val remote = connectToTarget(request.target)
+            val remote = connectToTarget(request.target, selectedProxy)
             try {
               local.getOutputStream().write("HTTP/1.1 200 Connection Established\r\n\r\n".toByteArray(HEADER_CHARSET))
               pipeBoth(local, remote, copyExecutor, idleTimeoutMs)
@@ -2532,14 +2618,14 @@ internal class LocalNetworkProxyServer(
             return
           }
 
-          val remote = if (upstream.protocol == "http") {
-            connectPlainOwned(upstream.host, upstream.port)
+          val remote = if (selectedProxy?.protocol == "http") {
+            connectPlainOwned(selectedProxy.host, selectedProxy.port)
           } else {
-            connectViaSocks5(request.target)
+            connectToTarget(request.target, selectedProxy)
           }
           try {
-            val outboundHeader = if (upstream.protocol == "http") {
-              headerWithHttpProxyAuthorization(header)
+            val outboundHeader = if (selectedProxy?.protocol == "http") {
+              headerWithHttpProxyAuthorization(header, selectedProxy)
             } else {
               originHeaderForDirectRequest(header, request)
             }
@@ -2567,10 +2653,59 @@ internal class LocalNetworkProxyServer(
     }
   }
 
-  private fun connectToTarget(target: ProxyTarget): Socket =
-    if (upstream.protocol == "http") connectViaHttpProxy(target) else connectViaSocks5(target)
+  private fun systemProxyForRequest(request: LocalProxyRequest): NetworkProxyProfile? {
+    val resolver = dns ?: return null
+    val uri = if (request.method == "CONNECT") {
+      URI("https", null, request.target.host, request.target.port, "/", null, null)
+    } else {
+      URI("http", null, request.target.host, request.target.port, originRequestPath(request.requestTarget), null, null)
+    }
+    val proxy = resolver.systemProxy { NetworkProxyRuntime.systemProxyFor(uri) } ?: return null
+    val address = proxy.address() as InetSocketAddress
+    return NetworkProxyProfile(
+      if (proxy.type() == Proxy.Type.SOCKS) "socks5" else "http",
+      address.address.hostAddress.orEmpty(), address.port, null, null
+    )
+  }
 
-  private fun connectViaHttpProxy(target: ProxyTarget): Socket {
+  private fun connectToTarget(target: ProxyTarget, proxy: NetworkProxyProfile?): Socket = when (proxy?.protocol) {
+    "http" -> connectViaHttpProxy(target, proxy)
+    "socks5" -> connectViaSocks5(target, proxy)
+    else -> connectUsingDns(target)
+  }
+
+  private fun connectUsingDns(target: ProxyTarget): Socket {
+    val resolver = dns ?: throw IOException("缺少出站网络配置")
+    val addresses = resolver.lookup(target.host)
+    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15)
+    val failover = resolver.forumTunnelFailure(target.host, target.port)
+    val firstDeadline = if (failover == null) deadline else System.nanoTime() + TimeUnit.SECONDS.toNanos(4)
+    return try {
+      connectAddresses(target.port, addresses, firstDeadline)
+    } catch (error: IOException) {
+      if (failover?.invoke() != true) throw error
+      connectAddresses(target.port, resolver.lookup(target.host), deadline)
+    }
+  }
+
+  private fun connectAddresses(port: Int, addresses: List<InetAddress>, deadline: Long): Socket {
+    var failure: IOException? = null
+    for (address in addresses) {
+      val remaining = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime())
+      if (remaining <= 0) break
+      val socket = own(Socket())
+      try {
+        socket.connect(InetSocketAddress(address, port), remaining.coerceIn(1, 4_000).toInt())
+        return socket
+      } catch (error: IOException) {
+        failure = error
+        closeOwned(socket)
+      }
+    }
+    throw failure ?: IOException("无法连接目标地址")
+  }
+
+  private fun connectViaHttpProxy(target: ProxyTarget, upstream: NetworkProxyProfile): Socket {
     val socket = connectPlainOwned(upstream.host, upstream.port)
     try {
       socket.soTimeout = 15_000
@@ -2578,7 +2713,7 @@ internal class LocalNetworkProxyServer(
       val authorityHost = if (target.host.contains(":")) "[" + target.host + "]" else target.host
       builder.append("CONNECT ").append(authorityHost).append(":").append(target.port).append(" HTTP/1.1\r\n")
       builder.append("Host: ").append(authorityHost).append(":").append(target.port).append("\r\n")
-      httpProxyAuthorizationHeader()?.let { builder.append(it).append("\r\n") }
+      httpProxyAuthorizationHeader(upstream)?.let { builder.append(it).append("\r\n") }
       builder.append("Proxy-Connection: Keep-Alive\r\n\r\n")
       socket.getOutputStream().write(builder.toString().toByteArray(HEADER_CHARSET))
       val response = readHeaderBlock(socket.getInputStream())
@@ -2594,7 +2729,7 @@ internal class LocalNetworkProxyServer(
     }
   }
 
-  private fun connectViaSocks5(target: ProxyTarget): Socket {
+  private fun connectViaSocks5(target: ProxyTarget, upstream: NetworkProxyProfile): Socket {
     val socket = connectPlainOwned(upstream.host, upstream.port)
     try {
       socket.soTimeout = 15_000
@@ -2613,7 +2748,7 @@ internal class LocalNetworkProxyServer(
         throw IOException("Invalid SOCKS5 response")
       }
       if (method == 0x02) {
-        sendSocks5Auth(output, input)
+        sendSocks5Auth(output, input, upstream)
       } else if (method != 0x00) {
         throw IOException("SOCKS5 proxy rejected authentication")
       }
@@ -2636,7 +2771,7 @@ internal class LocalNetworkProxyServer(
     }
   }
 
-  private fun sendSocks5Auth(output: OutputStream, input: InputStream) {
+  private fun sendSocks5Auth(output: OutputStream, input: InputStream, upstream: NetworkProxyProfile) {
     val username = (upstream.username ?: "").toByteArray(Charsets.UTF_8)
     val password = (upstream.password ?: "").toByteArray(Charsets.UTF_8)
     if (username.size > 255 || password.size > 255) {
@@ -2702,7 +2837,7 @@ internal class LocalNetworkProxyServer(
     }
   }
 
-  private fun headerWithHttpProxyAuthorization(header: String): String {
+  private fun headerWithHttpProxyAuthorization(header: String, upstream: NetworkProxyProfile): String {
     val lines = header.trimEnd().split("\r\n")
     val builder = StringBuilder()
     lines.forEachIndexed { index, line ->
@@ -2716,7 +2851,7 @@ internal class LocalNetworkProxyServer(
         builder.append(line).append("\r\n")
       }
     }
-    httpProxyAuthorizationHeader()?.let { builder.append(it).append("\r\n") }
+    httpProxyAuthorizationHeader(upstream)?.let { builder.append(it).append("\r\n") }
     builder.append("Connection: close\r\n")
     builder.append("Proxy-Connection: close\r\n")
     builder.append("\r\n")
@@ -2751,7 +2886,7 @@ internal class LocalNetworkProxyServer(
       || line.startsWith("Keep-Alive:", ignoreCase = true)
       || line.startsWith("Proxy-Connection:", ignoreCase = true)
 
-  private fun httpProxyAuthorizationHeader(): String? {
+  private fun httpProxyAuthorizationHeader(upstream: NetworkProxyProfile): String? {
     val user = upstream.username ?: ""
     val pass = upstream.password ?: ""
     if (user.isEmpty() && pass.isEmpty()) {
@@ -2763,7 +2898,7 @@ internal class LocalNetworkProxyServer(
 
   fun test() {
     val host = "www.gstatic.com"
-    val tunnel = connectToTarget(ProxyTarget(host, 443))
+    val tunnel = connectToTarget(ProxyTarget(host, 443), upstream)
     try {
       verifyTlsHttpConnectivity(tunnel, host)
     } finally {
@@ -3224,11 +3359,14 @@ private fun copySocket(
 private fun stripIpv6Brackets(host: String): String =
   if (host.startsWith("[") && host.endsWith("]")) host.substring(1, host.length - 1) else host
 
-private fun isLocalDevHost(host: String): Boolean {
+internal fun isLocalDevHost(host: String): Boolean {
   val clean = stripIpv6Brackets(host).lowercase(Locale.US)
   return clean == "localhost"
     || clean.endsWith(".localhost")
     || clean == "::1"
     || clean == "10.0.2.2"
-    || clean.startsWith("127.")
+    || (clean.startsWith("127.") && IPV4_PATTERN.matches(clean))
 }
+
+internal fun isPublicResolvedAddress(address: InetAddress): Boolean =
+  runCatching { normalizePublicTargetHost(address.hostAddress.orEmpty()) }.isSuccess

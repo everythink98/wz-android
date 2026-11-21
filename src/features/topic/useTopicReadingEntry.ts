@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useReducer } from 'react';
 import type { Topic, TopicDetail, TopicLocationTarget, ReadingAnchor } from '@/domain/forum/models';
 import type { ReaderCommand } from '@/domain/reader/readerRecordState';
-import { readingResumeAnchor } from '@/domain/forum/discourseReading';
+import { readingResumeAnchor, type DiscourseReadingState } from '@/domain/forum/discourseReading';
 import type { ReadGateway } from '@/sources/readGateway';
 
 import type { TopicEntryVisit } from './model/topicEntryVisit';
@@ -22,15 +22,38 @@ type EntryDecision = {
   window: 'pending' | 'confirmed';
 };
 type EntryDecisionEvent =
-  | { type: 'choose'; value: EntryDecision & { choice: Extract<EntryChoice, { phase: 'ready' }> } }
-  | { type: 'positioned' }
-  | { type: 'window-loaded' }
-  | { type: 'failed' };
+  { type: 'enter'; value: EntryDecision } | { type: 'positioned' } | { type: 'window-loaded' } | { type: 'failed' };
+
+function chooseEntry(
+  key: string,
+  current: DiscourseReadingState[string] | undefined,
+  location?: TopicLocationTarget,
+  cachedFloor = false
+): EntryDecision {
+  const anchor = location ? undefined : readingResumeAnchor(current);
+  const target: TopicLocationTarget | undefined = anchor
+    ? anchor.floor <= 1
+      ? { kind: 'opening' }
+      : { kind: 'reply', target: { floor: anchor.floor, readingResume: true } }
+    : undefined;
+  return {
+    key,
+    choice: {
+      phase: 'ready',
+      anchor,
+      location: target,
+      baseline: current?.highestKnown || undefined,
+      highest: current?.server.highestPostNumber
+    },
+    position: !anchor && location?.kind !== 'reply' ? 'confirmed' : 'pending',
+    window: !anchor || anchor.floor <= 1 || cachedFloor ? 'confirmed' : 'pending'
+  };
+}
 
 function entryDecision(state: EntryDecision, event: EntryDecisionEvent): EntryDecision {
   switch (event.type) {
-    case 'choose':
-      return event.value;
+    case 'enter':
+      return event.value.key === state.key && state.choice.phase === 'ready' ? state : event.value;
     case 'positioned':
       return state.position === 'confirmed' ? state : { ...state, position: 'confirmed' };
     case 'window-loaded':
@@ -59,6 +82,7 @@ export function useTopicReadingEntry({
   topic,
   detail,
   location,
+  hasCachedFloor,
   visit,
   gateway,
   commit
@@ -68,23 +92,33 @@ export function useTopicReadingEntry({
   topic: Topic;
   detail: TopicDetail | null;
   location?: TopicLocationTarget;
+  hasCachedFloor: (floor: number) => boolean;
   visit: TopicEntryVisit;
   gateway: ReadGateway;
   commit: (command: ReaderCommand) => void;
 }) {
   const { reading, getTopicReading } = gateway;
   const ordinaryTopic = topic.source === 'linuxdo' && !topic.isPrivateMessage && !detail?.isPrivateMessage;
-  const enabled = ordinaryTopic && Boolean(reading);
+  const enabled = ordinaryTopic && reading !== undefined;
   const recorded = useRef('');
   const [registration, setRegistration] = useState('');
   const visitSettled = visit.settled;
-  const hasDetail = Boolean(detail);
-  const [decision, dispatch] = useReducer(entryDecision, {
-    key: visit.key,
-    choice: enabled ? { phase: 'waiting' } : { phase: 'ready' },
-    position: enabled ? 'pending' : 'confirmed',
-    window: enabled ? 'pending' : 'confirmed'
-  });
+  const canRegister = visit.cached || Boolean(detail);
+  function initialEntry(): EntryDecision {
+    if (!enabled) return chooseEntry(visit.key, undefined);
+    const current = reading.state()[topic.id];
+    if (location || !reading.scope()) return chooseEntry(visit.key, current, location);
+    if (
+      visit.cached &&
+      detail &&
+      current?.anchor &&
+      (current.anchor.floor <= 1 || hasCachedFloor(current.anchor.floor))
+    )
+      return chooseEntry(visit.key, current, undefined, true);
+    return { key: visit.key, choice: { phase: 'waiting' }, position: 'pending', window: 'pending' };
+  }
+  const [decision, dispatch] = useReducer(entryDecision, undefined, initialEntry);
+  if (decision.key !== visit.key) dispatch({ type: 'enter', value: initialEntry() });
   const choice = decision.choice.phase === 'ready' ? decision.choice : undefined;
 
   useLayoutEffect(() => {
@@ -94,45 +128,24 @@ export function useTopicReadingEntry({
   }, [active, commit, ordinaryTopic, topic]);
 
   useEffect(() => {
-    if (!focused || !enabled || (!visit.cached && !hasDetail) || !visit.claimCachedRegistration()) return;
+    if (!focused || !enabled || !canRegister) return;
     // Another consumer may have supplied the in-flight Query without registering this entry.
     const controller = new AbortController();
+    if (!visit.claimCachedRegistration(controller.signal)) return;
     void getTopicReading(topic.id, { signal: controller.signal, trackVisit: true })
       .catch(() => undefined)
       .finally(() => {
         if (controller.signal.aborted) return;
-        visit.settleRequest();
+        visit.settleRequest(controller.signal);
         setRegistration(visit.key);
       });
     return () => controller.abort();
-  }, [focused, hasDetail, enabled, getTopicReading, topic.id, visit]);
+  }, [focused, canRegister, enabled, getTopicReading, topic.id, visit]);
 
   useEffect(() => {
     if (!active || !enabled || (decision.key === visit.key && decision.choice.phase === 'ready')) return;
-    const choose = () => {
-      const current = reading?.state()[topic.id];
-      const anchor = location ? undefined : readingResumeAnchor(current);
-      const target: TopicLocationTarget | undefined = anchor
-        ? anchor.floor <= 1
-          ? { kind: 'opening' }
-          : { kind: 'reply', target: { floor: anchor.floor, readingResume: true } }
-        : undefined;
-      dispatch({
-        type: 'choose',
-        value: {
-          key: visit.key,
-          choice: {
-            phase: 'ready',
-            anchor,
-            location: target,
-            baseline: current?.highestKnown || undefined,
-            highest: current?.server.highestPostNumber
-          },
-          position: !anchor && location?.kind !== 'reply' ? 'confirmed' : 'pending',
-          window: !anchor || anchor.floor <= 1 ? 'confirmed' : 'pending'
-        }
-      });
-    };
+    const choose = () =>
+      dispatch({ type: 'enter', value: chooseEntry(visit.key, reading?.state()[topic.id], location) });
     if (location || visit.settled || (!visit.cached && detail)) {
       choose();
       return;

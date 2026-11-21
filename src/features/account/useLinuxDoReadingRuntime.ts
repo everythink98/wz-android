@@ -86,7 +86,8 @@ export function useLinuxDoReadingRuntime({
           if (!lifetime.signal.aborted && scope() === identity) {
             const failure = error as { status?: number; reason?: string };
             const current = dependencies.current;
-            if (failure?.status === 401) current.onSessionExpired(current.snapshot().sessionEpoch);
+            if (failure?.status === 401 && failure.reason !== 'cloudflare')
+              current.onSessionExpired(current.snapshot().sessionEpoch);
             else if (failure?.reason === 'account-recheck-required')
               current.requestAccountRecheck('linuxdo', current.snapshot().sessionEpoch, trace.traceId);
           }

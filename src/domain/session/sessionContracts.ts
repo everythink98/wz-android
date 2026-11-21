@@ -8,7 +8,7 @@ export type RequestAccountRecheck = (
   source: SessionSource,
   requestSessionEpoch: number,
   parentTraceId?: string
-) => void;
+) => void | Promise<boolean>;
 
 export type AccountReconcileResult =
   | { status: 'anonymous' | 'changed' | 'same'; session: SiteSessionState; partial?: boolean }

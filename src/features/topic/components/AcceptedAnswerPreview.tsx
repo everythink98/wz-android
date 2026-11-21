@@ -1,6 +1,6 @@
 import type { TopicStyles } from '../styles';
 import type { ReactNode } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { CheckCircle, ChevronRight } from 'lucide-react-native';
 import type { QuotedPostMetadata, Reply, Source } from '@/domain/forum/models';
 import { formatDateTime } from '@/domain/forum/presentation';
@@ -131,17 +131,21 @@ export function AcceptedAnswerPreview({
               <Text style={styles.topicAcceptedAnswerReadMoreText}>查看完整答案 · #{floor}</Text>
               <ChevronRight color={theme.primary} size={17} strokeWidth={2.2} />
             </Pressable>
-          ) : !reply && onLoad && !loading ? (
+          ) : !reply && onLoad ? (
             <Pressable
               accessibilityLabel={`读取已采纳答案，第 ${floor} 楼`}
               accessibilityRole="button"
+              accessibilityState={{ busy: loading, disabled: loading }}
+              disabled={loading}
               style={styles.topicAcceptedAnswerReadMore}
-              onPress={() => {
-                onLoad();
-              }}
+              onPress={onLoad}
             >
               <Text style={styles.topicAcceptedAnswerReadMoreText}>读取答案 · #{floor}</Text>
-              <ChevronRight color={theme.primary} size={17} strokeWidth={2.2} />
+              {loading ? (
+                <ActivityIndicator accessible={false} color={theme.primary} size={17} />
+              ) : (
+                <ChevronRight color={theme.primary} size={17} strokeWidth={2.2} />
+              )}
             </Pressable>
           ) : null}
         </View>

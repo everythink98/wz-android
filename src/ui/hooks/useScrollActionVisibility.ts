@@ -25,7 +25,7 @@ export function useScrollActionVisibility({
   }, []);
   useEffect(reset, [active, reset, resetKey]);
   const onScroll = useCallback(
-    ({ nativeEvent }: NativeSyntheticEvent<NativeScrollEvent>) => {
+    ({ nativeEvent }: NativeSyntheticEvent<NativeScrollEvent>, positioning = false) => {
       if (!active || paused) return;
       const { contentOffset, contentSize, layoutMeasurement } = nativeEvent;
       const maxOffset = Math.max(0, contentSize.height - layoutMeasurement.height);
@@ -34,10 +34,15 @@ export function useScrollActionVisibility({
       const previous = scrollRef.current;
       const contentHeight = contentSize.height;
       const viewportHeight = layoutMeasurement.height;
-      if (!previous || previous.contentHeight !== contentHeight || previous.viewportHeight !== viewportHeight) {
+      if (
+        positioning ||
+        !previous ||
+        previous.contentHeight !== contentHeight ||
+        previous.viewportHeight !== viewportHeight
+      ) {
         // List measurement and viewport corrections are not a change in reading direction.
         scrollRef.current = { offset, anchor: offset, contentHeight, viewportHeight };
-        if (contentOffset.y <= 12) setVisible(true);
+        if (positioning || contentOffset.y <= 12) setVisible(true);
         return;
       }
       if (offset === previous.offset) return;
