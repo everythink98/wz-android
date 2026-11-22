@@ -1112,7 +1112,10 @@ describe('source gateway reads', () => {
   });
 });
 
+let nextAccountFailureEpoch = 1000;
+
 function accountFailureFixture(fetcher: Fetcher, enabledSources: readonly Source[] = ['linuxdo']) {
+  const sessionEpoch = nextAccountFailureEpoch++;
   const requestAccountRecheck = vi.fn();
   const onSessionExpired = vi.fn();
   const gateway = createReadGateway({
@@ -1128,7 +1131,7 @@ function accountFailureFixture(fetcher: Fetcher, enabledSources: readonly Source
       authSurfaceOpen: false,
       identityKey: `${source}:7`,
       identityTrust: 'confirmed',
-      sessionEpoch: 4,
+      sessionEpoch,
       sourceEnabled: true
     })
   });
