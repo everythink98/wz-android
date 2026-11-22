@@ -38,12 +38,12 @@ export function packetCoverDocument(cover: string, username: string) {
     baseUrl: LINUX_DO_PACKET_ORIGIN + '/',
     html: `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' blob:; connect-src 'self'; style-src 'unsafe-inline'; script-src 'nonce-wzPacketCover'; frame-src 'none'; base-uri 'none'; form-action 'none'">
-<style>html,body,img{margin:0;width:100%;height:100%;overflow:hidden}img{display:block;object-fit:contain}</style></head>
-<body><img alt="红包封面" data-cover="${escapeHtmlAttribute(cover)}" data-viewer="${escapeHtmlAttribute(username)}">
+<style>html,body,img{margin:0;width:100%;height:100%;overflow:hidden}img:not([hidden]){display:block;object-fit:contain}</style></head>
+<body><img hidden alt="红包封面" data-cover="${escapeHtmlAttribute(cover)}" data-viewer="${escapeHtmlAttribute(username)}">
 <script nonce="wzPacketCover">
 ${sessionScript}
 const image=document.querySelector('img');
-image.onload=()=>report('displayed');
+image.onload=()=>{image.hidden=false;report('displayed');};
 image.onerror=()=>report('error');
 async function showCover(){
   const viewer=image.dataset.viewer.toLowerCase();

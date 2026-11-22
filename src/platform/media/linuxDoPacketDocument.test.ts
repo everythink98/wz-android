@@ -1,6 +1,6 @@
 import { runInNewContext } from 'node:vm';
+import { JSDOM } from 'jsdom';
 import { describe, expect, it, vi } from 'vitest';
-import { parse } from 'node-html-parser';
 import { allowLinuxDoPacketNavigation, isLinuxDoPacketCover, isLinuxDoPacketPage } from '@/domain/forum/linuxDoPacket';
 import { packetCoverDocument } from './linuxDoPacketDocument';
 
@@ -28,20 +28,23 @@ describe('Linux Do packet covers', () => {
   });
 
   it.each([
-    { viewer: 'Reader', session: 'reader', personal: true },
-    { viewer: 'Reader', session: 'somebody-else', personal: false },
-    { viewer: 'Reader', session: null, personal: false },
-    { viewer: '', session: 'reader', personal: false }
+    { viewer: 'Reader', session: 'reader', personal: true, imageEvent: 'load' },
+    { viewer: 'Reader', session: 'somebody-else', personal: false, imageEvent: 'load' },
+    { viewer: 'Reader', session: null, personal: false, imageEvent: 'load' },
+    { viewer: '', session: 'reader', personal: false, imageEvent: 'load' },
+    { viewer: 'Reader', session: 'reader', personal: true, imageEvent: 'error' }
   ])(
-    'shows a personal image only for the matching account ($viewer / $session)',
-    async ({ viewer, session, personal }) => {
+    'reveals the cover only after a successful image load ($viewer / $session / $imageEvent)',
+    async ({ viewer, session, personal, imageEvent }) => {
       const page = packetCoverDocument(cover, viewer);
-      const doc = parse(page.html);
-      const img = doc.querySelector('img')!;
-      const image = {
-        src: '',
-        dataset: { cover: img.getAttribute('data-cover'), viewer: img.getAttribute('data-viewer') }
+      const { window } = new JSDOM(page.html, { url: page.baseUrl });
+      const { document } = window;
+      const image = document.querySelector('img')!;
+      const isVisible = () => {
+        const style = window.getComputedStyle(image);
+        return style.display !== 'none' && style.visibility !== 'hidden';
       };
+      const postMessage = vi.fn();
       const fetcher = vi.fn(async (url: string, init: RequestInit) => {
         expect(init.cache).toBe('no-store');
         if (url === '/api/session') {
@@ -52,17 +55,27 @@ describe('Linux Do packet covers', () => {
         expect(init.credentials).toBe('omit');
         return new Response('<svg/>', { headers: { 'content-type': 'image/svg+xml' } });
       });
-      await runInNewContext(doc.querySelector('script')!.rawText, {
-        document: { querySelector: () => image },
-        fetch: fetcher,
-        AbortController,
-        setTimeout,
-        clearTimeout,
-        URL: { createObjectURL: () => 'blob:public-image' },
-        window: { ReactNativeWebView: { postMessage: vi.fn() } }
-      });
-      expect(image.src).toBe(personal ? cover : 'blob:public-image');
-      expect(fetcher).toHaveBeenCalledTimes((viewer ? 1 : 0) + (personal ? 0 : 1));
+      try {
+        expect(isVisible()).toBe(false);
+        await runInNewContext(document.querySelector('script')!.textContent, {
+          document,
+          fetch: fetcher,
+          AbortController,
+          setTimeout,
+          clearTimeout,
+          URL: { createObjectURL: () => 'blob:public-image' },
+          window: { ReactNativeWebView: { postMessage } }
+        });
+        expect(image.src).toBe(personal ? cover : 'blob:public-image');
+        expect(fetcher).toHaveBeenCalledTimes((viewer ? 1 : 0) + (personal ? 0 : 1));
+        expect(isVisible()).toBe(false);
+        expect(postMessage).not.toHaveBeenCalled();
+        image.dispatchEvent(new window.Event(imageEvent));
+        expect(isVisible()).toBe(imageEvent === 'load');
+        expect(postMessage).toHaveBeenCalledExactlyOnceWith(imageEvent === 'load' ? 'displayed' : 'error');
+      } finally {
+        window.close();
+      }
     }
   );
 });
