@@ -243,13 +243,15 @@ NodeSeek 隐藏脚本另有真实 WebView 专项。先执行 `node scripts/prepa
 
 现场只在按安装身份步骤覆盖安装正常开发包后，用现有登录态进行只读浏览，等至少两次自然登录 Cookie 更新并看到落盘确认，再按保留数据方式结束/重启 App，核对 `/session/current.json` 与账号结果。不得清 Cookie、自动登录或重放写操作来制造条件。无真实登录或观察窗口内没有自然续签记 `NOT_VERIFIED`，缺隔离设备记 `BLOCKED_BY_ENV`。若服务端明确删除，继续追溯此前是否有客户端漏续签；不能只因 stale 消失就关闭 `REG-ACCOUNT-048`。
 
-### 加密 DNS 与网络设置验收
+### 网络设置与四站连通性验收
 
-构建需要 Android SDK Platform 37.0。ECH 实机验收分别覆盖 Android 17 及以上的系统 TLS 和较早版本的随包 Conscrypt。打开阅坛 DoH，通过原生直连请求核对目标服务器是否接受 ECH。在无代理的真机上记录默认网络的 VPN 状态、DoH 应答、TLS 握手与站点 HTTP 结果。站点返回验证页时记为已连通、待验证。
+在 Android 10 及以上打开「我的 → 网络设置 → 测试当前网络」。核对 NodeSeek、LINUX DO、V2EX 和妖火各自的结果与耗时。收到验证页时记录 HTTP 状态和「需网站验证」，超时时检查同一时段的网络日志。验证页能否显示、原请求能否恢复和账号是否登录分别核对。
 
-原生解析与 Cookie 回写用 `android/gradlew.bat -p android :forum-platform:testDebugUnitTest --tests '*AppEncryptedDnsTest' --tests '*ManagedCookieResponsesTest' --no-daemon`。同来源读取复核用 `src/sources/readGateway.test.ts` 和 `tests/ui/account/account-runtime.test.tsx`，对照实际原站查询和发送次数。
+从「打开网站验证页」返回 linux.do 后，核对检测是否等待当前主站网页完成初始化。若主站确认游客，账号中心应同步显示未登录。若核对超时，账号中心应保留已有身份并允许重试。
 
-在保留数据的 Android 设备上，先记录安装身份、网络模式与账号显示，再覆盖安装。分别检查系统模式、严格 DoH 和模式冷恢复，将配置还原到验收前状态。真实连通检查按解析、TLS、HTTP 结果记载。受控域名与故障注入只用于隔离设备，用对应请求记录确认组件实际访问。后续自然掉线样本独立按登录态诊断取证。
+按现场可用条件验证系统直连、系统 VPN、已生效的 HTTP 和 SOCKS5 代理。VPN 按阅坛的系统路由和分流规则验收。检查代理路径时，以受控代理实际收到的目的站点为据。保留数据的设备使用同签名覆盖安装，记录安装身份和账号状态，测试结束时恢复原网络设置。
+
+原生网络和 Cookie 回写测试见 `NetworkProxyRuntimeTest`、`NetworkProxyProfileTest` 和 `ManagedCookieResponsesTest`。过去的实验条件和真机对照见[未发布的 DoH 实验记录](performance/android-doh-retrospective.md)。
 
 ### 下拉刷新 Native 验证
 

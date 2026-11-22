@@ -749,9 +749,9 @@ describe('topic rich-text selection', () => {
           'https://linux.do/'
         )
       });
-      const surface = (active: boolean) => (
+      const surface = (active: boolean, revision = 0, username = 'reader') => (
         <QueryTestWrapper>
-          <LinuxDoPacketViewer.Provider value={{ active, username: 'reader', scope: 'test', revision: 0 }}>
+          <LinuxDoPacketViewer.Provider value={{ active, username, scope: 'test', revision }}>
             <ProductionContentList
               topic={topic}
               quotedReplies={{}}
@@ -774,10 +774,22 @@ describe('topic rich-text selection', () => {
         const first = view.getByTestId('linuxdo-packet-cover');
         await fireEvent(first, 'message', { nativeEvent: { data: 'error' } });
         expect(view.getByTestId('linuxdo-packet-cover')).not.toBe(first);
-        await view.rerender(surface(false));
+        await fireEvent(view.getByTestId('linuxdo-packet-cover'), 'message', { nativeEvent: { data: 'error' } });
+        await fireEvent.press(view.getByRole('button', { name: '图片加载失败，点按重试' }));
+        await fireEvent(view.getByTestId('linuxdo-packet-cover'), 'message', { nativeEvent: { data: 'error' } });
         expect(view.queryByTestId('linuxdo-packet-cover')).toBeNull();
-        await view.rerender(surface(true));
-        expect(view.getByTestId('linuxdo-packet-cover')).toBeTruthy();
+        await view.rerender(surface(true, 1));
+        const displayed = view.getByTestId('linuxdo-packet-cover');
+        await fireEvent(displayed, 'message', { nativeEvent: { data: 'displayed' } });
+        await view.rerender(surface(true, 2));
+        expect(view.getByTestId('linuxdo-packet-cover') === displayed).toBe(true);
+        expect(displayed.props.postMessageMock).toHaveBeenCalledWith('refresh');
+        await view.rerender(surface(false, 2));
+        expect(view.queryByTestId('linuxdo-packet-cover')).toBeNull();
+        await view.rerender(surface(true, 2));
+        const resumed = view.getByTestId('linuxdo-packet-cover');
+        await view.rerender(surface(true, 2, 'another'));
+        expect(view.getByTestId('linuxdo-packet-cover')).not.toBe(resumed);
       }
       expect(view.getByTestId('topic-image-frame')).toHaveStyle({ width: 300, height: 400 });
       expect(mockReadingImages.has(cover)).toBe(false);

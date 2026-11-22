@@ -112,7 +112,7 @@ export function AccountHosts({
         onNodeSeekHttpErrorStatus={session.markNodeSeekBrowserFetchHttpError}
       />
       <AccountHost
-        onLinuxDoChallengeReturned={verification.armLinuxDoPostChallengeCheck}
+        onLinuxDoForumDocument={verification.observeLinuxDoForumDocument}
         onLinuxDoDocumentNavigation={verification.beginLinuxDoDocumentNavigation}
         onLinuxDoVerificationPageEvent={verification.recordLinuxDoVerificationPageEvent}
         recoveryPanel={view.recoveryPanel}

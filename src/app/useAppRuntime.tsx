@@ -581,15 +581,13 @@ export function useAppRuntime() {
       applyError: networkRuntime.applyError,
       applyStatus: networkRuntime.applyStatus,
       confirmedState: networkRuntime.confirmedState,
-      dnsResult: networkRuntime.dnsResult,
       effectiveMode: networkRuntime.effectiveMode,
       proxyState: networkRuntime.proxyState,
       summary: networkRuntime.summary,
       deleteProxyProfile: networkRuntime.deleteProxyProfile,
       selectProxyProfile: networkRuntime.selectProxyProfile,
       setNetworkMode: networkRuntime.setNetworkMode,
-      testEncryptedDns: networkRuntime.testEncryptedDns,
-      testProxyProfile: networkRuntime.testProxyProfile,
+      networkProxyFetcher,
       upsertProxyProfile: networkRuntime.upsertProxyProfile
     }),
     [
@@ -597,15 +595,13 @@ export function useAppRuntime() {
       networkRuntime.applyError,
       networkRuntime.applyStatus,
       networkRuntime.confirmedState,
-      networkRuntime.dnsResult,
       networkRuntime.effectiveMode,
       networkRuntime.proxyState,
       networkRuntime.summary,
       networkRuntime.deleteProxyProfile,
       networkRuntime.selectProxyProfile,
       networkRuntime.setNetworkMode,
-      networkRuntime.testEncryptedDns,
-      networkRuntime.testProxyProfile,
+      networkProxyFetcher,
       networkRuntime.upsertProxyProfile
     ]
   );

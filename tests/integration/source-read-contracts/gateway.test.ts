@@ -15,7 +15,7 @@ import { getLinuxDoCurrentUserIdentity } from '@/sources/linuxdo/account';
 import { createNodeSeekWebViewFallbackFetcher } from '@/sources/nodeseek/browserFallback';
 import { getNodeSeekCurrentUserIdentity, getNodeSeekReplies } from '@/sources/nodeseek/reader';
 import { nodeSeekNotificationAdapter } from '@/sources/nodeseek/notifications';
-import { getNodeSeekAccountOverview } from '@/sources/nodeseek/accountData';
+import { getNodeSeekPageAccountOverview } from '@/sources/nodeseek/accountData';
 import { forumBrowserResponse } from '@/features/account/browserFetchQueue';
 import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import {
@@ -473,7 +473,7 @@ describe('Android local sources', () => {
     const webViewFetcher = vi.fn<typeof fetch>(async () => html(`<script>${payload}</script>`));
     const fetcher = createNodeSeekWebViewFallbackFetcher({ defaultFetcher, webViewFetcher });
 
-    await expect(getNodeSeekAccountOverview({ userId: '7', fetcher })).resolves.toMatchObject({
+    await expect(getNodeSeekPageAccountOverview({ userId: '7', fetcher })).resolves.toMatchObject({
       coin: 0,
       stardust: -2
     });

@@ -222,9 +222,8 @@ export const NotificationsScreen = memo(function NotificationsScreen({
   markAllBusy,
   pagination = {},
   refreshing,
+  sessions,
   source,
-  sourcePending,
-  sourceUnknown = false,
   unreadOnly,
   onChangeCategory,
   onChangeSource,
@@ -254,9 +253,8 @@ export const NotificationsScreen = memo(function NotificationsScreen({
   markAllBusy: boolean;
   pagination?: Partial<Record<NotificationSource, 'more' | 'complete'>>;
   refreshing: boolean;
+  sessions: SiteSessionViewModels;
   source: NotificationFilterSource;
-  sourcePending: boolean;
-  sourceUnknown?: boolean;
   unreadOnly: boolean;
   onChangeCategory?: (categoryId: string) => void;
   onChangeSource: (source: NotificationFilterSource) => void;
@@ -286,18 +284,20 @@ export const NotificationsScreen = memo(function NotificationsScreen({
     { value: 'all', label: '全部' },
     ...enabledSources.map((candidate) => ({ value: candidate, label: sourceCatalog[candidate].label }))
   ];
-  const errorSources = enabledSources.filter(
-    (candidate) => (source === 'all' || source === candidate) && errors[candidate]
-  );
-  const loginSources = enabledSources.filter(
-    (candidate) =>
-      (source === 'all' || source === candidate) &&
-      !activeSources.includes(candidate) &&
-      !errors[candidate] &&
-      !sourceUnknown &&
-      !sourcePending
-  );
+  const selectedSources = enabledSources.filter((candidate) => source === 'all' || source === candidate);
+  const errorSources = selectedSources.filter((candidate) => errors[candidate]);
+  const accountSites = selectedSources
+    .filter((candidate) => !activeSources.includes(candidate) && !errors[candidate])
+    .map((site) => {
+      const { identityTrust, isVerifying } = sessions[site];
+      const state = isVerifying || identityTrust === 'confirmed' ? 'pending' : identityTrust;
+      return { site, state };
+    });
   const sourceAvailable = source === 'all' ? activeSources.length > 0 : activeSources.includes(source);
+  const onlyAccountSites = !sourceAvailable && !errorSources.length && accountSites.length > 0;
+  const sourceUnknown = onlyAccountSites && accountSites.every(({ state }) => state === 'unknown');
+  const sourcePending = onlyAccountSites && accountSites.every(({ state }) => state === 'pending');
+  const showAccountSites = accountSites.length > 0 && !sourceUnknown && !sourcePending;
   const visibleSourceKey = notificationSources
     .filter((candidate) => enabledSources.includes(candidate) && activeSources.includes(candidate))
     .join('|');
@@ -343,6 +343,35 @@ export const NotificationsScreen = memo(function NotificationsScreen({
           : errorSources.length > 0
             ? 'error'
             : 'empty';
+  const emptyList = visibleItems.length === 0;
+  const failedSites = errorSources.length ? (
+    <View style={styles.noticeGroup} accessibilityLiveRegion="polite">
+      {emptyList ? (
+        <Text accessibilityRole="header" style={styles.noticeTitle}>
+          消息加载失败
+        </Text>
+      ) : null}
+      {errorSources.map((candidate) => {
+        const action = notificationErrorAction(errors[candidate]);
+        const site = sourceCatalog[candidate].label;
+        return (
+          <View key={candidate} style={styles.noticeRow}>
+            <View style={styles.noticeCopy}>
+              <Text style={styles.noticeSite}>{site}</Text>
+              <Text style={styles.errorText}>{errors[candidate]?.message}</Text>
+            </View>
+            <AppButton
+              compact
+              variant="primary"
+              label={action}
+              accessibilityLabel={`${action} ${site}`}
+              onPress={() => onRetrySource(candidate)}
+            />
+          </View>
+        );
+      })}
+    </View>
+  ) : null;
   const notices = (
     <View>
       {initializationError ? (
@@ -351,16 +380,38 @@ export const NotificationsScreen = memo(function NotificationsScreen({
           {onRetryInitialization ? <AppButton label="重试通知初始化" onPress={onRetryInitialization} /> : null}
         </View>
       ) : null}
-      {source === 'all' && loginSources.length ? (
-        <View style={[styles.sourceNotice, styles.sourceErrorRow]}>
-          {loginSources.map((candidate) => (
-            <AppButton
-              key={candidate}
-              compact
-              label={`去登录 ${sourceCatalog[candidate].label}`}
-              onPress={() => onLoginSource(candidate)}
-            />
-          ))}
+      {emptyList ? failedSites : null}
+      {showAccountSites ? (
+        <View style={styles.noticeGroup}>
+          <Text accessibilityRole="header" style={styles.noticeTitle}>
+            {sourceAvailable
+              ? '其他站点'
+              : accountSites.every(({ state }) => state === 'none')
+                ? '登录后查看消息'
+                : '站点账号'}
+          </Text>
+          {accountSites.map(({ site, state }) => {
+            const action = state === 'unknown' ? '重试账号核对' : '去登录';
+            return (
+              <View key={site} style={styles.noticeRow}>
+                <View style={styles.noticeCopy}>
+                  <Text style={styles.noticeSite}>{sourceCatalog[site].label}</Text>
+                  {state === 'unknown' ? <Text style={styles.controlMeta}>账号状态暂不可确认</Text> : null}
+                </View>
+                {state === 'pending' ? (
+                  <Text style={styles.controlMeta}>账号确认中</Text>
+                ) : (
+                  <AppButton
+                    compact
+                    variant="primary"
+                    label={action}
+                    accessibilityLabel={`${action} ${sourceCatalog[site].label}`}
+                    onPress={() => (state === 'unknown' ? onRetrySource(site) : onLoginSource(site))}
+                  />
+                )}
+              </View>
+            );
+          })}
         </View>
       ) : null}
       {enabledSources
@@ -387,7 +438,7 @@ export const NotificationsScreen = memo(function NotificationsScreen({
           if (nextSource && nextSource !== source) onChangeSource(nextSource);
         }}
       />
-      {source !== 'all' && (categories.length > 0 || loading) ? (
+      {sourceAvailable && source !== 'all' && (categories.length > 0 || loading) ? (
         <View testID="notification-category-strip" style={styles.categoryStrip}>
           <PillRail
             variant="tabs"
@@ -401,28 +452,30 @@ export const NotificationsScreen = memo(function NotificationsScreen({
           />
         </View>
       ) : null}
-      <View style={styles.controlRow}>
-        <View style={styles.unreadControl}>
-          <Text style={styles.controlLabel}>只看未读</Text>
-          <Switch
-            testID="notification-unread-switch"
-            accessibilityLabel="只看未读"
-            accessibilityState={{ checked: unreadOnly }}
-            value={unreadOnly}
-            onValueChange={onChangeUnreadOnly}
-          />
+      {sourceAvailable ? (
+        <View style={styles.controlRow}>
+          <View style={styles.unreadControl}>
+            <Text style={styles.controlLabel}>只看未读</Text>
+            <Switch
+              testID="notification-unread-switch"
+              accessibilityLabel="只看未读"
+              accessibilityState={{ checked: unreadOnly }}
+              value={unreadOnly}
+              onValueChange={onChangeUnreadOnly}
+            />
+          </View>
+          {showMarkAll ? (
+            <AppButton
+              testID="notification-mark-all"
+              accessibilityLabel={`将 ${sourceCatalog[source].label} 全部标记为已读`}
+              label="全部已读"
+              variant="primary"
+              loading={markAllBusy}
+              onPress={onMarkAll}
+            />
+          ) : null}
         </View>
-        {showMarkAll ? (
-          <AppButton
-            testID="notification-mark-all"
-            accessibilityLabel={`将 ${sourceCatalog[source].label} 全部标记为已读`}
-            label="全部已读"
-            variant="primary"
-            loading={markAllBusy}
-            onPress={onMarkAll}
-          />
-        ) : null}
-      </View>
+      ) : null}
     </View>
   );
   const onPageLayout = useStartupPageLayout();
@@ -440,22 +493,7 @@ export const NotificationsScreen = memo(function NotificationsScreen({
   return (
     <View style={styles.screen}>
       {toolbar}
-      {errorSources.length ? (
-        <View style={styles.sourceNotice} accessibilityLiveRegion="polite">
-          {errorSources.map((candidate) => (
-            <View key={candidate} style={styles.sourceErrorRow}>
-              <Text style={[styles.errorText, styles.sourceErrorText]}>
-                {sourceCatalog[candidate].label}：{errors[candidate]?.message}
-              </Text>
-              <AppButton
-                compact
-                label={`${notificationErrorAction(errors[candidate])} ${sourceCatalog[candidate].label}`}
-                onPress={() => onRetrySource(candidate)}
-              />
-            </View>
-          ))}
-        </View>
-      ) : null}
+      {emptyList ? null : failedSites}
       <FlashList
         ref={listRef}
         onLayout={onPageLayout}
@@ -477,18 +515,16 @@ export const NotificationsScreen = memo(function NotificationsScreen({
             refreshing ? null : (
               <NotificationListPlaceholder animating={active} label="加载中" />
             )
-          ) : sourceAvailable && errorSources.length ? null : (
+          ) : errorSources.length || (!sourceAvailable && showAccountSites) ? null : (
             <EmptyState
               title={emptyTitle}
               text={emptyText}
               action={
-                source !== 'all' && loginSources.includes(source)
-                  ? { label: `去登录 ${sourceCatalog[source].label}`, run: () => onLoginSource(source) }
-                  : sourceUnknown
-                    ? { label: '重试账号核对', run: onRetryAccountStatus }
-                    : sourceAvailable && unreadOnly && !errorSources.length
-                      ? { label: '查看全部消息', run: () => onChangeUnreadOnly(false) }
-                      : undefined
+                sourceUnknown
+                  ? { label: '重试账号核对', run: onRetryAccountStatus }
+                  : sourceAvailable && unreadOnly && !errorSources.length
+                    ? { label: '查看全部消息', run: () => onChangeUnreadOnly(false) }
+                    : undefined
               }
             />
           )

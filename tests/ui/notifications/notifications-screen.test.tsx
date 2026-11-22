@@ -4,6 +4,7 @@ import { describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
 import { Image, ScrollView, StyleSheet } from 'react-native';
 import { createSiteSessionStates } from '@/domain/session/siteSessionState';
+import type { NotificationSource } from '@/domain/forum/sourceCatalog';
 import { formatDateTime } from '@/domain/forum/presentation';
 import { createEmptyReaderData, type ReaderSettings } from '@/domain/reader/readerData';
 import type { ForumNotification, NotificationDetail } from '@/domain/notifications/models';
@@ -158,7 +159,9 @@ const notification: ForumNotification = {
   target: { type: 'information' }
 };
 
-function listProps() {
+function listProps(unknownSite?: NotificationSource, isVerifying = false) {
+  const sessions = projectTestAccountSessions(createSiteSessionStates());
+  if (unknownSite) sessions[unknownSite] = { ...sessions[unknownSite], identityTrust: 'unknown', isVerifying };
   return {
     activeSources: ['nodeseek', 'linuxdo', 'yaohuo'] as const,
     enabledSources: ['nodeseek', 'linuxdo', 'yaohuo'] as const,
@@ -169,8 +172,8 @@ function listProps() {
     loading: false,
     markAllBusy: false,
     refreshing: false,
+    sessions,
     source: 'all' as const,
-    sourcePending: false,
     unreadOnly: false,
     onChangeSource: jest.fn(),
     onChangeUnreadOnly: jest.fn(),
@@ -872,7 +875,7 @@ describe('notification screens', () => {
         onRetrySource={onRetrySource}
       />
     );
-    expect(view.getByText('NodeSeek：网络中断')).toBeTruthy();
+    expect(view.getByText('网络中断')).toBeTruthy();
     expect(view.queryByText('消息暂未加载成功')).toBeNull();
     expect(view.queryByText('NodeSeek · 读取中断，可重试')).toBeNull();
     await fireEvent.press(view.getByRole('button', { name: '重试 NodeSeek' }));
@@ -898,12 +901,12 @@ describe('notification screens', () => {
 
   it('keeps account confirmation distinct from login actions', async () => {
     const view = await render(
-      <NotificationsScreen {...listProps()} activeSources={[]} items={[]} source="nodeseek" sourceUnknown />
+      <NotificationsScreen {...listProps('nodeseek')} activeSources={[]} items={[]} source="nodeseek" />
     );
     expect(view.getAllByRole('button', { name: '重试账号核对' })).toHaveLength(1);
     expect(view.queryByRole('button', { name: '去登录 NodeSeek' })).toBeNull();
     await view.rerender(
-      <NotificationsScreen {...listProps()} activeSources={[]} items={[]} source="nodeseek" sourcePending />
+      <NotificationsScreen {...listProps('nodeseek', true)} activeSources={[]} items={[]} source="nodeseek" />
     );
     expect(view.queryByRole('button', { name: '去登录 NodeSeek' })).toBeNull();
   });
@@ -989,7 +992,7 @@ describe('notification screens', () => {
       'notification-source-linuxdo',
       'notification-source-nodeseek'
     ]);
-    expect(view.getByText('linux.do：暂不可用')).toBeTruthy();
+    expect(view.getByText('暂不可用')).toBeTruthy();
     expect(view.queryByText('妖火：不应展示')).toBeNull();
     expect(view.queryByTestId('notification-source-yaohuo')).toBeNull();
   });
@@ -1003,6 +1006,27 @@ describe('notification screens', () => {
     expect(view.getByTestId('notification-source-all')).toBeTruthy();
     expect(view.queryByTestId('notification-source-nodeseek')).toBeNull();
     expect(view.queryByLabelText('NodeSeek，未读，张三，回复了你，一个主题')).toBeNull();
+  });
+
+  it('groups signed-out sites with their login actions and omits unusable list controls', async () => {
+    const props = listProps();
+    const view = await render(<NotificationsScreen {...props} items={[]} activeSources={[]} />);
+    expect(view.getByRole('header', { name: '登录后查看消息' })).toBeTruthy();
+    expect(view.queryByLabelText('只看未读')).toBeNull();
+    await fireEvent.press(view.getByRole('button', { name: '去登录 NodeSeek' }));
+    expect(props.onLoginSource).toHaveBeenCalledWith('nodeseek');
+    await view.rerender(
+      <NotificationsScreen
+        {...props}
+        items={[]}
+        source="nodeseek"
+        errors={{ nodeseek: { kind: 'ordinary', message: '连接超时' } }}
+      />
+    );
+    expect(view.getByRole('header', { name: '消息加载失败' })).toBeTruthy();
+    expect(view.queryByText('暂无消息')).toBeNull();
+    await fireEvent.press(view.getByRole('button', { name: '重试 NodeSeek' }));
+    expect(props.onRetrySource).toHaveBeenCalledWith('nodeseek');
   });
 
   it('renders one compact retry action for each failed source', async () => {
@@ -1022,10 +1046,10 @@ describe('notification screens', () => {
 
     await fireEvent.press(view.getByLabelText('NodeSeek，未读，张三，回复了你，一个主题'));
     expect(onItemPress).toHaveBeenCalledWith(notification);
-    expect(view.getByText('linux.do：暂不可用')).toBeTruthy();
-    expect(view.getByText('妖火：读取失败')).toBeTruthy();
+    expect(view.getByText('暂不可用')).toBeTruthy();
+    expect(view.getByText('读取失败')).toBeTruthy();
     expect(view.getByTestId('notification-outcome-partial-all')).toBeTruthy();
-    await fireEvent.press(view.getByText('重试 linux.do'));
+    await fireEvent.press(view.getByRole('button', { name: '重试 linux.do' }));
     expect(onRetrySource).toHaveBeenCalledWith('linuxdo');
     expect(view.queryByText('重试暂不可用的站点')).toBeNull();
   });
@@ -1157,7 +1181,7 @@ describe('notification screens', () => {
 
   it('shows a signed-in source as confirming while its identity is pending', async () => {
     const view = await render(
-      <NotificationsScreen {...listProps()} activeSources={[]} items={[]} source="linuxdo" sourcePending />
+      <NotificationsScreen {...listProps('linuxdo', true)} activeSources={[]} items={[]} source="linuxdo" />
     );
 
     expect(view.getByText('账号确认中')).toBeTruthy();
@@ -1170,11 +1194,10 @@ describe('notification screens', () => {
     const onRetryAccountStatus = jest.fn();
     const view = await render(
       <NotificationsScreen
-        {...listProps()}
+        {...listProps('yaohuo')}
         activeSources={[]}
         items={[]}
         source="yaohuo"
-        sourceUnknown
         onRetryAccountStatus={onRetryAccountStatus}
       />
     );
@@ -1188,7 +1211,7 @@ describe('notification screens', () => {
 
   it('never renders cached private rows for a pending source', async () => {
     const view = await render(
-      <NotificationsScreen {...listProps()} activeSources={[]} source="nodeseek" sourcePending />
+      <NotificationsScreen {...listProps('nodeseek', true)} activeSources={[]} source="nodeseek" />
     );
 
     expect(view.getByText('账号确认中')).toBeTruthy();

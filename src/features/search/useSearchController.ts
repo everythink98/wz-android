@@ -43,7 +43,7 @@ import {
 } from '@/sources/sourceErrors';
 import { authNoticeForSource, authNoticeForSourceError } from '@/domain/session/siteSessionPrompts';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
-import type { Category, FeedSource, Source } from '@/domain/forum/models';
+import type { Category, FeedSource, Source, SourceErrorInfo } from '@/domain/forum/models';
 import {
   groupFromRemoteSearchResult,
   nextSearchPage,
@@ -135,6 +135,10 @@ function remoteSearchResult(group: SearchGroup): RemoteSearchSourceResult {
   return group.error ? { kind: 'failed', group } : { kind: 'success', group };
 }
 
+function searchErrorKind(error?: SourceErrorInfo): SearchGroup['errorKind'] {
+  return error?.reason === 'query-too-short' ? 'invalid-query' : error?.kind;
+}
+
 function searchGroupForUnexpectedError(source: Source, error: unknown): SearchGroup {
   const sourceError = sourceErrorFromUnknown(source, error);
   return {
@@ -142,7 +146,7 @@ function searchGroupForUnexpectedError(source: Source, error: unknown): SearchGr
     label: sourceLabel(source),
     items: [],
     error: sourceError.message,
-    errorKind: sourceError.kind,
+    errorKind: searchErrorKind(sourceError),
     authNotice: authNoticeForSourceError(sourceError) || undefined,
     hasMore: false,
     nextPage: null
@@ -384,7 +388,7 @@ export function useSearchController({
           items: data.items,
           authNotice: sourceError ? authNoticeForSourceError(sourceError) || undefined : sourceStatusNotice,
           error: sourceError?.message,
-          errorKind: sourceError?.kind,
+          errorKind: searchErrorKind(sourceError),
           hasMore: nextPage !== undefined,
           nextPage: nextPage ?? null
         };
@@ -447,7 +451,7 @@ export function useSearchController({
           label: sourceLabel(source),
           items: [],
           error: sourceError.message,
-          errorKind: sourceError.kind,
+          errorKind: searchErrorKind(sourceError),
           authNotice: authNoticeForSourceError(sourceError) || sourceStatusNotice,
           hasMore: false,
           nextPage: null

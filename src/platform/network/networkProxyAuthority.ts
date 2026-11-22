@@ -1,4 +1,4 @@
-import { activeNetworkRoute, applyNetworkProxy, loadNetworkProxyState } from './networkProxy';
+import { enabledNetworkProxyProfile, applyNetworkProxy, loadNetworkProxyState } from './networkProxy';
 
 type ProxyAuthority = { kind: 'headless' } | { kind: 'app'; ready: () => Promise<void> };
 
@@ -20,7 +20,7 @@ export async function restoreBackgroundNetworkProxy(assertActive: () => void) {
     assertActive();
     // Expo may start the App while its task is reading the old saved configuration.
     if (authority === initial) {
-      await applyNetworkProxy(activeNetworkRoute(state));
+      await applyNetworkProxy(enabledNetworkProxyProfile(state));
     }
   }
 

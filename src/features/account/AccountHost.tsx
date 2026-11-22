@@ -7,9 +7,14 @@ import { MemoizedLinuxDoVerifyModal } from './components/LinuxDoVerifyModal';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
 import type { NodeImageAuthDocument } from './useNodeImageAuthController';
 import type { AccountHostStyles } from './accountHostStyles';
+import type {
+  LinuxDoForumDocumentEvent,
+  LinuxDoRecoveryPanel,
+  LinuxDoVerificationPageEvent
+} from './useVerificationController';
 
 export function AccountHost({
-  onLinuxDoChallengeReturned,
+  onLinuxDoForumDocument,
   onLinuxDoDocumentNavigation,
   onLinuxDoVerificationPageEvent,
   recoveryPanel,
@@ -49,13 +54,10 @@ export function AccountHost({
   styles,
   webViewBlockMessage
 }: {
-  onLinuxDoChallengeReturned?: (webViewKey: number) => void;
+  onLinuxDoForumDocument?: (webViewKey: number, event: LinuxDoForumDocumentEvent) => void;
   onLinuxDoDocumentNavigation?: (webViewKey: number) => void;
-  onLinuxDoVerificationPageEvent?: (
-    event: import('./useVerificationController').LinuxDoVerificationPageEvent,
-    webViewKey: number
-  ) => void;
-  recoveryPanel?: import('./useVerificationController').LinuxDoRecoveryPanel;
+  onLinuxDoVerificationPageEvent?: (event: LinuxDoVerificationPageEvent, webViewKey: number) => void;
+  recoveryPanel?: LinuxDoRecoveryPanel;
   retryLinuxDoRecovery?: () => void;
   checking: boolean;
   credentialFillAttempt: number;
@@ -95,7 +97,7 @@ export function AccountHost({
   return (
     <>
       <MemoizedLinuxDoVerifyModal
-        onChallengeReturned={onLinuxDoChallengeReturned}
+        onForumDocument={onLinuxDoForumDocument}
         onDocumentNavigation={onLinuxDoDocumentNavigation}
         onVerificationPageEvent={onLinuxDoVerificationPageEvent}
         recoveryPanel={recoveryPanel}

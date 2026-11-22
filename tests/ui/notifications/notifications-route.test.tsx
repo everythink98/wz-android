@@ -1,4 +1,4 @@
-import { projectTestAccountSessions } from '../../helpers/accountSessions';
+import { projectTestAccountSessions, testAccountUser } from '../../helpers/accountSessions';
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
 import { createNavigationContainerRef, NavigationContainer, StackActions } from '@react-navigation/native';
@@ -2100,20 +2100,20 @@ describe('notification routes', () => {
       page = { ...page, quality: 'partial', items: [{ ...notification, title: '部分有效消息' }] };
       await fireEvent.press(view.getByTestId('notification-list-refresh'));
       await waitFor(() => expect(view.getByText('部分有效消息')).toBeTruthy());
-      expect(view.getByText('重试 NodeSeek')).toBeTruthy();
+      expect(view.getByRole('button', { name: '重试 NodeSeek' })).toBeTruthy();
       page = { ...page, quality: 'invalid', items: [] };
-      await fireEvent.press(view.getByText('重试 NodeSeek'));
+      await fireEvent.press(view.getByRole('button', { name: '重试 NodeSeek' }));
       await waitFor(() => expect(view.getByText(/消息内容无法解析，请重试/)).toBeTruthy());
       expect(view.getByText('部分有效消息')).toBeTruthy();
       if (source !== 'all') expect(view.getByText('仅提供近期消息')).toBeTruthy();
       page = { quality: 'complete', items: [{ ...notification, title: '恢复后的消息' }], cursor: null, hasMore: false };
-      await fireEvent.press(view.getByText('重试 NodeSeek'));
+      await fireEvent.press(view.getByRole('button', { name: '重试 NodeSeek' }));
       await waitFor(() => expect(view.getByText('恢复后的消息')).toBeTruthy());
-      expect(view.queryByText('重试 NodeSeek')).toBeNull();
+      expect(view.queryByRole('button', { name: '重试 NodeSeek' })).toBeNull();
       expect(view.queryByText('仅提供近期消息')).toBeNull();
       page = { ...page, quality: 'invalid', items: [] };
       await fireEvent.press(view.getByTestId('notification-list-refresh'));
-      await waitFor(() => expect(view.getByText('重试 NodeSeek')).toBeTruthy());
+      await waitFor(() => expect(view.getByRole('button', { name: '重试 NodeSeek' })).toBeTruthy());
       expect(view.getByText('恢复后的消息')).toBeTruthy();
       await view.rerender(
         tree({
@@ -2718,7 +2718,7 @@ describe('notification routes', () => {
       );
       const view = await render(tree(), { wrapper: QueryTestWrapper });
       try {
-        const retry = await view.findByText('重试 NodeSeek');
+        const retry = await view.findByRole('button', { name: '重试 NodeSeek' });
         const listRequests = fetcher.mock.calls.length;
         await fireEvent.press(retry);
         expect(runtime.reconcileAccountStatus).toHaveBeenCalledTimes(1);
@@ -2745,7 +2745,7 @@ describe('notification routes', () => {
             sessionEpochs: { ...runtime.sessionEpochs, nodeseek: 1 }
           };
           await view.rerender(tree());
-          await fireEvent.press(await view.findByText('去登录 NodeSeek'));
+          await fireEvent.press(await view.findByRole('button', { name: '去登录 NodeSeek' }));
           expect(runtime.openAccountSurface).toHaveBeenCalledTimes(1);
         }
         expect(runtime.reconcileAccountStatus).toHaveBeenCalledTimes(1);
@@ -2783,8 +2783,8 @@ describe('notification routes', () => {
       </NotificationRouteRuntimeProvider>,
       { wrapper: QueryTestWrapper }
     );
-    expect(view.getByText('账号尚未就绪')).toBeTruthy();
-    await fireEvent.press(view.getByText(/^去登录 /));
+    expect(view.getByText('登录后查看消息')).toBeTruthy();
+    await fireEvent.press(view.getByRole('button', { name: /^去登录 / }));
     expect(runtime.openAccountSurface).toHaveBeenCalledWith(source, '请登录并确认账号身份。');
     expect(runtime.reconcileAccountStatus).not.toHaveBeenCalled();
     expect(gateway.getCategories).not.toHaveBeenCalled();
@@ -2824,9 +2824,9 @@ describe('notification routes', () => {
         </NotificationRouteRuntimeProvider>,
         { wrapper: QueryTestWrapper }
       );
-      await waitFor(() => expect(view.getByText(/^重试 /)).toBeTruthy());
+      await waitFor(() => expect(view.getByRole('button', { name: /^重试 / })).toBeTruthy());
       const before = fetcher.mock.calls.length;
-      await fireEvent.press(view.getByText(/^重试 /));
+      await fireEvent.press(view.getByRole('button', { name: /^重试 / }));
       expect(runtime.reconcileAccountStatus).toHaveBeenCalledWith(source);
       expect(runtime.reconcileAccountStatus).toHaveBeenCalledTimes(1);
       expect(runtime.openAccountSurface).toHaveBeenCalledWith(source, '登录已失效，请重新登录。');
@@ -2870,13 +2870,13 @@ describe('notification routes', () => {
       { wrapper: QueryTestWrapper }
     );
     try {
-      await waitFor(() => expect(view.getByText('重试 linux.do')).toBeTruthy());
-      await fireEvent.press(view.getByText('重试 linux.do'));
+      await waitFor(() => expect(view.getByRole('button', { name: '重试 linux.do' })).toBeTruthy());
+      await fireEvent.press(view.getByRole('button', { name: '重试 linux.do' }));
       expect(runtime.reconcileAccountStatus).toHaveBeenCalledTimes(1);
       await act(async () => navigation.navigate('Other'));
       await act(async () => navigation.goBack());
       await waitFor(() => expect(appQueryClient.isFetching()).toBe(0));
-      await fireEvent.press(view.getByText('重试 linux.do'));
+      await fireEvent.press(view.getByRole('button', { name: '重试 linux.do' }));
       expect(runtime.reconcileAccountStatus).toHaveBeenCalledTimes(2);
 
       const readsBeforeRetry = fetcher.mock.calls.length;
@@ -2886,14 +2886,14 @@ describe('notification routes', () => {
         await accountCheck.promise;
       });
       await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(readsBeforeRetry + 1));
-      await fireEvent.press(view.getByText('重试 linux.do'));
+      await fireEvent.press(view.getByRole('button', { name: '重试 linux.do' }));
       expect(runtime.reconcileAccountStatus).toHaveBeenCalledTimes(2);
       expect(runtime.openAccountSurface).not.toHaveBeenCalled();
       await act(async () => {
         retryResponse.resolve(new Response(JSON.stringify({ notifications: [] })));
         await retryResponse.promise;
       });
-      await waitFor(() => expect(view.queryByText('重试 linux.do')).toBeNull());
+      await waitFor(() => expect(view.queryByRole('button', { name: '重试 linux.do' })).toBeNull());
       expect(runtime.notify).not.toHaveBeenCalled();
     } finally {
       accountCheck.resolve({ status: 'stale' });
@@ -2947,16 +2947,16 @@ describe('notification routes', () => {
         </NotificationRouteRuntimeProvider>,
         { wrapper: QueryTestWrapper }
       );
-      await waitFor(() => expect(view.getByText('去验证 linux.do')).toBeTruthy());
+      await waitFor(() => expect(view.getByRole('button', { name: '去验证 linux.do' })).toBeTruthy());
       const beforeOpen = fetcher.mock.calls.length;
-      await fireEvent.press(view.getByText('去验证 linux.do'));
+      await fireEvent.press(view.getByRole('button', { name: '去验证 linux.do' }));
       expect(fetcher).toHaveBeenCalledTimes(beforeOpen);
       expect(recovery).toBeDefined();
       challenged = false;
       await act(async () => {
         expect(await recovery!.resume()).toBe('completed');
       });
-      await waitFor(() => expect(view.queryByText('去验证 linux.do')).toBeNull());
+      await waitFor(() => expect(view.queryByRole('button', { name: '去验证 linux.do' })).toBeNull());
       expect(
         fetcher.mock.calls.filter(([url]) =>
           String(url).includes(failedRead === 'categories' ? '/site.json' : '/notifications')
@@ -3015,9 +3015,9 @@ describe('notification routes', () => {
         </NotificationRouteRuntimeProvider>,
         { wrapper: QueryTestWrapper }
       );
-      await waitFor(() => expect(view.getByText('重试 linux.do')).toBeTruthy());
-      await fireEvent.press(view.getByText('重试 linux.do'));
-      await fireEvent.press(view.getByText('重试 linux.do'));
+      await waitFor(() => expect(view.getByRole('button', { name: '重试 linux.do' })).toBeTruthy());
+      await fireEvent.press(view.getByRole('button', { name: '重试 linux.do' }));
+      await fireEvent.press(view.getByRole('button', { name: '重试 linux.do' }));
       expect(runtime.reconcileAccountStatus).toHaveBeenCalledTimes(1);
       expect(fetcher).toHaveBeenCalledTimes(1);
       failed = false;
@@ -3085,9 +3085,9 @@ describe('notification routes', () => {
         { wrapper: QueryTestWrapper }
       );
       const label = `${kind === 'verification-required' ? '去验证' : '去登录'} linux.do`;
-      await waitFor(() => expect(view.getByText(label)).toBeTruthy());
+      await waitFor(() => expect(view.getByRole('button', { name: label })).toBeTruthy());
       expect(openAccountSurface).not.toHaveBeenCalled();
-      await fireEvent.press(view.getByText(label));
+      await fireEvent.press(view.getByRole('button', { name: label }));
       expect(openAccountSurface).toHaveBeenCalledWith(
         'linuxdo',
         '需要恢复账号',
@@ -3286,10 +3286,10 @@ describe('notification routes', () => {
       { wrapper: QueryTestWrapper }
     );
 
-    await waitFor(() => expect(view.getByText('重试 NodeSeek')).toBeTruthy());
+    await waitFor(() => expect(view.getByRole('button', { name: '重试 NodeSeek' })).toBeTruthy());
     expect(view.queryByText('正在读取消息')).toBeNull();
     expect(listPage).not.toHaveBeenCalled();
-    await fireEvent.press(view.getByText('重试 NodeSeek'));
+    await fireEvent.press(view.getByRole('button', { name: '重试 NodeSeek' }));
     await waitFor(() => expect(view.getByTestId('notification-category-all')).toBeTruthy());
     await waitFor(() => expect(listPage).toHaveBeenCalledTimes(1));
     expect(getCategories).toHaveBeenCalledTimes(2);
@@ -3928,7 +3928,7 @@ describe('notification routes', () => {
           await waitFor(() => expect(view.getAllByText('旧账号消息')).toHaveLength(2));
           await fireEvent.press(view.getByTestId('notification-list-end'));
         }
-        await waitFor(() => expect(view.getByText('重试 NodeSeek')).toBeTruthy());
+        await waitFor(() => expect(view.getByRole('button', { name: '重试 NodeSeek' })).toBeTruthy());
         expect(listPage.mock.calls.map(([options]) => options.cursor)).toEqual([undefined, 'A', 'B']);
         if (source === 'all') {
           await fireEvent.press(view.getByTestId('notification-list-end'));
@@ -3936,8 +3936,8 @@ describe('notification routes', () => {
           expect(listPage).toHaveBeenCalledTimes(3);
         }
         retrySucceeded = true;
-        await fireEvent.press(view.getByText('重试 NodeSeek'));
-        await waitFor(() => expect(view.queryByText('重试 NodeSeek')).toBeNull());
+        await fireEvent.press(view.getByRole('button', { name: '重试 NodeSeek' }));
+        await waitFor(() => expect(view.queryByRole('button', { name: '重试 NodeSeek' })).toBeNull());
         expect(listPage.mock.calls.map(([options]) => options.cursor)).toEqual([undefined, 'A', 'B', 'B']);
         await fireEvent.press(view.getByTestId('notification-list-end'));
         await waitFor(() => expect(listPage).toHaveBeenCalledTimes(5));
@@ -4142,6 +4142,7 @@ describe('notification routes', () => {
     appQueryClient.clear();
     const runtime = routeRuntime({} as NotificationRouteRuntimeValue['gateway']);
     runtime.activeSources = [];
+    runtime.enabledNotificationSources = ['nodeseek', 'linuxdo'];
     runtime.sessions.nodeseek = { ...runtime.sessions.nodeseek, identityTrust: 'unknown' };
     runtime.sessions.linuxdo = { ...runtime.sessions.linuxdo, identityTrust: 'unknown' };
     const first = Promise.withResolvers<AccountReconcileResult>();
@@ -4294,6 +4295,59 @@ describe('notification routes', () => {
     expect(gateway.listPage).not.toHaveBeenCalled();
   });
 
+  it.each([true, false])(
+    'keeps an unknown account distinct from a guest when another site is readable: %s',
+    async (readable) => {
+      appQueryClient.clear();
+      const listAllPage = jest.fn(async () => ({
+        items: [notification],
+        errors: {},
+        qualities: {},
+        nextCursors: { nodeseek: null },
+        hasMore: false
+      }));
+      const gateway = { listAllPage, listPage: jest.fn() } as unknown as NotificationRouteRuntimeValue['gateway'];
+      const runtime = routeRuntime(gateway);
+      const states = createSiteSessionStates();
+      for (const site of ['nodeseek', 'linuxdo'] as const) {
+        states[site] = {
+          ...states[site],
+          status: 'logged-in',
+          currentUser: { ...testAccountUser(site), id: 'new-account' }
+        };
+      }
+      runtime.sessions = projectTestAccountSessions(states);
+      runtime.sessions.linuxdo.identityTrust = 'unknown';
+      if (!readable) {
+        runtime.activeSources = [];
+        runtime.enabledNotificationSources = ['linuxdo', 'yaohuo'];
+      }
+      const view = await render(
+        <NotificationRouteRuntimeProvider value={runtime}>
+          <NavigationContainer>
+            <NotificationsRoute
+              navigation={{ navigate: jest.fn(), setParams: jest.fn() } as never}
+              route={{ key: 'notifications', name: 'notifications', params: undefined }}
+            />
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>,
+        { wrapper: QueryTestWrapper }
+      );
+      if (readable) {
+        expect(await view.findByText(notification.title)).toBeTruthy();
+        expect(listAllPage).toHaveBeenCalledWith(expect.objectContaining({ sources: ['nodeseek'] }));
+      } else expect(listAllPage).not.toHaveBeenCalled();
+      expect(view.queryByRole('button', { name: '去登录 linux.do' })).toBeNull();
+      await fireEvent.press(view.getByRole('button', { name: '重试账号核对 linux.do' }));
+      expect(runtime.reconcileAccountStatus).toHaveBeenCalledTimes(1);
+      expect(runtime.reconcileAccountStatus).toHaveBeenCalledWith('linuxdo');
+      expect(runtime.openAccountSurface).not.toHaveBeenCalled();
+      expect(gateway.listPage).not.toHaveBeenCalled();
+      await fireEvent.press(view.getByRole('button', { name: '去登录 妖火' }));
+      expect(runtime.openAccountSurface).toHaveBeenCalledWith('yaohuo', '请登录并确认账号身份。');
+    }
+  );
+
   it('retries only the selected failed source in the aggregate list', async () => {
     appQueryClient.clear();
     const linuxdoNotification = { ...notification, source: 'linuxdo', id: 'reply:linuxdo' } as ForumNotification;
@@ -4338,9 +4392,9 @@ describe('notification routes', () => {
       { wrapper: QueryTestWrapper }
     );
 
-    await waitFor(() => expect(view.getByText('重试 linux.do')).toBeTruthy());
-    await fireEvent.press(view.getByText('重试 linux.do'));
-    await waitFor(() => expect(view.queryByText('重试 linux.do')).toBeNull());
+    await waitFor(() => expect(view.getByRole('button', { name: '重试 linux.do' })).toBeTruthy());
+    await fireEvent.press(view.getByRole('button', { name: '重试 linux.do' }));
+    await waitFor(() => expect(view.queryByRole('button', { name: '重试 linux.do' })).toBeNull());
     expect(view.getByText('linux.do · 时间未知')).toBeTruthy();
     expect(listPage).toHaveBeenCalledWith(
       'linuxdo',
@@ -4402,7 +4456,7 @@ describe('notification routes', () => {
       { wrapper: QueryTestWrapper }
     );
 
-    await waitFor(() => expect(view.getByText('重试 linux.do')).toBeTruthy());
+    await waitFor(() => expect(view.getByRole('button', { name: '重试 linux.do' })).toBeTruthy());
     await act(async () => {
       appQueryClient.setQueryData(queryKey, (current: any) => ({
         ...current,
@@ -4413,7 +4467,7 @@ describe('notification routes', () => {
         pageParams: [...current.pageParams, { allCursors: { nodeseek: 'ns-next', linuxdo: null } }]
       }));
     });
-    await fireEvent.press(view.getByText('重试 linux.do'));
+    await fireEvent.press(view.getByRole('button', { name: '重试 linux.do' }));
 
     await waitFor(() => {
       const cached = appQueryClient.getQueryData<any>(queryKey);

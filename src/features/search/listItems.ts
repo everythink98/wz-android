@@ -8,7 +8,7 @@ export type SearchGroup = {
   items: Topic[];
   externalSearchUrl?: string;
   error?: string;
-  errorKind?: SourceErrorKind;
+  errorKind?: SourceErrorKind | 'invalid-query';
   authNotice?: AuthNotice;
   loading?: boolean;
   loadingMore?: boolean;
@@ -66,6 +66,7 @@ export function searchGroupMeta(group: SearchGroup) {
     return '等待账号状态';
   }
   if (group.error) {
+    if (group.errorKind === 'invalid-query') return '请修改搜索词';
     if (searchGroupRetryPage(group)) {
       return `${group.items.length} 条 · 加载失败`;
     }

@@ -261,7 +261,7 @@ export const AppNavigator = memo(function AppNavigator({
             getComponent={getNetworkSettingsRoute}
             options={({ route }) => ({
               headerShown: route.params?.page !== 'proxies',
-              title: route.params?.page === 'dns' ? 'DNS 服务商' : '网络设置'
+              title: route.params?.page === 'log' ? '网络日志' : '网络设置'
             })}
           />
           <Stack.Screen name="User" getComponent={getUserRoute} />

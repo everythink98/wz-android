@@ -87,22 +87,79 @@ class NetworkProxyProfileTest {
     module.invalidate()
   }
 
-  @Test fun aVpnCannotCertifyAProxyFreeDohConnection() {
+  @Test fun networkSettingsShowTheAppsDefaultTransportBeforeAndAfterVpn() {
     val manager = RuntimeEnvironment.getApplication().getSystemService(ConnectivityManager::class.java)
     shadowOf(manager).setActiveNetworkInfo(ShadowNetworkInfo.newInstance(
-      NetworkInfo.DetailedState.CONNECTED, ConnectivityManager.TYPE_VPN, 0, true, NetworkInfo.State.CONNECTED))
+      NetworkInfo.DetailedState.CONNECTED, ConnectivityManager.TYPE_WIFI, 0, true, NetworkInfo.State.CONNECTED))
     val caps = ShadowNetworkCapabilities.newInstance()
-    shadowOf(caps).addTransportType(NetworkCapabilities.TRANSPORT_VPN)
-    shadowOf(manager).setNetworkCapabilities(requireNotNull(manager.activeNetwork), caps)
-    val rejected = CompletableFuture<List<Any?>>()
+    shadowOf(caps).addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+    val observed = mutableListOf<Any?>()
     val promise = java.lang.reflect.Proxy.newProxyInstance(Promise::class.java.classLoader, arrayOf(Promise::class.java)) {
-      _, method, args -> if (method.name == "reject") rejected.complete(args.orEmpty().toList())
+      _, method, args -> if (method.name == "resolve") observed.add(args?.firstOrNull())
       null
     } as Promise
-    module.testEncryptedDns(JavaOnlyMap(), promise)
-    val result = rejected.get(5, TimeUnit.SECONDS)
-    assertEquals("dns_test_network", result[0])
-    assertTrue(result[1].toString().contains("VPN"))
+    shadowOf(manager).setNetworkCapabilities(manager.activeNetwork, caps)
+    module.getSystemNetworkType(promise)
+    shadowOf(caps).addTransportType(NetworkCapabilities.TRANSPORT_VPN)
+    shadowOf(manager).setNetworkCapabilities(manager.activeNetwork, caps)
+    module.getSystemNetworkType(promise)
+    shadowOf(manager).setActiveNetworkInfo(null)
+    module.getSystemNetworkType(promise)
+    assertEquals(listOf("wifi", "vpn", "offline"), observed)
+  }
+
+  @Test fun managedRequestsReachEveryForumThroughTheSelectedHttpOrSocksProxy() {
+    val hosts = listOf("linux.do", "www.nodeseek.com", "www.v2ex.com", "www.yaohuo.me")
+    for (protocol in listOf("http", "socks5")) {
+      ServerSocket(0, 4, InetAddress.getByName("127.0.0.1")).use { upstream ->
+        upstream.soTimeout = 3000
+        val worker = Executors.newSingleThreadExecutor()
+        val relay = LocalNetworkProxyServer(NetworkProxyProfile(protocol, "127.0.0.1", upstream.localPort, null, null))
+        try {
+          relay.start()
+          NetworkProxyRuntime.setLocalProxyPort(relay.port)
+          val client = NetworkProxyRuntime.configureManagedClient(okhttp3.OkHttpClient.Builder())
+            .dns(object : okhttp3.Dns {
+              override fun lookup(hostname: String): List<InetAddress> {
+                check(hostname == "127.0.0.1") { "the managed request attempted direct DNS" }
+                return listOf(InetAddress.getByName(hostname))
+              }
+            })
+            .callTimeout(3, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(false)
+            .build()
+          for (host in hosts) {
+            val observed = worker.submit<String> {
+              upstream.accept().use { socket ->
+                socket.soTimeout = 3000
+                val input = socket.getInputStream()
+                val output = socket.getOutputStream()
+                if (protocol == "http") {
+                  val line = input.readHeaderLines().first()
+                  output.write("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n".toByteArray())
+                  line.substringAfter("CONNECT ").substringBefore(' ')
+                } else {
+                  assertArrayEquals(byteArrayOf(5, 1, 0), input.readExactly(3))
+                  output.write(byteArrayOf(5, 0))
+                  assertArrayEquals(byteArrayOf(5, 1, 0, 3), input.readExactly(4))
+                  val name = String(input.readExactly(input.read()), Charsets.US_ASCII)
+                  val port = DataInputStream(input).readUnsignedShort()
+                  output.write(byteArrayOf(5, 5, 0, 1, 0, 0, 0, 0, 0, 0))
+                  "$name:$port"
+                }
+              }
+            }
+            val request = okhttp3.Request.Builder().url("https://$host/").build()
+            org.junit.Assert.assertThrows(IOException::class.java) { client.newCall(request).execute().close() }
+            assertEquals("$protocol must receive the website destination", "$host:443", observed.get(3, TimeUnit.SECONDS))
+          }
+        } finally {
+          NetworkProxyRuntime.blockNetworkRequests()
+          relay.stop()
+          worker.shutdownNow()
+        }
+      }
+    }
   }
 
   @Test fun profileMappingPreservesAbsentNullEmptyAndWhitespacePasswords() {

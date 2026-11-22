@@ -189,19 +189,20 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
   useEffect(() => {
     if (packetPage && !packetUrl) setPacketPage(null);
   }, [packetPage, packetUrl]);
+  const [packetRefresh, setPacketRefresh] = useState(0);
   const packetAccount = runtime.account.sessionViewModels.linuxdo;
   const packetUsername = packetAccount?.isLoggedIn ? packetAccount.currentUser?.username || '' : '';
   const packetViewer = useMemo(
     () => ({
-      active: active && !packetUrl && !runtime.networkProxyWebViewBlockMessage,
+      active: active && !runtime.networkProxyWebViewBlockMessage,
       username: packetUsername,
-      revision: topicController.wholeTopicRevision,
+      revision: topicController.wholeTopicRevision + packetRefresh,
       scope: packetScope
     }),
     [
       active,
       packetScope,
-      packetUrl,
+      packetRefresh,
       packetUsername,
       runtime.networkProxyWebViewBlockMessage,
       topicController.wholeTopicRevision
@@ -451,7 +452,10 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
                 url={packetUrl}
                 username={packetUsername}
                 blockMessage={runtime.networkProxyWebViewBlockMessage}
-                onClose={() => setPacketPage(null)}
+                onClose={() => {
+                  setPacketPage(null);
+                  setPacketRefresh((value) => value + 1);
+                }}
               />
             ) : null}
             {sharingTopic?.kind === 'options' ? (

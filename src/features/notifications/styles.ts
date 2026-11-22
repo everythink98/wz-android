@@ -53,7 +53,19 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
       paddingHorizontal: 16,
       paddingVertical: 8
     },
-    sourceErrorRow: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    noticeGroup: { marginHorizontal: 16, marginTop: 12, marginBottom: 8 },
+    noticeTitle: { color: theme.ink, fontFamily, fontSize: scaled(16), fontWeight: '600', marginBottom: 4 },
+    noticeRow: {
+      minHeight: 52,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingVertical: 9,
+      borderBottomColor: theme.line,
+      borderBottomWidth: StyleSheet.hairlineWidth
+    },
+    noticeCopy: { flex: 1, minWidth: 0, gap: 3 },
+    noticeSite: { color: theme.ink, fontFamily, fontSize: scaled(14), lineHeight: scaled(20), fontWeight: '500' },
     sourceErrorText: { flex: 1 },
     noticeText: { color: theme.muted, fontFamily, fontSize: scaled(12), lineHeight: scaled(18) },
     errorText: { color: theme.danger, fontFamily, fontSize: scaled(12), lineHeight: scaled(18) },

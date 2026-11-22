@@ -107,15 +107,20 @@ describe('Feed navigation motion', () => {
     expect(activeColor).not.toEqual(inactiveColor);
     const activeOpacity = () => StyleSheet.flatten(view.getAllByText('V2EX')[1].parent!.props.style).opacity;
 
+    const categoryOffset = () =>
+      StyleSheet.flatten(view.getByTestId('feed-category-track').props.style).transform[0].translateX;
     const start = indicatorX();
     const startWidth = indicatorWidth();
     expect(activeOpacity()).toBe(0);
     await scroll(0.25);
     const quarter = indicatorX();
+    const categoryQuarter = categoryOffset();
+    expect(categoryQuarter).toBeLessThan(0);
     expect(indicatorWidth()).toBeGreaterThan(startWidth);
     expect(activeOpacity()).toBeCloseTo(0.25);
     await scroll(0.75);
     const threeQuarters = indicatorX();
+    expect(categoryOffset()).toBeCloseTo(3 * categoryQuarter);
     expect(quarter).toBeGreaterThan(start);
     expect(threeQuarters).toBeGreaterThan(quarter);
     expect(activeOpacity()).toBeCloseTo(0.75);
@@ -125,6 +130,7 @@ describe('Feed navigation motion', () => {
     await scroll(0);
     expect(indicatorX()).toBeCloseTo(start);
     expect(indicatorWidth()).toBeCloseTo(startWidth);
+    expect(categoryOffset()).toBeCloseTo(0);
     expect(activeOpacity()).toBe(0);
     await fireEvent(pager, 'pageScrollStateChanged', { nativeEvent: { pageScrollState: 'idle' } });
     await fireEvent(pager, 'pageSelected', { nativeEvent: { position: 0 } });
@@ -138,7 +144,7 @@ describe('Feed navigation motion', () => {
     expect(onFeedSourceChange).toHaveBeenCalledWith('v2ex');
   });
 
-  it('defers distant scenes and commits cross-page taps without animation or duplicate native confirmation', async () => {
+  it('prepares distant category rails and commits cross-page taps without animation or duplicate native confirmation', async () => {
     const onFeedSourceChange = jest.fn();
     const view = await render(
       <FeedNavigationHarness
@@ -148,11 +154,12 @@ describe('Feed navigation motion', () => {
     );
     const pager = view.getByTestId('native-feed-pager');
 
-    expect(view.getAllByTestId(/^feed-secondary-/, { includeHiddenElements: true })).toHaveLength(2);
+    expect(view.getAllByTestId(/^feed-secondary-/, { includeHiddenElements: true })).toHaveLength(5);
     expect(view.getAllByLabelText('加载中', { includeHiddenElements: true })).toHaveLength(5);
     expect(view.queryByText('加载中', { includeHiddenElements: true })).toBeNull();
-    expect(view.queryByTestId('feed-secondary-linuxdo', { includeHiddenElements: true })).toBeNull();
-    expect(view.queryByTestId('feed-secondary-nodeseek', { includeHiddenElements: true })).toBeNull();
+    const target = view.getByTestId('feed-secondary-nodeseek', { includeHiddenElements: true });
+    expect(within(target).getByText('新帖子', { includeHiddenElements: true })).toBeTruthy();
+    expect(view.queryByTestId('feed-secondary-nodeseek')).toBeNull();
     expect(onFeedSourceChange).not.toHaveBeenCalled();
 
     await fireEvent.press(view.getByTestId('feed-source-nodeseek'));

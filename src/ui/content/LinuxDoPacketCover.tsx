@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef } from 'react';
 import { StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { packetCoverDocument } from '@/platform/media/linuxDoPacketDocument';
@@ -17,11 +17,18 @@ export function LinuxDoPacketCover({
 }) {
   const viewer = useContext(LinuxDoPacketViewer);
   const source = useMemo(() => packetCoverDocument(cover, viewer.username), [cover, viewer.username]);
+  const webview = useRef<WebView>(null);
+  const revision = useRef(viewer.revision);
+  useEffect(() => {
+    if (revision.current !== viewer.revision) webview.current?.postMessage('refresh');
+    revision.current = viewer.revision;
+  }, [viewer.revision]);
   return (
     <View testID="topic-image-frame" pointerEvents="none" style={dimensions}>
       {viewer.active ? (
         <WebView
-          key={JSON.stringify([cover, viewer.username, viewer.scope, viewer.revision])}
+          ref={webview}
+          key={JSON.stringify([cover, viewer.username, viewer.scope])}
           testID="linuxdo-packet-cover"
           source={source}
           style={styles.cover}

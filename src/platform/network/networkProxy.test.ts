@@ -13,13 +13,11 @@ import * as SecureStore from 'expo-secure-store';
 import { beginDiagnosticTrace, setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import {
   NETWORK_PROXY_STORAGE_KEY,
-  activeNetworkRoute,
   applyNetworkProxy,
   createNetworkProxyProfile,
   loadNetworkProxyState,
   networkProxyModuleFromReactNativeImport,
   networkProxySummary,
-  networkMode,
   networkProxyWebViewBlockMessage,
   normalizeNetworkProxyState,
   removeNetworkProxyProfile,
@@ -27,27 +25,10 @@ import {
   recoverReadNetworkRuntime,
   retainReadNetworkRuntimeGeneration,
   saveNetworkProxyState,
-  testEncryptedDns,
-  testNetworkProxy,
   validateNetworkProxyProfile,
   type NetworkProxyProfile
 } from './networkProxy';
 import { getReadNetworkRuntimeSnapshot } from './readNetworkRuntime';
-
-it.each([
-  [200, true, '站点验证'],
-  [403, true, '站点验证'],
-  [503, false, 'HTTP 503']
-] as const)(
-  'distinguishes a forum response from an open page (%i, challenge %s)',
-  async (httpStatus, siteChallenge, message) => {
-    const bridge = { testEncryptedDns: async () => ({ ok: true, httpStatus, siteChallenge }) };
-    await expect(testEncryptedDns({ provider: 'auto', policy: 'strict' }, bridge)).resolves.toMatchObject({
-      ok: false,
-      message: expect.stringContaining(message)
-    });
-  }
-);
 
 const socksProfile: NetworkProxyProfile = {
   id: 'tg',
@@ -64,79 +45,6 @@ describe('network proxy settings', () => {
     vi.mocked(SecureStore.getItemAsync).mockReset();
     vi.mocked(SecureStore.setItemAsync).mockReset();
   });
-
-  it('restores automatic DoH with all public presets and keeps strict mode across the native boundary', async () => {
-    vi.mocked(SecureStore.getItemAsync).mockResolvedValueOnce(
-      JSON.stringify({
-        enabled: false,
-        activeId: null,
-        mode: 'doh',
-        profiles: [],
-        encryptedDns: { provider: 'auto', policy: 'strict' }
-      })
-    );
-    const restored = await loadNetworkProxyState();
-    const applyProxy = vi.fn(async () => ({ ok: true }));
-    await applyNetworkProxy(activeNetworkRoute(restored), { applyProxy });
-    expect(applyProxy).toHaveBeenCalledWith({
-      allowFallback: false,
-      providers: [
-        expect.objectContaining({ id: 'dnspod', endpoint: 'https://doh.pub/dns-query' }),
-        expect.objectContaining({ id: 'cloudflare', endpoint: 'https://cloudflare-dns.com/dns-query' }),
-        expect.objectContaining({ id: 'google', endpoint: 'https://dns.google/dns-query' }),
-        expect.objectContaining({ id: 'dnssb', endpoint: 'https://doh.dns.sb/dns-query' }),
-        expect.objectContaining({ id: '360', endpoint: 'https://doh.360.cn/dns-query' }),
-        expect.objectContaining({ id: '18bit', endpoint: 'https://doh.18bit.cn/dns-query' }),
-        expect.objectContaining({ id: 'onedns', endpoint: 'https://doh.onedns.net/dns-query' }),
-        expect.objectContaining({ id: 'cfluxdo', endpoint: 'https://edge.1molchuan.top/linuxdo' })
-      ]
-    });
-  });
-
-  it.each([
-    ['dnspod', 'https://doh.pub/dns-query', []],
-    [
-      'cloudflare',
-      'https://cloudflare-dns.com/dns-query',
-      ['1.1.1.1', '1.0.0.1', '2606:4700:4700::1111', '2606:4700:4700::1001']
-    ],
-    ['google', 'https://dns.google/dns-query', ['8.8.8.8', '8.8.4.4', '2001:4860:4860::8888', '2001:4860:4860::8844']],
-    ['dnssb', 'https://doh.dns.sb/dns-query', []],
-    ['360', 'https://doh.360.cn/dns-query', []],
-    ['18bit', 'https://doh.18bit.cn/dns-query', []],
-    ['onedns', 'https://doh.onedns.net/dns-query', []],
-    [
-      'cfluxdo',
-      'https://edge.1molchuan.top/linuxdo',
-      ['156.239.232.8', '156.239.232.72', '203.168.131.145', '103.199.103.204']
-    ]
-  ] as const)(
-    'restores the %s DoH route without losing the legacy proxy profile',
-    async (provider, endpoint, bootstrap) => {
-      vi.mocked(SecureStore.getItemAsync).mockResolvedValueOnce(
-        JSON.stringify({ enabled: true, activeId: socksProfile.id, profiles: [socksProfile] })
-      );
-      const legacy = await loadNetworkProxyState();
-      expect(networkMode(legacy)).toBe('proxy');
-      expect(activeNetworkRoute(legacy)).toEqual(socksProfile);
-      const settings = await saveNetworkProxyState({
-        ...legacy,
-        enabled: false,
-        mode: 'doh',
-        encryptedDns: { provider, policy: 'strict' }
-      });
-      vi.mocked(SecureStore.getItemAsync).mockResolvedValueOnce(JSON.stringify(settings));
-      const restored = await loadNetworkProxyState();
-      expect(networkMode(restored)).toBe('doh');
-      expect(activeNetworkRoute(restored)).toEqual({
-        endpoint,
-        bootstrap,
-        allowFallback: false
-      });
-      expect(restored.profiles).toEqual([socksProfile]);
-      expect(restored.activeId).toBe(socksProfile.id);
-    }
-  );
 
   it('validates HTTP and SOCKS5 proxy profiles with optional credentials', () => {
     expect(
@@ -213,7 +121,7 @@ describe('network proxy settings', () => {
   });
 
   it.each(['demo-password', ' ', '  demo-password  '])(
-    'preserves password %j through SecureStore and Native apply/probe',
+    'preserves password %j through SecureStore and Native apply',
     async (password) => {
       const profile = createNetworkProxyProfile({ ...socksProfile, password });
       const state = {
@@ -227,13 +135,10 @@ describe('network proxy settings', () => {
       const restored = (await loadNetworkProxyState()).profiles[0];
       expect(restored).toEqual(profile);
       const applyProxy = vi.fn().mockResolvedValue({ ok: true });
-      const testProxy = vi.fn().mockResolvedValue({ ok: true });
-      const module = { applyProxy, testProxy };
+      const module = { applyProxy };
 
       await applyNetworkProxy(restored, module);
-      await testNetworkProxy(restored, module);
       expect(applyProxy).toHaveBeenCalledWith(expect.objectContaining({ password }));
-      expect(testProxy).toHaveBeenCalledWith(expect.objectContaining({ password }));
     }
   );
 
@@ -303,15 +208,12 @@ describe('network proxy settings', () => {
 
   it('uses the native module returned by React Native dynamic imports', async () => {
     const applyProxy = vi.fn().mockResolvedValue({ ok: true, port: 8123 });
-    const testProxy = vi.fn().mockResolvedValue({ ok: true, latencyMs: 123 });
     const module = networkProxyModuleFromReactNativeImport({
-      default: { NativeModules: { NetworkProxyModule: { applyProxy, testProxy } } }
+      default: { NativeModules: { NetworkProxyModule: { applyProxy } } }
     });
 
     await expect(applyNetworkProxy(socksProfile, module)).resolves.toEqual({ ok: true, port: 8123 });
-    await expect(testNetworkProxy(socksProfile, module)).resolves.toEqual({ ok: true, latencyMs: 123 });
     expect(applyProxy).toHaveBeenCalledWith(socksProfile);
-    expect(testProxy).toHaveBeenCalledWith(socksProfile);
   });
 
   it('keeps read-channel recovery single-flight across sources for one generation', async () => {

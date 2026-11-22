@@ -92,6 +92,7 @@ function observationConfirmsTerminalIdentity(source: StatusSource, observation: 
   const session = observation.session;
   if (session.site !== source) return false;
   if (session.status === 'logged-in') return accountSessionIdentityKey(session) !== `${source}:anonymous`;
+  if (source === 'linuxdo' && observation.failed) return false;
   return session.status === 'anonymous' || session.status === 'verified' || session.status === 'expired';
 }
 

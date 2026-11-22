@@ -7,8 +7,9 @@ import type {
   NodeSeekStardustCreditPage
 } from '@/domain/forum/accountData';
 import { isRecord, toIsoString } from '@/domain/forum/html';
+import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
 import { proveForumReadResponse } from '@/sources/forumSourceReadAttempt';
-import { fetchNodeSeekJson, fetchNodeSeekTextResult, type NodeSeekOptions } from './reader';
+import { fetchNodeSeekJson, fetchNodeSeekTextResult, getNodeSeekProfileRecord, type NodeSeekOptions } from './reader';
 import { optionalNonNegativeInteger } from './protocol';
 import { nodeSeekCurrentUserFromConfig, parseNodeSeekUserDetails } from './userParser';
 
@@ -45,6 +46,35 @@ function accountOptions(options: AccountDataOptions): NodeSeekOptions {
 }
 
 export async function getNodeSeekAccountOverview(options: AccountDataOptions): Promise<NodeSeekAccountOverview> {
+  const detail = await getNodeSeekProfileRecord(options.userId, accountOptions(options)).catch((error) => {
+    if (options.signal?.aborted || normalizeDiagnosticReason(error) !== 'timeout') throw error;
+    return null;
+  });
+  if (
+    detail &&
+    String(detail.member_id ?? detail.id) === options.userId &&
+    typeof detail.coin === 'number' &&
+    typeof detail.stardust === 'number'
+  ) {
+    return accountOverviewFromUser(options.userId, detail);
+  }
+  return getNodeSeekPageAccountOverview(options);
+}
+
+function accountOverviewFromUser(userId: string, user: Record<string, unknown>): NodeSeekAccountOverview {
+  return {
+    source: 'nodeseek',
+    userId,
+    profile: parseNodeSeekUserDetails(userId, user),
+    coin: typeof user.coin === 'number' ? finiteNumber(user.coin) : undefined,
+    stardust: typeof user.stardust === 'number' ? finiteNumber(user.stardust) : undefined,
+    follows: optionalNonNegativeInteger(user.follows),
+    fans: optionalNonNegativeInteger(user.fans),
+    collectionCount: optionalNonNegativeInteger(user.collectionCount)
+  };
+}
+
+export async function getNodeSeekPageAccountOverview(options: AccountDataOptions): Promise<NodeSeekAccountOverview> {
   const { pageDocument, response } = await fetchNodeSeekTextResult('/', {
     ...accountOptions(options),
     browserFetchIntent: { owner: 'account-overview', priority: 'foreground' }
@@ -55,16 +85,7 @@ export async function getNodeSeekAccountOverview(options: AccountDataOptions): P
     if (!isRecord(user) || identity?.id !== options.userId) {
       throw new Error('NodeSeek 账号资料身份不匹配');
     }
-    return {
-      source: 'nodeseek',
-      userId: options.userId,
-      profile: parseNodeSeekUserDetails(options.userId, user),
-      coin: typeof user.coin === 'number' ? finiteNumber(user.coin) : undefined,
-      stardust: typeof user.stardust === 'number' ? finiteNumber(user.stardust) : undefined,
-      follows: optionalNonNegativeInteger(user.follows),
-      fans: optionalNonNegativeInteger(user.fans),
-      collectionCount: optionalNonNegativeInteger(user.collectionCount)
-    };
+    return accountOverviewFromUser(options.userId, user);
   });
 }
 

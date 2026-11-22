@@ -51,7 +51,7 @@ Account runtime 自己创建全局 host 节点，`AppComposition` 只把该节�
 
 Android 默认浏览器身份不进入模块求值或普通本地恢复门禁。`NetworkProxyModule.getDefaultWebViewUserAgent` 是 Promise 接口，复用主线程真实 provider 读取与进程缓存；JS `getDefaultAndroidWebViewUserAgent` 只在实际请求准备时合并并发读取、缓存成功非空值。保存 UA 直接使用；失败保留错误，取消只解除当前等待者，不取消共享 provider。原生读取最多等待 10 秒，超时或中断不缓存空身份，也不创建全局 WebView。
 
-正常可见 route 的导航与实际容器布局完成后，`useAppStartupRuntime` 只安排一次可取消的 idle 诊断导出维护；错误恢复布局不产生正常 `page-ready` 或维护。Feed 的 lazy placeholder 只保留背景和尺寸，`lazyPreloadDistance=1` 与真正访问后的场景保留继续由 TabView 拥有，不把首批内容当作 Splash 门禁。linux.do `ManagedCookieResponses.setBarrier(..., "startup")` 不读取 Cookie 作诊断，未观察字段缺席；pending 结算、dirty flush 与其他 reason 的观察不变。canonical owners 为 `tests/ui/app/app-composition.test.tsx`、`tests/ui/feed/feed-navigation-motion.test.tsx` 与 Native `ManagedCookieResponsesTest.kt`。
+正常可见 route 的导航与实际容器布局完成后，`useAppStartupRuntime` 只安排一次可取消的 idle 诊断导出维护；错误恢复布局不产生正常 `page-ready` 或维护。首页先为已启用来源排好二级分类栏，隐藏页只显示静态列表占位，主题列表按当前来源挂载。首批内容不阻塞启动画面的关闭。linux.do `ManagedCookieResponses.setBarrier(..., "startup")` 不读取 Cookie 作诊断，未观察字段缺席；pending 结算、dirty flush 与其他 reason 的观察不变。canonical owners 为 `tests/ui/app/app-composition.test.tsx`、`tests/ui/feed/feed-navigation-motion.test.tsx` 与 Native `ManagedCookieResponsesTest.kt`。
 
 2026-10-14 上述启动机制已通过完整门禁及匹配普通 APK 的范围内验收，对应机制事故为 `RESOLVED`；构建身份、Native 分轮测试与设备范围统一归 `REG-NAV-010`。`page-ready`、Splash 和 `feed-content` 仍是逻辑阶段，不能当作实际首帧或性能对照；整体间歇慢启动继续 `OPEN`，pending 刷新交叉与物理设备未验。
 
@@ -308,16 +308,12 @@ L 站业务请求的 `401` 由 Account 按同一账号和代次合并复核。�
 
 ## 服务器代理
 
-- 「我的 → 网络设置」提供跟随系统、加密 DNS 和应用代理。现有 SecureStore 记录继续保存 HTTP / SOCKS5 配置，并记录 DoH 服务商和保护级别。旧启用状态迁移到应用代理。选择和已确认生效的状态分别显示。
-- DoH 查询使用独立的 OkHttp HTTPS 客户端、连接池和调度器。同域名的并发查询共享结果，优先采用服务商的 HTTP 缓存规则。未声明有效期的未压缩 DNS 应答可按记录 TTL 复用，已缓存的时间计入有效期。首个引导地址无法连接时尝试备用地址。切换网络后隔离旧查询和缓存。业务 OkHttp 客户端直接使用当前解析器，WebView 和 Cronet 通过本机转发器使用同一解析策略。转发器核对解析出的公网地址，原 HTTPS 客户端校验站点证书。
-- 自动模式在当前网络第一次解析论坛域名时，并发验证各预设返回的地址能否通过 HTTPS 打开目标论坛。并发候选各有最多 4 秒解析时间，随后限时 2 秒请求首页，首个成功响应可提前结束测速。地址和 ECH 配置相同的候选共用一次匿名 GET 探测，按原域名校验证书。有效 2xx 优先，其次是验证页等 HTTP 响应。所有候选都未返回 HTTP 时，优先重试完成过 TLS、其次是建立过 TCP 的地址。证书验证失败的候选按不可达处理。后续在同一网络上复用选中的服务商，到期的 DNS 记录继续由该服务商更新。该服务商的解析或站点建连失败后重新选择，失败线路暂时退出该域名的候选。原生 GET 和 HEAD 仅在发送请求头前自动换线重试一次。本机转发器可在开始转发前重试 TCP，TLS 由 WebView 处理。切换 Android 网络或重新应用网络配置后清除选择和冷却状态。手动测试使用独立的解析器，自动选择期间已经收到的首页响应直接作为本次测量结果。
-- 其他公网域名沿用 `example.com` 解析测速，候选包含原有通用预设及 360、18bit、OneDNS。通用域名探测失败只影响通用选择。服务端限流和服务异常的退避时间对论坛与通用查询同时生效。CFluxDo 公共加速参与论坛探测并保留手动入口。解析服务连接失败、限流或服务端临时错误时，在同一解析预算内尝试其他服务商。故障解析服务冷却至少 30 秒，并遵守较长的 `Retry-After`。冷却期间只使用新鲜缓存。只有优先策略允许在加密服务暂不可用时回退系统 DNS。
-- CFluxDo 使用作者公开的 RFC 8484 DoH 地址及引导 IP。业务 OkHttp 直连从同一解析器获取地址与 HTTPS 记录。目标提供 ECH 配置时，Android 17 及以上使用系统 TLS，较早的受支持版本使用随包的 Conscrypt。后者将配置限定于当前网络、同一域名、端口和解析出的地址。两条路径均保留原站域名和证书校验。WebView 和 Cronet 保留各自的 TLS 握手。
-- 阅坛 DoH 使用 Android 分配给 App 的网络。系统代理命中目的地址时，「优先 DoH」沿系统代理解析，「仅 DoH」提示冲突。解析服务连接失败、超时或服务端临时失败才允许优先模式回退。明确只有 IPv4 的非 VPN 网络省略 AAAA，双栈、IPv6、VPN 或链路未知时继续查询 AAAA。服务商返回带有效 `Retry-After` 的 429 或 503 时，同一网络在期限内复用新鲜缓存，并按已选策略处理缓存未命中。手动 DoH 测试要求 App 当前网络可确认且未经过 Android VPN，跳过 HTTP 代理，按原生直连请求的规则尝试备用线路。测试分别区分解析、TCP、TLS、站点验证和首页响应，途中切网需重测。代理测试沿用 TLS、hostname 与 204 响应校验。
+- 「我的 → 网络设置」提供跟随系统和应用代理。系统模式使用 Android 给阅坛分配的网络及系统代理规则。应用代理使用当前已生效的 HTTP 或 SOCKS5 配置。模式切换期间保留上次确认的状态。
+- 「测试当前网络」复用论坛请求的网络通道，并发读取四个站点的 HTTPS 首页。每个请求独立计时、超时和报告结果。设置页失焦或切换模式会取消在途检测。验证页和登录继续使用系统 WebView。
 
 - 代理配置保存在 Android 安全存储，不进入备份 JSON。持久化加载先校验顶层结构、profile 字段与唯一 ID；enabled 必须对应有效 active profile。只有 key 不存在才使用首次默认值，读取、JSON 或结构损坏均阻断联网，不能归一为关闭后直连；用户明确关闭或删除配置的正常事务保持不变。
 - 原生 runtime 安装后立即 fail-closed；代理 SecureStore 读取最多等待 3 秒，超时或失败进入明确 failed 状态并释放等待者，但本地 routes 已可使用。只有安全存储读取成功并完成一次完整 native apply，managed App 请求与 WebView 才允许发布代理或直连；native apply 自身保持权威，不用额外 JS deadline 把仍在执行的 apply 误判为可直连。启用、切换和关闭期间，App 请求与 WebView 都保持阻止状态；即使 JS 已先把 `enabled` 更新为 false，WebView 也必须等原生 clear callback 成功后才能加载。runtime unmount 会让自己的等待者 fail-closed，代理应用失败时不能静默回退直连。
-- 原生 server 拥有全部 client/upstream socket，连接与 copy executor 均有固定上限；停止或 bridge 销毁时先拒绝新的 probe、取消受管 OkHttp、关闭旧 server/tunnel，再释放 worker。旧 bridge 不能停止或覆盖新 bridge 的 server/WebView 状态。
+- 原生 server 拥有全部 client/upstream socket，连接与 copy executor 均有固定上限；停止或 bridge 销毁时先阻止新连接、取消受管 OkHttp、关闭旧 server/tunnel，再释放 worker。旧 bridge 不能停止或覆盖新 bridge 的 server/WebView 状态。
 - 前台与 headless 恢复共用 `OwnedProxyServerRegistry` 的 WebView 确认凭据，嵌入既有 ownership。仅完整同步确认的相同 profile 可复用 relay 和在途请求；`Confirmed(null)` 与从未确认不同。真实变更仍 begin/block/cancel，迟到回调使确认失效，并复用既有 stateGeneration 阻止过期确认；不增设 JS 配置缓存或启动放行状态。
 - 普通 HTTP relay 的请求体由 `Content-Length` 定界，读满后停止该方向的 copy，不提前 `shutdownOutput()`；上游按 `Connection: close` 发完响应后，响应 copy 与连接 owner 才完成收口。CONNECT 没有 HTTP body 长度边界，仍传播半关闭并等待另一方向 drain。更新 fixture server 使用 Node 标准 HTTP 行为，不通过内部 `httpAllowHalfOpen` 配合客户端提前关流。
 - WebView localhost relay 只监听 `127.0.0.1`，backlog 与并发上限均为 16，header 上限为 64 KiB，共享双向 idle deadline 为 120 秒：任一方向读到字节都会续期，只有整个 tunnel 双向静默才超时。connection worker 用该 deadline 的剩余时间等待双向 copy 结算；真正过期时关闭双方 socket，因此阻塞写不能永久占用 worker。`Socket.soTimeout` 只负责唤醒读侧，不拥有 tunnel 生命周期。它只接受标准 HTTP 80 与 HTTPS CONNECT 443，拒绝 userinfo、控制字符、空 host、非标准 numeric IPv4、IPv4-compatible/mapped IPv6 及 loopback/private/link-local/multicast/unspecified IP literal；合法公网 IPv6 转发给 HTTP upstream 时使用带方括号的 authority-form。非 CONNECT HTTP 只按唯一合法 `Content-Length` 转发首个 request body，拒绝 `Transfer-Encoding`、重复或歧义 `Content-Length`，剥离 keep-alive 后关闭连接，不能把同一 client socket 的后续请求直接透传给 upstream；停止、切换和超时关闭 client/upstream socket 与 copy task。apply identity 只含协议、host、port、username、password，显示名称或配置 ID 变化不重启 relay。普通 `ServerSocket` 无法可靠取得 caller UID，因此这些限制只是 hardening，不构成「只有本 App 可用」的认证；hostname DNS rebinding 与同设备恶意 App 尝试连接仍是残余风险。若产品未来要求同-App 认证，必须单独采用可做 UID 归因的 `VpnService` 架构。

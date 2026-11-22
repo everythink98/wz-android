@@ -1059,7 +1059,7 @@ export async function resolveNodeSeekUser(username: string, options: NodeSeekOpt
   return parseNodeSeekUserReference(requestedUsername, data);
 }
 
-export async function getNodeSeekUserDetails(id: string, options: NodeSeekOptions = {}): Promise<UserDetails> {
+export async function getNodeSeekProfileRecord(id: string, options: NodeSeekOptions = {}) {
   const requestedId = id.trim();
   if (!/^\d+$/.test(requestedId)) throw new Error('NodeSeek 用户主页需要数字用户 ID');
   const requestOptions = withDefaultBrowserFetchIntent(options, 'user', 'foreground');
@@ -1067,7 +1067,11 @@ export async function getNodeSeekUserDetails(id: string, options: NodeSeekOption
     `/api/account/getInfo/${encodeURIComponent(requestedId)}?readme=1`,
     requestOptions
   );
-  return parseNodeSeekUserDetails(requestedId, parseNodeSeekUserIdentity(requestedId, data));
+  return parseNodeSeekUserIdentity(requestedId, data);
+}
+
+export async function getNodeSeekUserDetails(id: string, options: NodeSeekOptions = {}): Promise<UserDetails> {
+  return parseNodeSeekUserDetails(id.trim(), await getNodeSeekProfileRecord(id, options));
 }
 
 export async function getNodeSeekUserTopics(profile: UserDetails, options: NodeSeekOptions = {}) {
@@ -1153,6 +1157,10 @@ export async function searchNodeSeek(
       reason: 'login-required',
       source: 'nodeseek' as const
     });
+  }
+
+  if ([...trimmedQuery].length === 1) {
+    throw Object.assign(new Error('搜索词太短，请至少输入两个字符。'), { reason: 'query-too-short' });
   }
 
   const sourceResult = await fetchNodeSeekTextResult(

@@ -1,3 +1,4 @@
+import { checkForumConnectivity } from '@/features/more/forumConnectivity';
 import { useEffect } from 'react';
 import { createRoot } from 'test-renderer';
 import { QueryClientProvider, useQuery } from '@tanstack/react-query';
@@ -15,7 +16,7 @@ import { getLinuxDoCurrentUserIdentity } from '@/sources/linuxdo/account';
 import { createLinuxDoReadingSender } from '@/sources/linuxdo/reading';
 import { withLinuxDoPresence } from '@/sources/linuxdo/presence';
 import { recordUserInteraction } from '@/platform/network/userPresence';
-import { AppState, NativeModules } from 'react-native';
+import { AppState } from 'react-native';
 import { linuxDoNotificationAdapter } from '@/sources/discourseNotifications';
 import { createNotificationGateway } from '@/sources/notificationGateway';
 import {
@@ -300,17 +301,68 @@ describe('network proxy controller', () => {
     expect(mockApplyNetworkProxy.mock.calls).toEqual([[profileA]]);
   });
 
+  it.each([
+    {
+      page: 'readable list',
+      html:
+        '<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>' +
+        '<ul class="post-list"><li class="post-list-item"><a href="/post-42-1">A forum topic</a></li></ul>',
+      status: 200,
+      message: '可访问 · HTTP 200'
+    },
+    {
+      page: 'site verification',
+      html: '<html><title>NodeSeek | Security Check</title></html>',
+      status: 403,
+      message: '需网站验证 · HTTP 403'
+    }
+  ])('reports a NodeSeek $page from the current network', async ({ html, status, message }) => {
+    const response = new Response(html, { status, headers: { 'Content-Type': 'text/html' } });
+    await expect(
+      checkForumConnectivity('nodeseek', async () => response, new AbortController().signal)
+    ).resolves.toMatchObject({ message });
+  });
+
+  it.each(['system', 'http', 'socks5'] as const)('tests the website through the confirmed %s route', async (mode) => {
+    const proxy = { ...profileA, protocol: mode === 'http' ? ('http' as const) : ('socks5' as const) };
+    mockLoadNetworkProxyState.mockResolvedValueOnce({
+      enabled: mode !== 'system',
+      profiles: [proxy],
+      activeId: proxy.id
+    });
+    const applying = deferred<{ ok: boolean }>();
+    mockApplyNetworkProxy.mockImplementationOnce(() => applying.promise);
+    const baseFetcher = jest.fn<import('@/platform/network/request').Fetcher>(async () => new Response('ok'));
+    const hook = await renderHook(() => useNetworkProxyRuntime({ baseFetcher, notify: jest.fn() }));
+    try {
+      const test = checkForumConnectivity(
+        'nodeseek',
+        hook.result.current.networkProxyFetcher,
+        new AbortController().signal
+      );
+      await waitFor(() => expect(mockApplyNetworkProxy).toHaveBeenCalledWith(mode === 'system' ? null : proxy));
+      expect(baseFetcher).not.toHaveBeenCalled();
+      await act(async () => {
+        applying.resolve({ ok: true });
+        await expect(test).resolves.toMatchObject({ failed: false, message: '可访问 · HTTP 200' });
+      });
+      expect(baseFetcher).toHaveBeenCalledTimes(1);
+      expect(baseFetcher.mock.calls[0][0]).toBe('https://www.nodeseek.com/');
+    } finally {
+      applying.resolve({ ok: true });
+      await hook.unmount();
+    }
+  });
+
   it('restores the profiles read from recovered storage when applying the new mode fails', async () => {
     const saved = { enabled: true, activeId: profileA.id, profiles: [profileA] };
     mockLoadNetworkProxyState.mockRejectedValueOnce(new Error('temporarily unavailable')).mockResolvedValue(saved);
     const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn() }));
     await waitFor(() => expect(hook.result.current.applyStatus).toBe('failed'));
-    mockApplyNetworkProxy.mockRejectedValueOnce(new Error('cannot apply DNS'));
+    mockApplyNetworkProxy.mockRejectedValueOnce(new Error('cannot restore system network'));
 
     await act(async () => {
-      await expect(hook.result.current.setNetworkMode('doh', { provider: 'dnspod', policy: 'strict' })).rejects.toThrow(
-        'cannot apply DNS'
-      );
+      await expect(hook.result.current.setNetworkMode('system')).rejects.toThrow('cannot restore system network');
     });
 
     expect(mockSaveNetworkProxyState).toHaveBeenLastCalledWith(saved);
@@ -1126,50 +1178,6 @@ describe('network proxy lifetime ownership', () => {
       }
     }
   });
-
-  it.each([false, true])(
-    'publishes a completed native probe only to its current observer (retired: %s)',
-    async (retired) => {
-      const probing = deferred<{ ok: boolean; latencyMs: number }>();
-      const previousModule = NativeModules.NetworkProxyModule;
-      const firstNotify = jest.fn();
-      const currentNotify = jest.fn();
-      const hook = await renderHook(
-        ({ notify }: { notify: (message: string) => void }) => useNetworkProxyRuntime({ notify }),
-        {
-          initialProps: { notify: firstNotify }
-        }
-      );
-      let task: Promise<unknown> | undefined;
-      try {
-        NativeModules.NetworkProxyModule = { ...previousModule, testProxy: () => probing.promise };
-        await waitFor(() => expect(hook.result.current.applyStatus).toBe('disabled'));
-        await act(async () => {
-          task = hook.result.current.testProxyProfile(profileA);
-        });
-        await hook.rerender({ notify: currentNotify });
-        if (retired) await hook.unmount();
-        await act(async () => {
-          probing.resolve({ ok: true, latencyMs: 42 });
-          await Promise.allSettled([task]);
-        });
-        expect(firstNotify).not.toHaveBeenCalled();
-        expect(currentNotify).toHaveBeenCalledTimes(retired ? 0 : 1);
-        if (retired) await expect(task).rejects.toThrow('代理运行时已结束');
-        else await expect(task).resolves.toMatchObject({ ok: true, latencyMs: 42 });
-      } finally {
-        try {
-          await act(async () => {
-            probing.resolve({ ok: true, latencyMs: 42 });
-            await Promise.allSettled([task]);
-          });
-          await hook.unmount();
-        } finally {
-          NativeModules.NetworkProxyModule = previousModule;
-        }
-      }
-    }
-  );
 
   it('retires an owned waiter while the physical native startup apply is still pending', async () => {
     const applying = deferred<unknown>();

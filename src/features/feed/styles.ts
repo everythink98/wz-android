@@ -75,19 +75,23 @@ export function createFeedStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       textAlign: 'center'
     },
     feedSourceIndicator: { backgroundColor: theme.primary, height: 2 },
-    feedSecondaryHeader: {
-      backgroundColor: theme.surface,
+    feedCategoryViewport: {
       position: 'absolute',
       left: 0,
       right: 0,
+      zIndex: 3,
+      overflow: 'hidden',
+      backgroundColor: theme.surface
+    },
+    feedCategoryTrack: { flexDirection: 'row', alignSelf: 'flex-start' },
+    feedSecondaryHeader: {
+      backgroundColor: theme.surface,
       overflow: 'hidden',
       paddingHorizontal: 16,
       paddingTop: 0,
       paddingBottom: 0,
       borderBottomColor: theme.dark ? '#2B2D30' : '#ECEEF0',
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      zIndex: 3,
-      elevation: 0
+      borderBottomWidth: StyleSheet.hairlineWidth
     },
     feedSecondaryRow: {
       minHeight: 36,

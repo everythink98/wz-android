@@ -90,7 +90,6 @@ function ProxyScenario() {
         onClose={() => setVisible(false)}
         onDeleteProfile={noopAsync}
         onSelectProfile={noopAsync}
-        onTestProfile={async () => ({ ok: false, message: '视觉场景不执行网络测试' })}
         onUpsertProfile={noopAsync}
       />
     </SafeAreaInsetsContext.Provider>

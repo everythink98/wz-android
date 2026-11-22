@@ -1,29 +1,30 @@
-import { useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useIsFocused } from '@react-navigation/native';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { Check, ChevronRight } from 'lucide-react-native';
-import { AppButton } from '@/ui/controls/ButtonControls';
-import { AppTextInput } from '@/ui/controls/InputControls';
+import { useFocusEffect, useIsFocused } from '@react-navigation/native';
+import { AppState, Pressable, ScrollView, SectionList, StyleSheet, Text, View } from 'react-native';
+import { Check, ChevronRight, Copy, RefreshCw } from 'lucide-react-native';
+import * as Clipboard from 'expo-clipboard';
+import { IconButton } from '@/ui/controls/ButtonControls';
+import { PillRail } from '@/ui/controls/SelectionControls';
+import { readNetworkLog, type NetworkLogEntry } from '@/platform/diagnostics/networkLog';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { createReaderFontSizer, readerRadii, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
 import { errorMessage } from '@/platform/network/errors';
+import { sourceCatalog, sourceValues, type Source } from '@/domain/forum/sourceCatalog';
+import { checkForumConnectivity } from './forumConnectivity';
 import {
-  encryptedDnsProviderLabel,
-  encryptedDnsProviders,
-  normalizeEncryptedDnsSettings,
-  type EncryptedDnsProvider,
-  type EncryptedDnsSettings
-} from '@/platform/network/encryptedDns';
-import { activeNetworkProxyProfile, networkMode, type NetworkMode } from '@/platform/network/networkProxy';
+  activeNetworkProxyProfile,
+  networkMode,
+  readSystemNetworkLabel,
+  type NetworkMode
+} from '@/platform/network/networkProxy';
 import { NetworkProxyScreen } from './components/NetworkProxyScreen';
 import { useMoreRouteRuntime, type MoreRouteRuntimeValue } from './MoreRouteRuntime';
 import { createMoreScreenStyles } from './styles';
 
 const modeRows: { id: NetworkMode; title: string; description: string }[] = [
   { id: 'system', title: '跟随系统', description: '使用 Android 的网络与 DNS 设置' },
-  { id: 'doh', title: '加密 DNS', description: '通过 HTTPS 解析阅坛内访问的域名' },
   { id: 'proxy', title: '应用代理', description: '通过已保存的 HTTP 或 SOCKS5 代理连接' }
 ];
 
@@ -38,7 +39,6 @@ function createSettingsStyles(theme: ReaderTheme, settings: ReaderStyleSettings)
     group: { borderRadius: readerRadii.surface, backgroundColor: theme.surface, overflow: 'hidden' },
     heading: { marginBottom: 8, marginHorizontal: 4, color: theme.muted, fontSize: font(13), fontWeight: '600' },
     status: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, gap: 12 },
-    statusTitle: { flex: 1, lineHeight: font(21) },
     row: {
       minHeight: 52,
       paddingHorizontal: 16,
@@ -52,15 +52,31 @@ function createSettingsStyles(theme: ReaderTheme, settings: ReaderStyleSettings)
     title: { color: theme.ink, fontSize: font(15), fontWeight: '600' },
     description: { color: theme.muted, fontSize: font(13), lineHeight: font(19) },
     error: { color: theme.danger, fontSize: font(13), lineHeight: font(19) },
-    field: { gap: 8 },
-    input: {
-      color: theme.ink,
+    logToolbar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 12,
       backgroundColor: theme.surface,
-      padding: 12,
-      borderRadius: readerRadii.control,
-      fontSize: font(15)
+      borderBottomColor: theme.line,
+      borderBottomWidth: StyleSheet.hairlineWidth
     },
-    actions: { gap: 10 }
+    logFilters: { flex: 1, minWidth: 0 },
+    logList: { paddingHorizontal: 16, paddingBottom: 24 },
+    logDay: { paddingTop: 18, paddingBottom: 6, color: theme.muted, fontWeight: '600', fontSize: font(13) },
+    logRow: {
+      gap: 4,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      backgroundColor: theme.surface,
+      borderBottomColor: theme.line,
+      borderBottomWidth: StyleSheet.hairlineWidth
+    },
+    logLine: { flexDirection: 'row', alignItems: 'baseline', gap: 10 },
+    logSite: { flex: 1, color: theme.ink, fontSize: font(14), fontWeight: '600' },
+    logTime: { color: theme.muted, fontSize: font(12), fontVariant: ['tabular-nums'] },
+    logFeedback: { marginHorizontal: 16, marginTop: 10 },
+
+    logResult: { flexShrink: 1, textAlign: 'right' }
   });
 }
 
@@ -116,195 +132,247 @@ function ChoiceRow({
   );
 }
 
-function DnsProviderForm({ runtime, goBack }: { runtime: Runtime; goBack: () => boolean }) {
-  const { styles, theme } = useReaderThemeStyles(createSettingsStyles);
-  const saved = runtime.proxyState.encryptedDns;
-  const [provider, setProvider] = useState<EncryptedDnsProvider | undefined>(saved?.provider);
-  const [policy, setPolicy] = useState<EncryptedDnsSettings['policy']>(saved?.policy ?? 'prefer');
-  const [endpoint, setEndpoint] = useState(saved?.customEndpoint ?? '');
-  const [bootstrap, setBootstrap] = useState(saved?.customBootstrap?.join(', ') ?? '');
-  const [saving, setSaving] = useState(false);
-  const [failure, setFailure] = useState('');
-  const unchanged =
-    runtime.effectiveMode === 'doh' &&
-    runtime.applyStatus === 'applied' &&
-    provider === saved?.provider &&
-    policy === saved?.policy &&
-    (provider !== 'custom' ||
-      (endpoint === (saved?.customEndpoint ?? '') && bootstrap === (saved?.customBootstrap?.join(', ') ?? '')));
-  const save = async () => {
-    if (saving) return;
-    if (unchanged) {
-      goBack();
-      return;
-    }
-    try {
-      const settings = normalizeEncryptedDnsSettings({
-        provider,
-        policy,
-        customEndpoint: provider === 'custom' ? endpoint : saved?.customEndpoint,
-        customBootstrap: provider === 'custom' ? bootstrap.split(/[,，\s]+/).filter(Boolean) : saved?.customBootstrap
-      });
-      setSaving(true);
-      await runtime.setNetworkMode('doh', settings);
-      if (!goBack()) setSaving(false);
-    } catch (error) {
-      setFailure(errorMessage(error));
-      setSaving(false);
-    }
-  };
+const logFilters = [
+  { value: 'all', label: '全部' },
+  { value: 'failed', label: '仅看失败' }
+];
 
+function NetworkLogScreen({ focused }: { focused: boolean }) {
+  const { styles } = useReaderThemeStyles(createSettingsStyles);
+  const [entries, setEntries] = useState<NetworkLogEntry[]>([]);
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [failuresOnly, setFailuresOnly] = useState(false);
+  const [refresh, setRefresh] = useState(0);
+  const [copyStatus, setCopyStatus] = useState('');
+  useEffect(() => {
+    if (!focused) return;
+    let current = true;
+    setStatus('loading');
+    void readNetworkLog().then(
+      (rows) => {
+        if (current) {
+          setEntries(rows);
+          setStatus('ready');
+        }
+      },
+      () => {
+        if (current) setStatus('error');
+      }
+    );
+    return () => {
+      current = false;
+    };
+  }, [focused, refresh]);
+  const visible = (failuresOnly ? entries.filter((entry) => entry.failed) : entries).slice(0, 80);
+  const sections: { title: string; data: NetworkLogEntry[] }[] = [];
+  for (const entry of visible) {
+    const date = new Date(entry.time);
+    const title = `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`;
+    const last = sections[sections.length - 1];
+    if (last?.title === title) last.data.push(entry);
+    else sections.push({ title, data: [entry] });
+  }
+  const copyLog = async () => {
+    const lines = visible.map((entry) =>
+      [new Date(entry.time).toISOString(), entry.site, entry.stage, entry.result].join(' · ')
+    );
+    const ok = await Clipboard.setStringAsync(lines.join('\n')).catch(() => false);
+    setCopyStatus(ok ? '已复制当前显示的网络日志。' : '复制失败，请重试。');
+  };
   return (
-    <ScrollView style={styles.page} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-      <Section title="服务商">
-        {encryptedDnsProviders.map((item, index) => (
-          <ChoiceRow
-            key={item.id}
-            divider={index > 0}
-            title={item.label}
-            description={
-              item.id === 'auto'
-                ? '按各论坛的 HTTPS 直连结果选择，连不上时切换'
-                : item.id === 'cfluxdo'
-                  ? '使用作者公开的加密 DNS 服务'
-                  : undefined
-            }
-            selected={provider === item.id}
-            disabled={saving}
-            onPress={() => {
-              setFailure('');
-              setProvider(item.id);
+    <View style={styles.page}>
+      <View style={styles.logToolbar}>
+        <View style={styles.logFilters}>
+          <PillRail
+            items={logFilters}
+            variant="subtabs"
+            value={failuresOnly ? 'failed' : 'all'}
+            onChange={(value) => {
+              setFailuresOnly(value === 'failed');
+              setCopyStatus('');
             }}
           />
-        ))}
-      </Section>
-      {provider === 'custom' && (
-        <View style={styles.field}>
-          <Text style={styles.title}>HTTPS 地址</Text>
-          <AppTextInput
-            accessibilityLabel="HTTPS 地址"
-            value={endpoint}
-            editable={!saving}
-            onChangeText={setEndpoint}
-            placeholder="https://example.org/dns-query"
-            placeholderTextColor={theme.muted}
-            style={styles.input}
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="url"
-          />
-          <Text style={styles.title}>引导 IP（可选）</Text>
-          <AppTextInput
-            accessibilityLabel="引导 IP"
-            value={bootstrap}
-            editable={!saving}
-            onChangeText={setBootstrap}
-            placeholder="多个地址用逗号分隔"
-            placeholderTextColor={theme.muted}
-            style={styles.input}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
         </View>
-      )}
-      <Section title="保护级别">
-        <ChoiceRow
-          title="优先 DoH"
-          description="解析服务不可用时允许回退"
-          selected={policy === 'prefer'}
-          disabled={saving}
-          onPress={() => setPolicy('prefer')}
+        <IconButton
+          iconOnly
+          icon={RefreshCw}
+          label="刷新日志"
+          loading={status === 'loading'}
+          onPress={() => {
+            setCopyStatus('');
+            setRefresh((value) => value + 1);
+          }}
         />
-        <ChoiceRow
-          title="仅 DoH"
-          description="解析失败或与系统代理冲突时，显示错误"
-          divider
-          selected={policy === 'strict'}
-          disabled={saving}
-          onPress={() => setPolicy('strict')}
+        <IconButton
+          iconOnly
+          icon={Copy}
+          label="复制日志"
+          disabled={!visible.length || status === 'loading'}
+          onPress={() => void copyLog()}
         />
-      </Section>
-      {failure ? (
-        <Text accessibilityRole="alert" style={styles.error}>
-          {failure}
+      </View>
+      {copyStatus ? (
+        <Text accessibilityLiveRegion="polite" style={[styles.description, styles.logFeedback]}>
+          {copyStatus}
         </Text>
       ) : null}
-      <AppButton
-        label={unchanged && !saving ? '完成' : '保存并应用'}
-        variant="solid"
-        disabled={!provider || saving}
-        loading={saving}
-        onPress={() => void save()}
+      {status === 'error' ? (
+        <Text accessibilityRole="alert" style={[styles.error, styles.logFeedback]}>
+          暂时无法读取网络日志，请刷新重试。
+        </Text>
+      ) : null}
+      <SectionList
+        sections={sections}
+        contentContainerStyle={styles.logList}
+        stickySectionHeadersEnabled={false}
+        keyExtractor={(entry, index) => `${entry.time}-${entry.site}-${entry.stage}-${index}`}
+        renderSectionHeader={({ section }) => (
+          <Text accessibilityRole="header" style={styles.logDay}>
+            {section.title}
+          </Text>
+        )}
+        renderItem={({ item }) => (
+          <View style={styles.logRow}>
+            <View style={styles.logLine}>
+              <Text style={styles.logSite}>
+                {item.site} · {item.stage}
+              </Text>
+              <Text style={styles.logTime}>{new Date(item.time).toTimeString().slice(0, 8)}</Text>
+            </View>
+            <Text style={item.failed ? styles.error : styles.description}>{item.result}</Text>
+          </View>
+        )}
+        ListEmptyComponent={
+          status === 'ready' ? (
+            <Text style={[styles.description, styles.logDay]}>
+              {failuresOnly ? '最近没有失败记录。' : '还没有网络记录。访问论坛后可在这里查看。'}
+            </Text>
+          ) : null
+        }
+        ListFooterComponent={visible.length === 80 ? <Text style={styles.logDay}>显示最近 80 条记录</Text> : null}
       />
-    </ScrollView>
+    </View>
+  );
+}
+
+function ConnectivityTest({ fetcher, routeLabel }: { fetcher: Runtime['networkProxyFetcher']; routeLabel: string }) {
+  const { styles } = useReaderThemeStyles(createSettingsStyles);
+  const request = useRef<AbortController | null>(null);
+  const [results, setResults] = useState<Partial<Record<Source, Awaited<ReturnType<typeof checkForumConnectivity>>>>>();
+  useEffect(() => () => request.current?.abort(), []);
+  const test = async () => {
+    if (request.current) return;
+    const controller = new AbortController();
+    request.current = controller;
+    setResults({});
+    await Promise.all(
+      sourceValues.map(async (source) => {
+        const result = await checkForumConnectivity(source, fetcher, controller.signal);
+        if (!controller.signal.aborted) setResults((previous) => ({ ...previous, [source]: result }));
+      })
+    );
+    request.current = null;
+  };
+  const testing = !!results && sourceValues.some((source) => !results[source]);
+  return (
+    <Section title="连通性测试">
+      <ChoiceRow
+        title={testing ? '正在测试当前网络' : '测试当前网络'}
+        description={routeLabel}
+        disabled={testing}
+        onPress={() => void test()}
+      />
+      {results &&
+        sourceValues.map((source) => {
+          const result = results[source];
+          return (
+            <View key={source}>
+              <View style={styles.divider} />
+              <View style={styles.row}>
+                <Text style={[styles.title, styles.rowCopy]}>{sourceCatalog[source].label}</Text>
+                <Text
+                  accessibilityLiveRegion="polite"
+                  style={[result?.failed ? styles.error : styles.description, styles.logResult]}
+                >
+                  {result ? `${result.message} · ${result.latencyMs} ms` : '测试中'}
+                </Text>
+              </View>
+            </View>
+          );
+        })}
+    </Section>
   );
 }
 
 function NetworkSettingsOverview({
   runtime,
-  openDns,
-  openProfiles
+  focused,
+  openProfiles,
+  openLog,
+  openVerification
 }: {
   runtime: Runtime;
-  openDns: () => void;
+  focused: boolean;
   openProfiles: () => void;
+  openLog: () => void;
+  openVerification?: () => void;
 }) {
   const { styles } = useReaderThemeStyles(createSettingsStyles);
-  const [action, setAction] = useState<'apply' | 'test'>();
-  const [feedback, setFeedback] = useState<
-    | { kind: 'apply-error'; text: string }
-    | { kind: 'result' | 'test-error'; settings: EncryptedDnsSettings; text: string }
-  >();
-  const applying = runtime.applyStatus === 'applying' || action === 'apply';
+  const [systemNetwork, setSystemNetwork] = useState<string>();
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      const update = () => {
+        void readSystemNetworkLabel().then((label) => {
+          if (active) setSystemNetwork(label);
+        });
+      };
+      update();
+      const sub = AppState.addEventListener('focus', update);
+      return () => {
+        active = false;
+        sub.remove();
+      };
+    }, [])
+  );
+  const [changingMode, setChangingMode] = useState(false);
+  const [feedback, setFeedback] = useState('');
+  const applying = runtime.applyStatus === 'applying' || changingMode;
   const loading = runtime.applyStatus === 'loading';
   const shownState = loading ? undefined : applying ? runtime.confirmedState : runtime.proxyState;
   const selected = shownState ? networkMode(shownState) : undefined;
-  const dns = shownState?.encryptedDns;
   const profile = shownState && activeNetworkProxyProfile(shownState);
-  const busy = applying || loading || action === 'test';
+  const busy = applying || loading;
   const choose = async (mode: NetworkMode) => {
     if (busy) return;
     if (selected === mode && runtime.applyStatus !== 'failed') return;
-    if (mode === 'doh' && !dns) return openDns();
     if (mode === 'proxy' && !runtime.activeProfile) return openProfiles();
-    setAction('apply');
+    setChangingMode(true);
     try {
       await runtime.setNetworkMode(mode);
-      setFeedback(undefined);
+      setFeedback('');
     } catch (error) {
-      setFeedback({ kind: 'apply-error', text: errorMessage(error) });
+      setFeedback(errorMessage(error));
     } finally {
-      setAction(undefined);
-    }
-  };
-  const test = async () => {
-    if (busy || !dns) return;
-    setAction('test');
-    try {
-      const status = await runtime.testEncryptedDns(dns);
-      const provider = encryptedDnsProviderLabel(status.dnsProvider);
-      setFeedback({
-        kind: 'result',
-        settings: dns,
-        text: status.message ?? `LINUX DO 首页直连通过 · ${status.latencyMs ?? 0} ms${provider ? ` · ${provider}` : ''}`
-      });
-    } catch (error) {
-      setFeedback({ kind: 'test-error', settings: dns, text: errorMessage(error) });
-    } finally {
-      setAction(undefined);
+      setChangingMode(false);
     }
   };
   const effective = modeTitle(runtime.effectiveMode);
   const statusTitle =
     !applying && runtime.applyStatus === 'failed' ? '连接状态待确认' : (effective ?? '正在读取网络设置');
-  const applyError = applying ? '' : runtime.applyError || (feedback?.kind === 'apply-error' ? feedback.text : '');
-  const testResult = feedback && feedback.kind !== 'apply-error' && feedback.settings === dns ? feedback : undefined;
+  const applyError = applying ? '' : runtime.applyError || feedback;
+  const ready = !applying && (runtime.applyStatus === 'applied' || runtime.applyStatus === 'disabled');
+  const routeLabel =
+    runtime.effectiveMode === 'proxy' && profile ? `${profile.protocol.toUpperCase()} · ${profile.name}` : '跟随系统';
 
   return (
     <ScrollView style={styles.page} contentContainerStyle={styles.content} testID="network-settings">
       <Section title="当前网络">
         <View accessibilityLiveRegion="polite" style={styles.status}>
-          <Text style={[styles.title, styles.statusTitle]}>{statusTitle}</Text>
+          <View style={styles.rowCopy}>
+            <Text style={styles.title}>{statusTitle}</Text>
+            {systemNetwork ? <Text style={styles.description}>系统网络 · {systemNetwork}</Text> : null}
+          </View>
           {applying ? <Text style={styles.description}>正在应用</Text> : null}
         </View>
       </Section>
@@ -321,45 +389,32 @@ function NetworkSettingsOverview({
           />
         ))}
       </Section>
-      {selected === 'doh' && dns ? (
-        <Section title="加密 DNS">
-          <ChoiceRow
-            title="服务商和保护级别"
-            disabled={busy}
-            onPress={openDns}
-            description={`${encryptedDnsProviders.find((item) => item.id === dns.provider)?.label} · ${dns.policy === 'strict' ? '仅 DoH' : '优先 DoH'}`}
-          />
-        </Section>
-      ) : selected === 'proxy' ? (
+      {selected === 'proxy' ? (
         <Section title="应用代理">
           <ChoiceRow title="管理代理" description={profile?.name} disabled={busy} onPress={openProfiles} />
         </Section>
       ) : null}
-      {selected === 'doh' && dns ? (
-        <View style={styles.actions}>
-          <AppButton
-            label="测试连接"
-            variant="primary"
-            disabled={busy}
-            loading={action === 'test'}
-            onPress={() => void test()}
-          />
-          {testResult ? (
-            <Text
-              accessibilityLiveRegion="polite"
-              style={testResult.kind === 'test-error' ? styles.error : styles.description}
-            >
-              {testResult.text}
-            </Text>
-          ) : null}
-          {runtime.dnsResult ? <Text style={styles.description}>{runtime.dnsResult}</Text> : null}
-        </View>
-      ) : null}
+      {focused && ready && (
+        <ConnectivityTest
+          key={profile && selected === 'proxy' ? profile.id : 'system'}
+          fetcher={runtime.networkProxyFetcher}
+          routeLabel={routeLabel}
+        />
+      )}
       {applyError ? (
         <Text accessibilityRole="alert" style={styles.error}>
           {applyError}
         </Text>
       ) : null}
+      <Section title="诊断">
+        {openVerification && ready && <ChoiceRow title="打开网站验证页" onPress={openVerification} />}
+        <ChoiceRow
+          divider={!!openVerification && ready}
+          title="网络日志"
+          description="查看 DNS、TLS、HTTP 和账号资料的读取结果"
+          onPress={openLog}
+        />
+      </Section>
     </ScrollView>
   );
 }
@@ -368,7 +423,7 @@ export function NetworkSettingsRoute({
   navigation,
   route
 }: NativeStackScreenProps<RootStackParamList, 'NetworkSettings'>) {
-  const { proxy } = useMoreRouteRuntime();
+  const { account, proxy } = useMoreRouteRuntime();
   const focused = useIsFocused();
   const { styles, theme } = useReaderThemeStyles(createMoreScreenStyles);
   const close = () => {
@@ -396,16 +451,21 @@ export function NetworkSettingsRoute({
             close();
           }
         }}
-        onTestProfile={proxy.testProxyProfile}
       />
     );
   }
-  if (route.params?.page === 'dns') return <DnsProviderForm runtime={proxy} goBack={close} />;
+  if (route.params?.page === 'log') return <NetworkLogScreen focused={focused} />;
   return (
     <NetworkSettingsOverview
       runtime={proxy}
-      openDns={() => navigation.push('NetworkSettings', { page: 'dns' })}
+      focused={focused}
       openProfiles={() => navigation.push('NetworkSettings', { page: 'proxies' })}
+      openLog={() => navigation.push('NetworkSettings', { page: 'log' })}
+      openVerification={
+        account.enabledSessionSources.includes('linuxdo')
+          ? () => void account.center.command({ type: 'open-linuxdo-verification' })
+          : undefined
+      }
     />
   );
 }

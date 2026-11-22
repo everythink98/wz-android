@@ -25,6 +25,7 @@ import { discourseReadingQueryKey } from '@/platform/query/discourseReadingRunti
 import { accountSessionSnapshotFromEvent, createAccountSessionSnapshot } from '@/domain/session/siteSessionState';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { readManagedCookieHeader, setLinuxDoCookieResponseBarrier } from '@/platform/network/managedCookies';
+import * as accountRead from '@/sources/accountRead';
 import { waitForLinuxDoLoginInitialization } from '@/platform/network/linuxDoLoginInitialization';
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
 import { createNotificationGateway } from '@/sources/notificationGateway';
@@ -4695,7 +4696,60 @@ it('awaits the native cookie handoff before an explicit refresh after login clos
   await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
 });
 
-it.each(['open-login', 'open-login-with-fill'] as const)(
+it('settles standalone website verification as anonymous after the main site confirms logout', async () => {
+  await saveAccountSessionSnapshot(seedLinuxDoAccount());
+  const fetcher = jest.fn(async () => Response.json({ current_user: null }));
+  const { view, runtime, notify } = await renderSiteRuntime('linuxdo', fetcher);
+  try {
+    await act(async () => {
+      await runtime().center.handleAccountCenterCommand({ type: 'open-linuxdo-verification' });
+    });
+    await waitFor(() => expect(view.getByTestId('login-webview')).toBeTruthy());
+    await fireEvent.press(view.getByText('检测并继续'));
+    await waitFor(() => expect(runtime().hosts.linuxDoVerificationVisible).toBe(false));
+    expect(notify).toHaveBeenCalledWith('linux.do 主站可访问，当前未登录。');
+    expect(runtime().read.accountSessionViewModels.linuxdo).toMatchObject({
+      identityTrust: 'none',
+      isLoggedIn: false,
+      isVerifying: false
+    });
+    expect(runtime().read.forumSessionEpochs.linuxdo).toBe(1);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    await waitFor(async () =>
+      expect(JSON.parse((await AsyncStorage.getItem('account-session.v1.linuxdo'))!).handoffPending).toBeUndefined()
+    );
+  } finally {
+    await view.unmount();
+  }
+});
+
+it.each(['server-error', 'partial'] as const)(
+  'keeps the prior account on an inconclusive standalone verification result (%s)',
+  async (failure) => {
+    await saveAccountSessionSnapshot(seedLinuxDoAccount());
+    const { view, runtime, notify } = await renderSiteRuntime('linuxdo', async () => new Response('', { status: 503 }));
+    const observation = jest.spyOn(accountRead, 'readAccountStatus');
+    try {
+      if (failure === 'partial') {
+        observation.mockResolvedValueOnce({ session: createAccountSessionSnapshot('linuxdo'), failed: true });
+      }
+      await act(async () => {
+        await runtime().center.handleAccountCenterCommand({ type: 'open-linuxdo-verification' });
+      });
+      await waitFor(() => expect(view.getByTestId('login-webview')).toBeTruthy());
+      await fireEvent.press(view.getByText('检测并继续'));
+      await waitFor(() => expect(notify).toHaveBeenCalledWith(expect.stringContaining('主站访问暂时无法确认')));
+      expect(runtime().hosts.linuxDoVerificationVisible).toBe(true);
+      expect(runtime().read.accountSessionViewModels.linuxdo.currentUser?.id).toBe('alice');
+      expect(runtime().read.forumSessionEpochs.linuxdo).toBe(0);
+    } finally {
+      observation.mockRestore();
+      await view.unmount();
+    }
+  }
+);
+
+it.each(['open-login', 'open-login-with-fill', 'open-linuxdo-verification'] as const)(
   'opens the real login host for %s during closing and ignores the previous close receipt',
   async (type) => {
     jest.useFakeTimers();
@@ -4704,23 +4758,29 @@ it.each(['open-login', 'open-login-with-fill'] as const)(
     );
     const { view, runtime } = await renderManualLogin(fetcher);
     const oldHandoff = Promise.withResolvers<void>();
+    const verification = type === 'open-linuxdo-verification';
+    const command = verification ? ({ type } as const) : ({ type, site: 'linuxdo' } as const);
     try {
       jest.mocked(setLinuxDoCookieResponseBarrier).mockImplementationOnce(() => oldHandoff.promise);
       await fireEvent.press(view.getByLabelText('关闭'));
       expect(view.queryByTestId('login-webview')).toBeNull();
       await act(async () => {
         await jest.advanceTimersByTimeAsync(100);
-        await runtime().center.handleAccountCenterCommand({ type, site: 'linuxdo' });
-        await runtime().center.handleAccountCenterCommand({ type, site: 'linuxdo' });
+        await runtime().center.handleAccountCenterCommand(command);
+        await runtime().center.handleAccountCenterCommand(command);
       });
       expect(runtime().hosts.linuxDoVerificationVisible).toBe(false);
       await act(async () => {
         await jest.advanceTimersByTimeAsync(350);
       });
       expect(runtime().hosts.linuxDoVerificationVisible).toBe(true);
-      expect(view.getByText('linux.do 登录')).toBeTruthy();
+      expect(view.getByText(verification ? 'linux.do 安全验证' : 'linux.do 登录')).toBeTruthy();
       expect(view.getByTestId('login-webview').props.source.uri).toBe(
-        type === 'open-login-with-fill' ? LOGIN_FORM_ADAPTERS.linuxdo.loginUrl : 'https://linux.do/latest'
+        verification
+          ? 'https://cdk.linux.do/'
+          : type === 'open-login-with-fill'
+            ? LOGIN_FORM_ADAPTERS.linuxdo.loginUrl
+            : 'https://linux.do/latest'
       );
       if (type === 'open-login-with-fill') {
         await fireEvent(view.getByTestId('login-webview'), 'loadEnd', {
@@ -4737,7 +4797,7 @@ it.each(['open-login', 'open-login-with-fill'] as const)(
       expect(jest.mocked(setLinuxDoCookieResponseBarrier).mock.calls).toHaveLength(barriers);
       expect(fetcher).not.toHaveBeenCalled();
       expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice')).toBe(false);
-      await fireEvent.press(view.getByText('检测登录'));
+      await fireEvent.press(view.getByText(verification ? '检测并继续' : '检测登录'));
       await waitFor(() =>
         expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice')).toBe(true)
       );

@@ -77,6 +77,17 @@ describe('Shared action and form controls', () => {
     expect(onPress).toHaveBeenCalledTimes(1);
   });
 
+  it('centers an idle text action without an empty loading slot', async () => {
+    const view = await render(<AppButton label="确定" loading={false} onPress={jest.fn()} />);
+    const label = view.getByText('确定');
+    expect(label.parent?.children.length).toBe(1);
+    await view.rerender(<AppButton label="确定" loading onPress={jest.fn()} />);
+    expect(view.getByRole('button', { name: '确定' }).props.accessibilityState).toMatchObject({
+      busy: true,
+      disabled: true
+    });
+  });
+
   it('exposes selection and blocks a busy icon action without losing its name', async () => {
     const onPress = jest.fn();
     const view = await render(<IconButton icon={Search} label="查询" active loading onPress={onPress} />);

@@ -30,6 +30,47 @@ const stardustRecord = {
 };
 
 describe('NodeSeek private account data', () => {
+  it('reads the signed-in profile and both balances when the homepage times out', async () => {
+    const fetcher = vi.fn<Fetcher>(async (url) => {
+      if (String(url) === 'https://www.nodeseek.com/api/account/getInfo/7?readme=1') {
+        return Response.json({
+          success: true,
+          detail: { member_id: 7, member_name: 'alice', coin: 0, stardust: -3, nPost: 4, nComment: 5 }
+        });
+      }
+      throw new Error('homepage timeout');
+    });
+    await expect(getNodeSeekAccountOverview({ userId: '7', fetcher })).resolves.toMatchObject({
+      userId: '7',
+      coin: 0,
+      stardust: -3,
+      profile: { id: '7', topicCount: 4, replyCount: 5 }
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const wrongAccount = vi.fn<Fetcher>(async () =>
+      Response.json({ success: true, detail: { member_id: 8, coin: 4, stardust: 1 } })
+    );
+    await expect(getNodeSeekAccountOverview({ userId: '7', fetcher: wrongAccount })).rejects.toThrow('身份不匹配');
+    expect(wrongAccount).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads the signed-in homepage once when the profile times out and propagates other errors', async () => {
+    const embedded = Buffer.from(
+      JSON.stringify({ user: { member_id: 7, member_name: 'alice', coin: 9, stardust: 0 } })
+    ).toString('base64');
+    const fetcher = vi
+      .fn<Fetcher>()
+      .mockRejectedValueOnce(new Error('NodeSeek 页面读取超时'))
+      .mockResolvedValueOnce(new Response(`<script>window.__config__ = '${embedded}'</script>`));
+    await expect(getNodeSeekAccountOverview({ userId: '7', fetcher })).resolves.toMatchObject({ coin: 9, stardust: 0 });
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+      'https://www.nodeseek.com/api/account/getInfo/7?readme=1',
+      'https://www.nodeseek.com/'
+    ]);
+    const denied = vi.fn<Fetcher>().mockResolvedValue(new Response(null, { status: 403 }));
+    await expect(getNodeSeekAccountOverview({ userId: '7', fetcher: denied })).rejects.toThrow();
+    expect(denied).toHaveBeenCalledTimes(1);
+  });
   it('decodes unpadded embedded account data and preserves malformed UTF-8 bytes in a profile field', () => {
     const prefix = Buffer.from('{"user":{"name":"');
     const suffix = Buffer.from('"}}');
@@ -60,7 +101,11 @@ describe('NodeSeek private account data', () => {
         }
       })
     ).toString('base64');
-    const fetcher = vi.fn(async () => new Response(`<script>window.__config__ = '${embedded}'</script>`));
+    const fetcher = vi.fn<Fetcher>(async (url) =>
+      String(url).includes('/api/account/getInfo/')
+        ? Response.json({ success: true, detail: { member_name: 'alice' } })
+        : new Response(`<script>window.__config__ = '${embedded}'</script>`)
+    );
     expect(await getNodeSeekAccountOverview({ userId: '7', fetcher })).toMatchObject({
       source: 'nodeseek',
       userId: '7',
@@ -90,7 +135,10 @@ describe('NodeSeek private account data', () => {
     expect(
       await getNodeSeekAccountOverview({
         userId: '7',
-        fetcher: async () => new Response(`<script>window.__config__ = '${embedded}'</script>`)
+        fetcher: async (url) =>
+          String(url).includes('/api/account/getInfo/')
+            ? Response.json({ success: true, detail: { member_id: 7 } })
+            : new Response(`<script>window.__config__ = '${embedded}'</script>`)
       })
     ).toMatchObject({ coin: -2, stardust: -4 });
   });

@@ -96,12 +96,13 @@ describe('Account center cached reads', () => {
       onlineManager.setOnline(true);
     });
     expect(hook.result.current.overview).toMatchObject({ coin: 5 });
-    expect(getUserDetails).toHaveBeenCalledTimes(2);
+    expect(hook.result.current.profile).toMatchObject({ source: 'nodeseek', id: '42' });
+    expect(getUserDetails.mock.calls.map(([request]) => request.source)).toEqual(['linuxdo']);
     expect(getOverview).toHaveBeenCalledTimes(1);
     expect(getBoard).toHaveBeenCalledTimes(1);
     await act(async () => hook.result.current.refresh());
     await waitFor(() => expect(hook.result.current.overview).toMatchObject({ coin: 8 }));
-    expect(getUserDetails).toHaveBeenCalledTimes(3);
+    expect(getUserDetails).toHaveBeenCalledTimes(1);
     expect(getOverview).toHaveBeenCalledTimes(2);
     expect(getBoard).toHaveBeenCalledTimes(2);
     await hook.unmount();
@@ -122,7 +123,7 @@ describe('Account center cached reads', () => {
     }
     const next = await render();
     expect(next.result.current.overview).toMatchObject({ coin: 5 });
-    expect(getUserDetails).toHaveBeenCalledTimes(1);
+    expect(getUserDetails).not.toHaveBeenCalled();
     expect(getOverview).toHaveBeenCalledTimes(1);
     expect(getBoard).toHaveBeenCalledTimes(1);
     await act(async () => client.invalidateQueries({ queryKey: ['forum', 'nodeseek', 'account-data', 'overview'] }));

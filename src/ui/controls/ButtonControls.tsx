@@ -309,11 +309,11 @@ function TextButton({
           trailingIcon && styles.trailingIconContent
         ]}
       >
-        {Icon || loading !== undefined ? (
+        {Icon ? (
           <View style={[styles.iconSlot, { width: glyphSize, height: glyphSize }]}>
             {busy ? (
               <ActivityIndicator accessible={false} size={glyphSize} color={color} />
-            ) : Icon ? (
+            ) : (
               <Icon
                 size={glyphSize}
                 color={glyphColor}
@@ -321,12 +321,13 @@ function TextButton({
                 strokeWidth={1.8}
                 accessible={false}
               />
-            ) : null}
+            )}
           </View>
         ) : null}
         <Text
           style={[
             styles.text,
+            busy && !Icon && { opacity: 0 },
             (variant === 'solid' || variant === 'primary') && styles.textEmphasis,
             size === 'lg' && styles.textLarge,
             (compact || tiny) && styles.textCompact,
@@ -335,6 +336,11 @@ function TextButton({
         >
           {label}
         </Text>
+        {busy && !Icon ? (
+          <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.iconSlot]}>
+            <ActivityIndicator accessible={false} size={glyphSize} color={color} />
+          </View>
+        ) : null}
       </View>
     </TouchableRipple>
   );

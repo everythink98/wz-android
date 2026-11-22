@@ -50,6 +50,8 @@ function NotificationListScenario({ state }: { state: NotificationListState }) {
         ]
       : [];
   const unknown = state === 'auth-unknown';
+  const sessions = projectTestAccountSessions(createSiteSessionStates());
+  if (unknown) sessions.nodeseek.identityTrust = 'unknown';
   return (
     <NotificationsScreen
       activeSources={unknown ? [] : ['nodeseek', 'linuxdo', 'yaohuo']}
@@ -61,9 +63,8 @@ function NotificationListScenario({ state }: { state: NotificationListState }) {
       loading={state === 'loading'}
       markAllBusy={false}
       refreshing={false}
+      sessions={sessions}
       source={unknown ? 'nodeseek' : 'all'}
-      sourcePending={false}
-      sourceUnknown={unknown}
       unreadOnly={false}
       onChangeSource={noop}
       onChangeUnreadOnly={noop}

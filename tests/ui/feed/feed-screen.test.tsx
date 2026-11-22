@@ -676,7 +676,7 @@ describe('Feed loading', () => {
     const list = view.getByLabelText('列表，支持下拉刷新');
     expect(StyleSheet.flatten(list.props.contentContainerStyle)).toMatchObject({ paddingTop: 172, paddingBottom: 116 });
     expect(list.props.refreshControl.props.progressViewOffset).toBe(172);
-    expect(StyleSheet.flatten(view.getByTestId('feed-secondary-all').props.style).top).toBe(110);
+    expect(StyleSheet.flatten(view.getByTestId('feed-category-viewport').props.style).top).toBe(110);
     expect(view.getByTestId('feed-topic-first')).toBeTruthy();
   });
 
@@ -755,7 +755,11 @@ describe('Feed loading', () => {
     expect(view.getByTestId('feed-source-all').props.accessibilityState).toMatchObject({ selected: true });
     expect(view.getByLabelText('未读')).toBeTruthy();
     expect(incomingScene.getByLabelText('加载中')).toBeTruthy();
-    expect(incomingScene.getByText('问与答', { includeHiddenElements: true })).toBeTruthy();
+    expect(
+      within(view.getByTestId('feed-secondary-v2ex', { includeHiddenElements: true })).getByText('问与答', {
+        includeHiddenElements: true
+      })
+    ).toBeTruthy();
 
     await act(async () => mockPagerPosition.setValue(0.9));
 

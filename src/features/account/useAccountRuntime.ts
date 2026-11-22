@@ -970,8 +970,9 @@ export function useAccountRuntime({
     },
     onLinuxDoSurfaceOpened: handleLinuxDoSurfaceOpened,
     prepareLinuxDoCookieResponseBarrier,
-    reconcileAccountStatus: (source) =>
+    reconcileAccountStatus: (source, options) =>
       reconcileAuthSurfaceAccountStatus(source, {
+        ...options,
         surfaceGeneration: authSurfaceRegistryRef.current.active['linuxdo-login']?.generation
       }),
     setChecking,

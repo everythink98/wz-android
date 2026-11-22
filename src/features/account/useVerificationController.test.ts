@@ -202,6 +202,63 @@ afterEach(() => {
 });
 
 describe('linux.do visible verification coordinator', () => {
+  it('checks the original site from standalone website verification without waiting for a login document', async () => {
+    vi.mocked(waitForLinuxDoLoginInitialization).mockRejectedValue(new Error('no shared login document'));
+    const { controller, reconcileAccountStatus, notify, showLinuxDoPanelRef } = createController({
+      reconcileAccountStatus: async () => ({ status: 'anonymous', session: anonymousSession })
+    });
+    controller.changeLinuxDoPanel(true, true);
+    await controller.checkLinuxDoCookie();
+    expect(reconcileAccountStatus).toHaveBeenCalledOnce();
+    expect(waitForLinuxDoLoginInitialization).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith('linux.do 主站可访问，当前未登录。');
+    expect(showLinuxDoPanelRef.current).toBe(false);
+  });
+
+  it.each([
+    ['challenge-return', 'check'],
+    ['challenge-return', 'close'],
+    ['navigation', 'check'],
+    ['navigation', 'close']
+  ] as const)(
+    'protects the standalone main document on %s before its first page observation during %s',
+    async (entry, action) => {
+      const { controller, linuxDoWebViewSessionRef, onLinuxDoSurfaceClosed, reconcileAccountStatus } =
+        createController();
+      controller.changeLinuxDoPanel(true, true);
+      controller.observeLinuxDoForumDocument(linuxDoWebViewSessionRef.current, entry);
+      if (action === 'close') {
+        controller.closeLinuxDoPanel();
+        expect(onLinuxDoSurfaceClosed).toHaveBeenCalledWith({
+          authoritativeResult: false,
+          reason: 'initialization-incomplete'
+        });
+      } else {
+        vi.mocked(waitForLinuxDoLoginInitialization).mockRejectedValueOnce(new Error('initialization pending'));
+        await controller.checkLinuxDoCookie();
+        expect(waitForLinuxDoLoginInitialization).toHaveBeenCalledOnce();
+        expect(onLinuxDoSurfaceClosed).not.toHaveBeenCalled();
+      }
+      expect(reconcileAccountStatus).not.toHaveBeenCalled();
+    }
+  );
+
+  it('does not confirm a replacement login document from an obsolete initialization', async () => {
+    const initialization = Promise.withResolvers<boolean>();
+    vi.mocked(waitForLinuxDoLoginInitialization).mockReturnValueOnce(initialization.promise);
+    const { controller, onLinuxDoSurfaceClosed } = createController();
+    controller.changeLinuxDoPanel(true);
+    const previous = controller.checkLinuxDoCookie();
+    controller.resetLinuxDoWebView();
+    initialization.resolve(true);
+    await previous;
+    controller.closeLinuxDoPanel();
+    expect(onLinuxDoSurfaceClosed).toHaveBeenCalledWith({
+      authoritativeResult: false,
+      reason: 'initialization-incomplete'
+    });
+  });
+
   it('preserves one explicit login open while the previous panel is closing', async () => {
     const events: DiagnosticEvent[] = [];
     setDiagnosticWriter((line) => {
@@ -440,7 +497,7 @@ describe('linux.do visible verification coordinator', () => {
           key
         );
       if (order === 'return-first') {
-        controller.armLinuxDoPostChallengeCheck(key);
+        controller.observeLinuxDoForumDocument(key, 'challenge-return');
         controller.beginLinuxDoDocumentNavigation(key);
         controller.setLoadingLinuxDoPageForSession(true, key);
         ready();
@@ -448,9 +505,9 @@ describe('linux.do visible verification coordinator', () => {
         ready();
         await vi.advanceTimersByTimeAsync(0);
         expect(resume).not.toHaveBeenCalled();
-        controller.armLinuxDoPostChallengeCheck(key);
+        controller.observeLinuxDoForumDocument(key, 'challenge-return');
       }
-      controller.armLinuxDoPostChallengeCheck(key);
+      controller.observeLinuxDoForumDocument(key, 'challenge-return');
       ready();
       await vi.advanceTimersByTimeAsync(0);
       expect(resume).not.toHaveBeenCalled();
@@ -463,7 +520,7 @@ describe('linux.do visible verification coordinator', () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(resume).toHaveBeenCalledOnce();
       expect(reconcileAccountStatus).not.toHaveBeenCalled();
-      controller.armLinuxDoPostChallengeCheck(key);
+      controller.observeLinuxDoForumDocument(key, 'challenge-return');
       ready();
       await vi.advanceTimersByTimeAsync(5000);
       expect(resume).toHaveBeenCalledOnce();
@@ -483,7 +540,7 @@ describe('linux.do visible verification coordinator', () => {
       });
       await controller.showLinuxDoVerification();
       const key = linuxDoWebViewSessionRef.current;
-      controller.armLinuxDoPostChallengeCheck(key);
+      controller.observeLinuxDoForumDocument(key, 'challenge-return');
       const ready = (status: string) =>
         controller.handleLinuxDoMessage(
           {
@@ -523,7 +580,7 @@ describe('linux.do visible verification coordinator', () => {
       });
       await controller.showLinuxDoVerification();
       const key = linuxDoWebViewSessionRef.current;
-      controller.armLinuxDoPostChallengeCheck(key);
+      controller.observeLinuxDoForumDocument(key, 'challenge-return');
       const ready = (trusted: boolean) =>
         controller.handleLinuxDoMessage(
           {
@@ -584,7 +641,7 @@ describe('linux.do visible verification coordinator', () => {
       resume
     });
     const key = linuxDoWebViewSessionRef.current;
-    controller.armLinuxDoPostChallengeCheck(key);
+    controller.observeLinuxDoForumDocument(key, 'challenge-return');
     const ready = (documentKey: string, status: string) =>
       controller.handleLinuxDoMessage(
         {
@@ -613,7 +670,7 @@ describe('linux.do visible verification coordinator', () => {
     if (exit === 'expired') expired = true;
     settleProbe();
     await vi.advanceTimersByTimeAsync(0);
-    controller.armLinuxDoPostChallengeCheck(key);
+    controller.observeLinuxDoForumDocument(key, 'challenge-return');
     await vi.advanceTimersByTimeAsync(0);
     expect(resume).toHaveBeenCalledTimes(exit === 'manual' ? 1 : 0);
   });
@@ -1102,7 +1159,7 @@ describe('linux.do visible verification coordinator', () => {
 
       let check: Promise<void> | undefined;
       if (entry === 'challenge-return') {
-        controller.armLinuxDoPostChallengeCheck(documentSession);
+        controller.observeLinuxDoForumDocument(documentSession, 'challenge-return');
         controller.handleLinuxDoMessage(
           {
             nativeEvent: {

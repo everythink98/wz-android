@@ -63,13 +63,6 @@ export function useAccountOverview({
       }),
     [userId, sessionEpochs.nodeseek, privatePlan.cacheScope]
   );
-  const profileQuery = useQuery({
-    gcTime: Infinity,
-    queryKey: profileKey,
-    enabled: enabled && profilePlan.state === 'ready',
-    queryFn: ({ signal }) =>
-      gateway.getUserDetails({ source: site, id: userId, username: user?.username, signal }, { plan: profilePlan })
-  });
   const overviewQuery = useQuery<AccountOverview>({
     gcTime: Infinity,
     queryKey: privateKey,
@@ -80,6 +73,15 @@ export function useAccountOverview({
       if (site === 'yaohuo') return gateway.getYaohuoAccountOverview({ userId, signal }, context);
       throw new Error('该站点没有私有概要');
     }
+  });
+  const readPublicProfile =
+    site !== 'nodeseek' || !showPrivate || (overviewQuery.isError && !overviewQuery.data?.profile);
+  const profileQuery = useQuery({
+    gcTime: Infinity,
+    queryKey: profileKey,
+    enabled: enabled && showProfile && readPublicProfile,
+    queryFn: ({ signal }) =>
+      gateway.getUserDetails({ source: site, id: userId, username: user?.username, signal }, { plan: profilePlan })
   });
   const boardQuery = useQuery({
     gcTime: Infinity,
@@ -131,7 +133,7 @@ export function useAccountOverview({
     boardError: enabled ? boardQuery.error : null,
     boardUpdatedAt: boardQuery.dataUpdatedAt,
     busy: enabled && (profileQuery.isFetching || overviewQuery.isFetching),
-    error: profileQuery.error || overviewQuery.error,
+    error: (readPublicProfile && profileQuery.error) || overviewQuery.error,
     updatedAt: Math.max(profileQuery.dataUpdatedAt, overviewQuery.dataUpdatedAt),
     refresh,
     retryOverview,

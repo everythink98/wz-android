@@ -21,15 +21,13 @@ export type MoreRouteRuntimeValue = {
     | 'applyError'
     | 'applyStatus'
     | 'confirmedState'
-    | 'dnsResult'
     | 'effectiveMode'
     | 'deleteProxyProfile'
     | 'proxyState'
     | 'selectProxyProfile'
     | 'setNetworkMode'
     | 'summary'
-    | 'testProxyProfile'
-    | 'testEncryptedDns'
+    | 'networkProxyFetcher'
     | 'upsertProxyProfile'
   >;
   reader: {

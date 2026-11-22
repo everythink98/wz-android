@@ -11,7 +11,7 @@ import {
   prepareNodeSeekForumContent
 } from '@/sources/nodeseek/topicParser';
 import { parseNodeSeekPageDocument } from '@/sources/nodeseek/protocol';
-import { getNodeSeekAccountOverview } from '@/sources/nodeseek/accountData';
+import { getNodeSeekPageAccountOverview } from '@/sources/nodeseek/accountData';
 import { getCurrentUserIdentity } from '@/sources/sourceRead';
 import { normalizeCategories, parseHtmlTopics } from '@/sources/nodeseek/feedParser';
 import { requirePreparedForumContent } from '@/domain/forum/topicContentSplit';
@@ -311,13 +311,13 @@ describe('hidden browser fetch scripts', () => {
     expect(postMessage).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(postMessage.mock.calls[0]![0]);
     const fetcher = async () => forumBrowserResponse(payload.html, payload.challenge, undefined, payload.url);
-    await expect(getNodeSeekAccountOverview({ userId: '7', fetcher })).resolves.toMatchObject({
+    await expect(getNodeSeekPageAccountOverview({ userId: '7', fetcher })).resolves.toMatchObject({
       userId: '7',
       coin: scenario.coin,
       stardust: scenario.stardust,
       profile: { id: '7', username: '当前用户', topicCount: 5, replyCount: 64 }
     });
-    await expect(getNodeSeekAccountOverview({ userId: '8', fetcher })).rejects.toThrow('身份不匹配');
+    await expect(getNodeSeekPageAccountOverview({ userId: '8', fetcher })).rejects.toThrow('身份不匹配');
 
     const page = parseNodeSeekPageDocument(payload.html);
     expect(parseHtmlTopics(page)).toEqual([expect.objectContaining({ id: '832584', title: '保留首页主题' })]);
@@ -347,7 +347,7 @@ describe('hidden browser fetch scripts', () => {
       expect(postMessage).toHaveBeenCalledTimes(1);
       const payload = JSON.parse(postMessage.mock.calls[0]![0]);
       await expect(
-        getNodeSeekAccountOverview({
+        getNodeSeekPageAccountOverview({
           userId: '7',
           fetcher: async () => forumBrowserResponse(payload.html, payload.challenge, undefined, payload.url)
         })
@@ -377,7 +377,7 @@ describe('hidden browser fetch scripts', () => {
       expect(postMessage).toHaveBeenCalledTimes(1);
       const payload = JSON.parse(postMessage.mock.calls[0]![0]);
       await expect(
-        getNodeSeekAccountOverview({
+        getNodeSeekPageAccountOverview({
           userId: '7',
           fetcher: async () => {
             if (payload.error) throw new Error(payload.error);

@@ -5,13 +5,17 @@ import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
 import { LOGIN_FORM_ADAPTERS } from '@/domain/session/loginFormAdapters';
 import { LINUXDO_WEBVIEW_PROBE_SCRIPT } from '@/platform/network/loginWebViewScripts';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
-import type { LinuxDoVerificationPageEvent } from '../useVerificationController';
+import type { LinuxDoForumDocumentEvent, LinuxDoVerificationPageEvent } from '../useVerificationController';
 import {
   createLinuxDoVerificationDocument,
   LINUXDO_CHALLENGE_URL as CHALLENGE_URL
 } from './linuxDoVerificationDocument';
 
 const FORUM_URL = LINUXDO_URL + '/latest';
+
+function isForumDocument(url: string) {
+  return url === LINUXDO_URL || url.startsWith(LINUXDO_URL + '/');
+}
 
 function verificationPage(url: string): LinuxDoVerificationPageEvent['verificationPage'] {
   try {
@@ -42,7 +46,7 @@ export type LinuxDoVerificationPageProps = {
   onSetLinuxDoWebViewError: (value: string, webViewKey?: number, credentialAttempt?: number) => void;
   onSetLoadingLinuxDoPage: (value: boolean, webViewKey?: number) => void;
   onVerificationPageEvent?: (event: LinuxDoVerificationPageEvent, webViewKey: number) => void;
-  onChallengeReturned?: (webViewKey: number) => void;
+  onForumDocument?: (webViewKey: number, event: LinuxDoForumDocumentEvent) => void;
   onDocumentNavigation?: (webViewKey: number) => void;
 };
 
@@ -63,7 +67,7 @@ export function useLinuxDoVerificationPage({
   onSetLinuxDoWebViewError,
   onSetLoadingLinuxDoPage,
   onVerificationPageEvent,
-  onChallengeReturned,
+  onForumDocument,
   onDocumentNavigation
 }: LinuxDoVerificationPageProps & { dedicated: boolean; web: boolean }) {
   const [document] = useState(() => createLinuxDoVerificationDocument(dedicated && !loginFormMode));
@@ -140,7 +144,10 @@ export function useLinuxDoVerificationPage({
     onShouldStartLoadWithRequest: (request) => {
       if (!isCurrent()) return false;
       const allowed = handleLinuxDoNavigation(request);
-      if (allowed && request.isTopFrame !== false) onDocumentNavigation?.(key);
+      if (allowed && request.isTopFrame !== false) {
+        onDocumentNavigation?.(key);
+        if (isForumDocument(request.url)) onForumDocument?.(key, 'navigation');
+      }
       return allowed;
     },
     onLoadProgress: (event) => {
@@ -149,6 +156,7 @@ export function useLinuxDoVerificationPage({
     onLoadStart: (event) => {
       if (!isCurrent()) return;
       const url = event?.nativeEvent.url || '';
+      if (isForumDocument(url)) onForumDocument?.(key, 'navigation');
       const started = document.started(url, event?.nativeEvent.loading !== false, stage);
       if (started.logChallengeEntry) record('challenge-open', CHALLENGE_URL);
       record('load-start', url);
@@ -172,10 +180,13 @@ export function useLinuxDoVerificationPage({
     onMessage: (event) => {
       if (!isCurrent()) return;
       const url = event.nativeEvent.url || '';
-      const result = document.challengeMessage(event.nativeEvent.data, url, stage);
+      const result =
+        isForumDocument(document.documentUrl) && isForumDocument(url)
+          ? 'unrelated'
+          : document.challengeMessage(event.nativeEvent.data, url, stage);
       if (result === 'returned') {
         record('return-to-forum', CHALLENGE_URL + 'login');
-        onChallengeReturned?.(key);
+        onForumDocument?.(key, 'challenge-return');
         publishPage();
         onSetLoadingLinuxDoPage(true, key);
         return;
@@ -188,9 +199,24 @@ export function useLinuxDoVerificationPage({
       if (!isCurrent()) return;
       const url = event.nativeEvent.url || document.documentUrl;
       document.failed(url);
-      record('load-error', url, { reason: 'network_error', hasLoadError: true });
+      const description = event.nativeEvent.description ?? '';
+      const reason = /ERR_(?:NAME_NOT_RESOLVED|DNS_)/.test(description)
+        ? 'dns_error'
+        : /ERR_(?:SSL_|CERT_)/.test(description)
+          ? 'tls_error'
+          : 'network_error';
+      record('load-error', url, { reason, hasLoadError: true });
+      document.requireRemount();
+      publishPage();
       onSetLoadingLinuxDoPage(false, key);
-      onSetLinuxDoWebViewError('页面加载失败，请检查网络后重新打开。', key, credentialAttempt);
+      const closed = /\bERR_CONNECTION_(?:CLOSED|RESET)\b/.test(description);
+      onSetLinuxDoWebViewError(
+        closed
+          ? '网页连接已关闭。请重新打开，如果仍然失败，请切换网络后再试。'
+          : '页面加载失败，请检查网络后重新打开。',
+        key,
+        credentialAttempt
+      );
     },
     onHttpError: (event) => {
       if (!isCurrent()) return;

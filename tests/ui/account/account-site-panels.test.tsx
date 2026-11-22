@@ -925,7 +925,7 @@ describe('Account site panels', () => {
 
   it('opens the working challenge directly and returns only after its document probe', async () => {
     const props = linuxDoVerifyProps({
-      onChallengeReturned: jest.fn(),
+      onForumDocument: jest.fn(),
       recoveryPanel: { phase: 'web', dedicated: true, results: [{ kind: 'reading', outcome: 'pending' }] }
     });
     const view = await render(<LinuxDoVerifyModal {...props} />);
@@ -945,7 +945,7 @@ describe('Account site panels', () => {
       }
     };
     await act(() => previousMessage(ready));
-    expect(props.onChallengeReturned).not.toHaveBeenCalled();
+    expect(props.onForumDocument).not.toHaveBeenCalled();
     await act(() => {
       mockLoginWebViewProps.onLoadStart({ nativeEvent: { url: 'https://cdk.linux.do/' } });
       mockLoginWebViewProps.onHttpError({ nativeEvent: { url: 'https://cdk.linux.do/', statusCode: 403 } });
@@ -957,13 +957,13 @@ describe('Account site panels', () => {
       mockLoginWebViewProps.onLoadStart({ nativeEvent: { url: 'https://cdk.linux.do/login' } });
       mockLoginWebViewProps.onLoadEnd({ nativeEvent: { url: 'https://cdk.linux.do/login' } });
     });
-    expect(props.onChallengeReturned).not.toHaveBeenCalled();
+    expect(props.onForumDocument).not.toHaveBeenCalled();
     await act(() => mockLoginWebViewProps.onMessage(ready));
     expect(mockLoginWebViewProps.source.uri).toBe('https://linux.do/latest');
-    expect(props.onChallengeReturned).toHaveBeenCalledTimes(1);
-    expect(props.onChallengeReturned).toHaveBeenCalledWith(2);
+    expect(props.onForumDocument).toHaveBeenCalledTimes(1);
+    expect(props.onForumDocument).toHaveBeenCalledWith(2, 'challenge-return');
     await act(() => mockLoginWebViewProps.onMessage(ready));
-    expect(props.onChallengeReturned).toHaveBeenCalledTimes(1);
+    expect(props.onForumDocument).toHaveBeenCalledTimes(1);
     expect(props.onHandleLinuxDoMessage).not.toHaveBeenCalled();
     expect(props.onCheckLinuxDoCookie).not.toHaveBeenCalled();
     expect(props.onClearLinuxDoCookie).not.toHaveBeenCalled();
@@ -974,11 +974,54 @@ describe('Account site panels', () => {
     expect(mockLoginWebViewProps.source.uri).toBe('https://cdk.linux.do/');
   });
 
+  it('reopens the real verification page when the connection closes before the document loads', async () => {
+    const props = linuxDoVerifyProps({
+      recoveryPanel: { phase: 'web', dedicated: true, results: [{ kind: 'reading', outcome: 'pending' }] }
+    });
+    const view = await render(<LinuxDoVerifyModal {...props} />);
+    const url = 'https://cdk.linux.do/';
+    await act(() => {
+      mockLoginWebViewProps.onLoadStart({ nativeEvent: { url } });
+      mockLoginWebViewProps.onError({ nativeEvent: { url, description: 'net::ERR_CONNECTION_CLOSED' } });
+    });
+    expect(props.onSetLinuxDoWebViewError).toHaveBeenCalledWith(expect.stringContaining('连接已关闭'), 1, 5);
+    expect(view.queryByLabelText('检测并继续')).toBeNull();
+    await fireEvent.press(view.getByLabelText('重新打开验证'));
+    expect(props.onResetLinuxDoWebView).toHaveBeenCalledTimes(1);
+    expect(props.onCheckLinuxDoCookie).not.toHaveBeenCalled();
+    await view.rerender(<LinuxDoVerifyModal {...props} linuxDoWebViewKey={2} />);
+    expect(mockLoginWebViewProps.source.uri).toBe(url);
+  });
+
+  it('observes a direct main-site document without arming an automatic challenge return', async () => {
+    const onForumDocument = jest.fn();
+    const props = linuxDoVerifyProps({
+      handleLinuxDoNavigation: jest.fn(() => true),
+      onForumDocument,
+      recoveryPanel: { phase: 'idle', dedicated: true, results: [] }
+    });
+    await render(<LinuxDoVerifyModal {...props} />);
+    const url = 'https://linux.do/latest';
+    const page = { nativeEvent: { url, data: JSON.stringify({ type: 'linuxdo-webview' }) } };
+    mockLoginWebViewProps.onShouldStartLoadWithRequest({ url, isTopFrame: false });
+    expect(props.onForumDocument).not.toHaveBeenCalled();
+    await act(() => mockLoginWebViewProps.onMessage(page));
+    expect(props.onHandleLinuxDoMessage).not.toHaveBeenCalled();
+    mockLoginWebViewProps.onShouldStartLoadWithRequest({ url, isTopFrame: true });
+    expect(props.onForumDocument).toHaveBeenCalledWith(1, 'navigation');
+    onForumDocument.mockClear();
+    await act(() => mockLoginWebViewProps.onLoadStart({ nativeEvent: { url } }));
+    expect(props.onForumDocument).toHaveBeenCalledWith(1, 'navigation');
+    await act(() => mockLoginWebViewProps.onMessage(page));
+    expect(props.onHandleLinuxDoMessage).toHaveBeenCalledWith(page, 1);
+    expect(props.onForumDocument).not.toHaveBeenCalledWith(1, 'challenge-return');
+  });
+
   it.each(['network', 'early-http'] as const)(
     'does not return from a failed challenge login document: %s',
     async (failure) => {
       const props = linuxDoVerifyProps({
-        onChallengeReturned: jest.fn(),
+        onForumDocument: jest.fn(),
         recoveryPanel: { phase: 'web', dedicated: true, results: [{ kind: 'reading', outcome: 'pending' }] }
       });
       await render(<LinuxDoVerifyModal {...props} />);
@@ -1001,7 +1044,7 @@ describe('Account site panels', () => {
         });
       });
       expect(mockLoginWebViewProps.source.uri).toBe('https://cdk.linux.do/');
-      expect(props.onChallengeReturned).not.toHaveBeenCalled();
+      expect(props.onForumDocument).not.toHaveBeenCalled();
     }
   );
 

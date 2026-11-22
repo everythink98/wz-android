@@ -18,6 +18,8 @@
 
 停止首页加载研究后的 Search、私信草稿与代码查找优化见 [Android 交互中的代码重复工作](android-code-interaction.md)。
 
+2026-11-22 的网络实验见[未发布的 DoH 实验记录](android-doh-retrospective.md)，包含验证页、系统路由、账号会话和包体的真机对照。
+
 ## 按问题查经验
 
 | 遇到的问题 | 已经走过的路径 | 阅读入口 |

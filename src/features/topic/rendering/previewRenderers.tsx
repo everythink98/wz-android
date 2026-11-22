@@ -606,11 +606,19 @@ function AdmittedPreviewImageBlock({
 function PreviewImageBlock(props: PreviewImageBlockProps) {
   const packet = props.mediaContext.contentSource === 'linuxdo' && isLinuxDoPacketCover(props.src);
   const viewer = useContext(LinuxDoPacketViewer);
+  const [packetRevision, setPacketRevision] = useState(() => ({ seen: viewer.revision, lease: viewer.revision }));
   const imageIdentity = compatibleImageRequestIdentity(props.imageSource);
   const requestIdentity = packet
-    ? JSON.stringify([imageIdentity, viewer.scope, viewer.username, viewer.revision])
+    ? JSON.stringify([imageIdentity, viewer.scope, viewer.username, packetRevision.lease])
     : imageIdentity;
   const bodyMediaLease = useTopicBodyMediaLease({ kind: 'base', requestIdentity, enabled: !packet || viewer.active });
+  if (packet && viewer.revision !== packetRevision.seen) {
+    // Mounted covers refresh in place. A failed or deferred cover needs a fresh request.
+    setPacketRevision({
+      seen: viewer.revision,
+      lease: bodyMediaLease.admitted ? packetRevision.lease : viewer.revision
+    });
+  }
   const contentWidth = Math.max(1, props.contentWidth);
   const cacheKey = imageDisplayCacheIdentity(props.imageSource);
   const cachedDimensions = cachedImageDisplayDimensions(cacheKey);

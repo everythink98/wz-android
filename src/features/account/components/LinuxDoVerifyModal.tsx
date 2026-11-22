@@ -61,7 +61,7 @@ export function LinuxDoVerifyModal(props: Props) {
   } = props;
   const recovery = recoveryPanel && recoveryPanel.phase !== 'idle' ? recoveryPanel : undefined;
   const web = !recovery || recovery.phase === 'web';
-  const page = useLinuxDoVerificationPage({ ...props, dedicated: recovery?.dedicated ?? false, web });
+  const page = useLinuxDoVerificationPage({ ...props, dedicated: recoveryPanel?.dedicated ?? false, web });
   const verifying = !!recovery || page.stage !== 'account';
   const busy = checking || recovery?.phase === 'checking';
   const result = recovery?.phase === 'result';
@@ -137,7 +137,7 @@ export function LinuxDoVerifyModal(props: Props) {
         ) : undefined
       }
       footer={
-        web && verifying && !busy ? (
+        web && verifying && !busy && !needsReopen && !webViewBlockMessage ? (
           <Text style={styles.verificationHint} accessibilityLiveRegion="polite">
             {page.stage === 'challenge'
               ? '请完成网页中的验证，无需登录。完成后会自动检测。'

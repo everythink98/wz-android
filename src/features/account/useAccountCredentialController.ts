@@ -45,7 +45,7 @@ export function useAccountCredentialController({
   webViewBlockMessage,
   yaohuoWebViewRef
 }: {
-  changeLinuxDoPanel: (visible: boolean) => boolean;
+  changeLinuxDoPanel: (visible: boolean, startAtChallenge?: boolean) => boolean;
   changeNodeSeekLoginPanel: (visible: boolean) => void;
   changeYaohuoLoginPanel: (visible: boolean) => void;
   linuxDoWebViewRef: WebViewRef;
@@ -145,7 +145,7 @@ export function useAccountCredentialController({
   }, [reloadCredentialSummaries]);
 
   const openAccountLogin = useCallback(
-    (site: SessionSite, fill: boolean) => {
+    (site: SessionSite, fill: boolean, startAtChallenge = false) => {
       if (lifetimeRef.current.signal.aborted) return;
       const previousSite = fillSession.site;
       if (previousSite && previousSite !== site) {
@@ -161,7 +161,7 @@ export function useAccountCredentialController({
         setYaohuoLoginPrompt('');
         changeYaohuoLoginPanel(true);
       } else {
-        opened = changeLinuxDoPanel(true);
+        opened = changeLinuxDoPanel(true, startAtChallenge);
       }
       if (!opened) {
         clearCredentialLoginIntent(site);
@@ -332,6 +332,10 @@ export function useAccountCredentialController({
       if (lifetimeRef.current.signal.aborted) return;
       if (command.type === 'refresh') {
         await refreshAccountStatus();
+        return;
+      }
+      if (command.type === 'open-linuxdo-verification') {
+        openAccountLogin('linuxdo', false, true);
         return;
       }
       if (command.type === 'open-login' || command.type === 'open-login-with-fill') {

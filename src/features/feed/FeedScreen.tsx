@@ -13,6 +13,8 @@ import {
   type RefObject
 } from 'react';
 import {
+  Animated as NativeAnimated,
+  I18nManager,
   Pressable,
   Text,
   View,
@@ -228,34 +230,6 @@ export const FeedScreen = memo(function FeedScreen({
     () => screenActive && isRouteFocused?.() !== false,
     [isRouteFocused, screenActive]
   );
-  const renderFeedTabBar = useCallback(
-    (props: TabBarProps<{ key: string }>) => (
-      <View
-        testID="feed-primary-header"
-        style={styles.feedFixedHeader}
-        onLayout={(event) => setSourceHeaderHeight(event.nativeEvent.layout.height)}
-      >
-        <TabBar
-          {...props}
-          onTabPress={({ preventDefault }) => {
-            if (!canChangeFeedSelection()) preventDefault();
-          }}
-          scrollEnabled
-          gap={22}
-          activeColor={theme.primary}
-          inactiveColor={theme.muted}
-          pressColor="transparent"
-          pressOpacity={1}
-          style={styles.feedSourceBar}
-          tabStyle={styles.feedSourceTab}
-          indicatorStyle={styles.feedSourceIndicator}
-          contentContainerStyle={styles.feedSourceRail}
-        />
-      </View>
-    ),
-    [canChangeFeedSelection, styles, theme]
-  );
-
   const requestFeedLoadMore = useCallback(
     (source: 'button' | 'scroll' = 'button', offsetY = 0) => {
       if (!feedHasMore || busy || refreshing || loadingMore) {
@@ -589,9 +563,16 @@ export const FeedScreen = memo(function FeedScreen({
   );
 
   const renderFeedScene = useCallback(
-    ({ route }: { route: { key: string } }) => {
-      const routeSource = enabledFeedSourceItems.find((item) => item.value === route.key)?.value;
-      if (!routeSource) return null;
+    ({ route }: { route: { key: string } }) => (
+      <NavigationBackdropTarget active={screenActive && route.key === feedSource}>
+        {renderFeedContent({ route })}
+      </NavigationBackdropTarget>
+    ),
+    [feedSource, renderFeedContent, screenActive]
+  );
+
+  const renderCategoryRail = useCallback(
+    ({ value: routeSource }: { value: FeedSource }) => {
       const active = routeSource === feedSource;
       const routeCategory = active ? categoryFilter : '';
       const routeFilter = active
@@ -602,91 +583,130 @@ export const FeedScreen = memo(function FeedScreen({
       const routeShowsFilter = shouldUseFeedFilter(routeSource, routeCategory);
       const categoryItems = feedCategoryItems(categories, routeSource);
       return (
-        <View style={styles.content}>
-          <NavigationBackdropTarget active={screenActive && active}>
-            {renderFeedContent({ route })}
-          </NavigationBackdropTarget>
-          <View
-            testID={`feed-secondary-${routeSource}`}
-            style={[styles.feedSecondaryHeader, { top: sourceHeaderHeight }]}
-            onLayout={(event) => {
-              if (active) setSecondaryHeaderHeight(event.nativeEvent.layout.height);
-            }}
-            pointerEvents={active ? 'auto' : 'none'}
-            accessibilityElementsHidden={!active}
-            importantForAccessibility={active ? 'auto' : 'no-hide-descendants'}
-          >
-            {shouldUseReadingFilter(routeSource) ? (
-              <PillRail
-                variant="subtabs"
-                disabled={!active}
-                items={feedReadingFilterItems}
-                value={readingFilter}
-                onChange={(value) => {
-                  if (active) changeReadingFilter(value);
-                }}
-              />
-            ) : (
-              <View style={routeShowsFilter ? styles.feedSecondaryRow : undefined}>
-                <View style={routeShowsFilter ? styles.feedCategoryRailSlot : undefined}>
-                  <PillRail
-                    variant="subtabs"
-                    disabled={!active}
-                    items={categoryItems}
-                    value={routeCategory}
-                    resetScrollKey={Number(active)}
-                    onChange={(value) => {
-                      if (active) changeCategoryFilter(value);
-                    }}
-                  />
-                </View>
-                {routeShowsFilter ? (
-                  <Pressable
-                    testID={active ? 'feed-list-filter' : undefined}
-                    accessibilityRole="button"
-                    accessibilityLabel="列表筛选"
-                    accessibilityValue={{ text: feedFilterLabel(routeSource, routeFilter) }}
-                    accessibilityState={{ disabled: !active, expanded: active && filterMenuOpen }}
-                    disabled={!active}
-                    style={styles.linuxDoFilterButton}
-                    onPress={() => {
-                      if (active) toggleFeedFilterMenu();
-                    }}
-                  >
-                    <Text style={styles.linuxDoFilterButtonText} numberOfLines={1}>
-                      {feedFilterLabel(routeSource, routeFilter)}
-                    </Text>
-                    <ChevronDown
-                      accessible={false}
-                      size={14}
-                      color={styles.linuxDoFilterButtonText.color}
-                      strokeWidth={1.8}
-                    />
-                  </Pressable>
-                ) : null}
+        <View
+          key={routeSource}
+          testID={`feed-secondary-${routeSource}`}
+          style={[styles.feedSecondaryHeader, { width: pagerWidth }]}
+          onLayout={(event) => {
+            if (active) setSecondaryHeaderHeight(event.nativeEvent.layout.height);
+          }}
+          pointerEvents={active ? 'auto' : 'none'}
+          accessibilityElementsHidden={!active}
+          importantForAccessibility={active ? 'auto' : 'no-hide-descendants'}
+        >
+          {shouldUseReadingFilter(routeSource) ? (
+            <PillRail
+              variant="subtabs"
+              disabled={!active}
+              items={feedReadingFilterItems}
+              value={readingFilter}
+              onChange={(value) => {
+                if (active) changeReadingFilter(value);
+              }}
+            />
+          ) : (
+            <View style={routeShowsFilter ? styles.feedSecondaryRow : undefined}>
+              <View style={routeShowsFilter ? styles.feedCategoryRailSlot : undefined}>
+                <PillRail
+                  variant="subtabs"
+                  disabled={!active}
+                  items={categoryItems}
+                  value={routeCategory}
+                  resetScrollKey={Number(active)}
+                  onChange={(value) => {
+                    if (active) changeCategoryFilter(value);
+                  }}
+                />
               </View>
-            )}
-          </View>
+              {routeShowsFilter ? (
+                <Pressable
+                  testID={active ? 'feed-list-filter' : undefined}
+                  accessibilityRole="button"
+                  accessibilityLabel="列表筛选"
+                  accessibilityValue={{ text: feedFilterLabel(routeSource, routeFilter) }}
+                  accessibilityState={{ disabled: !active, expanded: active && filterMenuOpen }}
+                  disabled={!active}
+                  style={styles.linuxDoFilterButton}
+                  onPress={() => {
+                    if (active) toggleFeedFilterMenu();
+                  }}
+                >
+                  <Text style={styles.linuxDoFilterButtonText} numberOfLines={1}>
+                    {feedFilterLabel(routeSource, routeFilter)}
+                  </Text>
+                  <ChevronDown
+                    accessible={false}
+                    size={14}
+                    color={styles.linuxDoFilterButtonText.color}
+                    strokeWidth={1.8}
+                  />
+                </Pressable>
+              ) : null}
+            </View>
+          )}
         </View>
       );
     },
     [
-      enabledFeedSourceItems,
-      screenActive,
       feedSource,
       categoryFilter,
       feedFilter,
       feedFilters,
       categories,
       styles,
-      sourceHeaderHeight,
+      pagerWidth,
       readingFilter,
       changeReadingFilter,
       changeCategoryFilter,
       filterMenuOpen,
-      toggleFeedFilterMenu,
-      renderFeedContent
+      toggleFeedFilterMenu
     ]
+  );
+
+  const renderFeedTabBar = useCallback(
+    (props: TabBarProps<{ key: string }>) => (
+      <>
+        <View
+          testID="feed-primary-header"
+          style={styles.feedFixedHeader}
+          onLayout={(event) => setSourceHeaderHeight(event.nativeEvent.layout.height)}
+        >
+          <TabBar
+            {...props}
+            onTabPress={({ preventDefault }) => {
+              if (!canChangeFeedSelection()) preventDefault();
+            }}
+            scrollEnabled
+            gap={22}
+            activeColor={theme.primary}
+            inactiveColor={theme.muted}
+            pressColor="transparent"
+            pressOpacity={1}
+            style={styles.feedSourceBar}
+            tabStyle={styles.feedSourceTab}
+            indicatorStyle={styles.feedSourceIndicator}
+            contentContainerStyle={styles.feedSourceRail}
+          />
+        </View>
+        <View testID="feed-category-viewport" style={[styles.feedCategoryViewport, { top: sourceHeaderHeight }]}>
+          <NativeAnimated.View
+            testID="feed-category-track"
+            style={[
+              styles.feedCategoryTrack,
+              {
+                width: enabledFeedSourceItems.length * pagerWidth,
+                transform: [
+                  { translateX: NativeAnimated.multiply(props.position, I18nManager.isRTL ? pagerWidth : -pagerWidth) }
+                ]
+              }
+            ]}
+          >
+            {enabledFeedSourceItems.map(renderCategoryRail)}
+          </NativeAnimated.View>
+        </View>
+      </>
+    ),
+    [canChangeFeedSelection, enabledFeedSourceItems, pagerWidth, renderCategoryRail, sourceHeaderHeight, styles, theme]
   );
 
   const onPageLayout = useStartupPageLayout();
@@ -699,9 +719,9 @@ export const FeedScreen = memo(function FeedScreen({
         initialLayout={feedInitialLayout}
         lazy
         lazyPreloadDistance={1}
+        renderLazyPlaceholder={renderFeedLoadingScene}
         navigationState={feedNavigationState}
         commonOptions={feedTabOptions}
-        renderLazyPlaceholder={renderFeedLoadingScene}
         renderScene={renderFeedScene}
         renderTabBar={renderFeedTabBar}
         onSwipeStart={closeFeedFilterMenu}

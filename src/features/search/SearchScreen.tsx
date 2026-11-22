@@ -624,6 +624,7 @@ export const SearchScreen = memo(function SearchScreen({
         );
       }
       if (item.type === 'groupError') {
+        if (item.group.errorKind === 'invalid-query') return <EmptyText text={item.group.error || ''} />;
         const retryPage = searchGroupRetryPage(item.group);
         return (
           <View style={styles.errorBox}>

@@ -78,4 +78,48 @@ describe('Linux Do packet covers', () => {
       }
     }
   );
+  it('keeps the displayed cover until its replacement loads and drops a private cover after an account change', async () => {
+    const page = packetCoverDocument(cover, 'reader');
+    const { window } = new JSDOM(page.html, { url: page.baseUrl });
+    const document = window.document;
+    const first = document.querySelector('img')!;
+    const created = vi.spyOn(document, 'createElement');
+    const postMessage = vi.fn();
+    let account = 'reader';
+    const fetcher = vi.fn(async (url: string, init: RequestInit) => {
+      expect(init.cache).toBe('no-store');
+      if (url === '/api/session') return Response.json({ user: { username: account } });
+      expect(init.credentials).toBe(account === 'reader' ? 'same-origin' : 'omit');
+      return new Response('<svg/>', { headers: { 'content-type': 'image/svg+xml' } });
+    });
+    let blob = 0;
+    const urls = { createObjectURL: () => `blob:cover-${++blob}`, revokeObjectURL: vi.fn() };
+    try {
+      await runInNewContext(document.querySelector('script')!.textContent, {
+        document,
+        fetch: fetcher,
+        AbortController,
+        setTimeout,
+        clearTimeout,
+        URL: urls,
+        window: { ReactNativeWebView: { postMessage } }
+      });
+      first.dispatchEvent(new window.Event('load'));
+      for (const username of ['reader', 'another']) {
+        account = username;
+        const previous = document.querySelector('img')!;
+        document.dispatchEvent(new window.MessageEvent('message', { data: 'refresh' }));
+        await vi.waitFor(() => expect(blob).toBe(username === 'reader' ? 1 : 2));
+        expect(document.querySelector('img') === previous).toBe(true);
+        expect(previous.hidden).toBe(username !== 'reader');
+        const next = created.mock.results.at(-1)?.value as HTMLImageElement;
+        next.dispatchEvent(new window.Event('load'));
+        expect(document.querySelector('img') === next).toBe(true);
+        expect(next.hidden).toBe(false);
+      }
+      expect(urls.revokeObjectURL).toHaveBeenCalledWith('blob:cover-1');
+    } finally {
+      window.close();
+    }
+  });
 });

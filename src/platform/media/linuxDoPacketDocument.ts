@@ -9,7 +9,7 @@ async function readWithTimeout(url, options, milliseconds, read){
   const timer=setTimeout(()=>abort.abort(),milliseconds);
   try{
     const response=await fetch(url,{...options,cache:'no-store',redirect:'error',signal:abort.signal});
-    if(!response.ok)throw Error();
+    if(!response.ok)throw Error('http:'+response.status);
     return await read(response);
   }
   finally{clearTimeout(timer);}
@@ -23,10 +23,10 @@ async function packetIdentity(viewer){
 
 export function packetSessionDocument(username: string) {
   return {
-    baseUrl: LINUX_DO_PACKET_ORIGIN + '/',
+    baseUrl: LINUX_DO_PACKET_ORIGIN + '/.wz-packet-session',
     html: `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src 'self'; script-src 'nonce-wzPacketCover'; base-uri 'none'; form-action 'none'">
 <body data-viewer="${escapeHtmlAttribute(username)}"><script nonce="wzPacketCover">${sessionScript}
-packetIdentity(document.body.dataset.viewer).then(report,()=>report('error'));
+packetIdentity(document.body.dataset.viewer).then(report,error=>report(/^http:[45][0-9]{2}$/.test(error.message)?error.message:'error'));
 </script></body>`
   };
 }
@@ -42,26 +42,43 @@ export function packetCoverDocument(cover: string, username: string) {
 <body><img hidden alt="红包封面" data-cover="${escapeHtmlAttribute(cover)}" data-viewer="${escapeHtmlAttribute(username)}">
 <script nonce="wzPacketCover">
 ${sessionScript}
-const image=document.querySelector('img');
-image.onload=()=>{image.hidden=false;report('displayed');};
-image.onerror=()=>report('error');
+let image=document.querySelector('img');
+const {cover,viewer}=image.dataset;
+let generation=0, displayedBlob, displayedPersonal=false;
 async function showCover(){
-  const viewer=image.dataset.viewer.toLowerCase();
+  const version=++generation;
+  let personal=false;
   if(viewer){
-    try{
-      if(await packetIdentity(viewer)==='matching'){
-        image.src=image.dataset.cover;
-        return;
-      }
-    }catch{}
+    try{personal=await packetIdentity(viewer)==='matching';}catch{}
   }
-  const svg=await readWithTimeout(image.dataset.cover,{credentials:'omit',headers:{Accept:'image/svg+xml,image/*;q=0.8'}},10000,async response=>{
-    if(response.headers.get('content-type')?.split(';')[0].trim().toLowerCase()!=='image/svg+xml')throw Error();
-    return response.blob();
-  });
-  image.src=URL.createObjectURL(svg);
+  if(version!==generation)return;
+  if(displayedPersonal && !personal)image.hidden=true;
+  const next=version===1?image:document.createElement('img');
+  next.alt='红包封面';
+  let blob;
+  const failed=()=>{if(blob)URL.revokeObjectURL(blob);if(version===generation && image.hidden)report('error');};
+  next.onerror=failed;
+  next.onload=()=>{
+    if(version!==generation){if(blob)URL.revokeObjectURL(blob);return;}
+    next.hidden=false;
+    if(next!==image)image.replaceWith(next);
+    image=next;
+    if(displayedBlob)URL.revokeObjectURL(displayedBlob);
+    displayedBlob=blob;
+    displayedPersonal=personal;
+    report('displayed');
+  };
+  if(personal && version===1){next.src=cover;return;}
+  try{
+    const svg=await readWithTimeout(cover,{credentials:personal?'same-origin':'omit',headers:{Accept:'image/svg+xml,image/*;q=0.8'}},10000,async response=>{
+      if(response.headers.get('content-type')?.split(';')[0].trim().toLowerCase()!=='image/svg+xml')throw Error();
+      return response.blob();
+    });
+    if(version===generation)next.src=blob=URL.createObjectURL(svg);
+  }catch{failed();}
 }
-showCover().catch(()=>report('error'));
+document.addEventListener('message',event=>{if(event.data==='refresh')void showCover();});
+showCover();
 </script></body></html>`
   };
 }

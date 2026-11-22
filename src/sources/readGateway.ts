@@ -917,6 +917,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
 
   const readAccountData = <T>(
     source: SessionSource,
+    diagnosticOperation: 'getAccountOverview' | 'getAccountLedger' | 'attendance',
     options: ManagedAccountDataOptions,
     operation: (credentials: {
       fetcher: Fetcher;
@@ -927,7 +928,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
   ) =>
     read(
       source,
-      'getUserProfile',
+      diagnosticOperation,
       'account-data',
       (credentials) => {
         if (readSessionSnapshot(source).identityKey !== `${source}:${options.userId}`) {
@@ -1035,6 +1036,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
     ) {
       return readAccountData(
         'linuxdo',
+        'getAccountOverview',
         options,
         ({ fetcher, discourseAuth }) =>
           getLinuxDoCreditAccount({ ...options, fetcher, userAgent: discourseAuth?.userAgent }),
@@ -1047,6 +1049,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
     ) {
       return readAccountData(
         'linuxdo',
+        'getAccountLedger',
         options,
         ({ fetcher, discourseAuth }) =>
           getLinuxDoCreditTransactions({ ...options, fetcher, userAgent: discourseAuth?.userAgent }),
@@ -1056,6 +1059,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
     getNodeSeekAccountOverview(options: ManagedAccountDataOptions, context?: ReadGatewayReadContext) {
       return readAccountData(
         'nodeseek',
+        'getAccountOverview',
         options,
         (credentials) => getNodeSeekAccountOverviewDirect({ ...options, ...credentials }),
         context
@@ -1064,6 +1068,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
     getNodeSeekAttendanceBoard(options: ManagedAccountDataOptions, context?: ReadGatewayReadContext) {
       return readAccountData(
         'nodeseek',
+        'attendance',
         options,
         (credentials) => getNodeSeekAttendanceBoardDirect({ ...options, ...credentials }),
         context
@@ -1072,6 +1077,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
     getNodeSeekCredits(options: ManagedAccountDataOptions & { page?: number }, context?: ReadGatewayReadContext) {
       return readAccountData(
         'nodeseek',
+        'getAccountLedger',
         options,
         (credentials) => getNodeSeekCreditsDirect({ ...options, ...credentials }),
         context
@@ -1083,6 +1089,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
     ) {
       return readAccountData(
         'nodeseek',
+        'getAccountLedger',
         options,
         (credentials) => getNodeSeekStardustCreditsDirect({ ...options, ...credentials }),
         context
@@ -1091,6 +1098,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
     getYaohuoAccountOverview(options: ManagedAccountDataOptions, context?: ReadGatewayReadContext) {
       return readAccountData(
         'yaohuo',
+        'getAccountOverview',
         options,
         (credentials) => getYaohuoAccountOverviewDirect({ ...options, ...credentials }),
         context

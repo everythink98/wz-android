@@ -1406,10 +1406,19 @@ describe('Search state', () => {
         label: 'linux.do',
         items: [],
         error: 'linux.do 暂时不可用'
+      },
+      {
+        source: 'nodeseek',
+        label: 'NodeSeek',
+        items: [],
+        errorKind: 'invalid-query',
+        error: '搜索词太短，请至少输入两个字符。'
       }
     ];
     const view = await renderSearchScreen({ onRetrySearchSource, searchGroups });
 
+    expect(view.getByText('搜索词太短，请至少输入两个字符。')).toBeTruthy();
+    expect(view.queryByRole('button', { name: '重试 NodeSeek' })).toBeNull();
     expect(view.getByText('第一页主题')).toBeTruthy();
     expect(view.getByText('linux.do 暂时不可用')).toBeTruthy();
     fireEvent.press(view.getByText('重试 linux.do'));

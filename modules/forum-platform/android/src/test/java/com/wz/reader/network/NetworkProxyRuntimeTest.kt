@@ -457,7 +457,7 @@ class NetworkProxyRuntimeTest {
   fun retiredRuntimeCannotReplayStaleHttp2ImageContext() =
     Http2ImageFaultFixture().use { it.assertRetiredRuntimeDoesNotReplay() }
 
-  private class ControllableGlideCall(private val request: Request) : Call by OkHttpClient().newCall(request) {
+  private class ControllableGlideCall(private val request: Request) : Call {
     private var callback: Callback? = null
     private val canceled = AtomicBoolean(false)
     private val executed = AtomicBoolean(false)
@@ -2435,6 +2435,16 @@ class NetworkProxyRuntimeTest {
     cyclic.initCause(IOException("PRIVATE_CYCLE").apply { initCause(cyclic) })
     listener.callFailed(call, cyclic)
     assertEquals("other", NetworkProxyRuntime.readNetworkDiagnosticEvents().last().fields["socketFailure"])
+
+    call.cancel()
+    val closed = SocketException("Socket closed")
+    listener.connectFailed(call, InetSocketAddress.createUnresolved("test.example", 443), Proxy.NO_PROXY, null, closed)
+    listener.requestFailed(call, closed)
+    listener.responseFailed(call, closed)
+    listener.callFailed(call, closed)
+    val canceled = NetworkProxyRuntime.readNetworkDiagnosticEvents().takeLast(4).map { DiagnosticJournal.safeNetworkFields(it.fields) }
+    assertEquals(listOf("connect-failed", "request-failed", "response-failed", "call-failed"), canceled.map { it["phase"] })
+    assertTrue(canceled.all { it["outcome"] == "canceled" })
   }
 
   @Test
@@ -2482,37 +2492,6 @@ class NetworkProxyRuntimeTest {
       assertSame(proxy, selector.select(remote).single())
       assertSame(Proxy.NO_PROXY, selector.select(java.net.URI("http://localhost/probe")).single())
     } finally { NetworkProxyRuntime.blockNetworkRequests() }
-  }
-
-  @Test
-  fun invalidationClaimsTheActiveProbeAndRejectsLateRegistration() {
-    val released = mutableListOf<Any>()
-    val probes = InvalidatableResourceSlot<Any> { released.add(it) }
-    val active = Any()
-    val late = Any()
-
-    assertTrue(probes.register(active))
-    assertSame(active, probes.invalidate())
-    assertFalse(probes.register(late))
-    assertEquals(listOf(late), released)
-    assertNull(probes.invalidate())
-  }
-
-  @Test
-  fun staleProbeCompletionCannotClearItsReplacement() {
-    val released = mutableListOf<Any>()
-    val probes = InvalidatableResourceSlot<Any> { released.add(it) }
-    val previous = Any()
-    val replacement = Any()
-
-    assertTrue(probes.register(previous))
-    assertTrue(probes.register(replacement))
-    probes.clear(previous)
-    assertSame(replacement, probes.invalidate())
-    probes.clear(replacement)
-    val late = Any()
-    assertFalse(probes.register(late))
-    assertEquals(listOf(late), released)
   }
 
   @Test
@@ -2933,139 +2912,32 @@ class NetworkProxyRuntimeTest {
   }
 
   @Test
-  fun connectivityProbeRequiresTheExpectedHttpResponse() {
-    assertThrows(java.io.IOException::class.java) {
-      validateProxyHealthResponse(ByteArrayInputStream(ByteArray(0)))
-    }
-    assertThrows(java.io.IOException::class.java) {
-      validateProxyHealthResponse(ByteArrayInputStream("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".toByteArray()))
-    }
-
-    validateProxyHealthResponse(ByteArrayInputStream("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n".toByteArray()))
-  }
-
-  @Test
-  fun successfulConnectTunnelStillPerformsTlsHostnameAndHttpVerification() {
-    val upstreamListener = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
-    val upstreamExecutor = Executors.newSingleThreadExecutor()
-    val events = mutableListOf<String>()
-    val request = ByteArrayOutputStream()
-    upstreamExecutor.execute {
-      val accepted = upstreamListener.accept()
-      try {
-        val reader = accepted.getInputStream().bufferedReader()
-        while (!reader.readLine().isNullOrEmpty()) {
-        }
-        accepted.getOutputStream().apply {
-          write("HTTP/1.1 200 Connection Established\r\n\r\n".toByteArray())
-          flush()
-        }
-      } finally {
-        accepted.close()
-      }
-    }
-    val probe = LocalNetworkProxyServer(
-      NetworkProxyProfile("http", "127.0.0.1", upstreamListener.localPort, null, null),
-      tlsConnectionFactory = { tunnel, host, port ->
-        events.add("factory:" + host + ":" + port)
-        object : ProxyTlsConnection {
-          override val socket = tunnel
-
-          override fun setReadTimeout(timeoutMs: Int) {
-            events.add("timeout:" + timeoutMs)
-          }
-
-          override fun enableHttpsHostnameVerification() {
-            events.add("hostname")
-          }
-
-          override fun startHandshake() {
-            events.add("handshake")
-          }
-
-          override fun outputStream() = request.also { events.add("output") }
-
-          override fun inputStream() = ByteArrayInputStream(
-            "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n".toByteArray()
-          ).also { events.add("input") }
-        }
-      }
-    )
-    try {
-      probe.test()
-
-      assertEquals(
-        listOf("factory:www.gstatic.com:443", "timeout:15000", "hostname", "handshake", "output", "input"),
-        events
-      )
-      val requestText = request.toString(Charsets.ISO_8859_1.name())
-      assertTrue(requestText.startsWith("GET /generate_204 HTTP/1.1\r\n"))
-      assertTrue(requestText.contains("Host: www.gstatic.com\r\n"))
-      assertTrue(requestText.endsWith("Connection: close\r\n\r\n"))
-    } finally {
-      probe.stop()
-      upstreamListener.close()
-      upstreamExecutor.shutdownNow()
-    }
-  }
-
-  @Test
   fun stopInterruptsAnUpstreamConnectionAttempt() {
     val connectStarted = CountDownLatch(1)
-    val observedClosed = CountDownLatch(1)
-    val probeFinished = CountDownLatch(1)
-    val probeExecutor = Executors.newSingleThreadExecutor()
+    val connecting = AtomicReference<Socket>()
+    val releaseConnector = CountDownLatch(1)
     val probe = LocalNetworkProxyServer(
       NetworkProxyProfile("http", "127.0.0.1", 1, null, null),
       socketConnector = { socket, _, _ ->
+        connecting.set(socket)
         connectStarted.countDown()
-        while (!socket.isClosed) {
-          Thread.sleep(5)
-        }
-        observedClosed.countDown()
+        releaseConnector.await()
         throw SocketException("closed by proxy stop")
       }
     )
     try {
-      probeExecutor.execute {
-        try {
-          probe.test()
-        } catch (_: Exception) {
-        } finally {
-          probeFinished.countDown()
-        }
+      probe.start()
+      Socket("127.0.0.1", probe.port).use { client ->
+        client.getOutputStream().write("CONNECT example.org:443 HTTP/1.1\r\nHost: example.org:443\r\n\r\n".toByteArray())
+        assertTrue("the relay must start connecting", connectStarted.await(2, TimeUnit.SECONDS))
+        probe.stop()
+        assertTrue("stop must close the connecting socket", connecting.get().isClosed)
       }
-      assertTrue("the local connector must begin", connectStarted.await(2, TimeUnit.SECONDS))
-
-      probe.stop()
-
-      assertTrue("stop must close a socket while connect is still blocked", observedClosed.await(2, TimeUnit.SECONDS))
-      assertTrue("closing the connecting socket must release the probe", probeFinished.await(2, TimeUnit.SECONDS))
     } finally {
+      releaseConnector.countDown()
       probe.stop()
-      probeExecutor.shutdownNow()
     }
-  }
-
-  @Test
-  fun stoppedProxyRejectsProbeAndRestartAfterRepeatedStop() {
-    val connectorCalls = AtomicInteger()
-    val server = LocalNetworkProxyServer(
-      NetworkProxyProfile("http", "127.0.0.1", 1, null, null),
-      socketConnector = { _, _, _ ->
-        connectorCalls.incrementAndGet()
-        throw AssertionError("a stopped proxy must reject before connecting")
-      }
-    )
-    try {
-      server.stop()
-      server.stop()
-      assertThrows(SocketException::class.java) { server.test() }
-      assertEquals(0, connectorCalls.get())
-      assertThrows(java.util.concurrent.RejectedExecutionException::class.java) { server.start() }
-    } finally {
-      server.stop()
-    }
+    assertThrows(java.util.concurrent.RejectedExecutionException::class.java) { probe.start() }
   }
 
   @Test
@@ -3229,7 +3101,7 @@ class NetworkProxyRuntimeTest {
         while (!reader.readLine().isNullOrEmpty()) {
         }
         accepted.getOutputStream().apply {
-          write("HTTP/1.1 200 Connection Established\r\n".toByteArray())
+          write("HTTP/1.1 407 Proxy Authentication Required\r\n\r\n".toByteArray())
           flush()
         }
         accepted.shutdownOutput()
@@ -3248,8 +3120,11 @@ class NetworkProxyRuntimeTest {
       NetworkProxyProfile("http", "127.0.0.1", upstreamListener.localPort, null, null)
     )
     try {
-      assertThrows(java.io.IOException::class.java) {
-        probe.test()
+      probe.start()
+      Socket("127.0.0.1", probe.port).use { client ->
+        client.soTimeout = 2_000
+        client.getOutputStream().write("CONNECT example.org:443 HTTP/1.1\r\nHost: example.org:443\r\n\r\n".toByteArray())
+        assertTrue(readHeaderBlock(client.getInputStream()).startsWith("HTTP/1.1 502"))
       }
 
       assertTrue(

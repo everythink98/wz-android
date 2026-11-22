@@ -352,36 +352,63 @@ describe('Topic Route external links', () => {
       link?.({ stopPropagation: jest.fn() } as never, 'https://hb.lafi.sh/', {} as never, {} as never)
     );
     expect(view.getByText('红包站')).toBeTruthy();
-    await fireEvent(view.getByTestId('linuxdo-packet-session'), 'message', {
-      nativeEvent: { url: 'https://hb.lafi.sh/', data: 'mismatch' }
+    await fireEvent(view.getByTestId('linuxdo-packet-session', { includeHiddenElements: true }), 'message', {
+      nativeEvent: {
+        url: view.getByTestId('linuxdo-packet-session', { includeHiddenElements: true }).props.source.baseUrl,
+        data: 'mismatch'
+      }
     });
-    expect(view.queryByTestId('linuxdo-packet-page')).toBeNull();
+    expect(view.queryByTestId('linuxdo-packet-page', { includeHiddenElements: true })).toBeNull();
     await fireEvent.press(view.getByLabelText('关闭'));
     expect(view.queryByText('红包站')).toBeNull();
     expect(latestScreen().active).toBe(true);
     await act(async () =>
       link?.({ stopPropagation: jest.fn() } as never, 'https://hb.lafi.sh/', {} as never, {} as never)
     );
-    await fireEvent(view.getByTestId('linuxdo-packet-session'), 'message', {
+    await fireEvent(view.getByTestId('linuxdo-packet-session', { includeHiddenElements: true }), 'message', {
       nativeEvent: { url: 'https://hb.lafi.sh', data: 'matching' }
     });
-    expect(view.getByTestId('linuxdo-packet-page')).toHaveProp('source', { uri: 'https://hb.lafi.sh/' });
-    expect(view.getByTestId('linuxdo-packet-page').props.onMessage).toBeUndefined();
+    expect(view.getByTestId('linuxdo-packet-page', { includeHiddenElements: true })).toHaveProp('source', {
+      uri: 'https://hb.lafi.sh/'
+    });
+    expect(view.getByTestId('linuxdo-packet-page', { includeHiddenElements: true }).props.onMessage).toBeUndefined();
+    expect(view.getByText('正在打开红包页…')).toBeTruthy();
+    await fireEvent(view.getByTestId('linuxdo-packet-page', { includeHiddenElements: true }), 'load', {
+      nativeEvent: { url: 'https://hb.lafi.sh/' }
+    });
+    expect(view.queryByText('正在打开红包页…')).toBeNull();
+  });
+
+  it('preserves the topic behind account checks and offers a retry when the site refuses the check', async () => {
+    const view = await render(
+      <LinuxDoPacketPage url="https://hb.lafi.sh/" username="reader" blockMessage="" onClose={jest.fn()} />
+    );
+    const session = view.getByTestId('linuxdo-packet-session', { includeHiddenElements: true });
+    expect(session.props.containerStyle).toMatchObject({ opacity: 0 });
+    await fireEvent(session, 'message', { nativeEvent: { url: session.props.source.baseUrl, data: 'http:403' } });
+    expect(view.getByText(/账号核对失败（HTTP 403）/)).toBeTruthy();
+    expect(view.queryByTestId('linuxdo-packet-page', { includeHiddenElements: true })).toBeNull();
+    await fireEvent.press(view.getByRole('button', { name: '重新加载' }));
+    expect(view.getByTestId('linuxdo-packet-session', { includeHiddenElements: true })).toBeTruthy();
   });
 
   it('keeps the previous packet account hidden when a user cancels reconnecting', async () => {
     const view = await render(
       <LinuxDoPacketPage url="https://hb.lafi.sh/" username="reader" blockMessage="" onClose={jest.fn()} />
     );
-    await fireEvent(view.getByTestId('linuxdo-packet-session'), 'message', {
-      nativeEvent: { url: 'https://hb.lafi.sh/', data: 'mismatch' }
+    await fireEvent(view.getByTestId('linuxdo-packet-session', { includeHiddenElements: true }), 'message', {
+      nativeEvent: {
+        url: view.getByTestId('linuxdo-packet-session', { includeHiddenElements: true }).props.source.baseUrl,
+        data: 'mismatch'
+      }
     });
     await fireEvent.press(view.getByLabelText('连接当前账号'));
-    const navigate = view.getByTestId('linuxdo-packet-page').props.onShouldStartLoadWithRequest;
+    const navigate = view.getByTestId('linuxdo-packet-page', { includeHiddenElements: true }).props
+      .onShouldStartLoadWithRequest;
     await act(async () =>
       expect(navigate({ url: 'https://hb.lafi.sh/?authError=access_denied', isTopFrame: true })).toBe(false)
     );
-    expect(view.queryByTestId('linuxdo-packet-page')).toBeNull();
+    expect(view.queryByTestId('linuxdo-packet-page', { includeHiddenElements: true })).toBeNull();
   });
 
   it('reports a Custom Tab rejection, keeps original-site opening in the full browser, and stops native content in the background', async () => {

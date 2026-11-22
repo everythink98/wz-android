@@ -3585,6 +3585,17 @@ describe('Android local sources', () => {
     expect(calls).not.toContain('keyword=GPT');
   });
 
+  it.each([' 一 ', '1', '🧧'])(
+    'reports a one-character site query as too short before sending it (%s)',
+    async (query) => {
+      const fetcher = vi.fn(async () => new Response('<div>搜索词太短😭</div>', { status: 404 }));
+      await expect(searchTopics({ source: 'nodeseek', query, fetcher, nodeSeekAuthenticated: true })).rejects.toThrow(
+        '搜索词太短'
+      );
+      expect(fetcher).not.toHaveBeenCalled();
+    }
+  );
+
   it('keeps NodeSeek site search enabled for short AI terms', async () => {
     const fetcher = routeFetcher([
       [

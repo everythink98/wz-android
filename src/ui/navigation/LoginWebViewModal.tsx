@@ -65,6 +65,7 @@ export function LoginWebViewModal({
   footer,
   loading,
   loadingText,
+  showContentWhileLoading = false,
   primaryAction,
   refreshAction,
   title,
@@ -78,6 +79,7 @@ export function LoginWebViewModal({
   footer?: ReactNode;
   loading: boolean;
   loadingText: string;
+  showContentWhileLoading?: boolean;
   primaryAction?: ReactNode;
   refreshAction?: ReactNode;
   title: string;
@@ -87,20 +89,22 @@ export function LoginWebViewModal({
 }) {
   const { styles, theme } = useReaderThemeStyles(createLoginWebViewStyles);
 
+  const loadingBackground = loading && showContentWhileLoading ? { backgroundColor: 'transparent' } : undefined;
   return (
     <Modal
       visible={visible}
-      backdropColor={theme.surface}
+      transparent={showContentWhileLoading}
+      backdropColor={showContentWhileLoading ? undefined : theme.surface}
       animationType="slide"
       statusBarTranslucent
       navigationBarTranslucent
       onRequestClose={onClose}
     >
-      <SafeAreaProvider style={styles.loginWebViewModal}>
+      <SafeAreaProvider style={[styles.loginWebViewModal, loadingBackground]}>
         <SafeAreaView
           onTouchStart={recordUserInteraction}
           onTouchMove={recordUserInteraction}
-          style={styles.loginWebViewModal}
+          style={[styles.loginWebViewModal, loadingBackground]}
         >
           <View style={styles.loginWebViewChrome}>
             <View style={styles.loginWebViewHeader}>
@@ -128,7 +132,7 @@ export function LoginWebViewModal({
               </View>
             ) : null}
           </View>
-          <View style={styles.loginWebViewBody} testID="login-webview-content">
+          <View style={[styles.loginWebViewBody, loadingBackground]} testID="login-webview-content">
             {loading ? (
               <View pointerEvents="none" style={styles.loading} accessibilityLiveRegion="polite">
                 <ActivityIndicator size="small" color={theme.primary} accessible={false} />

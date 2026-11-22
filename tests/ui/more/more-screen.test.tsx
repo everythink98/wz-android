@@ -6,10 +6,12 @@ import { useDiagnosticLogController } from '@/features/more/useDiagnosticLogCont
 import { useReaderRuntime } from '@/app/useReaderRuntime';
 import { useReaderSettingsController } from '@/features/more/useReaderSettingsController';
 import * as diagnosticFileStore from '@/platform/diagnostics/diagnosticFileStore';
+import * as journal from '@/platform/diagnostics/nativeDiagnosticJournal';
 import React, { type ComponentProps, Profiler, useLayoutEffect, useState } from 'react';
 import { createRoot } from 'test-renderer';
 import { Alert, Linking, StyleSheet, Text, View } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
+import * as Clipboard from 'expo-clipboard';
 import { emptyCredentialSummaries } from '@/platform/storage/credentialVault';
 import { clearNodeImageApiKey, NODEIMAGE_API_KEY_STORAGE_KEY } from '@/sources/nodeimage/credentials';
 import { createEmptyNetworkProxyState } from '@/platform/network/networkProxy';
@@ -294,6 +296,7 @@ jest.mock('lucide-react-native', () => {
     Check: Icon,
     CheckCircle: Icon,
     CalendarCheck: Icon,
+    Copy: Icon,
     ChevronDown: Icon,
     ChevronRight: Icon,
     ChevronUp: Icon,
@@ -612,15 +615,15 @@ function createMoreRouteRuntime(props = moreProps()): MoreRouteRuntimeValue {
       applyError: '',
       applyStatus: 'disabled',
       confirmedState: undefined,
-      dnsResult: undefined,
       effectiveMode: 'system',
       proxyState: createEmptyNetworkProxyState(),
       summary: props.utilities.proxy.summary,
       deleteProxyProfile: jest.fn(async () => undefined),
       selectProxyProfile: jest.fn(async () => undefined),
       setNetworkMode: jest.fn(async () => undefined),
-      testEncryptedDns: jest.fn(async () => ({ ok: true, latencyMs: 10 })),
-      testProxyProfile: jest.fn(async () => ({ ok: true, latencyMs: 10 })),
+      networkProxyFetcher: jest.fn(
+        async () => new Response('<html>forum</html>', { headers: { 'content-type': 'text/html' } })
+      ),
       upsertProxyProfile: jest.fn(async () => undefined)
     },
     reader: {
@@ -662,123 +665,165 @@ function renderNetworkSettings(runtime: MoreRouteRuntimeValue) {
 }
 
 describe('network settings transitions', () => {
-  it('can apply a preset after abandoning an invalid custom DNS draft', async () => {
-    const runtime = createMoreRouteRuntime();
-    const saved = {
-      provider: 'custom' as const,
-      policy: 'strict' as const,
-      customEndpoint: 'https://resolver.example/dns-query',
-      customBootstrap: ['2001:db8::1']
+  it('opens a network-only log, filters failures, and retries an unavailable journal', async () => {
+    const time = '2026-11-22T09:00:00Z';
+    const nativeRequest = {
+      timeMs: Date.parse(time),
+      diagnosticKind: 'network',
+      operation: 'request',
+      source: 'nodeseek'
     };
-    runtime.proxy = {
-      ...runtime.proxy,
-      effectiveMode: 'doh',
-      applyStatus: 'applied',
-      proxyState: { ...runtime.proxy.proxyState, mode: 'doh', encryptedDns: saved }
+    const snapshot: journal.DiagnosticJournalSnapshot = {
+      status: 'available',
+      health: {},
+      crashLines: '',
+      jsLines: [
+        {
+          time,
+          area: 'source',
+          operation: 'getAccountOverview',
+          phase: 'finish',
+          outcome: 'failure',
+          source: 'nodeseek',
+          reason: 'invalid_response'
+        },
+        {
+          time,
+          area: 'source',
+          operation: 'attendance',
+          phase: 'finish',
+          outcome: 'failure',
+          source: 'nodeseek',
+          reason: 'timeout'
+        },
+        {
+          time,
+          area: 'credential',
+          operation: 'check',
+          phase: 'transport',
+          source: 'linuxdo',
+          isCurrent: true,
+          verificationPage: 'alternate',
+          verificationAction: 'load-end'
+        },
+        {
+          time,
+          area: 'credential',
+          operation: 'check',
+          phase: 'transport',
+          source: 'linuxdo',
+          isCurrent: true,
+          verificationPage: 'alternate',
+          verificationAction: 'load-error',
+          reason: 'tls_error'
+        },
+        {
+          time,
+          area: 'credential',
+          operation: 'check',
+          phase: 'transport',
+          source: 'linuxdo',
+          isCurrent: true,
+          verificationPage: 'alternate',
+          verificationAction: 'load-end',
+          hasLoadError: true
+        }
+      ]
+        .map((v) => JSON.stringify(v))
+        .join('\n'),
+      nativeLines: [
+        {
+          ...nativeRequest,
+          phase: 'response-headers',
+          status: 200,
+          url: 'private-field'
+        },
+        { ...nativeRequest, phase: 'call-failed', outcome: 'canceled', socketFailure: 'closed' },
+        { ...nativeRequest, phase: 'call-failed', outcome: 'failure', socketFailure: 'refused' },
+        {
+          timeMs: Date.parse(time),
+          diagnosticKind: 'network',
+          operation: 'cookie-request',
+          source: 'linuxdo',
+          phase: 'finish',
+          cookie: 'private-field'
+        }
+      ]
+        .map((v) => JSON.stringify(v))
+        .join('\n')
     };
-    const view = await render(renderNetworkSettings(runtime));
+    const reading = jest
+      .spyOn(journal, 'readDiagnosticJournal')
+      .mockResolvedValueOnce({ ...snapshot, status: 'timeout' })
+      .mockResolvedValue(snapshot);
+    const copy = jest.spyOn(Clipboard, 'setStringAsync').mockResolvedValue(true);
+    const view = await render(renderNetworkSettings(createMoreRouteRuntime()));
     try {
-      await fireEvent.press(view.getByText('服务商和保护级别'));
-      await fireEvent.changeText(view.getByLabelText('HTTPS 地址'), 'https:/');
-      await fireEvent.changeText(view.getByLabelText('引导 IP'), 'unfinished');
-      await fireEvent.press(view.getByRole('radio', { name: /CFluxDo 公共加速/ }));
-      await fireEvent.press(view.getByRole('button', { name: '保存并应用' }));
-      expect(runtime.proxy.setNetworkMode).toHaveBeenCalledWith('doh', { ...saved, provider: 'cfluxdo' });
+      await fireEvent.press(view.getByText('网络日志'));
+      expect(await view.findByText('暂时无法读取网络日志，请刷新重试。')).toBeTruthy();
+      await fireEvent.press(view.getByRole('button', { name: '刷新日志' }));
+      expect(await view.findByText('HTTP 200')).toBeTruthy();
+      expect(view.getAllByText(/^\d{2}:\d{2}:\d{2}$/).length).toBeGreaterThan(1);
+      expect(view.getAllByRole('header', { name: '2026年11月22日' })).toHaveLength(1);
+      expect(view.getByText('响应格式不符')).toBeTruthy();
+      expect(view.getAllByText('页面已加载')).toHaveLength(1);
+      expect(view.getByText('TLS 握手失败')).toBeTruthy();
+      expect(view.queryByText(/private-field/)).toBeNull();
+      await fireEvent.press(view.getByRole('button', { name: '仅看失败' }));
+      expect(view.queryByText('HTTP 200')).toBeNull();
+      expect(view.queryByText('连接已关闭')).toBeNull();
+      expect(view.getByText('连接被拒绝')).toBeTruthy();
+      expect(view.getByText('响应格式不符')).toBeTruthy();
+      await fireEvent.press(view.getByRole('button', { name: '复制日志' }));
+      expect(copy).toHaveBeenCalledWith(
+        [
+          '2026-11-22T09:00:00.000Z · NodeSeek · 网络请求 · 连接被拒绝',
+          '2026-11-22T09:00:00.000Z · NodeSeek · 我的资料 · 响应格式不符',
+          '2026-11-22T09:00:00.000Z · NodeSeek · 签到榜 · 超时',
+          '2026-11-22T09:00:00.000Z · linux.do · 网站验证页 · TLS 握手失败'
+        ].join('\n')
+      );
+      reading.mockResolvedValue({ ...snapshot, jsLines: '', nativeLines: '' });
+      await fireEvent.press(view.getByRole('button', { name: '刷新日志' }));
+      expect(await view.findByText('最近没有失败记录。')).toBeTruthy();
     } finally {
       await view.unmount();
+      reading.mockRestore();
+      copy.mockRestore();
     }
   });
-
-  it('keeps confirmed mode and actions visible until the native mode change completes', async () => {
+  it('offers only system networking and the application proxy, with access to website verification', async () => {
     const runtime = createMoreRouteRuntime();
-    const saved = { ...runtime.proxy.proxyState, encryptedDns: { provider: 'dnspod', policy: 'strict' } as const };
-    const next = { ...saved, mode: 'doh' as const };
-    const applying = Promise.withResolvers<void>();
-    runtime.proxy.proxyState = saved;
-    runtime.proxy.setNetworkMode = jest.fn(() => applying.promise);
+    const slow = Promise.withResolvers<Response>();
+    const fetcher = jest.fn<import('@/platform/network/request').Fetcher>(async (url) => {
+      if (url.includes('yaohuo.me')) return slow.promise;
+      if (url.includes('linux.do'))
+        return new Response('<title>Just a moment</title>', { status: 403, headers: { 'content-type': 'text/html' } });
+      if (url.includes('v2ex.com')) throw new Error('Network request failed');
+      return new Response('<html>forum</html>', { status: 200 });
+    });
+    runtime.proxy.networkProxyFetcher = fetcher;
     const view = await render(renderNetworkSettings(runtime));
-
     try {
-      await fireEvent.press(view.getByText('加密 DNS'));
-      await view.rerender(
-        renderNetworkSettings({
-          ...runtime,
-          proxy: { ...runtime.proxy, proxyState: next, confirmedState: saved, applyStatus: 'applying' }
-        })
-      );
+      expect(view.getAllByRole('radio')).toHaveLength(2);
       expect(view.getByRole('radio', { name: /跟随系统/, checked: true })).toBeTruthy();
-      expect(view.queryByText('测试连接')).toBeNull();
-
-      await act(async () => applying.resolve());
-      await view.rerender(
-        renderNetworkSettings({
-          ...runtime,
-          proxy: {
-            ...runtime.proxy,
-            proxyState: next,
-            confirmedState: next,
-            effectiveMode: 'doh',
-            applyStatus: 'applied'
-          }
-        })
+      expect(view.getByRole('radio', { name: /应用代理/, checked: false })).toBeTruthy();
+      await fireEvent.press(view.getByText('测试当前网络'));
+      expect(await view.findByText(/可访问 · HTTP 200/)).toBeTruthy();
+      expect(view.getByText(/需网站验证 · HTTP 403/)).toBeTruthy();
+      expect(view.getByText(/连接失败 ·/)).toBeTruthy();
+      expect(view.getByText('测试中')).toBeTruthy();
+      await act(async () => slow.resolve(new Response('', { status: 503 })));
+      expect(await view.findByText(/站点返回错误 · HTTP 503/)).toBeTruthy();
+      expect(fetcher.mock.calls.every(([, init]) => init?.credentials === 'omit')).toBe(true);
+      expect(fetcher.mock.calls.map(([url]) => url).sort()).toEqual(
+        ['https://linux.do/', 'https://www.nodeseek.com/', 'https://www.v2ex.com/', 'https://www.yaohuo.me/'].sort()
       );
-      expect(view.getByRole('radio', { name: /加密 DNS/, checked: true })).toBeTruthy();
-      expect(view.getByText('测试连接')).toBeEnabled();
-      expect(runtime.proxy.setNetworkMode).toHaveBeenCalledTimes(1);
+      await fireEvent.press(view.getByText('打开网站验证页'));
+      expect(runtime.account.center.command).toHaveBeenCalledWith({ type: 'open-linuxdo-verification' });
     } finally {
-      applying.resolve();
       await view.unmount();
     }
-  });
-
-  it('keeps the last connection result visible while the same configuration is tested again', async () => {
-    const runtime = createMoreRouteRuntime();
-    const saved = {
-      ...runtime.proxy.proxyState,
-      mode: 'doh',
-      encryptedDns: { provider: 'auto', policy: 'strict' }
-    } as const;
-    const second = Promise.withResolvers<{ ok: boolean; latencyMs: number; dnsProvider?: string }>();
-    runtime.proxy = {
-      ...runtime.proxy,
-      effectiveMode: 'doh',
-      applyStatus: 'applied',
-      confirmedState: saved,
-      proxyState: saved,
-      testEncryptedDns: jest
-        .fn(() => second.promise)
-        .mockResolvedValueOnce({ ok: true, latencyMs: 10, dnsProvider: 'dnspod' })
-    };
-    const view = await render(renderNetworkSettings(runtime));
-
-    try {
-      await fireEvent.press(view.getByText('测试连接'));
-      expect(await view.findByText(/通过 · 10 ms · DNSPod/)).toBeTruthy();
-      await fireEvent.press(view.getByText('测试连接'));
-      expect(view.getByText(/通过 · 10 ms · DNSPod/)).toBeTruthy();
-      await act(async () => second.resolve({ ok: true, latencyMs: 20, dnsProvider: 'google' }));
-      expect(await view.findByText(/通过 · 20 ms · Google Public DNS/)).toBeTruthy();
-      expect(runtime.proxy.testEncryptedDns).toHaveBeenCalledTimes(2);
-    } finally {
-      second.resolve({ ok: true, latencyMs: 20 });
-      await view.unmount();
-    }
-  });
-
-  it('returns from unchanged DNS settings without saving or applying again', async () => {
-    const runtime = createMoreRouteRuntime();
-    runtime.proxy = {
-      ...runtime.proxy,
-      applyStatus: 'applied',
-      effectiveMode: 'doh',
-      proxyState: { ...runtime.proxy.proxyState, mode: 'doh', encryptedDns: { provider: 'dnspod', policy: 'strict' } }
-    };
-    const view = await render(renderNetworkSettings(runtime));
-    await fireEvent.press(view.getByText('服务商和保护级别'));
-    await fireEvent.press(await view.findByRole('button', { name: '完成' }));
-    expect(await view.findByText('服务商和保护级别')).toBeTruthy();
-    expect(runtime.proxy.setNetworkMode).not.toHaveBeenCalled();
-    await view.unmount();
   });
 });
 
@@ -1701,7 +1746,7 @@ describe('More screen state and actions', () => {
       view.getByLabelText(label)
     );
     await fireEvent.press(view.getByTestId('account-site-nodeseek'));
-    expect(getUserDetails).toHaveBeenCalledTimes(2);
+    expect(getUserDetails).toHaveBeenCalledTimes(1);
     expect(getOverview).toHaveBeenCalledTimes(1);
     expect(getBoard).toHaveBeenCalledTimes(1);
     await fireEvent.press(view.getByLabelText('更多资料'));
@@ -1922,7 +1967,7 @@ describe('More screen state and actions', () => {
 
     await waitFor(() => expect(view.getByLabelText('重试资料')).toBeTruthy());
     await waitFor(() => expect(view.getByLabelText('重试签到状态')).toBeTruthy());
-    const coinSlot = view.getByLabelText('鸡腿 暂无数据');
+    const coinSlot = await view.findByLabelText('鸡腿 暂无数据');
     const stardustSlot = view.getByLabelText('星辰 暂无数据');
     expect(coinSlot.props.accessibilityState.busy).toBe(false);
     expect(stardustSlot.props.accessibilityState.busy).toBe(false);
@@ -2083,14 +2128,14 @@ describe('More screen state and actions', () => {
       getNodeSeekAttendanceBoard
     };
     const view = await render(<MoreScreen {...props} />);
-    expect(getUserDetails).toHaveBeenCalledTimes(1);
+    expect(getUserDetails).not.toHaveBeenCalled();
     expect(getNodeSeekAttendanceBoard).toHaveBeenCalledTimes(1);
 
     await waitFor(() => expect(view.getByLabelText('鸡腿 0')).toBeTruthy());
     expect(view.getByLabelText('主题 0')).toBeTruthy();
     expect(view.getByLabelText('星辰 2')).toBeTruthy();
     expect(view.queryByText('读取通道自愈阈值')).toBeNull();
-    expect(getUserDetails).toHaveBeenCalledTimes(1);
+    expect(getUserDetails).not.toHaveBeenCalled();
     expect(getNodeSeekAccountOverview).toHaveBeenCalledTimes(1);
     expect(getNodeSeekAttendanceBoard).toHaveBeenCalledTimes(1);
     expect(props.account.center.nodeSeek.observeBoard).toHaveBeenCalledTimes(1);
@@ -2122,7 +2167,7 @@ describe('More screen state and actions', () => {
     expect(hiddenDetails?.props.importantForAccessibility).toBe('no-hide-descendants');
     await fireEvent.press(view.getByLabelText('更多资料'));
     expect(view.getByText('粉丝 · 2')).toBeTruthy();
-    expect(getUserDetails).toHaveBeenCalledTimes(1);
+    expect(getUserDetails).not.toHaveBeenCalled();
     expect(getNodeSeekAccountOverview).toHaveBeenCalledTimes(1);
     expect(view.queryByLabelText('鸡腿流水')).toBeNull();
     expect(view.getByLabelText('鸡腿 0').props.accessibilityHint).toBe('查看鸡腿流水');
@@ -2138,7 +2183,7 @@ describe('More screen state and actions', () => {
     expect(view.queryByLabelText('重试资料')).toBeNull();
     await fireEvent.press(view.getByLabelText('刷新账号'));
     await waitFor(() => expect(getNodeSeekAttendanceBoard).toHaveBeenCalledTimes(2));
-    expect(getUserDetails).toHaveBeenCalledTimes(2);
+    expect(getUserDetails).not.toHaveBeenCalled();
     expect(getNodeSeekAccountOverview).toHaveBeenCalledTimes(2);
     expect(props.account.center.command).toHaveBeenLastCalledWith({ type: 'refresh' });
     await view.rerender(<MoreScreen {...props} account={{ ...props.account, active: false }} />);
@@ -2147,14 +2192,19 @@ describe('More screen state and actions', () => {
     expect(view.getByText('粉丝 · 2')).toBeTruthy();
     await fireEvent.press(view.getByTestId('account-site-linuxdo'));
     await fireEvent.press(view.getByTestId('account-site-nodeseek'));
-    expect(getUserDetails).toHaveBeenCalledTimes(2);
+    expect(getUserDetails).not.toHaveBeenCalled();
     expect(getNodeSeekAccountOverview).toHaveBeenCalledTimes(2);
     expect(getNodeSeekAttendanceBoard).toHaveBeenCalledTimes(2);
     await view.rerender(<MoreScreen {...props} />);
     expect(getNodeSeekAttendanceBoard).toHaveBeenCalledTimes(2);
     expect(getNodeSeekAccountOverview).toHaveBeenCalledTimes(2);
-    expect(getUserDetails).toHaveBeenCalledTimes(2);
+    expect(getUserDetails).not.toHaveBeenCalled();
     expect(view.getByLabelText('鸡腿 0')).toBeTruthy();
+    getNodeSeekAccountOverview.mockRejectedValueOnce(new Error('NodeSeek 页面读取超时'));
+    await fireEvent.press(view.getByLabelText('刷新账号'));
+    await waitFor(() => expect(view.getByLabelText('重试资料')).toBeTruthy());
+    expect(view.getByLabelText('主题 0')).toBeTruthy();
+    expect(getUserDetails).not.toHaveBeenCalled();
     await view.rerender(
       <MoreScreen
         {...props}

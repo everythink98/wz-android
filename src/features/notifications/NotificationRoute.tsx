@@ -134,14 +134,6 @@ export function NotificationsRoute({
   const identityKey = source === 'all' ? runtime.identitySignature : runtime.identityKeys[source] || `${source}:none`;
   const selectedSourceEpoch = source === 'all' ? 0 : runtime.sessionEpochs[source];
   const sourceAvailable = source === 'all' ? runtime.activeSources.length > 0 : runtime.activeSources.includes(source);
-  const aggregateSessions =
-    source === 'all' && !sourceAvailable
-      ? runtime.enabledNotificationSources.map((candidate) => runtime.sessions[candidate])
-      : [];
-  const sourceUnknown =
-    source === 'all'
-      ? aggregateSessions.some((session) => session.identityTrust === 'unknown')
-      : runtime.enabledNotificationSources.includes(source) && runtime.sessions[source].identityTrust === 'unknown';
   const categoriesQueryKey = forumQueryKeys.notificationCategories({ source, identityKey });
   const categoriesQuery = useQuery({
     queryKey: categoriesQueryKey,
@@ -714,9 +706,8 @@ export function NotificationsRoute({
       historyNotices={historyNotices}
       pagination={pagination}
       refreshing={refreshing}
+      sessions={runtime.sessions}
       source={source}
-      sourcePending={false}
-      sourceUnknown={sourceUnknown}
       unreadOnly={unreadOnly}
       onChangeCategory={setCategoryId}
       onChangeSource={changeSource}

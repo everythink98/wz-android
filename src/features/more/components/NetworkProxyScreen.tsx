@@ -14,7 +14,7 @@ import {
   useWindowDimensions,
   View
 } from 'react-native';
-import { Activity, ArrowLeft, Check, Pencil, Plus, Trash2, X } from 'lucide-react-native';
+import { ArrowLeft, Check, Pencil, Plus, Trash2, X } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { EmptyText } from '@/ui/controls/FeedbackStates';
@@ -26,8 +26,7 @@ import {
   validateNetworkProxyProfile,
   type NetworkProxyProfile,
   type NetworkProxyProtocol,
-  type NetworkProxyState,
-  type NetworkProxyStatus
+  type NetworkProxyState
 } from '@/platform/network/networkProxy';
 import { errorMessage } from '@/platform/network/errors';
 
@@ -96,7 +95,6 @@ export function NetworkProxyScreen({
   onClose,
   onDeleteProfile,
   onSelectProfile,
-  onTestProfile,
   onUpsertProfile
 }: {
   active: boolean;
@@ -109,7 +107,6 @@ export function NetworkProxyScreen({
   onClose: () => void;
   onDeleteProfile: (id: string) => Promise<void>;
   onSelectProfile: (id: string) => Promise<void>;
-  onTestProfile: (profile: NetworkProxyProfile) => Promise<NetworkProxyStatus>;
   onUpsertProfile: (profile: NetworkProxyProfile) => Promise<void>;
 }) {
   const navigation = useContext(NavigationContext);
@@ -120,8 +117,6 @@ export function NetworkProxyScreen({
   const draftMode = draftState.mode === 'closed' ? null : draftState.mode;
   const submitted = draftState.mode !== 'closed' && draftState.submitted;
   const [busy, setBusy] = useState(false);
-  const [testingId, setTestingId] = useState<string | null>(null);
-  const [testResults, setTestResults] = useState<Record<string, string>>({});
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [draftKeyboardInset, setDraftKeyboardInset] = useState(0);
   const opening = useMemo(() => (active ? {} : null), [active]);
@@ -158,7 +153,6 @@ export function NetworkProxyScreen({
     if (!active) {
       setDraftState({ mode: 'closed' });
       setBusy(false);
-      setTestingId(null);
       setSelectedIds([]);
       setDraftKeyboardInset(0);
     }
@@ -197,25 +191,25 @@ export function NetworkProxyScreen({
     setSelectedIds((current) => current.filter((id) => proxyState.profiles.some((profile) => profile.id === id)));
   }, [proxyState.profiles]);
 
-  const executeProxyTask = async <T,>(task: () => Promise<T>) => {
+  const executeProxyTask = async (task: () => Promise<void>) => {
     if (
       navigation?.isFocused() === false ||
       !opening ||
       activeOpening.current.phase !== 'ready' ||
       activeOpening.current.opening !== opening
     ) {
-      return null;
+      return false;
     }
     const request = { phase: 'running' as const, opening };
     activeOpening.current = request;
     setBusy(true);
     try {
-      const value = await task();
-      return activeOpening.current === request ? ({ ok: true, value } as const) : null;
+      await task();
+      return activeOpening.current === request;
     } catch (error) {
-      if (activeOpening.current !== request) return null;
+      if (activeOpening.current !== request) return false;
       Alert.alert('服务器代理', errorMessage(error));
-      return { ok: false } as const;
+      return false;
     } finally {
       if (activeOpening.current === request) {
         activeOpening.current = { phase: 'ready', opening };
@@ -239,13 +233,9 @@ export function NetworkProxyScreen({
       return;
     }
     const result = await executeProxyTask(() => onUpsertProfile(draftProfile));
-    if (!result?.ok) {
+    if (!result) {
       return;
     }
-    setTestResults((current) => {
-      const { [draftProfile.id]: _removed, ...rest } = current;
-      return rest;
-    });
     Keyboard.dismiss();
     setDraftState({ mode: 'closed' });
     setDraftKeyboardInset(0);
@@ -273,24 +263,6 @@ export function NetworkProxyScreen({
     }
   };
 
-  const testProfile = async (profile: NetworkProxyProfile) => {
-    if (busy || applying) {
-      return;
-    }
-    const result = await executeProxyTask(() => {
-      setTestingId(profile.id);
-      return onTestProfile(profile);
-    });
-    if (!result) return;
-    if (result.ok) {
-      setTestResults((current) => ({
-        ...current,
-        [profile.id]: `${result.value.latencyMs} ms`
-      }));
-    }
-    setTestingId(null);
-  };
-
   const deleteProfiles = (ids: readonly string[]) => {
     return executeProxyTask(async () => {
       for (const id of ids) {
@@ -307,7 +279,7 @@ export function NetworkProxyScreen({
         style: 'destructive',
         onPress: async () => {
           const result = await deleteProfiles(selectedIds);
-          if (result?.ok) {
+          if (result) {
             setSelectedIds([]);
           }
         }
@@ -326,7 +298,7 @@ export function NetworkProxyScreen({
         style: 'destructive',
         onPress: async () => {
           const result = await deleteProfiles([targetId]);
-          if (result?.ok) {
+          if (result) {
             Keyboard.dismiss();
             setDraftState({ mode: 'closed' });
             setDraftKeyboardInset(0);
@@ -381,29 +353,15 @@ export function NetworkProxyScreen({
           {!proxyState.profiles.length ? <EmptyText text="还没有代理配置" /> : null}
           {proxyState.profiles.map((profile) => {
             const active = profile.id === shownState.activeId;
-            const latency = testResults[profile.id];
             const selected = selectedIds.includes(profile.id);
             const activeApplying = applying && profile.id === proxyState.activeId;
             const activeDisplayedEnabled = active && shownState.enabled;
             let status = `${protocolLabel(profile.protocol)}${profile.username ? ' · 已填写账号' : ''}`;
-            if (activeDisplayedEnabled) {
-              status = applyStatus === 'failed' ? '代理异常' : `已连接${latency ? `, 连通性: ${latency}` : ''}`;
-            } else if (latency) {
-              status = `${status} · 连通性: ${latency}`;
-            }
-            if (activeApplying) {
-              status = '正在应用代理';
-            }
-            if (testingId === profile.id) {
-              status = '正在测试连通性';
-            }
-            const isTestingThis = testingId === profile.id;
-            const activeFailed =
-              activeDisplayedEnabled && applyStatus === 'failed' && !activeApplying && !isTestingThis;
+            if (activeDisplayedEnabled) status = applyStatus === 'failed' ? '代理异常' : '已应用';
+            if (activeApplying) status = '正在应用代理';
+            const activeFailed = activeDisplayedEnabled && applyStatus === 'failed' && !activeApplying;
             const statusText =
-              activeDisplayedEnabled && !selecting && !applying && !isTestingThis && !activeFailed
-                ? `✓ ${status}`
-                : status;
+              activeDisplayedEnabled && !selecting && !applying && !activeFailed ? `✓ ${status}` : status;
             return (
               <Pressable
                 key={profile.id}
@@ -453,7 +411,7 @@ export function NetworkProxyScreen({
                         proxyStyles.proxyStatus,
                         activeFailed
                           ? { color: theme.danger }
-                          : activeApplying || activeDisplayedEnabled || isTestingThis
+                          : activeApplying || activeDisplayedEnabled
                             ? { color: accentColor }
                             : null
                       ]}
@@ -464,16 +422,6 @@ export function NetworkProxyScreen({
                 </View>
                 {!selecting ? (
                   <View style={proxyStyles.rowActions}>
-                    <IconButton
-                      ghost
-                      iconOnly
-                      iconSize={18}
-                      icon={Activity}
-                      label="测试代理连通性"
-                      loading={isTestingThis}
-                      disabled={busy || applying}
-                      onPress={() => void testProfile(profile)}
-                    />
                     <IconButton
                       ghost
                       iconOnly

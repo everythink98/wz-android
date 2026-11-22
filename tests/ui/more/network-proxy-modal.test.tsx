@@ -59,7 +59,6 @@ function proxyScreen(overrides: Partial<React.ComponentProps<typeof NetworkProxy
     onClose: jest.fn(),
     onDeleteProfile: jest.fn(async () => undefined),
     onSelectProfile: jest.fn(async () => undefined),
-    onTestProfile: jest.fn(async () => ({ ok: true, latencyMs: 10 })),
     onUpsertProfile: jest.fn(async () => undefined),
     ...overrides
   };
@@ -202,36 +201,6 @@ describe('Network proxy settings', () => {
     }
   });
 
-  it('keeps a rejected test from displaying an operation that never started', async () => {
-    const selection = Promise.withResolvers<void>();
-    const onSelectProfile = jest.fn<(_id: string) => Promise<void>>(() => selection.promise);
-    const onTestProfile = jest.fn(async (_profile: NetworkProxyProfile) => ({ ok: true, latencyMs: 42 }));
-    const view = await render(
-      proxyScreen({
-        proxyState: { activeId: primaryProfile.id, enabled: false, profiles: [primaryProfile, backupProfile] },
-        onSelectProfile,
-        onTestProfile
-      })
-    );
-    try {
-      await act(async () => {
-        await fireEvent.press(view.getByText('备用代理'));
-        await fireEvent.press(view.getAllByLabelText('测试代理连通性')[0]);
-      });
-      expect(onSelectProfile).toHaveBeenCalledTimes(1);
-      expect(onTestProfile).not.toHaveBeenCalled();
-      await act(async () => selection.resolve());
-
-      expect(view.queryByText(/正在测试连通性/)).toBeNull();
-      expect(view.getAllByLabelText('测试代理连通性')).toHaveLength(2);
-      await fireEvent.press(view.getAllByLabelText('测试代理连通性')[0]);
-      expect(onTestProfile).toHaveBeenCalledTimes(1);
-      await waitFor(() => expect(view.getByText(/连通性: 42 ms/)).toBeTruthy());
-    } finally {
-      await act(async () => selection.resolve());
-    }
-  });
-
   it('gives proxy passwords secure input semantics', async () => {
     const view = await render(proxyScreen());
 
@@ -281,48 +250,6 @@ describe('Network proxy settings', () => {
         })
       );
     });
-  });
-
-  it('shows full connectivity results on an explicit test', async () => {
-    const onSelectProfile = jest.fn(async (_id: string) => undefined);
-    const onTestProfile = jest.fn(async (_profile: NetworkProxyProfile) => ({ ok: true, latencyMs: 42 }));
-    const proxyState = {
-      activeId: primaryProfile.id,
-      enabled: false,
-      profiles: [primaryProfile]
-    };
-    const view = await render(
-      proxyScreen({
-        proxyState,
-        onSelectProfile,
-        onTestProfile
-      })
-    );
-
-    await fireEvent.press(view.getByLabelText('测试代理连通性'));
-    await waitFor(() => {
-      expect(onTestProfile).toHaveBeenCalledWith(primaryProfile);
-      expect(view.getByText(/连通性: 42 ms/)).toBeTruthy();
-    });
-    expect(onSelectProfile).not.toHaveBeenCalled();
-  });
-
-  it('keeps the connectivity action in place while applying a proxy change', async () => {
-    const onTestProfile = jest.fn(async () => ({ ok: true, latencyMs: 42 }));
-    const props = {
-      proxyState: { activeId: primaryProfile.id, enabled: false, profiles: [primaryProfile] },
-      onTestProfile
-    };
-    const view = await render(proxyScreen(props));
-    const testAction = () => view.getByLabelText('测试代理连通性');
-    expect(testAction()).toBeEnabled();
-
-    await view.rerender(proxyScreen({ ...props, applyStatus: 'applying' }));
-    expect(testAction()).toBeDisabled();
-    await fireEvent.press(testAction());
-    expect(onTestProfile).not.toHaveBeenCalled();
-    await view.rerender(proxyScreen({ ...props, proxyState: { ...props.proxyState, enabled: true } }));
-    expect(testAction()).toBeEnabled();
   });
 
   it.each([0, 24, 48])(

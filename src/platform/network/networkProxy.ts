@@ -4,13 +4,6 @@ import type { Source } from '@/domain/forum/sourceCatalog';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import type { DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import { getReadNetworkRuntimeSnapshot, publishReadNetworkRuntimeRotation } from './readNetworkRuntime';
-import {
-  encryptedDnsProviderLabel,
-  encryptedDnsRoute,
-  normalizeEncryptedDnsSettings,
-  type EncryptedDnsRoute,
-  type EncryptedDnsSettings
-} from './encryptedDns';
 
 export const NETWORK_PROXY_STORAGE_KEY = 'network-proxy-settings';
 export const MAX_NETWORK_PROXY_PROFILES = 10;
@@ -44,33 +37,27 @@ export type NetworkProxyState = {
   enabled: boolean;
   activeId: string | null;
   profiles: NetworkProxyProfile[];
-  mode?: 'doh';
-  encryptedDns?: EncryptedDnsSettings;
 };
 
-export type NetworkMode = 'system' | 'doh' | 'proxy';
-export type ActiveNetworkRoute = NetworkProxyProfile | EncryptedDnsRoute;
+export type NetworkMode = 'system' | 'proxy';
 
 export type NetworkProxyApplyStatus = 'loading' | 'disabled' | 'applying' | 'applied' | 'failed';
 
 export type NetworkProxyStatus = {
   ok: boolean;
   port?: number;
-  latencyMs?: number;
-  httpStatus?: number;
-  siteChallenge?: boolean;
-  dnsProvider?: string;
   message?: string;
 };
 
 export type NativeNetworkProxyModule = {
+  getSystemNetworkType?: () => Promise<unknown>;
   getDefaultWebViewUserAgent?: () => Promise<unknown>;
   acknowledgeReadNetworkRuntimeApply?: (
     traceId: string,
     previousGeneration: number,
     generation: number
   ) => Promise<boolean>;
-  applyProxy?: (profile: ActiveNetworkRoute | null) => Promise<NetworkProxyStatus>;
+  applyProxy?: (profile: NetworkProxyProfile | null) => Promise<NetworkProxyStatus>;
   clearManagedLoginCookies?: (source: string) => Promise<unknown>;
   readManagedCookieHeader?: (exactUrl: string) => Promise<unknown>;
   recoverForumReadChannel?: (
@@ -80,8 +67,6 @@ export type NativeNetworkProxyModule = {
   ) => Promise<ReadNetworkRuntimeRecoveryResult>;
   releaseReadNetworkGeneration?: (generation: number) => Promise<boolean>;
   retainReadNetworkGeneration?: (generation: number) => Promise<ReadNetworkGenerationLease>;
-  testProxy?: (profile: NetworkProxyProfile) => Promise<NetworkProxyStatus>;
-  testEncryptedDns?: (route: EncryptedDnsRoute) => Promise<NetworkProxyStatus>;
 };
 
 const readNetworkRuntimeRecoveries = new Map<number, Promise<ReadNetworkRuntimeRecoveryResult>>();
@@ -152,14 +137,10 @@ export function normalizeNetworkProxyState(value: unknown): NetworkProxyState {
     .slice(0, MAX_NETWORK_PROXY_PROFILES);
   const activeId = cleanText(input.activeId);
   const hasActive = activeId && profiles.some((profile) => profile.id === activeId);
-  const encryptedDns = input.encryptedDns === undefined ? undefined : normalizeEncryptedDnsSettings(input.encryptedDns);
-  const doh = input.mode === 'doh' && encryptedDns !== undefined;
   return {
-    enabled: Boolean(input.enabled && hasActive && !doh),
+    enabled: Boolean(input.enabled && hasActive),
     activeId: hasActive ? activeId : null,
-    profiles,
-    ...(doh ? { mode: 'doh' } : {}),
-    ...(encryptedDns ? { encryptedDns } : {})
+    profiles
   };
 }
 
@@ -206,19 +187,16 @@ export function activeNetworkProxyProfile(state: NetworkProxyState) {
 }
 
 export function networkMode(state: NetworkProxyState): NetworkMode {
-  if (state.mode === 'doh') return 'doh';
   return state.enabled ? 'proxy' : 'system';
 }
 
-export function activeNetworkRoute(state: NetworkProxyState): ActiveNetworkRoute | null {
-  if (state.mode === 'doh' && state.encryptedDns) return encryptedDnsRoute(state.encryptedDns);
+export function enabledNetworkProxyProfile(state: NetworkProxyState) {
   return state.enabled ? activeNetworkProxyProfile(state) : null;
 }
 
 export function removeNetworkProxyProfile(state: NetworkProxyState, id: string) {
   const deletingActive = state.activeId === id;
   return normalizeNetworkProxyState({
-    ...state,
     enabled: deletingActive ? false : state.enabled,
     activeId: deletingActive ? null : state.activeId,
     profiles: state.profiles.filter((profile) => profile.id !== id)
@@ -230,7 +208,6 @@ export function networkProxySummary(state: NetworkProxyState, applyError = '') {
   if (applyError) {
     return '代理异常';
   }
-  if (state.mode === 'doh') return '加密 DNS';
   if (!state.enabled || !active) {
     return '未启用';
   }
@@ -272,6 +249,20 @@ function networkProxyNativeModule() {
   return networkProxyModuleFromReactNativeImport({ NativeModules });
 }
 
+const systemNetworkLabels = new Map<string, string>([
+  ['vpn', 'VPN（按系统分流规则连接）'],
+  ['wifi', 'Wi-Fi'],
+  ['cellular', '移动网络'],
+  ['ethernet', '以太网'],
+  ['offline', '未连接'],
+  ['unknown', '暂时无法识别']
+]);
+
+export async function readSystemNetworkLabel(module = networkProxyNativeModule()) {
+  const value = await module?.getSystemNetworkType?.().catch(() => undefined);
+  return typeof value === 'string' ? systemNetworkLabels.get(value) : undefined;
+}
+
 export class InvalidSavedNetworkProxyStateError extends Error {
   constructor() {
     super('代理配置已损坏，请重新保存或删除该配置。');
@@ -308,7 +299,7 @@ export async function loadNetworkProxyState() {
     )
       throw new Error();
     const state = normalizeNetworkProxyState(input);
-    if ((input.enabled && !state.enabled) || (input.mode !== undefined && state.mode !== input.mode)) throw new Error();
+    if (input.enabled && !state.enabled) throw new Error();
     return state;
   } catch {
     throw new InvalidSavedNetworkProxyStateError();
@@ -321,7 +312,7 @@ export async function saveNetworkProxyState(state: NetworkProxyState) {
   return clean;
 }
 
-export async function applyNetworkProxy(profile: ActiveNetworkRoute | null, module = networkProxyNativeModule()) {
+export async function applyNetworkProxy(profile: NetworkProxyProfile | null, module = networkProxyNativeModule()) {
   if (!module?.applyProxy) {
     if (profile) {
       throw new Error('当前安装包不支持服务器代理。');
@@ -332,21 +323,6 @@ export async function applyNetworkProxy(profile: ActiveNetworkRoute | null, modu
   if (!result?.ok) {
     throw new Error(result?.message || '代理启动失败');
   }
-  return result;
-}
-
-export async function testEncryptedDns(settings: EncryptedDnsSettings, module = networkProxyNativeModule()) {
-  if (!module?.testEncryptedDns) throw new Error('当前安装包不支持加密 DNS 测试。');
-  const result = await module.testEncryptedDns(encryptedDnsRoute(normalizeEncryptedDnsSettings(settings)));
-  const provider = encryptedDnsProviderLabel(result.dnsProvider ?? settings.provider);
-  const via = provider ? ` · ${provider}` : '';
-  if (result.siteChallenge) {
-    return { ...result, ok: false, message: `已直连 LINUX DO，需完成站点验证（HTTP ${result.httpStatus}）${via}` };
-  }
-  if (result.httpStatus !== undefined && (result.httpStatus < 200 || result.httpStatus >= 300)) {
-    return { ...result, ok: false, message: `已直连 LINUX DO，首页返回 HTTP ${result.httpStatus}${via}` };
-  }
-  if (!result.ok) throw new Error(result.message || '加密 DNS 测试失败。');
   return result;
 }
 
@@ -453,26 +429,6 @@ export async function releaseReadNetworkRuntimeGeneration(generation: number, mo
     return false;
   }
   return module.releaseReadNetworkGeneration(generation);
-}
-
-export async function testNetworkProxy(profile: NetworkProxyProfile, module = networkProxyNativeModule()) {
-  if (hasNetworkProxyProfileErrors(profile)) {
-    throw new Error('请先补全代理配置。');
-  }
-  if (!module?.testProxy) {
-    throw new Error('当前安装包不支持测试代理。');
-  }
-  const startedAt = Date.now();
-  const result = await module.testProxy(profile);
-  if (!result?.ok) {
-    throw new Error(result?.message || '代理测试失败');
-  }
-  return {
-    ...result,
-    latencyMs: Number.isFinite(result.latencyMs)
-      ? Math.max(0, Math.round(result.latencyMs || 0))
-      : Math.max(0, Date.now() - startedAt)
-  };
 }
 
 export function createNetworkProxyProfile(input: Partial<NetworkProxyProfile>): NetworkProxyProfile {
