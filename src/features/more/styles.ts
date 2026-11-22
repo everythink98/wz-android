@@ -177,13 +177,8 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       flexDirection: 'row',
       gap: 8,
       justifyContent: 'space-between',
-      marginRight: -8
-    },
-    updateTitleRow: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8
+      marginRight: -8,
+      minHeight: 48
     },
     updateIdentity: {
       alignItems: 'center',
@@ -214,99 +209,67 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       fontSize: fontSize(13),
       lineHeight: fontSize(20)
     },
-    updateBadge: {
-      alignSelf: 'flex-start',
-      overflow: 'hidden',
-      color: theme.dark ? theme.primary : theme.primaryStrong,
-      fontFamily: appFontFamily,
-      fontSize: fontSize(11),
-      fontWeight: '600',
-      lineHeight: fontSize(15),
-      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.18 : 0.1),
-      borderRadius: readerRadii.badge,
-      paddingHorizontal: 7,
-      paddingVertical: 2
-    },
-    updatePrimarySlot: {
-      width: '100%'
-    },
     updateIntegratedBar: {
-      backgroundColor: theme.surface,
-      borderColor: alphaColor(theme.primary, theme.dark ? 0.28 : 0.2),
+      backgroundColor: theme.primarySoft,
       borderRadius: readerRadii.control,
-      borderWidth: StyleSheet.hairlineWidth,
       justifyContent: 'center',
-      minHeight: 42,
+      minHeight: 52,
       overflow: 'hidden',
       position: 'relative',
       width: '100%'
     },
-    updateBarDisabled: {
-      opacity: 0.6
-    },
-    updateIntegratedFill: {
-      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.24 : 0.13),
-      bottom: 0,
-      left: 0,
-      position: 'absolute',
-      top: 0
-    },
     updateIntegratedContent: {
       alignItems: 'center',
       flexDirection: 'row',
-      flexWrap: 'wrap',
       columnGap: 10,
-      rowGap: 4,
       justifyContent: 'space-between',
-      paddingHorizontal: 14,
+      paddingHorizontal: 16,
       paddingVertical: 8
+    },
+    updateIntegratedFill: {
+      ...StyleSheet.absoluteFill,
+      backgroundColor: alphaColor(theme.primary, 0.46),
+      transformOrigin: 'left center'
     },
     updateIntegratedLeft: {
       alignItems: 'center',
       flexDirection: 'row',
+      flexShrink: 1,
       maxWidth: '100%',
-      gap: 7
+      gap: 8
     },
     updateIntegratedActionText: {
       flexShrink: 1,
-      color: theme.dark ? theme.primary : theme.primaryStrong,
+      color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: fontSize(13),
+      fontSize: fontSize(14),
       fontWeight: '600',
       includeFontPadding: false,
-      lineHeight: fontSize(18)
+      lineHeight: fontSize(20)
     },
     updateIntegratedRight: {
-      alignItems: 'center',
-      flexGrow: 1,
+      alignItems: 'flex-end',
       flexShrink: 1,
-      flexDirection: 'row',
-      gap: 8,
-      justifyContent: 'flex-end',
       maxWidth: '100%'
-    },
-    updateSecondaryRow: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8,
-      justifyContent: 'space-between'
     },
     updateProgressPercent: {
       flexShrink: 0,
-      color: theme.dark ? theme.primary : theme.primaryStrong,
+      textAlign: 'right',
+      includeFontPadding: false,
+      color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: fontSize(12),
-      fontWeight: '700',
-      lineHeight: fontSize(17),
+      fontSize: fontSize(14),
+      fontWeight: '600',
+      lineHeight: fontSize(19),
       fontVariant: ['tabular-nums']
     },
     updateProgressMeta: {
       flexShrink: 1,
-      color: theme.muted,
+      textAlign: 'right',
+      includeFontPadding: false,
+      color: alphaColor(theme.ink, 0.9),
       fontFamily: appFontFamily,
       fontSize: fontSize(11),
-      fontWeight: '500',
       lineHeight: fontSize(16),
       fontVariant: ['tabular-nums']
     },

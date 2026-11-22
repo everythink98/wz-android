@@ -100,6 +100,14 @@ function shouldUseFallbackAccessRequirement(topic: Topic | TopicDetail, fallback
   );
 }
 
+function v2exAvatarSizeKey(uri: string) {
+  if (uri.startsWith('https://cdn.v2ex.com/gravatar/')) return uri.replace(/([?&])s=\d+(?=&|$)/, '$1s=73');
+  return uri.replace(
+    /^(https:\/\/cdn\.v2ex\.com\/avatar\/[^?#]+)_(?:xlarge|normal|mini)\.png(?=[?#]|$)/,
+    '$1_large.png'
+  );
+}
+
 export function topicWithAuthorFallback<T extends Topic | TopicDetail>(
   topic: T | null,
   fallback?: Topic | null
@@ -124,10 +132,19 @@ export function topicWithAuthorFallback<T extends Topic | TopicDetail>(
       }
     : {};
   if (topic.source !== 'nodeseek') {
-    const hasFallbackFields = Object.keys(fallbackTopicFields).length > 0;
-    return Object.keys(accessRequirementFields).length || hasFallbackFields
-      ? { ...topic, ...accessRequirementFields, ...fallbackTopicFields }
-      : topic;
+    const fields = { ...accessRequirementFields, ...fallbackTopicFields };
+    if (
+      topic.source === 'v2ex' &&
+      topic.author &&
+      topic.author === fallback.author &&
+      topic.authorAvatar &&
+      fallback.authorAvatar &&
+      topic.authorAvatar !== fallback.authorAvatar &&
+      v2exAvatarSizeKey(topic.authorAvatar) === v2exAvatarSizeKey(fallback.authorAvatar)
+    ) {
+      return { ...topic, ...fields, authorAvatar: fallback.authorAvatar };
+    }
+    return Object.keys(fields).length ? { ...topic, ...fields } : topic;
   }
   const fallbackAuthorId = nodeSeekAuthorId(fallback.authorId, fallback.authorUrl);
   if (topic.authorId && !hasRestrictedPlaceholder) {

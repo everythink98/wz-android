@@ -1,7 +1,15 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import SkeletonLoading from 'expo-skeleton-loading';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import MaskedView from '@react-native-masked-view/masked-view';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Animated, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
-import { useReducedMotion } from 'react-native-reanimated';
+import Reanimated, {
+  cancelAnimation,
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withRepeat,
+  withTiming
+} from 'react-native-reanimated';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { readerRadii, type ReaderTheme } from '@/ui/theme/tokens';
 
@@ -45,6 +53,8 @@ export function LoadingCover({
   return (
     <Animated.View
       style={[StyleSheet.absoluteFill, style, { opacity }]}
+      needsOffscreenAlphaCompositing
+      renderToHardwareTextureAndroid={!visible}
       pointerEvents={visible ? 'box-none' : 'none'}
       accessibilityElementsHidden={!visible}
       importantForAccessibility={visible ? 'auto' : 'no-hide-descendants'}
@@ -79,14 +89,41 @@ export function ContentLoadingPlaceholder({
       pointerEvents="none"
       role="status"
     >
-      {animating && !reduceMotion ? (
-        <SkeletonLoading background={theme.line} highlight={theme.dark ? theme.lineStrong : theme.surface2}>
-          <View collapsable={false}>{children}</View>
-        </SkeletonLoading>
-      ) : (
-        children
+      {children}
+      {animating && !reduceMotion && (
+        <SkeletonHighlight color={theme.dark ? theme.lineStrong : theme.surface2}>{children}</SkeletonHighlight>
       )}
     </View>
+  );
+}
+
+function SkeletonHighlight({ children, color }: { children: ReactNode; color: string }) {
+  const progress = useSharedValue(0);
+  useEffect(() => {
+    progress.set(withRepeat(withTiming(1, { duration: 1000 }), -1, false));
+    return () => cancelAnimation(progress);
+  }, [progress]);
+  const sweep = useAnimatedStyle(() => ({
+    transform: [{ translateX: `${progress.get() * 200 - 100}%` as const }]
+  }));
+  const transparent = `${color}00`;
+  return (
+    <MaskedView
+      style={StyleSheet.absoluteFill}
+      maskElement={<View collapsable={false}>{children}</View>}
+      pointerEvents="none"
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+    >
+      <Reanimated.View style={[StyleSheet.absoluteFill, sweep]}>
+        <LinearGradient
+          style={StyleSheet.absoluteFill}
+          colors={[transparent, color, transparent]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+        />
+      </Reanimated.View>
+    </MaskedView>
   );
 }
 

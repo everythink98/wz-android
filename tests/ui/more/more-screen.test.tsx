@@ -289,7 +289,7 @@ jest.mock('lucide-react-native', () => {
   const Icon = () => null;
   return {
     Activity: Icon,
-    ArrowDownToLine: Icon,
+    PackageCheck: Icon,
     ArrowLeft: Icon,
     Bell: Icon,
     Bug: Icon,
@@ -560,7 +560,7 @@ function moreProps(overrides: MoreScreenOverrides = {}): MoreScreenProps {
       restoreFailed: false,
       progress: null,
       info: null,
-      message: '当前版本 1.3.63',
+      message: '',
       check: jest.fn(),
       start: jest.fn(),
       pause: jest.fn(),
@@ -640,7 +640,7 @@ function createMoreRouteRuntime(props = moreProps()): MoreRouteRuntimeValue {
       appUpdateBusy: true,
       appUpdateDownloadProgress: formatAppUpdateDownloadProgress('2.0.0', 0, 100),
       appUpdateInfo: null,
-      appUpdateMessage: '正在下载',
+      appUpdateMessage: '',
       checkAppUpdate: jest.fn(async () => undefined),
       startAppUpdateDownload: jest.fn(async () => undefined),
       pauseAppUpdateDownload: jest.fn(async () => undefined),
@@ -3057,7 +3057,7 @@ describe('More screen state and actions', () => {
     expect(view.queryByTestId('more-notifications-unread-dot')).toBeNull();
   });
 
-  it('shows current, checking, available-update and download progress states', async () => {
+  it('keeps the same update control and installed version from checking through download progress', async () => {
     const onCheckAppUpdate = jest.fn();
     const onDownloadAppUpdate = jest.fn();
     const view = await render(
@@ -3065,7 +3065,8 @@ describe('More screen state and actions', () => {
     );
 
     expect(view.queryByText('有新版本')).toBeNull();
-    await fireEvent.press(view.getByLabelText('检查更新'));
+    const action = view.getByRole('button', { name: '检查更新' });
+    await fireEvent.press(action);
     expect(onCheckAppUpdate).toHaveBeenCalledTimes(1);
 
     await view.rerender(
@@ -3090,14 +3091,18 @@ describe('More screen state and actions', () => {
         {...moreProps({
           update: {
             info: appUpdateInfo,
-            message: '发现新版 1.4.0',
             check: onCheckAppUpdate,
             start: onDownloadAppUpdate
           }
         })}
       />
     );
-    expect(view.getByText('有新版本')).toBeTruthy();
+    expect(view.getByRole('button', { name: '下载并安装' }) === action).toBe(true);
+    expect(view.getByText(`当前版本 ${CURRENT_APP_VERSION} → 1.4.0`)).toBeTruthy();
+    expect(view.getByLabelText(`当前版本 ${CURRENT_APP_VERSION}，更新至 1.4.0`)).toBeTruthy();
+    expect(view.queryByText('1.4.0')).toBeNull();
+    expect(view.queryByText('修复已知问题')).toBeNull();
+    await fireEvent.press(view.getByRole('button', { name: '展开更新说明' }));
     expect(view.getByText('修复已知问题')).toBeTruthy();
     await fireEvent.press(view.getByLabelText('下载并安装'));
     expect(onDownloadAppUpdate).toHaveBeenCalledTimes(1);
@@ -3124,8 +3129,11 @@ describe('More screen state and actions', () => {
     );
     expect(view.getByText('1 KB / 2 KB')).toBeTruthy();
     expect(view.getByText('50%')).toBeTruthy();
+    expect(view.getByText('修复已知问题')).toBeTruthy();
+    expect(view.getByText(`当前版本 ${CURRENT_APP_VERSION} → 1.4.0`)).toBeTruthy();
     expect(view.queryByLabelText('下载中')).toBeNull();
     const pause = view.getByRole('button', { name: '暂停下载' });
+    expect(pause === action).toBe(true);
     expect(pause.props.accessibilityState.disabled).toBe(false);
     expect(pause.props.accessibilityValue).toMatchObject({ now: 50, text: '1 KB / 2 KB，50%' });
     const height = StyleSheet.flatten(pause.props.style).minHeight;

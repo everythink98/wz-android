@@ -9,6 +9,28 @@ import {
 import type { Reply, Topic, TopicDetail } from './models';
 
 describe('Android user navigation helpers', () => {
+  it.each([
+    ['avatar/ab/cd/123_xlarge.png?m=7', 'avatar/ab/cd/123_large.png?m=7'],
+    ['gravatar/abc?s=48&d=retro', 'gravatar/abc?s=73&d=retro']
+  ])('keeps the displayed V2EX avatar when only its requested size changes (%s)', (listPath, detailPath) => {
+    const base = 'https://cdn.v2ex.com/';
+    const list: Topic = {
+      source: 'v2ex',
+      id: '1',
+      title: 'Topic',
+      author: 'alice',
+      authorAvatar: base + listPath,
+      url: 'https://www.v2ex.com/t/1',
+      createdAt: ''
+    };
+    const detail = { ...list, authorAvatar: base + detailPath };
+    expect(topicWithAuthorFallback(detail, list)?.authorAvatar).toBe(list.authorAvatar);
+    const updated = { ...detail, authorAvatar: detail.authorAvatar + '&revision=2' };
+    expect(topicWithAuthorFallback(updated, list)).toBe(updated);
+    const otherAuthor = { ...detail, author: 'bob' };
+    expect(topicWithAuthorFallback(otherAuthor, list)).toBe(otherAuthor);
+  });
+
   it('extracts NodeSeek numeric user IDs from space URLs with discussion hashes', () => {
     expect(nodeSeekUserIdFromValue('https://www.nodeseek.com/space/15105#/discussions')).toBe('15105');
     expect(nodeSeekUserIdFromValue('/space/15105#/discussions')).toBe('15105');

@@ -406,14 +406,13 @@ export const FeedScreen = memo(function FeedScreen({
         style={[styles.content, { paddingTop: sourceHeaderHeight + secondaryHeaderHeight }]}
       >
         <TopicListPlaceholder
-          key={pagerWidth}
           label="加载中"
           animating={screenActive && route.key === feedSource}
           fillHeight={pagerHeight - sourceHeaderHeight - secondaryHeaderHeight}
         />
       </View>
     ),
-    [styles, sourceHeaderHeight, secondaryHeaderHeight, feedSource, screenActive, pagerWidth, pagerHeight]
+    [styles, sourceHeaderHeight, secondaryHeaderHeight, feedSource, screenActive, pagerHeight]
   );
   const renderFeedContent = useCallback(
     ({ route }: { route: { key: string } }) => {

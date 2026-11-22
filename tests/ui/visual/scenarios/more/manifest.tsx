@@ -126,7 +126,7 @@ function UpdateAvailableScenario({ phase = 'idle' }: { phase?: 'idle' | 'restori
           restoreFailed: false,
           progress: null,
           info: phase === 'idle' ? updateInfo : null,
-          message: '发现新版 1.4.0',
+          message: '',
           check: noop,
           start: noop,
           pause: noop,
@@ -157,7 +157,7 @@ function UpdateProgressScenario({
               ? { kind: 'verified', update: updateInfo, bytes: downloadedBytes }
               : { kind: 'partial', update: updateInfo, totalBytes: unknownTotal ? null : 80_000_000, downloadedBytes },
           info: updateInfo,
-          message: '正在下载安装包',
+          message: '',
           progress: formatAppUpdateDownloadProgress(
             updateInfo.version,
             downloadedBytes,
@@ -292,7 +292,7 @@ export const moreVisualScenarios: readonly VisualScenarioDefinition[] = [
     kind: 'rendered',
     tags: ['more', 'update', 'ready'],
     title: '关于阅坛·后台完成待安装',
-    render: () => <UpdateRetainedScenario ready message="安装包已就绪，可安装" />
+    render: () => <UpdateRetainedScenario ready message="" />
   },
   {
     capabilityIds: ['MORE-04'],
@@ -300,7 +300,7 @@ export const moreVisualScenarios: readonly VisualScenarioDefinition[] = [
     kind: 'rendered',
     tags: ['more', 'update', 'newer'],
     title: '关于阅坛·本地包与不同新版',
-    render: () => <UpdateRetainedScenario ready newer message="发现新版 1.4.1" />
+    render: () => <UpdateRetainedScenario ready newer message="" />
   },
   {
     capabilityIds: ['MORE-04'],

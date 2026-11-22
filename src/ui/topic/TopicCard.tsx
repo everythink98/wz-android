@@ -274,12 +274,7 @@ export function TopicListPlaceholder({
   const rowCount =
     fillHeight === undefined ? placeholderTitleWidths.length : Math.max(1, Math.ceil(fillHeight / rowHeight));
   return (
-    <ContentLoadingPlaceholder
-      key={`${rowCount}:${rowHeight}`}
-      animating={animating}
-      label={label}
-      style={styles.topicRowSurface}
-    >
+    <ContentLoadingPlaceholder animating={animating} label={label} style={styles.topicRowSurface}>
       {Array.from({ length: rowCount }, (_, index) => (
         <View key={index} style={styles.topicRowShell}>
           {index > 0 ? <View style={styles.topicListSeparator} /> : null}

@@ -182,6 +182,8 @@ Modal、BottomSheet、WebView、系统浏览器、文件选择器、系统分享
 
 `FEED-01/02` 首屏内容须有实际布局证据：非空列表使用 FlashList `onLoad`，空列表使用空状态容器 `onLayout`，因为 FlashList 空列表不触发 `onLoad`。首个来源的有效帖子实际布局后即可记录一次 `feed-content`；通知、更新和延后的远程分类仍等待整次首屏读取终态与实际布局，不因部分内容提前启动。同一终态边界独立记录 `feed-terminal`，性能工具不能仅凭提前出现的内容结束采样。空结果与失败分别记录 `feed-empty`、`feed-error`，不计作已有帖子。首页首次读取和等待本机筛选所需的阅读记录共用骨架，来源预铺和切入使用相同形状与位置。频道骨架按可用高度、字号和列表密度填充首屏。当前频道的首批帖子绘制完成后才撤下骨架。已有帖子时，后台刷新保留列表。骨架动效和部分结果的刷新提示只在活动场景运行。Canonical evidence 为 `tests/ui/feed/feed-screen.test.tsx`。
 
+首页、搜索、消息、收藏与历史、主题详情和用户主页共用加载骨架。预加载标签开始扫光或页面尺寸改变时，已有骨架块保留在原位。首页和详情页的骨架淡出时，已显示的文字保持原有亮度。V2EX 详情沿用同一楼主已显示的头像尺寸，头像版本变化时使用新图。回归见 `tests/ui/shared/content-loading-placeholder.test.tsx` 和 `src/domain/forum/userNavigation.test.ts`。
+
 `NAV-01`、`FEED-01/02`、`SEARCH-01/02`：共享分类按来源、ReadPlan scope 和 session epoch 复用单站 Query。冷启动先并行读取帖子、linux.do 必需的分类元数据和本地分类；其他远程分类等首批 Feed 完成实际布局后读取，提前进入单站或 Search 时立即按需读取。单站切换复用相同 scope 的分类，账号变化只替换受影响来源；离开 Feed 不取消 Search 仍在使用的分类请求。分类的单来源预算为 5 秒；linux.do 共享底层请求也独立持有该总截止，包含直读、WebView 恢复及正文处理，不因恢复重开预算。单个等待者取消不影响其他读者；共享超时按普通元数据失败降级，不伪装为调用方取消。帖子排序、分页和错误处理保持原规则。Canonical evidence 为 `tests/ui/app/forum-catalog-runtime.test.tsx`、`tests/ui/app/app-runtime-startup.test.tsx`、`tests/ui/feed/feed-controller-session.test.tsx` 与 `src/sources/linuxdo/reader.test.ts`。
 
 `SEARCH-02/04`：AI Query 取消后可仍为 pending，失焦只暂停 AI 加载指示器，不伪造成功或清掉普通结果；恢复焦点后沿原状态继续。`tests/ui/search/search-screen.test.tsx` 经过真实 Route、controller 与 Query 验证该边界。
@@ -1048,7 +1050,7 @@ Reanimated 键盘补丁在 Android `onPrepare` 接管过渡，禁止把布局阶
 
 `MORE-02` 覆盖当前按需 UA、验证排队和 L 站互动链路：默认 WebView 身份只在实际 provider 读取时记录一次 `read-user-agent`，成功保留脱敏指纹，失败记 `identity_unavailable`，并发等待和缓存命中不重复记录。登录/阅读验证排队记录取消、替换、打开或失效终态；反应及加电用闭集 `requestType` 区分操作，保留匿名主题引用、楼层、乐观应用、回滚和结果未确认事实，写后核对用 `interaction-reconcile` 接续原 trace。共享 `NOTIFY-01` 的详情重试、验证恢复和实际读取通过 `notification-detail-retry → notification-detail-resume → notification-detail` 的 `parentTraceId` 关联；idle 导出维护单独记录 `export-cleanup`。这些日志不新增身份读取、业务请求或逐帧采样。Canonical evidence 为现有 UA、verification、diagnostics/file store、ReadGateway 单测和 Topic、Notification、App composition UI owner；设备与 Live 证据独立验收。
 
-`MORE-04` 的「关于阅坛」位于「我的」滚动内容最底部，在外观设置之后。检查时仅原按钮显示忙碌，版本行与原有内容保持。确认新版或本地下载任务后，操作和进度显示在同一区块内。检查、下载、恢复与安装沿用同一 App 级更新 runtime。
+`MORE-04` 的「关于阅坛」位于「我的」底部，在同一行显示当前版本和主按钮对应的目标版本。检查、下载、暂停、继续和安装共用一个全宽按钮。浅蓝色按已下载比例填满整个按钮，暂停时保留进度，就绪时显示 100%。总大小未知时显示已下载大小。手动检查返回结果提示，错误在面板中保留。有本地任务或可用更新时可从标题右侧重新检查。更新说明默认收起。本地包和服务器新版不同时，替换操作和新版说明标明各自的目标。检查、下载、恢复与安装共用 App 级更新 runtime。
 
 `MORE-02`、`ACCOUNT-02` 共用 linux.do 验证出口诊断：可见验证 WebView 的每个就绪文档触发一对同源 `/cdn-cgi/trace` 只读探测，原生侧使用现有代理 fetcher，网页侧使用该验证文档的 fetch；双方均不带凭据，不进入隐藏 WebView fallback，不做业务重试。独立 `egress-probe` trace 关联账号验证 trace，记录两端结果、HTTP 状态、协议、出口地址族；只有双方有效才记录 `isSameEgress`。IP 与响应正文仅用于内存比较，不落日志。导航、检测、关闭、后台和卸载取消所属探测，五秒内未完成明确记为 timeout。手动检测不等待探测；CDK 返回后的自动检测等待当前主域探针结算，失败或超时也继续既有检测，不把出口结果作为业务准入条件。Canonical owner 为 `src/platform/network/cloudflareEgressDiagnostics.test.ts`、`src/features/account/useVerificationController.test.ts` 与 `tests/ui/account/account-runtime.test.tsx`；结果只证明采样时 trace 请求的出口，不替代实际业务终态或服务端规则归因。
 

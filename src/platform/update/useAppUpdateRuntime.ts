@@ -53,7 +53,7 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
   const [appUpdateInfo, setAppUpdateInfo] = useState<AppUpdateInfo | null>(null);
   const [artifact, setArtifact] = useState<AppUpdateArtifact | null>(null);
   const [restoreFailed, setRestoreFailed] = useState(false);
-  const [appUpdateMessage, setAppUpdateMessage] = useState(`当前版本 ${CURRENT_APP_VERSION}`);
+  const [appUpdateMessage, setAppUpdateMessage] = useState('');
   const [appUpdateDownloadProgress, setAppUpdateDownloadProgress] = useState<AppUpdateDownloadProgress | null>(null);
   const artifactRef = useRef<AppUpdateArtifact | null>(null);
   const availableRef = useRef<AppUpdateInfo | null>(null);
@@ -72,13 +72,7 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
     (restored: AppUpdateArtifact | null) => {
       applyArtifact(restored);
       setRestoreFailed(false);
-      setAppUpdateMessage(
-        restored?.kind === 'verified'
-          ? '安装包已就绪，可再次安装'
-          : restored?.kind === 'partial'
-            ? '下载进度已保留，可继续下载'
-            : `当前版本 ${CURRENT_APP_VERSION}`
-      );
+      setAppUpdateMessage('');
     },
     [applyArtifact]
   );
@@ -124,6 +118,7 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
     ) => {
       const request = operations.begin(operation);
       if (!request) return;
+      if (!silent) setAppUpdateMessage('');
       publishPhase();
       const trace = beginDiagnosticTrace('update', operation);
       const execution = settledUpdateOperation.then(async () => {
@@ -180,9 +175,7 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
           if (!request.current()) return;
           availableRef.current = update;
           setAppUpdateInfo(update);
-          const message = update ? `发现新版 ${update.version}` : `已是最新版 ${CURRENT_APP_VERSION}`;
-          if (!artifactRef.current || !silent) setAppUpdateMessage(message);
-          if (!silent) notifyRef.current(message);
+          if (!silent) notifyRef.current(update ? `发现新版 ${update.version}` : `已是最新版 ${CURRENT_APP_VERSION}`);
         },
         silent
       );
@@ -198,7 +191,6 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
       await openApkInstaller(NativeModules.ApkInstallerModule as ApkInstaller | undefined, uri);
       if (!request.current()) return;
       markDiagnosticStage(trace, 'apply', { state: 'installer-opened' });
-      setAppUpdateMessage('已打开安装确认，可随时回来再次安装');
       notifyRef.current('已打开安装确认');
     },
     [publishPhase]
@@ -291,7 +283,7 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
               await pendingSave;
               request.stage('verifying');
               publishPhase();
-              setAppUpdateMessage('下载完成，正在校验安装包');
+              setAppUpdateMessage('');
               latest = await finishAppUpdateDownload(latest, trace);
               if (saveError) throw saveError;
               break;
@@ -325,12 +317,10 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
         }
       }
       if (!request.current()) return;
-      if (latest.kind === 'partial') {
-        setAppUpdateMessage('下载已暂停，进度已保留');
-        return;
+      setAppUpdateMessage('');
+      if (latest.kind === 'verified' && AppState.currentState === 'active' && !request.pauseRequested) {
+        await installArtifact(latest, request, trace);
       }
-      setAppUpdateMessage('安装包已就绪，可安装');
-      if (AppState.currentState === 'active' && !request.pauseRequested) await installArtifact(latest, request, trace);
     },
     [applyArtifact, beforeRequest, installArtifact, publishPhase]
   );

@@ -540,8 +540,9 @@ describe('recoverable app updates', () => {
     try {
       await waitFor(() => expect(view.getByLabelText('安装').props.accessibilityState.disabled).toBe(false));
       await fireEvent.press(view.getByLabelText('检查更新'));
-      await fireEvent.press(view.getByLabelText(`下载新版 ${update(2).version}`));
-      await waitFor(() => expect(view.getByText(`本地安装包 ${update(2).version} · 已就绪`)).toBeTruthy());
+      await fireEvent.press(view.getByRole('button', { name: `下载 ${update(2).version} 并替换本地包` }));
+      await waitFor(() => expect(view.getByRole('button', { name: '安装' })).toBeEnabled());
+      expect(view.getByText(`当前版本 ${appConfig.expo.version} → ${update(2).version}`)).toBeTruthy();
       expect(mockNotify).not.toHaveBeenCalledWith(expect.stringContaining('安装包已保留'));
       expect(mockFiles.has(target(update(), true))).toBe(false);
       expect(mockReceivedOffsets).toEqual([0]);
@@ -915,7 +916,7 @@ describe('recoverable app updates', () => {
     const restoringStyle = sectionStyle();
     try {
       expect(view.getByText('正在恢复下载记录')).toBeTruthy();
-      expect(view.getByLabelText('检查更新').props.accessibilityState.disabled).toBe(true);
+      expect(view.getByRole('button', { name: '正在恢复下载记录' })).toBeDisabled();
       expect(view.queryByLabelText('下载并安装')).toBeNull();
     } finally {
       await act(async () => recovery.resolve(null));
@@ -930,11 +931,12 @@ describe('recoverable app updates', () => {
       expect(view.getByLabelText('检查中').props.accessibilityState.disabled).toBe(true);
       expect(sectionStyle()).toEqual(idleStyle);
       expect(view.queryByText('正在检查更新')).toBeNull();
-      expect(view.queryByTestId('more-update-action')).toBeNull();
+      expect(view.getByTestId('more-update-action')).toBe(view.getByLabelText('检查中'));
     } finally {
       await act(async () => checked.resolve(null));
     }
-    expect(view.getByText(`已是最新版 ${appConfig.expo.version}`)).toBeTruthy();
+    expect(mockNotify).toHaveBeenCalledWith(`已是最新版 ${appConfig.expo.version}`);
+    expect(view.getByText(`当前版本 ${appConfig.expo.version}`)).toBeTruthy();
     expect(sectionStyle()).toEqual(restoringStyle);
     await fireEvent.press(view.getByLabelText('检查更新'));
     expect(view.getByText('更新说明')).toBeTruthy();
@@ -953,15 +955,15 @@ describe('recoverable app updates', () => {
     await act(async () => {
       void fireEvent.press(view.getByLabelText('下载并安装'));
     });
-    await waitFor(() => expect(view.getByLabelText('校验中')).toBeTruthy());
+    await waitFor(() => expect(view.getByRole('button', { name: '正在校验安装包' })).toBeDisabled());
     try {
       expect(view.queryByText(`正在下载 ${update().version}`)).toBeNull();
       expect(view.getByText('正在校验安装包')).toBeTruthy();
-      expect(view.getByRole('button', { name: '校验中' }).props.accessibilityValue.now).toBe(100);
+      expect(view.getByRole('button', { name: '正在校验安装包' }).props.accessibilityValue.now).toBe(100);
       expect(view.queryByLabelText('暂停下载')).toBeNull();
       expect(view.getByLabelText('检查更新').props.accessibilityState.disabled).toBe(true);
       await act(async () => inspected.resolve(update()));
-      await waitFor(() => expect(view.getByLabelText('打开安装确认中')).toBeTruthy());
+      await waitFor(() => expect(view.getByRole('button', { name: '正在打开安装确认' })).toBeDisabled());
       expect(view.getByText('正在打开安装确认')).toBeTruthy();
       expect(view.queryByText(`正在下载 ${update().version}`)).toBeNull();
     } finally {
@@ -971,7 +973,9 @@ describe('recoverable app updates', () => {
       });
     }
     await waitFor(() => expect(view.getByLabelText('安装').props.accessibilityState.disabled).toBe(false));
-    expect(view.getByText('已打开安装确认，可随时回来再次安装')).toBeTruthy();
+    expect(view.getByLabelText('安装').props.accessibilityValue?.now).toBe(100);
+    expect(mockNotify).toHaveBeenCalledWith('已打开安装确认');
+    expect(view.queryByText(/已打开安装确认|本地安装包/)).toBeNull();
     expect(view.queryByText('安装成功')).toBeNull();
   });
 
@@ -982,12 +986,14 @@ describe('recoverable app updates', () => {
     const view = await render(<RuntimePanel />);
     await waitFor(() => expect(view.getByLabelText('安装').props.accessibilityState.disabled).toBe(false));
     await fireEvent.press(view.getByLabelText('检查更新'));
-    expect(view.getByText(`下载新版将替换本地 ${update().version} 的下载任务。`)).toBeTruthy();
+    expect(view.getByText(`当前版本 ${appConfig.expo.version} → ${update().version}`)).toBeTruthy();
+    expect(view.getByText(update(2).version)).toBeTruthy();
     await fireEvent.press(view.getByLabelText('安装'));
     expect(mockReceivedOffsets).toEqual([]);
     expect(mockFiles.has(target(update(), true))).toBe(true);
-    await fireEvent.press(view.getByLabelText(`下载新版 ${update(2).version}`));
-    await waitFor(() => expect(view.getByText(`本地安装包 ${update(2).version} · 已就绪`)).toBeTruthy());
+    await fireEvent.press(view.getByRole('button', { name: `下载 ${update(2).version} 并替换本地包` }));
+    await waitFor(() => expect(view.getByRole('button', { name: '安装' })).toBeEnabled());
+    expect(view.getByText(`当前版本 ${appConfig.expo.version} → ${update(2).version}`)).toBeTruthy();
     expect(mockFiles.has(target(update(), true))).toBe(false);
     expect(mockReceivedOffsets).toEqual([0]);
   });
@@ -1024,6 +1030,7 @@ describe('recoverable app updates', () => {
     await waitFor(() => expect(view.getByLabelText('安装').props.accessibilityState.disabled).toBe(false));
     mockCheck.mockRejectedValueOnce(new Error('检查失败'));
     await fireEvent.press(view.getByLabelText('检查更新'));
+    expect(view.getByText('检查失败')).toBeTruthy();
     await waitFor(() => expect(view.getByLabelText('安装').props.accessibilityState.disabled).toBe(false));
     await fireEvent.press(view.getByLabelText('安装'));
     await waitFor(() => expect(mockOpen).toHaveBeenCalledTimes(2));
@@ -1054,14 +1061,14 @@ describe('recoverable app updates', () => {
         void fireEvent.press(view.getByLabelText('暂停下载'));
       });
       expect(view.getByText('正在暂停下载')).toBeTruthy();
-      expect(view.getByLabelText('暂停中').props.accessibilityState.disabled).toBe(true);
+      expect(view.getByRole('button', { name: '正在暂停下载' })).toBeDisabled();
       expect(view.queryByLabelText('继续下载')).toBeNull();
       expect(view.getByLabelText('检查更新').props.accessibilityState.disabled).toBe(true);
     } finally {
       await act(async () => stopped.resolve(null));
     }
     await waitFor(() => expect(view.getByLabelText('继续下载').props.accessibilityState.disabled).toBe(false));
-    expect(view.getByText('下载已暂停，进度已保留')).toBeTruthy();
+    expect(view.queryByText(/下载已暂停|进度已保留/)).toBeNull();
   });
 
   it('never resumes a known complete but corrupted partial file', async () => {
