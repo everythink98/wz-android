@@ -3,6 +3,18 @@ import type { Fetcher } from '@/platform/network/request';
 import { withHtmlDecodedInputBudget, withHtmlWorkBudget } from '../../../tests/helpers/htmlWorkBudget';
 
 describe('NodeSeek reader', () => {
+  it('requires the expected page number when identifying a search continuation', async () => {
+    const { nextSearchPath } = await import('./feedParser');
+    const { parseNodeSeekPageDocument } = await import('./protocol');
+    const document = parseNodeSeekPageDocument(
+      '<a href="/search?page=20">20</a><a rel="next" href="/search?page=1">Next</a>'
+    );
+    expect(nextSearchPath(document, 2)).toBeNull();
+    expect(nextSearchPath(parseNodeSeekPageDocument('<a rel="next" href="?q=cache&amp;page=2">Next</a>'), 2)).toBe(
+      '/search?q=cache&page=2'
+    );
+  });
+
   it('preserves an undated topic and its visible source time across list shapes', async () => {
     const { embeddedTopics, parseHtmlTopics } = await import('./feedParser');
     const { parseNodeSeekPageDocument } = await import('./protocol');

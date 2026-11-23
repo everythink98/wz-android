@@ -61,7 +61,12 @@ export function LinuxDoVerifyModal(props: Props) {
   } = props;
   const recovery = recoveryPanel && recoveryPanel.phase !== 'idle' ? recoveryPanel : undefined;
   const web = !recovery || recovery.phase === 'web';
-  const page = useLinuxDoVerificationPage({ ...props, dedicated: recoveryPanel?.dedicated ?? false, web });
+  const page = useLinuxDoVerificationPage({
+    ...props,
+    dedicated: recoveryPanel?.dedicated ?? false,
+    web,
+    mounted: mountLinuxDoWebView && !webViewBlockMessage
+  });
   const verifying = !!recovery || page.stage !== 'account';
   const busy = checking || recovery?.phase === 'checking';
   const result = recovery?.phase === 'result';

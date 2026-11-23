@@ -1,4 +1,5 @@
 import { linuxDoPreloadedData, parseLinuxDoRecord } from './preloadedData';
+import { proveForumReadResponse } from '@/sources/forumSourceReadAttempt';
 import type { DiscourseInteractionConfig } from '@/domain/forum/discourseInteractions';
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
@@ -68,5 +69,5 @@ export async function loadLinuxDoInteractionConfig({
     throw new LinuxDoCloudflareError(response);
   if (!response.ok) throw linuxDoRequestError(`linux.do 互动配置读取失败：HTTP ${response.status}`, response.status);
   if (!Object.keys(settings).length) throw new Error('linux.do 未返回互动配置，请刷新后重试');
-  return linuxDoInteractionConfig(settings);
+  return proveForumReadResponse(response, () => linuxDoInteractionConfig(settings));
 }

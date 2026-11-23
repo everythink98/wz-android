@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef, useState } from 'react';
+import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View, type ImageStyle, type StyleProp } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { SvgXml } from 'react-native-svg';
@@ -9,7 +9,7 @@ import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestCont
 
 import type { Source } from '@/domain/forum/models';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import { type ReaderStyleSettings, fontFamilyValue, textSizeStyle, type ReaderTheme } from '@/ui/theme/tokens';
 
 type AvatarImageState =
   { kind: 'native'; retryCount: 0 | 1 } | { kind: 'fallback' } | { kind: 'svg'; xml: string } | { kind: 'text' };
@@ -17,6 +17,8 @@ type AvatarImageState =
 type GraphemeSegmenter = {
   segment: (value: string) => Iterable<{ segment: string }>;
 };
+
+let graphemeSegmenter: GraphemeSegmenter | undefined;
 
 export function avatarInitial(name?: string) {
   const text = (name || '').trim();
@@ -27,13 +29,12 @@ export function avatarInitial(name?: string) {
     globalThis.Intl as unknown as
       { Segmenter?: new (locale?: string, options?: { granularity: 'grapheme' }) => GraphemeSegmenter } | undefined
   )?.Segmenter;
-  const segment = Segmenter
-    ? new Segmenter(undefined, { granularity: 'grapheme' }).segment(text)[Symbol.iterator]().next().value?.segment
-    : Array.from(text)[0];
+  if (!graphemeSegmenter && Segmenter) graphemeSegmenter = new Segmenter(undefined, { granularity: 'grapheme' });
+  const segment = graphemeSegmenter?.segment(text)[Symbol.iterator]().next().value?.segment ?? Array.from(text)[0];
   return segment?.toUpperCase() || '?';
 }
 
-export function Avatar({
+export const Avatar = memo(function Avatar({
   contentSource,
   large,
   name,
@@ -70,7 +71,7 @@ export function Avatar({
       ) : null}
     </View>
   );
-}
+});
 
 function AvatarImage({
   imageStyle,
@@ -82,6 +83,7 @@ function AvatarImage({
   uri: string;
 }) {
   const [image, setImage] = useState<AvatarImageState>({ kind: 'native', retryCount: 0 });
+  const source = useMemo(() => imageSourceFromUrl(uri, { mediaContext }), [mediaContext, uri]);
   const currentImageRef = useRef(image);
   const mountedRef = useRef(false);
   useLayoutEffect(() => {
@@ -120,7 +122,7 @@ function AvatarImage({
   return (
     <ExpoImage
       key={imageKey}
-      source={imageSourceFromUrl(uri, { mediaContext })}
+      source={source}
       style={[imageStyle, StyleSheet.absoluteFill]}
       contentFit="cover"
       recyclingKey={imageKey}
@@ -150,11 +152,11 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     image: { width: '100%', height: '100%' },
     text: {
       color: theme.primary,
-      fontFamily: fontFamilyValue(settings.fontFamily),
-      fontSize: 13,
+      fontFamily: fontFamilyValue(settings.uiFontFamily),
+      ...textSizeStyle(13),
       fontWeight: '700'
     },
-    smallText: { fontSize: 11 },
-    largeText: { fontSize: 22 }
+    smallText: textSizeStyle(11),
+    largeText: textSizeStyle(22)
   });
 }

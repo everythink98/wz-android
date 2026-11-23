@@ -1,4 +1,5 @@
 import { isRecord } from '@/domain/forum/html';
+import { collectForumReadResponses } from '@/sources/forumSourceReadAttempt';
 import {
   type TopicDraft,
   type TopicTag,
@@ -10,6 +11,7 @@ import {
   type TopicEditResult
 } from '@/domain/forum/topicComposer';
 import type { Fetcher } from '@/platform/network/request';
+import { LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
 import { runLinuxDoAction } from './actionClient';
 import { loadLinuxDoTopicCreationContext } from './topicCreation';
 
@@ -39,9 +41,11 @@ export async function loadLinuxDoTopicEditContext(
 ): Promise<TopicEditContext> {
   const { topicId, identityKey } = options;
   if (!/^\d+$/.test(topicId)) throw new Error('帖子 ID 不正确');
+  const required = collectForumReadResponses(options.fetcher);
   const read = (path: string) =>
     runLinuxDoAction({
       ...options,
+      fetcher: required.fetcher,
       browserFetchIntent: { owner: 'topic', priority: 'foreground' },
       request: { path, method: 'GET', headers: {} }
     });
@@ -58,7 +62,9 @@ export async function loadLinuxDoTopicEditContext(
     post.id !== first.id ||
     String(post.topic_id) !== topicId ||
     post.post_number !== 1 ||
-    identityKey !== `linuxdo:${post.user_id}` ||
+    typeof post.username !== 'string' ||
+    !post.username.trim() ||
+    identityKey.toLowerCase() !== `linuxdo:${post.username.toLowerCase()}` ||
     typeof post.raw !== 'string' ||
     typeof data.title !== 'string'
   )
@@ -74,6 +80,7 @@ export async function loadLinuxDoTopicEditContext(
   };
   if (!Object.values(permissions).some(Boolean)) throw new Error('原站不允许编辑此主帖');
   const rules = await loadLinuxDoTopicCreationContext(options);
+  required.accept();
   return {
     source: 'linuxdo',
     topicId,
@@ -164,6 +171,15 @@ export async function editLinuxDoTopic(
   } catch (error) {
     const status = isRecord(error) ? Number(error.status) : 0;
     const { confirmed } = save.state;
+    if (error instanceof LinuxDoCloudflareError) {
+      const uncertain = save.state.kind === 'sent' && status !== 403;
+      return {
+        status: uncertain ? 'unknown' : Object.keys(confirmed).length ? 'partial' : 'rejected',
+        message: uncertain ? `${error.message}；保存结果未知，请到原站核对` : error.message,
+        verificationRequired: true,
+        confirmed
+      };
+    }
     const known =
       save.state.kind !== 'checkpoint-failed' &&
       (save.state.kind === 'preparing' || [400, 401, 403, 404, 409, 422, 429].includes(status));

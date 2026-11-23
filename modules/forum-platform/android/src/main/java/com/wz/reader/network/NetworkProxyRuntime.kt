@@ -56,6 +56,8 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.SynchronousQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
@@ -174,7 +176,7 @@ internal class ForumMediaRequestInterceptor(
           .build()
       )
     val kind = request.header(FORUM_MEDIA_KIND_HEADER)?.takeIf { value -> value == "video" }
-    val firstTargetSource = sourceForUri(URI(request.url.toString()))
+    val firstTargetSource = sourceForUri(request.url.toUri())
     val policy = MediaRequestCookiePolicy(source.takeIf { it == firstTargetSource })
     val sanitized = request.newBuilder()
       .removeHeader(FORUM_MEDIA_SOURCE_HEADER)
@@ -234,7 +236,7 @@ internal class ForumReadClearancePolicy(source: String?, origin: HttpUrl) {
   fun observe(request: Request, sourceForUri: (URI) -> String?) {
     val current = access
     val url = request.url
-    if (current.source == null || sourceForUri(URI(url.toString())) != current.source ||
+    if (current.source == null || sourceForUri(url.toUri()) != current.source ||
       url.scheme != current.origin.scheme || url.host != current.origin.host || url.port != current.origin.port ||
       (request.method != "GET" && request.method != "HEAD")) {
       access = Access.Downgraded(current.source, current.origin)
@@ -347,6 +349,12 @@ internal class ForumMediaCloudflareFallbackInterceptor(
   }
 }
 
+private val imageCancellationExecutor by lazy {
+  Executors.newSingleThreadExecutor { runnable ->
+    Thread(runnable, "WzImageCancellation").apply { isDaemon = true }
+  }
+}
+
 internal class CloseSafeGlideStreamFetcher(
   private val callFactory: Call.Factory,
   private val glideUrl: GlideUrl,
@@ -393,26 +401,23 @@ internal class CloseSafeGlideStreamFetcher(
     }
   }
 
-  override fun onFailure(call: Call, e: IOException) {
-    synchronized(lock) {
-      (state as? State.Active)?.callback?.onLoadFailed(e)
-    }
+  private fun fail(error: Exception) {
+    val callback = synchronized(lock) { (state as? State.Active)?.callback }
+    callback?.onLoadFailed(error)
   }
+
+  override fun onFailure(call: Call, e: IOException) = fail(e)
 
   override fun onResponse(call: Call, response: Response) {
     if (!response.isSuccessful) {
       response.close()
-      synchronized(lock) {
-        (state as? State.Active)?.callback?.onLoadFailed(HttpException(response.message, response.code))
-      }
+      fail(HttpException(response.message, response.code))
       return
     }
     val originalBody = response.body
     if (originalBody == null) {
       response.close()
-      synchronized(lock) {
-        (state as? State.Active)?.callback?.onLoadFailed(IOException("Successful image response has no body"))
-      }
+      fail(IOException("Successful image response has no body"))
       return
     }
     var transformedBody = originalBody
@@ -421,22 +426,16 @@ internal class CloseSafeGlideStreamFetcher(
       ContentLengthInputStream.obtain(transformedBody.byteStream(), transformedBody.contentLength())
     } catch (error: Exception) {
       transformedBody.close()
-      synchronized(lock) {
-        (state as? State.Active)?.callback?.onLoadFailed(error)
-      }
+      fail(error)
       return
     }
-    val accepted = synchronized(lock) {
-      val current = state as? State.Active
-      if (current == null) {
-        false
-      } else {
-        state = State.Streaming(current.call, current.callback, transformedBody)
-        current.callback?.onDataReady(nextStream)
-        true
-      }
+    val callback = synchronized(lock) {
+      val current = state as? State.Active ?: return@synchronized null
+      val listener = current.callback ?: return@synchronized null
+      state = State.Streaming(current.call, listener, transformedBody)
+      listener
     }
-    if (!accepted) transformedBody.close()
+    if (callback == null) transformedBody.close() else callback.onDataReady(nextStream)
   }
 
   override fun cleanup() {
@@ -460,11 +459,10 @@ internal class CloseSafeGlideStreamFetcher(
         State.Cancelled -> return
       }
     }
-    try {
-      owned.first?.cancel()
-    } finally {
-      owned.second?.close()
+    val close = Runnable {
+      try { owned.first?.cancel() } finally { owned.second?.close() }
     }
+    if (Looper.getMainLooper()?.isCurrentThread == true) imageCancellationExecutor.execute(close) else close.run()
   }
 
   override fun getDataClass(): Class<InputStream> = InputStream::class.java
@@ -573,26 +571,31 @@ internal class CronetMediaTransport(
   private var lifetime = Lifetime.ACCEPTING
   private val retired: Boolean get() = lifetime != Lifetime.ACCEPTING
   private val shutdownStarted: Boolean get() = lifetime == Lifetime.SHUTDOWN_CLAIMED
-  private val cancellationWatch = lifecycleExecutor.scheduleWithFixedDelay(
-    {
-      val canceled = synchronized(lock) {
-        activeCalls.filterValues { outerCall -> outerCall.isCanceled() }.keys.toList()
-      }
-      canceled.forEach { call -> call.cancel() }
-    },
-    CRONET_CANCEL_POLL_MS,
-    CRONET_CANCEL_POLL_MS,
-    TimeUnit.MILLISECONDS
-  )
+  private var cancellationWatch: ScheduledFuture<*>? = null
+
+  private fun cancelAbandonedCalls() {
+    val canceled = synchronized(lock) { activeCalls.filterValues { it.isCanceled() }.keys.toList() }
+    canceled.forEach { it.cancel() }
+  }
 
   override fun execute(request: Request, outerCall: Call): Response? {
     if (outerCall.isCanceled()) return null
     val call = client.newCall(request)
-    val registered = synchronized(lock) {
-      if (retired) false else {
-        activeCalls[call] = outerCall
-        true
+    val registered = try {
+      synchronized(lock) {
+        if (retired) false else {
+          if (cancellationWatch == null) {
+            cancellationWatch = lifecycleExecutor.scheduleWithFixedDelay(
+              ::cancelAbandonedCalls, CRONET_CANCEL_POLL_MS, CRONET_CANCEL_POLL_MS, TimeUnit.MILLISECONDS
+            )
+          }
+          activeCalls[call] = outerCall
+          true
+        }
       }
+    } catch (error: RejectedExecutionException) {
+      call.cancel()
+      throw error
     }
     if (!registered) {
       call.cancel()
@@ -628,7 +631,13 @@ internal class CronetMediaTransport(
   }
 
   private fun finish(call: Call) {
-    synchronized(lock) { activeCalls.remove(call) }
+    synchronized(lock) {
+      activeCalls.remove(call)
+      if (activeCalls.isEmpty()) {
+        cancellationWatch?.cancel(false)
+        cancellationWatch = null
+      }
+    }
     shutdownIfIdle()
   }
 
@@ -641,7 +650,6 @@ internal class CronetMediaTransport(
       if (shutdownStarted || !retired || activeCalls.isNotEmpty()) return
       lifetime = Lifetime.SHUTDOWN_CLAIMED
     }
-    cancellationWatch.cancel(false)
     lifecycleExecutor.execute { closeTransport() }
   }
 }
@@ -1633,9 +1641,9 @@ object NetworkProxyRuntime {
   }
   private val cookieHandler = ReadOnlyWebViewCookieHandler()
   private val cookieJar = ReadOnlyCookieJarContainer(JavaNetCookieJar(cookieHandler))
-  private val cronetLifecycleExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
+  private val cronetLifecycleExecutor = ScheduledThreadPoolExecutor(1) { runnable ->
     Thread(runnable, "WzMediaCronetLifecycle").apply { isDaemon = true }
-  }
+  }.apply { removeOnCancelPolicy = true }
   private val runtimeLifecycleExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
     Thread(runnable, "WzReadRuntimeLifecycle").apply { isDaemon = true }
   }
@@ -1658,11 +1666,6 @@ object NetworkProxyRuntime {
   private val imageCalls = mutableMapOf<Call, ReadNetworkRuntimeGeneration>()
   internal val frescoCallFactory = Call.Factory { request -> RuntimeImageCall(request, false) }
   internal val imageCallFactory = Call.Factory { request -> RuntimeImageCall(request, true) }
-  private val imageCancellationExecutor by lazy {
-    Executors.newSingleThreadExecutor { runnable ->
-      Thread(runnable, "WzImageCancellation").apply { isDaemon = true }
-    }
-  }
 
   // Consumers keep this factory for their entire lifetime; only execution takes a generation lease.
   private class RuntimeImageCall(
@@ -2542,7 +2545,7 @@ internal class LocalNetworkProxyServer(
       socket.getOutputStream().write(builder.toString().toByteArray(HEADER_CHARSET))
       val response = readHeaderBlock(socket.getInputStream())
       val statusLine = response.lineSequence().firstOrNull().orEmpty()
-      if (!statusLine.contains(" 200 ")) {
+      if (!isSuccessfulProxyConnectResponse(statusLine)) {
         throw IOException("HTTP proxy rejected CONNECT")
       }
       socket.soTimeout = 0
@@ -2726,6 +2729,9 @@ private val HEADER_CHARSET: Charset = Charsets.ISO_8859_1
 private val IPV4_PATTERN = Regex("^\\d{1,3}(\\.\\d{1,3}){3}$")
 private val HTTP_REQUEST_LINE_PATTERN = Regex("^([A-Za-z]+) ([^\\s]+) (HTTP/1\\.[01])$")
 private val HTTP_HEADER_NAME_PATTERN = Regex("^[A-Za-z0-9_-]+$")
+
+private val successfulProxyConnectStatus = Regex("""HTTP/1\.[01] 2[0-9]{2}(?: [^\r\n]*)?""")
+internal fun isSuccessfulProxyConnectResponse(statusLine: String): Boolean = successfulProxyConnectStatus.matches(statusLine)
 
 internal fun readHeaderBlock(input: InputStream): String {
   val buffer = ByteArrayOutputStream()

@@ -7,7 +7,13 @@ import type { CompiledForumContentRow } from '@/domain/forum/topicContentSplit';
 import { OriginalImageUpgradeBoundary } from '@/platform/media/originalImageLoading';
 import { IconButton } from '@/ui/controls/ButtonControls';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { fontFamilyValue, readerRadii, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
+import {
+  fontFamilyValue,
+  readerRadii,
+  type ReaderStyleSettings,
+  type ReaderTheme,
+  textSizeStyle
+} from '@/ui/theme/tokens';
 import { TopicContentPresentationProvider } from '../rendering/TopicContentPresentation';
 import { useTopicImageGallery, useTopicSplitDisclosureScopeKey } from '../rendering/TopicSplitDisclosure';
 import { useTopicSelectionCancel } from '../selection/TopicSelectionSurface';
@@ -101,7 +107,7 @@ export function TopicImageGallery({
 }
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
-  const fontFamily = fontFamilyValue(settings.fontFamily);
+  const fontFamily = fontFamilyValue(settings.uiFontFamily);
   return StyleSheet.create({
     gallery: { gap: 8, marginBottom: 10, marginTop: 6 },
     viewport: {
@@ -150,10 +156,9 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     counter: {
       color: theme.muted,
       fontFamily,
-      fontSize: Math.round(12 * settings.fontScale),
+      ...textSizeStyle(Math.round(12 * settings.uiFontScale)),
       fontVariant: ['tabular-nums'],
-      fontWeight: '600',
-      includeFontPadding: false
+      fontWeight: '600'
     }
   });
 }

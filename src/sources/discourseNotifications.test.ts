@@ -5,6 +5,42 @@ import { linuxDoNotificationAdapter } from './discourseNotifications';
 import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 
 describe('Discourse notifications', () => {
+  it('preserves plain notification titles and reads the emoji labels of HTML-only titles', async () => {
+    const page = await linuxDoNotificationAdapter.listPage({
+      identityKey: 'linuxdo:7',
+      userId: '7',
+      fetcher: async () =>
+        jsonResponse({
+          notifications: [
+            { id: 1, fancy_title: 'Old &amp; stale', data: { topic_title: 'Real <title>' } },
+            { id: 2, fancy_title: 'A &amp; <i>B</i>' },
+            { id: 3, fancy_title: '<img class="emoji" alt=":smile:" src="/smile.png">' }
+          ],
+          total_rows_notifications: 3
+        })
+    });
+    expect(page.items.map((item) => item.title)).toEqual(['Real <title>', 'A & B', ':smile:']);
+  });
+
+  it('advances by the server offset after inaccessible rows and stops at the actual total', async () => {
+    const read = (offset: number) =>
+      linuxDoNotificationAdapter.listPage({
+        identityKey: 'linuxdo:7',
+        userId: '7',
+        limit: 3,
+        cursor: String(offset),
+        fetcher: async () =>
+          jsonResponse({
+            notifications: [{ id: 1 }, { id: 2 }],
+            total_rows_notifications: 5,
+            load_more_notifications: `/notifications?offset=${offset + 3}&limit=3`
+          })
+      });
+    const page = await read(0);
+    expect(page.cursor).toBe('3');
+    expect((await read(3)).hasMore).toBe(false);
+  });
+
   function conversationHistory(count: number) {
     let size = count;
     let failPosts = false;

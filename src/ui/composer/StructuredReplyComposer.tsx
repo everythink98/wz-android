@@ -35,7 +35,13 @@ import {
 } from './structuredComposerBridge';
 import { ComposerToolbar } from './ComposerToolbar';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { readerRadii, type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import {
+  readerRadii,
+  type ReaderStyleSettings,
+  fontFamilyValue,
+  type ReaderTheme,
+  textSizeStyle
+} from '@/ui/theme/tokens';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
 import type { DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
@@ -46,6 +52,7 @@ import { createComposerHandoffs, type ComposerImageHandoff } from './composerHan
 type TemplateSummary = { id: string; title: string; content: string };
 type EmojiUrlMap = Record<string, string>;
 const EMPTY_EMOJI_URLS: EmojiUrlMap = {};
+type EditorDraft = Pick<ComposerSnapshot, 'markdown' | 'pendingNodeSeekPolls'>;
 
 export type StructuredReplyComposerHandle = {
   requestSnapshot: () => Promise<ComposerSnapshot>;
@@ -55,7 +62,7 @@ export type StructuredReplyComposerHandle = {
 };
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
-  const fontSize = (size: number) => Math.round(size * Math.min(settings.fontScale, 1.15));
+  const fontSize = (size: number) => Math.round(size * settings.uiFontScale);
   return StyleSheet.create({
     root: { alignSelf: 'stretch', backgroundColor: theme.surface, flex: 1, minHeight: 0, overflow: 'hidden' },
     header: {
@@ -70,8 +77,8 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     headerBody: { flex: 1, minWidth: 0 },
     title: {
       color: theme.ink,
-      fontFamily: fontFamilyValue(settings.fontFamily),
-      fontSize: fontSize(15),
+      fontFamily: fontFamilyValue(settings.uiFontFamily),
+      ...textSizeStyle(fontSize(15)),
       fontWeight: '600'
     },
     modeSwitch: {
@@ -95,8 +102,8 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     webView: { flex: 1, backgroundColor: theme.surface },
     message: {
       color: theme.muted,
-      fontFamily: fontFamilyValue(settings.fontFamily),
-      fontSize: fontSize(12),
+      fontFamily: fontFamilyValue(settings.uiFontFamily),
+      ...textSizeStyle(fontSize(12)),
       paddingHorizontal: 12,
       paddingTop: 7
     },
@@ -116,8 +123,8 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     footerBody: { flex: 1, minWidth: 0 },
     metaText: {
       color: theme.muted,
-      fontFamily: fontFamilyValue(settings.fontFamily),
-      fontSize: fontSize(11)
+      fontFamily: fontFamilyValue(settings.uiFontFamily),
+      ...textSizeStyle(fontSize(11))
     },
     rendererGone: { alignItems: 'center', flex: 1, gap: 12, justifyContent: 'center', padding: 24 }
   });
@@ -226,10 +233,12 @@ export const StructuredReplyComposer = forwardRef<
         primary: theme.primary,
         primarySoft: theme.primarySoft,
         danger: theme.danger,
-        fontScale: settings.fontScale
+        fontScale: settings.fontScale,
+        uiFontScale: settings.uiFontScale
       }),
       [
         settings.fontScale,
+        settings.uiFontScale,
         theme.danger,
         theme.dark,
         theme.ink,
@@ -267,7 +276,7 @@ export const StructuredReplyComposer = forwardRef<
     const [mode, setMode] = useState<ComposerMode>(initialMode ?? 'rich');
     const [documentLifecycle] = useState(() => createComposerDocumentLifecycle(Boolean(initialMode)));
     const [documentView, setDocumentView] = useState(documentLifecycle.snapshot);
-    const { modeLoaded, webLoaded, ready, rendererGone } = documentView;
+    const { modeLoaded, webLoaded, ready, rendererGone, initializationTimedOut } = documentView;
     const transitionDocument = useCallback(
       (event: ComposerDocumentEvent) => setDocumentView(documentLifecycle.apply(event)),
       [documentLifecycle]
@@ -290,11 +299,14 @@ export const StructuredReplyComposer = forwardRef<
       canRedo: false,
       markdownLength: content.length
     }));
-    const lastConfirmedMarkdownRef = useRef(content);
+    const lastConfirmedDraft = useRef<EditorDraft>({ markdown: content, pendingNodeSeekPolls });
     const lastExternalSentRef = useRef(content);
     const lastContentPropRef = useRef(content);
     const lastRevisionRef = useRef(0);
     const documentEpochRef = useRef(initialMode ? 0 : -1);
+    const [webViewKey, setWebViewKey] = useState(0);
+    const activeWebViewKey = useRef(0);
+    const reloadDraft = useRef<{ intentKey: string; content: string; draft: EditorDraft } | null>(null);
     const [submissionSnapshot, publishSubmission] = useState<{ readonly epoch: number } | null>(null);
     const [writes] = useState(() => createComposerWriteOperations(publishSubmission));
     const submitting = submissionSnapshot !== null;
@@ -316,6 +328,9 @@ export const StructuredReplyComposer = forwardRef<
           .map(([name, url]) => ({ name, url })),
       [discourseEmojiUrls]
     );
+    const memberId =
+      intent.site === 'nodeseek' && nodeSeekMemberId && /^\d+$/.test(nodeSeekMemberId) ? nodeSeekMemberId : null;
+    const sentNodeSeekMemberRef = useRef(memberId);
     const initPayload = useMemo(
       () => ({
         site: intent.site,
@@ -324,7 +339,7 @@ export const StructuredReplyComposer = forwardRef<
         pendingNodeSeekPolls,
         mode: initialMode ?? mode,
         readOnly,
-        ...(nodeSeekMemberId && /^\d+$/.test(nodeSeekMemberId) ? { nodeSeekMemberId } : {}),
+        ...(memberId ? { nodeSeekMemberId: memberId } : {}),
         discourseEmoji,
         theme: editorTheme
       }),
@@ -336,7 +351,7 @@ export const StructuredReplyComposer = forwardRef<
         intent.kind,
         intent.site,
         mode,
-        nodeSeekMemberId,
+        memberId,
         pendingNodeSeekPolls,
         readOnly
       ]
@@ -353,7 +368,8 @@ export const StructuredReplyComposer = forwardRef<
       const html = initialDocument
         ? editorDocument.html.replace(
             '</head>',
-            `<script type="application/json" id="composer-initial-document">${JSON.stringify(initialDocument).replaceAll('<', '\\u003c')}</script></head>`
+            () =>
+              `<script type="application/json" id="composer-initial-document">${JSON.stringify(initialDocument).replaceAll('<', '\\u003c')}</script></head>`
           )
         : editorDocument.html;
       return { html, baseUrl: 'https://composer.local/' };
@@ -371,6 +387,11 @@ export const StructuredReplyComposer = forwardRef<
     const send = useCallback((message: ComposerHostMessage) => {
       webViewRef.current?.postMessage(JSON.stringify(message));
     }, []);
+    const syncNodeSeekMember = useCallback(() => {
+      if (intent.site !== 'nodeseek' || sentNodeSeekMemberRef.current === memberId) return;
+      sentNodeSeekMemberRef.current = memberId;
+      send({ type: 'SET_NODESEEK_MEMBER', payload: { documentEpoch: documentEpochRef.current, memberId } });
+    }, [intent.site, memberId, send]);
     useEffect(() => {
       // Android Back first collapses the native sheet. Close its expanded form too.
       if (expandedPanel && previousPresentationRef.current === 'fullscreen' && presentation === 'sheet') {
@@ -420,20 +441,45 @@ export const StructuredReplyComposer = forwardRef<
         invalidatePanelHandoff();
     }, [actionBusy, dismissPanels, invalidatePanelHandoff, readOnly, ready, rendererGone, submitting, visible]);
 
+    const clearReadyTimer = useCallback(() => {
+      if (readyTimerRef.current) clearTimeout(readyTimerRef.current);
+      readyTimerRef.current = null;
+    }, []);
+    const rejectSnapshots = useCallback((message: string, reason: 'canceled' | 'superseded' | 'renderer_gone') => {
+      for (const { reject, timer, trace } of snapshotResolversRef.current.values()) {
+        clearTimeout(timer);
+        finishDiagnosticTrace(
+          trace,
+          reason === 'renderer_gone' ? 'failure' : reason === 'superseded' ? 'stale' : 'canceled',
+          { reason }
+        );
+        reject(new Error(message));
+      }
+      snapshotResolversRef.current.clear();
+    }, []);
     const scheduleInitializationTimeout = useCallback(
       (state = AppState.currentState) => {
-        if (readyTimerRef.current) clearTimeout(readyTimerRef.current);
-        readyTimerRef.current = null;
         const trace = initializationTraceRef.current;
-        if (!trace || !documentLifecycle.initializing || !visible || state === 'background' || state === 'inactive')
+        if (
+          !trace ||
+          !documentLifecycle.waitingForReady ||
+          !visible ||
+          state === 'background' ||
+          state === 'inactive'
+        ) {
+          clearReadyTimer();
           return;
+        }
+        if (readyTimerRef.current) return;
         readyTimerRef.current = setTimeout(() => {
+          readyTimerRef.current = null;
+          initializationTraceRef.current = null;
           finishDiagnosticTrace(trace, 'failure', { reason: 'timeout' });
           transitionDocument('initialization-timeout');
           setLocalError('编辑器启动超时，可重载后继续');
         }, 1500);
       },
-      [documentLifecycle, transitionDocument, visible]
+      [clearReadyTimer, documentLifecycle, transitionDocument, visible]
     );
     const watchInitialization = useCallback(() => {
       initializationTraceRef.current = beginDiagnosticTrace('webview', 'composer-init', { site: intent.site, mode });
@@ -452,36 +498,44 @@ export const StructuredReplyComposer = forwardRef<
       writes.cancelSubmission();
       cancelUploadCommand();
       transitionDocument('initialize');
-      snapshotResolversRef.current.forEach(({ reject, timer, trace }) => {
-        clearTimeout(timer);
-        finishDiagnosticTrace(trace, 'stale', { reason: 'superseded' });
-        reject(new Error('编辑文档已切换，请重试'));
-      });
-      snapshotResolversRef.current.clear();
+      rejectSnapshots('编辑文档已切换，请重试', 'superseded');
+      clearReadyTimer();
       if (initializationTraceRef.current)
         finishDiagnosticTrace(initializationTraceRef.current, 'stale', { reason: 'superseded' });
       watchInitialization();
       setLocalError('');
+      const restoring = reloadDraft.current;
+      reloadDraft.current = null;
+      const draft =
+        restoring?.intentKey === intentKey && restoring.content === content
+          ? restoring.draft
+          : { markdown: content, pendingNodeSeekPolls: initPayload.pendingNodeSeekPolls };
       send({
         type: 'INIT',
         payload: {
           ...initPayload,
+          ...draft,
+          ...(restoring?.intentKey === intentKey ? { mode: modePreferenceRef.current } : {}),
           documentEpoch: documentEpochRef.current
         }
       });
       sentThemeRef.current = initPayload.theme;
+      sentNodeSeekMemberRef.current = initPayload.nodeSeekMemberId ?? null;
       sentDiscourseEmojiRef.current = discourseEmoji;
       initKeyRef.current = intentKey;
-      lastConfirmedMarkdownRef.current = content;
-      lastExternalSentRef.current = content;
+      lastConfirmedDraft.current = draft;
+      lastExternalSentRef.current = draft.markdown;
+      lastContentPropRef.current = content;
       lastRevisionRef.current = 0;
     }, [
       cancelUploadCommand,
+      clearReadyTimer,
       content,
       discourseEmoji,
       initPayload,
       intentKey,
       modeLoaded,
+      rejectSnapshots,
       send,
       transitionDocument,
       watchInitialization,
@@ -513,15 +567,19 @@ export const StructuredReplyComposer = forwardRef<
     }, [intent.site, intentKey, transitionDocument]);
 
     useEffect(() => {
-      if (!webLoaded || !modeLoaded || ready) return;
+      if (!webLoaded || !modeLoaded || ready || rendererGone) return;
       if (!documentLifecycle.initializing) sendInit();
-      else if (!initializationTraceRef.current) watchInitialization();
-    }, [documentLifecycle, modeLoaded, ready, sendInit, watchInitialization, webLoaded]);
+      else if (documentLifecycle.waitingForReady && !initializationTraceRef.current) watchInitialization();
+    }, [documentLifecycle, modeLoaded, ready, rendererGone, sendInit, watchInitialization, webLoaded]);
 
     useEffect(() => {
       if (!ready || initKeyRef.current === intentKey) return;
       sendInit();
     }, [intentKey, ready, sendInit]);
+
+    useEffect(() => {
+      if (ready && !documentLifecycle.initializing) syncNodeSeekMember();
+    }, [documentLifecycle, ready, syncNodeSeekMember]);
 
     useEffect(() => {
       if (!ready || sentThemeRef.current === editorTheme) return;
@@ -542,13 +600,13 @@ export const StructuredReplyComposer = forwardRef<
     useEffect(() => {
       if (!ready || content === lastContentPropRef.current) return;
       lastContentPropRef.current = content;
-      if (content === lastConfirmedMarkdownRef.current || content === lastExternalSentRef.current) return;
+      if (content === lastConfirmedDraft.current.markdown || content === lastExternalSentRef.current) return;
       if (!content || intent.kind === 'create-topic' || intent.kind === 'edit-topic') {
         sendInit();
         return;
       }
       lastExternalSentRef.current = content;
-      const confirmed = lastConfirmedMarkdownRef.current;
+      const confirmed = lastConfirmedDraft.current.markdown;
       const markdown = content.startsWith(confirmed) ? content.slice(confirmed.length) : content;
       send({ type: 'COMMAND', payload: { name: 'insert-markdown', markdown } });
     }, [content, intent.kind, ready, send, sendInit]);
@@ -689,19 +747,57 @@ export const StructuredReplyComposer = forwardRef<
       () => () => {
         writes.cancelSubmission();
         cancelUploadCommand();
-        if (readyTimerRef.current) clearTimeout(readyTimerRef.current);
+        clearReadyTimer();
         if (initializationTraceRef.current)
           finishDiagnosticTrace(initializationTraceRef.current, 'canceled', { reason: 'canceled' });
-        snapshotResolversRef.current.forEach(({ reject, timer, trace }) => {
-          clearTimeout(timer);
-          finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
-          reject(new Error('编辑器已关闭'));
-        });
-        snapshotResolversRef.current.clear();
+        initializationTraceRef.current = null;
+        rejectSnapshots('编辑器已关闭', 'canceled');
         send({ type: 'DESTROY' });
       },
-      [cancelUploadCommand, send, writes]
+      [cancelUploadCommand, clearReadyTimer, rejectSnapshots, send, writes]
     );
+
+    const discardDocumentOperations = (reason: 'renderer_gone' | 'superseded') => {
+      documentEpochRef.current++;
+      clearReadyTimer();
+      if (initializationTraceRef.current) {
+        finishDiagnosticTrace(initializationTraceRef.current, reason === 'renderer_gone' ? 'failure' : 'stale', {
+          reason
+        });
+        initializationTraceRef.current = null;
+      }
+      rejectSnapshots(reason === 'renderer_gone' ? '编辑器进程已退出' : '编辑器正在重载', reason);
+      writes.cancelSubmission();
+      writes.cancelCommand();
+      if (writes.upload) writes.releaseUpload(writes.upload);
+      if (handoffs.image) handoffs.releaseImage(handoffs.image);
+      handoffs.invalidatePanel();
+      publishHandoffs();
+      setToolbarState(null);
+      setPanelLayout('compact');
+      onPanelChange?.(false);
+      const previous = panelPresentationRef.current;
+      panelPresentationRef.current = null;
+      if (previous) onPresentationChange?.(previous);
+    };
+    const reloadEditor = () => {
+      reloadDraft.current = {
+        intentKey,
+        content,
+        draft:
+          initKeyRef.current === intentKey && content === lastContentPropRef.current
+            ? lastConfirmedDraft.current
+            : { markdown: content, pendingNodeSeekPolls }
+      };
+      discardDocumentOperations('superseded');
+      const trace = beginDiagnosticTrace('webview', 'recover', { site: intent.site });
+      finishDiagnosticTrace(trace, 'success', { state: 'started' });
+      setUseInitialDocument(false);
+      activeWebViewKey.current += 1;
+      setWebViewKey(activeWebViewKey.current);
+      transitionDocument('reload');
+      setLocalError('');
+    };
 
     const handleMessage = useCallback(
       (event: WebViewMessageEvent) => {
@@ -784,10 +880,11 @@ export const StructuredReplyComposer = forwardRef<
         }
         if (message.type === 'READY') {
           transitionDocument('ready');
+          syncNodeSeekMember();
           if (initializationTraceRef.current)
             finishDiagnosticTrace(initializationTraceRef.current, 'success', { state: 'ready' });
-          if (readyTimerRef.current) clearTimeout(readyTimerRef.current);
-          readyTimerRef.current = null;
+          initializationTraceRef.current = null;
+          clearReadyTimer();
           setLocalError('');
           return;
         }
@@ -829,7 +926,10 @@ export const StructuredReplyComposer = forwardRef<
             return;
           }
           lastRevisionRef.current = snapshot.revision;
-          lastConfirmedMarkdownRef.current = snapshot.markdown;
+          lastConfirmedDraft.current = {
+            markdown: snapshot.markdown,
+            pendingNodeSeekPolls: snapshot.pendingNodeSeekPolls
+          };
           lastExternalSentRef.current = snapshot.markdown;
           onSnapshot(snapshot);
           setMode(snapshot.mode);
@@ -849,9 +949,11 @@ export const StructuredReplyComposer = forwardRef<
           return;
         }
         if (message.type === 'REQUEST_HOST_ACTION') {
+          const requestEpoch = documentEpochRef.current;
           let imageRequest: ComposerImageHandoff | undefined;
           let panelRequest: object | undefined;
-          const reply = (result?: unknown, actionError?: string) =>
+          const reply = (result?: unknown, actionError?: string) => {
+            if (requestEpoch !== documentEpochRef.current || !mounted.current) return;
             send({
               type: 'COMMAND',
               payload: {
@@ -861,6 +963,7 @@ export const StructuredReplyComposer = forwardRef<
                 ...(actionError ? { error: actionError } : {})
               }
             });
+          };
           void (async () => {
             try {
               if (message.payload.action === 'preview-topic') {
@@ -954,7 +1057,7 @@ export const StructuredReplyComposer = forwardRef<
                 reply({ used: true });
               }
             } catch (actionError) {
-              if (imageRequest)
+              if (imageRequest && imageRequest.epoch === documentEpochRef.current)
                 send({
                   type: 'COMMAND',
                   payload: {
@@ -997,6 +1100,7 @@ export const StructuredReplyComposer = forwardRef<
         intent.site,
         intentKey,
         currentIntentKey,
+        clearReadyTimer,
         localError,
         onLoadLinuxDoPollCapabilities,
         onResolveLinuxDoUpload,
@@ -1018,6 +1122,7 @@ export const StructuredReplyComposer = forwardRef<
         rendererGone,
         send,
         sendUploadCommand,
+        syncNodeSeekMember,
         transitionDocument,
         visible,
         uploadAvailable,
@@ -1190,20 +1295,11 @@ export const StructuredReplyComposer = forwardRef<
           {rendererGone ? (
             <View style={styles.rendererGone}>
               <Text style={[styles.message, styles.error]}>编辑器进程已退出，最后确认草稿仍在。</Text>
-              <AppButton
-                label="重载编辑器"
-                onPress={() => {
-                  const trace = beginDiagnosticTrace('webview', 'recover', { site: intent.site });
-                  finishDiagnosticTrace(trace, 'success', { state: 'started' });
-                  setUseInitialDocument(false);
-                  documentEpochRef.current += 1;
-                  transitionDocument('reload');
-                  webViewRef.current?.reload();
-                }}
-              />
+              <AppButton label="重载编辑器" onPress={reloadEditor} />
             </View>
           ) : (
             <WebView
+              key={webViewKey}
               ref={webViewRef}
               testID="structured-composer-webview"
               source={source}
@@ -1226,19 +1322,21 @@ export const StructuredReplyComposer = forwardRef<
               androidPrewarmOnWindowVisible
               nestedScrollEnabled
               overScrollMode="never"
-              textZoom={100}
               onLoadEnd={() => {
-                transitionDocument('web-loaded');
+                if (activeWebViewKey.current === webViewKey) transitionDocument('web-loaded');
               }}
-              onMessage={handleMessage}
+              onMessage={(event) => {
+                if (activeWebViewKey.current === webViewKey) handleMessage(event);
+              }}
               onRenderProcessGone={() => {
-                if (initializationTraceRef.current)
-                  finishDiagnosticTrace(initializationTraceRef.current, 'failure', { reason: 'renderer_gone' });
+                if (activeWebViewKey.current !== webViewKey) return;
+                activeWebViewKey.current += 1;
                 const trace = beginDiagnosticTrace('webview', 'composer-error', {
                   site: intent.site,
                   revision: lastRevisionRef.current
                 });
                 finishDiagnosticTrace(trace, 'failure', { reason: 'renderer_gone' });
+                discardDocumentOperations('renderer_gone');
                 transitionDocument('renderer-gone');
                 setLocalError('编辑器进程已退出，最后确认草稿仍在');
               }}
@@ -1248,6 +1346,7 @@ export const StructuredReplyComposer = forwardRef<
             />
           )}
         </View>
+        {initializationTimedOut && !rendererGone ? <AppButton label="重载编辑器" onPress={reloadEditor} /> : null}
         {!readOnly && !expandedPanel && !expressionPanel && !rendererGone ? (
           <ComposerToolbar
             state={toolbarState}

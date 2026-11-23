@@ -12,7 +12,7 @@ import { appQueryClient } from '@/platform/query/serverState';
 import { diagnosticBuildContext } from '@/platform/diagnostics/nativeDiagnosticJournal';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
-import { createTheme } from '@/ui/theme/tokens';
+import { resolveReaderStyleSettings, createTheme } from '@/ui/theme/tokens';
 import { createAppStyles } from '@/app/styles';
 import {
   createComposerTransport,
@@ -77,6 +77,7 @@ function Proof({ scenario }: { scenario: Scenario }) {
   const settings = {
     ...createEmptyReaderData().settings,
     fontScale: scenario.fontScale,
+    uiFontScale: scenario.fontScale,
     theme: scenario.dark ? ('dark' as const) : ('light' as const)
   };
   const theme = createTheme(settings);
@@ -118,7 +119,7 @@ function Proof({ scenario }: { scenario: Scenario }) {
     );
   });
   return (
-    <ReaderStyleProvider value={{ settings, theme }}>
+    <ReaderStyleProvider value={{ settings: resolveReaderStyleSettings(settings), theme }}>
       <AppFrame styles={styles} dark={theme.dark}>
         {scenario.entry === 'topic' || scenario.entry === 'topic-edit' ? (
           <TopicCreationFixture

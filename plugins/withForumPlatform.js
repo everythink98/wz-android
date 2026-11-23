@@ -1,8 +1,8 @@
-const { withMainApplication } = require('@expo/config-plugins');
+const { withMainActivity, withMainApplication } = require('@expo/config-plugins');
 const { injectMainApplicationPackage } = require('./androidPackageRegistration');
 
 module.exports = function withForumPlatform(config) {
-  return withMainApplication(config, (config) => {
+  config = withMainApplication(config, (config) => {
     let contents = config.modResults.contents;
     for (const name of ['ForumPlatformPackage', 'NetworkProxyPackage', 'SvgRendererPackage'])
       contents = injectMainApplicationPackage(contents, `com.wz.reader.${name}`);
@@ -15,6 +15,15 @@ module.exports = function withForumPlatform(config) {
       );
     }
     config.modResults.contents = contents;
+    return config;
+  });
+  return withMainActivity(config, (config) => {
+    const hook = 'com.wz.reader.ReaderTypeface.register(resources)';
+    const { contents } = config.modResults;
+    if (contents.includes(hook)) return config;
+    const superCall = /^([ \t]*)super\.onCreate\(null\)$/m;
+    if (!superCall.test(contents)) throw new Error('无法注册阅坛字体：MainActivity 模板不匹配。');
+    config.modResults.contents = contents.replace(superCall, (match, indent) => indent + hook + '\n' + match);
     return config;
   });
 };

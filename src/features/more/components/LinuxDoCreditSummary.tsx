@@ -6,11 +6,17 @@ import { errorMessage } from '@/platform/network/errors';
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import { AppButton } from '@/ui/controls/ButtonControls';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { createReaderFontSizer, fontFamilyValue, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
+import {
+  createUiFontSizer,
+  fontFamilyValue,
+  type ReaderStyleSettings,
+  type ReaderTheme,
+  textSizeStyle
+} from '@/ui/theme/tokens';
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
-  const fontFamily = fontFamilyValue(settings.fontFamily);
-  const size = createReaderFontSizer(settings);
+  const fontFamily = fontFamilyValue(settings.uiFontFamily);
+  const size = createUiFontSizer(settings);
   return StyleSheet.create({
     section: { paddingHorizontal: 20, gap: 8 },
     row: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 },
@@ -22,19 +28,19 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: theme.line
     },
-    title: { fontFamily, color: theme.ink, fontSize: size(14), lineHeight: size(21) },
+    title: { fontFamily, color: theme.ink, ...textSizeStyle(size(14), size(21)) },
     value: {
       fontFamily,
       color: theme.ink,
-      fontSize: size(20),
+      ...textSizeStyle(size(20)),
       fontWeight: '600',
       fontVariant: ['tabular-nums'],
       maxWidth: '100%'
     },
-    meta: { fontFamily, color: theme.muted, fontSize: size(12), lineHeight: size(18) },
+    meta: { fontFamily, color: theme.muted, ...textSizeStyle(size(12), size(18)) },
     link: { flexDirection: 'row', alignItems: 'center', gap: 2, marginLeft: 'auto' },
-    linkText: { fontFamily, color: theme.primary, fontSize: size(12), lineHeight: size(18) },
-    error: { fontFamily, color: theme.danger, fontSize: size(13), lineHeight: size(20) },
+    linkText: { fontFamily, color: theme.primary, ...textSizeStyle(size(12), size(18)) },
+    error: { fontFamily, color: theme.danger, ...textSizeStyle(size(13), size(20)) },
     actions: { alignItems: 'flex-start' }
   });
 }

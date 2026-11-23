@@ -120,6 +120,53 @@ function readerDataWithEnabledSources(enabledSources: readonly Source[]) {
 }
 
 describe('Feed controller sessions', () => {
+  it('shows a loading state during a retry after a cached empty feed failed to refresh', async () => {
+    const empty: FeedResponse = { items: [], errors: {}, hasMore: false, nextPage: null };
+    const next = Promise.withResolvers<FeedResponse>();
+    const getFeed = jest
+      .fn<Promise<FeedResponse>, Parameters<ReadGateway['getFeed']>>()
+      .mockResolvedValueOnce(empty)
+      .mockRejectedValueOnce(new Error('更新失败'))
+      .mockImplementationOnce(() => next.promise);
+    const readGateway = {
+      getFeed,
+      getCategories: jest.fn(async () => ({ items: [], errors: {} }))
+    } as unknown as ReadGateway;
+    const readerData = readerDataWithEnabledSources(['v2ex']);
+    const hook = await renderHook(() =>
+      useFeedRuntime({
+        active: true,
+        linuxDoVerificationActive: false,
+        readerData,
+        readerDataLoaded: true,
+        notify: jest.fn(),
+        showLinuxDoVerification: jest.fn(),
+        showNodeSeekVerification: jest.fn(),
+        showYaohuoLogin: jest.fn(),
+        readGateway
+      })
+    );
+    await waitFor(() => expect(hook.result.current.feedOutcomeKind).toBe('empty'));
+    await act(async () => {
+      await hook.result.current.refreshFeed();
+    });
+    await waitFor(() => expect(hook.result.current.feedOutcomeKind).toBe('error'));
+    let retry: Promise<void> | undefined;
+    await act(async () => {
+      retry = hook.result.current.refreshFeed();
+    });
+    await waitFor(() => expect(getFeed).toHaveBeenCalledTimes(3));
+    try {
+      await waitFor(() => expect(hook.result.current.feedBusy).toBe(true));
+    } finally {
+      await act(async () => {
+        next.resolve(empty);
+        await retry;
+      });
+    }
+    await waitFor(() => expect(hook.result.current.feedOutcomeKind).toBe('empty'));
+  });
+
   it('keeps a local reading filter pending until reader history is available', async () => {
     let readerDataLoaded = false;
     const getFeed = jest.fn(async (): Promise<FeedResponse> => ({ items: [], errors: {}, hasMore: false }));
@@ -977,7 +1024,7 @@ describe('Feed controller sessions', () => {
     expect(notify).not.toHaveBeenCalledWith('列表正在更新');
   });
 
-  it('does not replay a cached partial error after returning to Feed', async () => {
+  it('does not replay a cached partial error on returning to Feed or retaining a page across a scope change', async () => {
     const partialErrors = {
       v2ex: {
         kind: 'ordinary' as const,
@@ -1006,8 +1053,10 @@ describe('Feed controller sessions', () => {
     } as unknown as ReadGateway;
     const notify = jest.fn();
     let active = true;
+    let identityBarriers: SessionSource[] = [];
     const hook = await renderHook(() =>
       useFeedRuntime({
+        identityBarriers,
         linuxDoVerificationActive: false,
         notify,
         readerData: createEmptyReaderData(),
@@ -1032,6 +1081,19 @@ describe('Feed controller sessions', () => {
     });
     expect(readGateway.getFeed).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenCalledTimes(1);
+    const next = Promise.withResolvers<FeedResponse>();
+    jest.mocked(readGateway.getFeed).mockImplementationOnce(() => next.promise);
+    identityBarriers = ['nodeseek'];
+    await act(async () => hook.rerender({}));
+    await waitFor(() => expect(readGateway.getFeed).toHaveBeenCalledTimes(2));
+    try {
+      expect(hook.result.current.activeFeedState.items.map((topic) => topic.id)).toEqual(['partial-page-topic']);
+      expect(notify).toHaveBeenCalledTimes(1);
+    } finally {
+      await act(async () => {
+        next.resolve({ items: [], errors: {}, hasMore: false, nextPage: null });
+      });
+    }
   });
 
   it.each(['unchanged', 'changed'] as const)(
@@ -2904,6 +2966,7 @@ describe('Feed controller sessions', () => {
     await waitFor(() => {
       expect(hook.result.current.activeFeedState.items).toEqual([dirtyPublicTopic, unchangedManagedTopic]);
     });
+    await waitFor(() => expect(notify.mock.calls.flat().join(' ')).toContain('retained-source-error'));
     notify.mockClear();
 
     await act(async () => {
@@ -2916,10 +2979,7 @@ describe('Feed controller sessions', () => {
 
     await waitFor(() => expect(readGateway.getFeed).toHaveBeenCalledTimes(3));
     expect(hook.result.current.activeFeedState.items).toEqual([dirtyPublicTopic, unchangedManagedTopic]);
-    await waitFor(() => expect(notify).toHaveBeenCalled());
-    const transitionMessages = notify.mock.calls.flat().join(' ');
-    expect(transitionMessages).toContain('retained-source-error');
-    expect(transitionMessages).not.toContain('removed-source-error');
+    expect(notify).not.toHaveBeenCalled();
 
     await act(async () => {
       newEpochRead.resolve({ items: [newTopic], errors: {}, hasMore: false, nextPage: null });
@@ -3737,7 +3797,7 @@ describe('Feed controller sessions', () => {
     expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
   });
 
-  it('retries a failed multi-page refresh instead of advancing to a later page', async () => {
+  it('preserves loaded pages on a failed first-page refresh and replaces them on recovery', async () => {
     const firstTopic = {
       source: 'linuxdo' as const,
       id: 'first',
@@ -3752,13 +3812,13 @@ describe('Feed controller sessions', () => {
     const getFeed = jest.fn(async ({ source, page = 1 }: { source: string; page?: number }) => {
       if (source !== 'linuxdo') return { items: [], errors: {}, hasMore: false, nextPage: null };
       requestCount += 1;
-      if (requestCount === 4) {
+      if (requestCount === 3) {
         return {
           items: [],
           errors: {
             linuxdo: {
               kind: 'verification-required' as const,
-              message: '刷新第二页需要验证',
+              message: '刷新第一页需要验证',
               verificationRequired: true
             }
           },
@@ -3806,6 +3866,7 @@ describe('Feed controller sessions', () => {
     });
     await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
     const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
+    expect(hook.result.current.activeFeedState.items).toEqual([firstTopic, secondTopic]);
 
     await act(async () => {
       await expect(recovery.resume()).resolves.toBe('completed');
@@ -3813,8 +3874,12 @@ describe('Feed controller sessions', () => {
 
     expect(
       getFeed.mock.calls.filter(([request]) => request.source === 'linuxdo').map(([request]) => request.page || 1)
-    ).toEqual([1, 2, 1, 2, 1, 2]);
-    expect(hook.result.current.activeFeedState.items).toEqual([firstTopic, secondTopic]);
+    ).toEqual([1, 2, 1, 1]);
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([firstTopic]));
+    await act(async () => {
+      await hook.result.current.loadFeed();
+    });
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([firstTopic, secondTopic]));
   });
 
   it.each(['all', 'nodeseek'] as const)(

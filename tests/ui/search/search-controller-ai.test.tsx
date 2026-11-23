@@ -666,6 +666,7 @@ describe('linux.do AI search controller', () => {
       await Promise.resolve();
     });
     await waitFor(() => expect(aiSignals[0]?.aborted).toBe(true));
+    expect(hook.result.current.searchCandidateRequestsEnabled).toBe(false);
     expect(searchSemanticTopics).toHaveBeenCalledTimes(1);
 
     linuxDoVerificationActive = false;
@@ -674,6 +675,7 @@ describe('linux.do AI search controller', () => {
       await Promise.resolve();
     });
     await waitFor(() => expect(searchSemanticTopics).toHaveBeenCalledTimes(2));
+    expect(hook.result.current.searchCandidateRequestsEnabled).toBe(true);
   });
 
   it('cancels candidate reads while verification is open and resumes the current request after closing', async () => {
@@ -1231,6 +1233,11 @@ describe('linux.do AI search controller', () => {
         })
       ])
     );
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'codex', source: 'v2ex' });
+    });
+    await waitFor(() => expect(hook.result.current.searchGroups[0]?.items).toEqual(v2exTopics));
+    expect(searchTopics.mock.calls.slice(5).map(([request]) => request.page)).toEqual([1]);
   });
 
   it.each([-1000, 1000])(
@@ -2099,6 +2106,70 @@ describe('linux.do AI search controller', () => {
     expect(diagnosticLines.join('')).not.toContain('快问快答');
   });
 
+  it.each(['same query', 'unrelated session change', 'changed query'] as const)(
+    'replaces in-flight pagination after an explicit repeat (%s)',
+    async (transition) => {
+      const third = Promise.withResolvers<SearchResponse>();
+      const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ page = 1 }) => {
+        if (page === 3) return third.promise;
+        return { items: [{ ...standardTopic, id: String(page) }], errors: {}, hasMore: true, nextPage: page + 1 };
+      });
+      let epochs = initialForumSessionEpochs;
+      const hook = await renderSearchController(createGateway({ searchTopics }), undefined, undefined, () => epochs);
+      const submit = { query: '分页重搜', source: 'v2ex' as const };
+      await act(async () => {
+        await hook.result.current.runSearch(submit);
+      });
+      await waitFor(() => expect(hook.result.current.searchGroups[0]?.nextPage).toBe(2));
+      await act(async () => {
+        await hook.result.current.loadMoreSearchSource('v2ex', 2);
+      });
+      let pagination: Promise<unknown> | undefined;
+      await act(async () => {
+        pagination = hook.result.current.loadMoreSearchSource('v2ex', 3);
+      });
+      await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(3));
+      const canceled = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const cancel = appQueryClient.cancelQueries.bind(appQueryClient);
+      const cancellation = jest.spyOn(appQueryClient, 'cancelQueries').mockImplementationOnce(async (...options) => {
+        await cancel(...options);
+        canceled.resolve();
+        await release.promise;
+      });
+      try {
+        await act(async () => {
+          await hook.result.current.runSearch(submit);
+          await canceled.promise;
+        });
+        if (transition === 'unrelated session change') {
+          epochs = { ...epochs, nodeseek: epochs.nodeseek + 1 };
+          await act(async () => {
+            await hook.rerender(undefined);
+          });
+        } else if (transition === 'changed query') {
+          await act(async () => {
+            await hook.result.current.runSearch({ ...submit, query: '新搜索词' });
+          });
+        }
+        await act(async () => {
+          release.resolve();
+        });
+        await waitFor(() => expect(searchTopics.mock.calls.map(([request]) => request.page)).toEqual([1, 2, 3, 1]));
+        expect(searchTopics.mock.calls[3][0].query).toBe(transition === 'changed query' ? '新搜索词' : submit.query);
+        expect(searchTopics.mock.calls[2][0].signal?.aborted).toBe(true);
+        await waitFor(() => expect(hook.result.current.searchGroups[0]?.items.map((topic) => topic.id)).toEqual(['1']));
+      } finally {
+        release.resolve();
+        cancellation.mockRestore();
+        await act(async () => {
+          third.resolve({ items: [], errors: {}, hasMore: false, nextPage: null });
+          await pagination;
+        });
+      }
+    }
+  );
+
   it('preserves the failed page cursor and retries that page', async () => {
     const secondPageTopic: Topic = {
       ...standardTopic,
@@ -2164,7 +2235,7 @@ describe('linux.do AI search controller', () => {
     );
   });
 
-  it('retries a failed multi-page refresh instead of skipping to the next cursor', async () => {
+  it('keeps cached pages after a failed first-page refresh and retries the first page', async () => {
     const secondPageTopic = {
       ...standardTopic,
       id: '2',
@@ -2174,12 +2245,12 @@ describe('linux.do AI search controller', () => {
     let requestCount = 0;
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ page = 1 }) => {
       requestCount += 1;
-      if (requestCount === 4) {
+      if (requestCount === 3) {
         return {
           items: [],
-          errors: { linuxdo: { kind: 'ordinary' as const, message: '刷新第二页失败' } },
-          hasMore: true,
-          nextPage: 3
+          errors: { linuxdo: { kind: 'ordinary' as const, message: '刷新首页失败' } },
+          hasMore: false,
+          nextPage: null
         };
       }
       if (page === 1) {
@@ -2210,14 +2281,14 @@ describe('linux.do AI search controller', () => {
     await act(async () => {
       await hook.result.current.runSearch({ query: 'refresh pagination', source: 'linuxdo' });
     });
-    await waitFor(() => expect(hook.result.current.searchGroups[0]?.error).toBe('刷新第二页失败'));
+    await waitFor(() => expect(hook.result.current.searchGroups[0]?.error).toBe('刷新首页失败'));
+    expect(hook.result.current.searchGroups[0]?.items.map(({ id }) => id)).toEqual(['1', '2']);
     await act(async () => {
       hook.result.current.retrySearchSource('linuxdo');
     });
-    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(6));
+    await waitFor(() => expect(hook.result.current.searchGroups[0]?.items.map(({ id }) => id)).toEqual(['1']));
 
-    expect(searchTopics.mock.calls.map(([request]) => request.page)).toEqual([1, 2, 1, 2, 1, 2]);
-    expect(hook.result.current.searchGroups[0]?.items.map(({ id }) => id)).toEqual(['1', '2']);
+    expect(searchTopics.mock.calls.map(([request]) => request.page)).toEqual([1, 2, 1, 1]);
   });
 
   it('does not append partial items from a failed search page', async () => {
@@ -2699,6 +2770,42 @@ describe('linux.do AI search controller', () => {
         .filter(({ operation, phase }) => operation === 'searchSemanticTopics' && phase === 'finish')
         .map(({ outcome }) => outcome)
     ).toEqual(['canceled', 'success', 'failure', 'success']);
+  });
+
+  it('shows a single pending AI retry when a cached search failed to refresh', async () => {
+    const result: SearchResponse = { items: [aiOnlyTopic], errors: {}, hasMore: false, nextPage: null };
+    const pending = Promise.withResolvers<SearchResponse>();
+    const searchSemanticTopics = jest
+      .fn<ReadGateway['searchSemanticTopics']>()
+      .mockResolvedValueOnce(result)
+      .mockRejectedValueOnce(new Error('重试'))
+      .mockImplementationOnce(() => pending.promise);
+    const hook = await renderSearchController(
+      createGateway({ searchSemanticTopics, searchTopics: async () => result })
+    );
+    await prepareLinuxDoSearch(hook, '已有搜索');
+    await act(async () => {
+      await hook.result.current.runSearch({ source: 'linuxdo', filters: LINUXDO_RELEVANCE_FILTERS });
+    });
+    await waitFor(() => expect(hook.result.current.linuxDoAiState.status).toBe('ready'));
+    await act(async () => {
+      await appQueryClient.invalidateQueries({ queryKey: ['forum', 'linuxdo', 'semantic-search'] });
+    });
+    await waitFor(() => expect(hook.result.current.linuxDoAiState.status).toBe('error'));
+    try {
+      await act(async () => {
+        hook.result.current.retryLinuxDoAiSearch();
+        hook.result.current.retryLinuxDoAiSearch();
+      });
+      expect(searchSemanticTopics).toHaveBeenCalledTimes(3);
+      await waitFor(() => expect(hook.result.current.linuxDoAiState.status).toBe('loading'));
+    } finally {
+      await act(async () => {
+        pending.resolve(result);
+        await pending.promise;
+      });
+    }
+    await waitFor(() => expect(hook.result.current.linuxDoAiState.status).toBe('ready'));
   });
 
   it('records a transport rejection caused by Query cancellation as canceled', async () => {

@@ -204,7 +204,8 @@ export const UserScreen = memo(function UserScreen({
   const retryActivity = userTab === 'topics' ? onRetryTopics : onRetryReplies;
   const [bioExpanded, setBioExpanded] = useState(false);
   const [topBarHeight, setTopBarHeight] = useState(56);
-  const userIdentity = user ? `${user.source}:${user.id || user.username}` : '';
+  const routeUser = requestedUser || profile;
+  const userIdentity = routeUser ? `${routeUser.source}:${routeUser.id || routeUser.username}` : '';
   const displayName = user?.displayName || user?.username || user?.id || '用户';
   const userSubtitle = user
     ? [sourceLabel(user.source), user.username && user.username !== displayName ? user.username : '']
@@ -242,7 +243,7 @@ export const UserScreen = memo(function UserScreen({
   useEffect(() => {
     listInteraction.disarm();
     setUserTab(initialTab);
-  }, [initialTab, user?.id, user?.source, user?.username, listInteraction]);
+  }, [initialTab, userIdentity, listInteraction]);
   const scrollListToTop = useCallback(() => {
     if (!listRef.current) {
       listInteraction.requestReset();
@@ -262,7 +263,7 @@ export const UserScreen = memo(function UserScreen({
     return () => {
       cancelAnimationFrame(frame);
     };
-  }, [completePendingScrollReset, user?.id, user?.source, user?.username, userTab, listInteraction]);
+  }, [completePendingScrollReset, userIdentity, userTab, listInteraction]);
   const armAutoLoad = useCallback(() => {
     listInteraction.dragged();
   }, [listInteraction]);
@@ -308,7 +309,7 @@ export const UserScreen = memo(function UserScreen({
   }, [onLoadMoreReplies, onLoadMoreTopics, userTab, listInteraction]);
   const profileHeader = useMemo(() => {
     const isNodeSeek = user?.source === 'nodeseek';
-    const actionMinWidth = Math.round((isNodeSeek ? 72 : 88) * settings.fontScale * fontScale);
+    const actionMinWidth = Math.round((isNodeSeek ? 72 : 88) * settings.uiFontScale * fontScale);
     const actions = profile ? (
       <View style={styles.profileActions}>
         {onPrivateMessage ? (
@@ -415,7 +416,7 @@ export const UserScreen = memo(function UserScreen({
     profile,
     profileDetails,
     profileStats,
-    settings.fontScale,
+    settings.uiFontScale,
     styles,
     theme,
     user,

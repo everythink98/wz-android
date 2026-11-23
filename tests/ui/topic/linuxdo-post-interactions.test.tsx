@@ -24,7 +24,7 @@ import {
   useLinuxDoInteractionOverlayOpen
 } from '@/features/topic/components/LinuxDoPostInteractions';
 import { createTopicStyles } from '@/features/topic/styles';
-import { createTheme } from '@/ui/theme/tokens';
+import { resolveReaderStyleSettings, createTheme } from '@/ui/theme/tokens';
 
 const mockBoostKeyboard = { height: { value: 0 }, state: { value: 4 } };
 jest.mock('react-native-reanimated', () => ({
@@ -76,7 +76,7 @@ const opening: TopicDetail = {
 const queryKey = forumQueryKeys.topic({ source: 'linuxdo', topicId: '42', scope: initialForumSessionEpochs });
 const settings = createEmptyReaderData().settings;
 const theme = createTheme(settings);
-const styles = createTopicStyles(theme, settings);
+const styles = createTopicStyles(theme, resolveReaderStyleSettings(settings));
 const emojiUrls = {
   heart: 'https://linux.do/heart.png',
   laughing: 'https://linux.do/laughing.png',

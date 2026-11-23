@@ -4,11 +4,12 @@ import {
   readerRadii,
   type ReaderStyleSettings,
   type ReaderTheme,
-  fontFamilyValue
+  fontFamilyValue,
+  textSizeStyle
 } from '@/ui/theme/tokens';
 
 export function createLoginWebViewStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
-  const appFontFamily = fontFamilyValue(settings.fontFamily);
+  const appFontFamily = fontFamilyValue(settings.uiFontFamily);
   return StyleSheet.create({
     loginWebViewModal: {
       flex: 1,
@@ -34,7 +35,7 @@ export function createLoginWebViewStyles(theme: ReaderTheme, settings: ReaderSty
     loginWebViewTitle: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: Math.round(17 * settings.fontScale),
+      ...textSizeStyle(Math.round(17 * settings.uiFontScale)),
       fontWeight: '600'
     },
     loginWebViewTitleBlock: {
@@ -45,8 +46,7 @@ export function createLoginWebViewStyles(theme: ReaderTheme, settings: ReaderSty
     loginWebViewSubtitle: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: Math.round(12 * settings.fontScale),
-      lineHeight: Math.round(18 * settings.fontScale)
+      ...textSizeStyle(Math.round(12 * settings.uiFontScale), Math.round(18 * settings.uiFontScale))
     },
     loginWebViewToolbar: {
       flexGrow: 0,
@@ -98,8 +98,7 @@ export function createLoginWebViewStyles(theme: ReaderTheme, settings: ReaderSty
       flexShrink: 1,
       color: theme.dark ? theme.primary : theme.primaryStrong,
       fontFamily: appFontFamily,
-      fontSize: Math.round(12 * settings.fontScale),
-      lineHeight: Math.round(18 * settings.fontScale)
+      ...textSizeStyle(Math.round(12 * settings.uiFontScale), Math.round(18 * settings.uiFontScale))
     },
     errorBox: {
       flexDirection: 'row',
@@ -117,8 +116,7 @@ export function createLoginWebViewStyles(theme: ReaderTheme, settings: ReaderSty
       flex: 1,
       color: theme.danger,
       fontFamily: appFontFamily,
-      fontSize: Math.round(13 * settings.fontScale),
-      lineHeight: Math.round(19 * settings.fontScale)
+      ...textSizeStyle(Math.round(13 * settings.uiFontScale), Math.round(19 * settings.uiFontScale))
     },
     actions: {
       alignItems: 'center',

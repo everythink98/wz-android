@@ -10,18 +10,24 @@ import {
 } from 'react-native';
 import { TextInput } from 'react-native-paper';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { fontFamilyValue, readerRadii, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
+import {
+  fontFamilyValue,
+  readerRadii,
+  type ReaderStyleSettings,
+  type ReaderTheme,
+  textSizeStyle
+} from '@/ui/theme/tokens';
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   return StyleSheet.create({
     container: { backgroundColor: theme.surface, borderRadius: readerRadii.control },
     field: {
       color: theme.ink,
-      fontFamily: fontFamilyValue(settings.fontFamily),
-      fontSize: Math.round(14 * settings.fontScale),
+      fontFamily: fontFamilyValue(settings.uiFontFamily),
+      ...textSizeStyle(Math.round(14 * settings.uiFontScale)),
       borderRadius: readerRadii.control
     },
-    label: { fontSize: 16 * settings.fontScale }
+    label: { fontSize: 16 * settings.uiFontScale }
   });
 }
 

@@ -9,7 +9,7 @@ import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
 import * as svgPosterRenderer from '@/platform/media/svgPosterRenderer';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { createTheme } from '@/ui/theme/tokens';
+import { resolveReaderStyleSettings, createTheme } from '@/ui/theme/tokens';
 import type { TopicDetail } from '@/domain/forum/models';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import { act, fireEvent, render, within } from '../render';
@@ -193,7 +193,7 @@ describe('Topic body image sharing', () => {
     const settings = { ...createEmptyReaderData().settings, theme: mode };
     const theme = createTheme(settings);
     const view = await render(
-      <ReaderStyleProvider value={{ settings, theme }}>
+      <ReaderStyleProvider value={{ settings: resolveReaderStyleSettings(settings), theme }}>
         <TopicShareSheet topic={topic} mediaContext={mediaContext} onClose={jest.fn()} />
       </ReaderStyleProvider>
     );
@@ -210,6 +210,39 @@ describe('Topic body image sharing', () => {
     expect(StyleSheet.flatten(spacer.props.style).width).toBe(StyleSheet.flatten(close.props.style).width);
   });
 
+  it('keeps the export typography and action layout independent at opposite sizes', async () => {
+    const window = native.Dimensions.get('window');
+    const changeWindow = (nextWindow: typeof window) => act(async () => native.Dimensions.set({ window: nextWindow }));
+    const tree = (uiFontScale: number, fontScale: number) => {
+      const settings = { ...createEmptyReaderData().settings, uiFontScale, fontScale, uiFontFamily: 'system' as const };
+      return (
+        <ReaderStyleProvider value={{ settings, theme: createTheme(settings) }}>
+          <TopicShareSheet topic={topic} mediaContext={mediaContext} onClose={jest.fn()} />
+        </ReaderStyleProvider>
+      );
+    };
+    try {
+      await changeWindow({ ...window, width: 400, fontScale: 1 });
+      const view = await render(tree(0.85, 1.4));
+      const actionDirection = () =>
+        view.getByTestId('topic-share-actions').children.flatMap((child) => {
+          if (typeof child === 'string') return [];
+          const style = StyleSheet.flatten(child.props.style);
+          return style?.gap === 12 ? [style.flexDirection] : [];
+        });
+      expect(actionDirection()).toContain('row');
+      expect(view.getByText('正文长图')).toHaveStyle({ fontFamily: 'sans-serif', fontSize: 14 });
+      expect(view.getByText(topic.title)).toHaveStyle({ fontFamily: 'WzNotoSansSC', fontSize: 31 });
+
+      await view.rerender(tree(1.4, 0.85));
+      expect(actionDirection()).toContain('column');
+      expect(view.getByText('正文长图')).toHaveStyle({ fontFamily: 'sans-serif', fontSize: 24 });
+      expect(view.getByText(topic.title)).toHaveStyle({ fontFamily: 'WzNotoSansSC', fontSize: 19 });
+    } finally {
+      await changeWindow(window);
+    }
+  });
+
   it('uses reading typography and preserves safe alignment and emphasis in the exported body', async () => {
     const view = await render(
       <TopicShareSheet
@@ -222,7 +255,7 @@ describe('Topic body image sharing', () => {
         onClose={jest.fn()}
       />
     );
-    expect(view.getByText('正文标题')).toHaveStyle({ fontSize: 20, lineHeight: 28 });
+    expect(view.getByText('正文标题')).toHaveStyle({ fontSize: 20, lineHeight: 28, fontFamily: 'WzNotoSansSC' });
     expect(view.getByText('右对齐删除线')).toHaveStyle({ textDecorationLine: 'line-through' });
     expect(view.getByText('右对齐删除线')).toHaveStyle({ textAlign: 'right', color: '#bb2222' });
     expect(view.getByText('放大正文')).toHaveStyle({ fontSize: 24, lineHeight: 36 });

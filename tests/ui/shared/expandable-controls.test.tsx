@@ -6,7 +6,7 @@ import { ChevronDown } from 'lucide-react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { DisclosureChevron, ExpandableContent, ExpandablePanel, MenuButton } from '@/ui/controls/ExpandableControls';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
-import { createTheme } from '@/ui/theme/tokens';
+import { resolveReaderStyleSettings, createTheme } from '@/ui/theme/tokens';
 import { fireEvent, render } from '../render';
 
 let mockProgress = 0.5;
@@ -47,11 +47,16 @@ beforeEach(() => {
   mockWithTiming.mockClear();
 });
 
-it('updates setting titles and summaries when the reader font scale changes', async () => {
-  const settings = { ...createEmptyReaderData().settings, fontFamily: 'serif' as const };
+it('updates setting titles and summaries when the interface font scale changes', async () => {
+  const settings = {
+    ...createEmptyReaderData().settings,
+    uiFontFamily: 'system' as const
+  };
   const theme = createTheme(settings);
   const controls = (fontScale: number) => (
-    <ReaderStyleProvider value={{ theme, settings: { ...settings, fontScale } }}>
+    <ReaderStyleProvider
+      value={{ theme, settings: resolveReaderStyleSettings({ ...settings, uiFontScale: fontScale }) }}
+    >
       <MenuButton icon={ChevronDown} label="服务器代理" value="未启用" onPress={() => undefined} />
       <ExpandablePanel title="外观" meta="浅色" expanded={false} onExpandedChange={() => undefined}>
         <Text>设置内容</Text>
@@ -60,19 +65,19 @@ it('updates setting titles and summaries when the reader font scale changes', as
   );
   const view = await render(controls(1));
   for (const title of ['服务器代理', '外观']) {
-    expect(view.getByText(title)).toHaveStyle({ fontFamily: 'serif', fontSize: 15, lineHeight: 20 });
+    expect(view.getByText(title)).toHaveStyle({ fontFamily: 'sans-serif', fontSize: 15, lineHeight: 20 });
   }
   for (const summary of ['未启用', '浅色']) {
-    expect(view.getByText(summary)).toHaveStyle({ fontFamily: 'serif', fontSize: 12, lineHeight: 17 });
+    expect(view.getByText(summary)).toHaveStyle({ fontFamily: 'sans-serif', fontSize: 12, lineHeight: 17 });
   }
 
   await view.rerender(controls(1.4));
 
   for (const title of ['服务器代理', '外观']) {
-    expect(view.getByText(title)).toHaveStyle({ fontFamily: 'serif', fontSize: 21, lineHeight: 28 });
+    expect(view.getByText(title)).toHaveStyle({ fontFamily: 'sans-serif', fontSize: 21, lineHeight: 28 });
   }
   for (const summary of ['未启用', '浅色']) {
-    expect(view.getByText(summary)).toHaveStyle({ fontFamily: 'serif', fontSize: 17, lineHeight: 24 });
+    expect(view.getByText(summary)).toHaveStyle({ fontFamily: 'sans-serif', fontSize: 17, lineHeight: 24 });
   }
 });
 

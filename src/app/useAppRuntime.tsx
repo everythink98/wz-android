@@ -12,6 +12,7 @@ import type { TopicComposerRouteRuntimeValue } from '@/features/topic-composer/T
 import type { UserRouteRuntimeValue } from '@/features/user/UserRouteRuntime';
 import { nodeSeekUserIdForSession } from '@/domain/session/siteSessionState';
 import { useAppTheme } from './useAppTheme';
+import { useEffectiveReaderFontSettings } from '@/ui/theme/useReaderFonts';
 import { useForumCatalogRuntime } from './useForumCatalogRuntime';
 import { useAppBackHandler } from './useAppBackHandler';
 import { useAppDiagnosticsRuntime } from './useAppDiagnosticsRuntime';
@@ -58,8 +59,9 @@ export function useAppRuntime() {
     [favorites, history, followedUsers, settings]
   );
   const { fontScale, listDensity } = readerData.settings;
+  const typographySettings = useEffectiveReaderFontSettings(settings);
   const { appStyles, contentWidth, navigationTheme, readerStyleContext, theme } = useAppTheme(
-    readerData.settings,
+    typographySettings,
     width
   );
   const baseFetcher = useMemo(() => withLinuxDoPresence(fetch), []);
@@ -87,6 +89,7 @@ export function useAppRuntime() {
   const accountRuntime = useAccountRuntime({
     appActive,
     beforeRequest: ensureNetworkProxyReady,
+    contentSourcesReady: settingsTrusted,
     enabledSources,
     fetcher: networkProxyFetcher,
     loginNavigation: lifecycle.loginNavigation,

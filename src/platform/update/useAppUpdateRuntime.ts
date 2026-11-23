@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, NativeModules } from 'react-native';
-import { createAppUpdateOperations, type AppUpdateOperation, type AppUpdatePhase } from './appUpdateOperation';
+import {
+  createAppUpdateOperations,
+  createAppUpdateProgress,
+  type AppUpdateOperation,
+  type AppUpdatePhase
+} from './appUpdateOperation';
 import {
   type AppUpdateInfo,
   type ApkInstaller,
@@ -10,8 +15,7 @@ import {
   openApkInstaller,
   verifyDownloadedApk,
   isInvalidApk,
-  sameAppUpdate,
-  type AppUpdateDownloadProgress
+  sameAppUpdate
 } from './appUpdate';
 import {
   type AppUpdateArtifact,
@@ -54,7 +58,7 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
   const [artifact, setArtifact] = useState<AppUpdateArtifact | null>(null);
   const [restoreFailed, setRestoreFailed] = useState(false);
   const [appUpdateMessage, setAppUpdateMessage] = useState('');
-  const [appUpdateDownloadProgress, setAppUpdateDownloadProgress] = useState<AppUpdateDownloadProgress | null>(null);
+  const [downloadProgress] = useState(createAppUpdateProgress);
   const artifactRef = useRef<AppUpdateArtifact | null>(null);
   const availableRef = useRef<AppUpdateInfo | null>(null);
   const autoCheckStartedRef = useRef(false);
@@ -156,12 +160,12 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
         }
       } finally {
         if (request.finished()) {
-          setAppUpdateDownloadProgress(null);
+          downloadProgress.set(null);
           publishPhase();
         }
       }
     },
-    [operations, publishPhase]
+    [downloadProgress, operations, publishPhase]
   );
 
   const checkAppUpdate = useCallback(
@@ -256,7 +260,7 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
                 data.bytesWritten,
                 data.totalBytes
               );
-              setAppUpdateDownloadProgress(progress);
+              downloadProgress.set(progress);
               if (progress.totalBytes !== latest.totalBytes) {
                 latest = { ...latest, totalBytes: progress.totalBytes };
                 const snapshot = latest;
@@ -322,7 +326,7 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
         await installArtifact(latest, request, trace);
       }
     },
-    [applyArtifact, beforeRequest, installArtifact, publishPhase]
+    [applyArtifact, beforeRequest, downloadProgress, installArtifact, publishPhase]
   );
 
   const startAppUpdateDownload = useCallback(async () => {
@@ -398,7 +402,7 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
     artifact,
     restoreFailed,
     appUpdateBusy: phase !== 'idle',
-    appUpdateDownloadProgress,
+    downloadProgress,
     appUpdateInfo,
     appUpdateMessage,
     checkAppUpdate,

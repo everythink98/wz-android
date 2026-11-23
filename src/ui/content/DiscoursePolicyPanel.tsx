@@ -2,17 +2,23 @@ import { StyleSheet, Text, View } from 'react-native';
 import type { DiscoursePostPolicy } from '@/domain/forum/discoursePolicy';
 import { AppButton } from '@/ui/controls/ButtonControls';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { createReaderFontSizer, fontFamilyValue, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
+import {
+  createUiFontSizer,
+  fontFamilyValue,
+  type ReaderStyleSettings,
+  type ReaderTheme,
+  textSizeStyle
+} from '@/ui/theme/tokens';
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
-  const fontFamily = fontFamilyValue(settings.fontFamily);
-  const scaled = createReaderFontSizer(settings);
+  const fontFamily = fontFamilyValue(settings.uiFontFamily);
+  const scaled = createUiFontSizer(settings);
   return StyleSheet.create({
     section: { gap: 10, borderTopColor: theme.line, borderTopWidth: StyleSheet.hairlineWidth, paddingVertical: 16 },
-    title: { color: theme.ink, fontFamily, fontSize: scaled(15), fontWeight: '600', lineHeight: scaled(22) },
-    text: { color: theme.muted, fontFamily, fontSize: scaled(13), lineHeight: scaled(20) },
-    confirmed: { color: theme.primary, fontFamily, fontSize: scaled(14), fontWeight: '600', lineHeight: scaled(21) },
-    error: { color: theme.danger, fontFamily, fontSize: scaled(13), lineHeight: scaled(20) },
+    title: { color: theme.ink, fontFamily, ...textSizeStyle(scaled(15), scaled(22)), fontWeight: '600' },
+    text: { color: theme.muted, fontFamily, ...textSizeStyle(scaled(13), scaled(20)) },
+    confirmed: { color: theme.primary, fontFamily, ...textSizeStyle(scaled(14), scaled(21)), fontWeight: '600' },
+    error: { color: theme.danger, fontFamily, ...textSizeStyle(scaled(13), scaled(20)) },
     actions: { alignItems: 'flex-start' }
   });
 }

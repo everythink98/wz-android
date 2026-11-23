@@ -1,9 +1,17 @@
 import { StyleSheet, StatusBar as NativeStatusBar } from 'react-native';
-import { readerRadii, type ReaderStyleSettings, type ReaderTheme, fontFamilyValue } from '@/ui/theme/tokens';
+import {
+  createUiFontSizer,
+  readerRadii,
+  type ReaderStyleSettings,
+  type ReaderTheme,
+  fontFamilyValue,
+  textSizeStyle
+} from '@/ui/theme/tokens';
 
 export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
-  const appFontFamily = fontFamilyValue(settings.fontFamily);
-  const filterLabelWidth = Math.round(92 * settings.fontScale);
+  const appFontFamily = fontFamilyValue(settings.uiFontFamily);
+  const fontSize = createUiFontSizer(settings);
+  const filterLabelWidth = Math.round(92 * settings.uiFontScale);
   return StyleSheet.create({
     button: {
       minHeight: 40,
@@ -28,7 +36,7 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
     buttonText: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: 13,
+      ...textSizeStyle(fontSize(13)),
       fontWeight: '600'
     },
     content: {
@@ -46,8 +54,7 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
     errorText: {
       color: theme.danger,
       fontFamily: appFontFamily,
-      fontSize: 13,
-      lineHeight: 19
+      ...textSizeStyle(fontSize(13), fontSize(19))
     },
     flex: {
       flex: 1
@@ -55,8 +62,7 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
     meta: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: 12,
-      lineHeight: 17
+      ...textSizeStyle(fontSize(12), fontSize(17))
     },
     searchFilterActions: {
       alignItems: 'center',
@@ -86,16 +92,16 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
     searchFilterTitle: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: Math.round(19 * settings.fontScale),
-      lineHeight: Math.round(25 * settings.fontScale),
+      fontSize: Math.round(19 * settings.uiFontScale),
+      lineHeight: Math.round(25 * settings.uiFontScale),
       fontWeight: '700',
       includeFontPadding: false
     },
     searchFilterSite: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: Math.round(13 * settings.fontScale),
-      lineHeight: Math.round(18 * settings.fontScale),
+      fontSize: Math.round(13 * settings.uiFontScale),
+      lineHeight: Math.round(18 * settings.uiFontScale),
       includeFontPadding: false
     },
     sectionHeader: {
@@ -107,7 +113,7 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
     sectionTitle: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: Math.round(20 * settings.fontScale),
+      ...textSizeStyle(Math.round(20 * settings.uiFontScale)),
       fontWeight: '600'
     },
     stack: {
@@ -145,8 +151,8 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
       minHeight: 48,
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: 15 * settings.fontScale,
-      lineHeight: 22 * settings.fontScale,
+      fontSize: 15 * settings.uiFontScale,
+      lineHeight: 22 * settings.uiFontScale,
       includeFontPadding: false,
       textAlignVertical: 'center',
       paddingHorizontal: 0,
@@ -197,19 +203,15 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
     searchFilterEntryText: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: 13,
-      fontWeight: '600',
-      includeFontPadding: false,
-      lineHeight: 18
+      ...textSizeStyle(fontSize(13), fontSize(18)),
+      fontWeight: '600'
     },
     searchFilterEntrySummary: {
       flex: 1,
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: 12,
-      fontWeight: '500',
-      includeFontPadding: false,
-      lineHeight: 17
+      ...textSizeStyle(fontSize(12), fontSize(17)),
+      fontWeight: '500'
     },
     searchFilterEntrySummaryActive: {
       color: theme.dark ? theme.primary : theme.primaryStrong,
@@ -218,9 +220,9 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
     searchFilterLabel: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: Math.round(14 * settings.fontScale),
+      fontSize: Math.round(14 * settings.uiFontScale),
       fontWeight: '600',
-      lineHeight: Math.round(20 * settings.fontScale),
+      lineHeight: Math.round(20 * settings.uiFontScale),
       includeFontPadding: false
     },
     searchFilterRow: {
@@ -234,8 +236,8 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
     searchFilterFieldError: {
       color: theme.danger,
       fontFamily: appFontFamily,
-      fontSize: Math.round(12 * settings.fontScale),
-      lineHeight: Math.round(17 * settings.fontScale),
+      fontSize: Math.round(12 * settings.uiFontScale),
+      lineHeight: Math.round(17 * settings.uiFontScale),
       includeFontPadding: false,
       marginLeft: filterLabelWidth,
       paddingVertical: 6
@@ -261,8 +263,8 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
       minHeight: 48,
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: Math.round(14 * settings.fontScale),
-      lineHeight: Math.round(20 * settings.fontScale),
+      fontSize: Math.round(14 * settings.uiFontScale),
+      lineHeight: Math.round(20 * settings.uiFontScale),
       includeFontPadding: false,
       paddingHorizontal: 0,
       paddingVertical: 0
@@ -278,8 +280,8 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
       minWidth: 0,
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: Math.round(14 * settings.fontScale),
-      lineHeight: Math.round(20 * settings.fontScale),
+      fontSize: Math.round(14 * settings.uiFontScale),
+      lineHeight: Math.round(20 * settings.uiFontScale),
       includeFontPadding: false,
       paddingVertical: 9
     },
@@ -316,10 +318,10 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
       flex: 1,
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: Math.round(13 * settings.fontScale),
+      fontSize: Math.round(13 * settings.uiFontScale),
       fontWeight: '600',
       includeFontPadding: false,
-      lineHeight: Math.round(18 * settings.fontScale)
+      lineHeight: Math.round(18 * settings.uiFontScale)
     },
     searchFilterOptionCopy: { flex: 1, minWidth: 0, rowGap: 3, paddingVertical: 9 },
     searchFilterCheckbox: {
@@ -348,9 +350,9 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
     searchFilterDetail: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: Math.round(12 * settings.fontScale),
+      fontSize: Math.round(12 * settings.uiFontScale),
       includeFontPadding: false,
-      lineHeight: Math.round(17 * settings.fontScale)
+      lineHeight: Math.round(17 * settings.uiFontScale)
     },
     searchGroupHeader: {
       minHeight: 48,
@@ -374,18 +376,14 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
     searchGroupTitleText: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: 13,
-      fontWeight: '700',
-      includeFontPadding: false,
-      lineHeight: 18
+      ...textSizeStyle(fontSize(13), fontSize(18)),
+      fontWeight: '700'
     },
     searchGroupMetaText: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: 12,
-      fontWeight: '500',
-      includeFontPadding: false,
-      lineHeight: 17
+      ...textSizeStyle(fontSize(12), fontSize(17)),
+      fontWeight: '500'
     },
     searchGroupAction: {
       alignItems: 'center',
@@ -395,10 +393,8 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
     searchGroupActionText: {
       color: theme.primary,
       fontFamily: appFontFamily,
-      fontSize: 12,
-      fontWeight: '600',
-      includeFontPadding: false,
-      lineHeight: 17
+      ...textSizeStyle(fontSize(12), fontSize(17)),
+      fontWeight: '600'
     },
     searchGroupChevron: {
       opacity: 0.78
@@ -446,9 +442,8 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
       flex: 1,
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: 14,
+      ...textSizeStyle(fontSize(14), fontSize(20)),
       fontWeight: '500',
-      lineHeight: 20,
       minWidth: 0
     },
     removableChipShell: {

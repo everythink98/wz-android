@@ -24,7 +24,7 @@ import type { ComposerSnapshot } from '@/domain/forum/structuredComposer';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
-import { createTheme } from '@/ui/theme/tokens';
+import { resolveReaderStyleSettings, createTheme } from '@/ui/theme/tokens';
 import { act, fireEvent, render, waitFor, within } from '../render';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 
@@ -229,7 +229,7 @@ function controllerFor(draft: TopicDraft, overrides: Partial<Controller> = {}): 
     editContext: null,
     hasChanges: false,
     reviewLatest: async () => undefined,
-    rebaseEdit: async () => undefined,
+    rebaseEdit: async () => false,
     source: draft.source,
     draft,
     context: contextFor(draft.source),
@@ -348,6 +348,64 @@ describe('Create topic screen', () => {
     expect(view.getByRole('button', { name: '选择标签' })).not.toBeDisabled();
     await openTopicMore(view);
     expect(view.queryByLabelText('帖子设置')).toBeNull();
+  });
+
+  it('shows read-only title metadata without locking the body tools', async () => {
+    const draft = draftFor('linuxdo');
+    draft.edit = { topicId: '123', original: { title: draft.title, body: draft.body, categoryId: draft.categoryId } };
+    const editContext = {
+      ...draft.edit,
+      source: draft.source,
+      identityKey: draft.identityKey,
+      rules: contextFor('linuxdo'),
+      permissions: { title: false, body: true, categoryId: true, tags: true, rank: false, additionalReward: false }
+    };
+    const view = await render(<Harness initialDraft={draft} overrides={{ editing: true, editContext }} />);
+    await act(() => mockStructuredProps.onPanelChange?.(true));
+    await fireEvent.press(view.getByLabelText('查看标题与标签'));
+    expect(view.getByLabelText('帖子标题').props.editable).toBe(false);
+    expect(mockStructuredProps.dismissPanels).toBe(false);
+  });
+
+  it('leaves the remote conflict panel open when the rebase is not saved', async () => {
+    const draft = draftFor('linuxdo');
+    draft.edit = { topicId: '123', original: { title: draft.title, body: draft.body, categoryId: draft.categoryId } };
+    const editContext = {
+      ...draft.edit,
+      source: draft.source,
+      identityKey: draft.identityKey,
+      rules: contextFor('linuxdo'),
+      permissions: { title: true, body: true, categoryId: true, tags: true, rank: false, additionalReward: false }
+    };
+    const attempt = {
+      source: draft.source,
+      identityKey: draft.identityKey,
+      draftId: draft.id,
+      revision: draft.revision,
+      id: 'conflict',
+      startedAt: 1,
+      status: 'conflict',
+      result: { status: 'conflict', message: '原站内容已变化' }
+    } as const;
+    const rebaseEdit = jest.fn<Controller['rebaseEdit']>(async () => false);
+    const view = await render(
+      <Harness
+        initialDraft={draft}
+        overrides={{
+          editing: true,
+          editContext,
+          attempt,
+          error: attempt.result.message,
+          rebaseEdit,
+          reviewLatest: async () => editContext.original
+        }}
+      />
+    );
+    await press(view.getByLabelText('核对原站最新内容'));
+    await waitFor(() => expect(view.getByLabelText('保留本机修改继续')).toBeTruthy());
+    await fireEvent.press(view.getByLabelText('保留本机修改继续'));
+    expect(rebaseEdit).toHaveBeenCalledTimes(1);
+    expect(view.queryByLabelText('保留本机修改继续')).toBeTruthy();
   });
 
   it('offers only additional reward for Yaohuo edits and no new post type controls', async () => {
@@ -1916,15 +1974,15 @@ describe('Create topic screen', () => {
   });
 
   it('keeps the metadata scrollable and field text scalable at large font sizes', async () => {
-    const settings = { ...createEmptyReaderData().settings, fontScale: 1.5 };
+    const settings = { ...createEmptyReaderData().settings, fontScale: 1.3, uiFontScale: 1.4 };
     const view = await render(
-      <ReaderStyleProvider value={{ settings, theme: createTheme(settings) }}>
+      <ReaderStyleProvider value={{ settings: resolveReaderStyleSettings(settings), theme: createTheme(settings) }}>
         <Harness />
       </ReaderStyleProvider>
     );
-    expect(StyleSheet.flatten(view.getByLabelText('帖子标题').props.style).fontSize).toBe(30);
+    expect(StyleSheet.flatten(view.getByLabelText('帖子标题').props.style).fontSize).toBe(26);
     expect(view.queryByLabelText('预览')).toBeNull();
     await press(view.getByLabelText('帖子设置'));
-    expect(StyleSheet.flatten(view.getByLabelText('悬赏妖晶（选填，至少 1000）').props.style).fontSize).toBe(21);
+    expect(StyleSheet.flatten(view.getByLabelText('悬赏妖晶（选填，至少 1000）').props.style).fontSize).toBe(20);
   });
 });

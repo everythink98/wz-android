@@ -15,11 +15,13 @@ import {
   NotificationsScreen
 } from '@/features/notifications/NotificationScreens';
 import { act, fireEvent, render, waitFor, within } from '../render';
-import { createTheme, lineHeightMultiplier } from '@/ui/theme/tokens';
+import { resolveReaderStyleSettings, createTheme, lineHeightMultiplier } from '@/ui/theme/tokens';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 import { ForumSessionEpochProvider } from '@/platform/media/mediaSessionEpoch';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import * as notificationPresentation from '@/features/notifications/notificationPresentation';
+import * as notificationStyles from '@/features/notifications/styles';
+import * as forumHtmlStyles from '@/ui/content/forumHtmlStyles';
 
 jest.mock('@/ui/media/ImagePreviewModal', () => {
   const ReactModule = require('react') as typeof React;
@@ -202,6 +204,52 @@ function notificationState(globalEnabled = true): NotificationState {
 }
 
 describe('notification screens', () => {
+  it('shares presentation styles across HTML messages and recalculates when the theme changes', async () => {
+    const screenStyles = jest.spyOn(notificationStyles, 'createNotificationStyles');
+    const htmlStyles = jest.spyOn(forumHtmlStyles, 'buildHtmlRenderingStyles');
+    const messages = Array.from({ length: 6 }, (_, index) => ({
+      id: String(index),
+      author: 'alice',
+      createdAt: null,
+      contentHtml: `<p>消息 ${index}</p>`
+    }));
+    const detail: NotificationDetail = {
+      notification: { ...notification, kind: 'private-message' },
+      title: '私信',
+      messages
+    };
+    const screen = (
+      <NotificationDetailScreen
+        contentWidth={360}
+        detail={detail}
+        loading={false}
+        onOpenTopic={jest.fn()}
+        onRetry={jest.fn()}
+      />
+    );
+    const settings = resolveReaderStyleSettings(createEmptyReaderData().settings);
+    const scene = (dark: boolean) => (
+      <ReaderStyleProvider value={{ settings, theme: createTheme({ theme: dark ? 'dark' : 'light' }) }}>
+        {screen}
+      </ReaderStyleProvider>
+    );
+    try {
+      const view = await render(scene(false));
+      expect({ screen: screenStyles.mock.calls.length, html: htmlStyles.mock.calls.length }).toEqual({
+        screen: 1,
+        html: 1
+      });
+      await view.rerender(scene(true));
+      expect({ screen: screenStyles.mock.calls.length, html: htmlStyles.mock.calls.length }).toEqual({
+        screen: 2,
+        html: 2
+      });
+      expect(view.getByText('消息 5')).toBeTruthy();
+    } finally {
+      screenStyles.mockRestore();
+      htmlStyles.mockRestore();
+    }
+  });
   it('keeps conversation message work idle while the draft and reply status change', async () => {
     const formatTime = jest.spyOn(notificationPresentation, 'formatNotificationTime');
     let messageIdReads = 0;
@@ -305,7 +353,7 @@ describe('notification screens', () => {
   };
 
   it('updates reused conversation bubbles for appearance, width, media identity and current actions', async () => {
-    const lightSettings = createEmptyReaderData().settings;
+    const lightSettings = resolveReaderStyleSettings(createEmptyReaderData().settings);
     let appearance = { settings: lightSettings, theme: createTheme(lightSettings) };
     let sessionEpochs = initialForumSessionEpochs;
     const detail: NotificationDetail = {
@@ -337,7 +385,7 @@ describe('notification screens', () => {
     expect(StyleSheet.flatten(view.getByLabelText('第一张').props.style).width).toBe(173);
 
     const darkSettings: ReaderSettings = { ...lightSettings, theme: 'dark', fontScale: 1.25 };
-    appearance = { settings: darkSettings, theme: createTheme(darkSettings) };
+    appearance = { settings: resolveReaderStyleSettings(darkSettings), theme: createTheme(darkSettings) };
     await view.rerender(tree());
     expect(StyleSheet.flatten(view.getByText('plain body').props.style)).toMatchObject({
       color: appearance.theme.ink,
@@ -956,9 +1004,12 @@ describe('notification screens', () => {
     expect(mockNotificationFlashListData).toEqual([]);
   });
   it('invalidates the mounted message list when reader appearance changes', async () => {
-    const darkSettings: ReaderSettings = { ...createEmptyReaderData().settings, theme: 'dark' };
-    const lightSettings: ReaderSettings = { ...darkSettings, theme: 'light' };
-    const themedScreen = (settings: ReaderSettings) => (
+    const darkSettings = resolveReaderStyleSettings<ReaderSettings>({
+      ...createEmptyReaderData().settings,
+      theme: 'dark'
+    });
+    const lightSettings = { ...darkSettings, theme: 'light' as const };
+    const themedScreen = (settings: typeof darkSettings) => (
       <ReaderStyleProvider value={{ settings, theme: createTheme(settings) }}>
         <NotificationsScreen {...listProps()} />
       </ReaderStyleProvider>
@@ -1799,12 +1850,13 @@ describe('notification screens', () => {
       (['light', 'dark'] as const).map((theme) => ({ surface, theme }))
     )
   )('preserves rich-text formatting in $surface content with $theme appearance', async ({ surface, theme: mode }) => {
+    const fontFamily = `WzLocalFont_${'f'.repeat(64)}` as const;
     const settings = {
       ...createEmptyReaderData().settings,
       theme: mode,
       fontScale: mode === 'dark' ? 1.3 : 1,
       lineHeight: mode === 'dark' ? ('loose' as const) : ('standard' as const),
-      fontFamily: 'serif' as const
+      fontFamily
     };
     const theme = createTheme(settings);
     const html =
@@ -1830,7 +1882,13 @@ describe('notification screens', () => {
         onOpenTopic={jest.fn()}
         onRetry={jest.fn()}
       />,
-      { wrapper: ({ children }) => <ReaderStyleProvider value={{ settings, theme }}>{children}</ReaderStyleProvider> }
+      {
+        wrapper: ({ children }) => (
+          <ReaderStyleProvider value={{ settings: resolveReaderStyleSettings(settings), theme }}>
+            {children}
+          </ReaderStyleProvider>
+        )
+      }
     );
     const style = (text: string) => StyleSheet.flatten(view.getByText(text).props.style);
     const ancestorStyles = (text: string) => {
@@ -1843,7 +1901,7 @@ describe('notification screens', () => {
     expect(style('小标题').fontSize).toBeGreaterThan(style('正文段落').fontSize);
     expect(style('正文段落')).toMatchObject({
       color: theme.ink,
-      fontFamily: 'serif',
+      fontFamily,
       fontSize: Math.round((surface === 'message' ? 14 : 15) * settings.fontScale),
       lineHeight: Math.round(
         Math.round((surface === 'message' ? 14 : 15) * settings.fontScale) * lineHeightMultiplier(settings.lineHeight)

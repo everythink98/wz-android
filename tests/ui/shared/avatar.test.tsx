@@ -4,9 +4,9 @@ import React, { useLayoutEffect } from 'react';
 import { createRoot } from 'test-renderer';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
-import { createTheme } from '@/ui/theme/tokens';
+import { resolveReaderStyleSettings, createTheme } from '@/ui/theme/tokens';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import { Avatar } from '@/ui/avatar/Avatar';
+import { Avatar, avatarInitial } from '@/ui/avatar/Avatar';
 import { ForumSessionEpochProvider, mediaSessionIdentityForSource } from '@/platform/media/mediaSessionEpoch';
 
 type AvatarSvgLoader = typeof import('@/platform/media/avatarImages').loadRemoteAvatarSvgText;
@@ -44,6 +44,32 @@ afterEach(() => {
 const includeHidden = { includeHiddenElements: true };
 
 describe('Avatar image fallback', () => {
+  it('retains the native source across name changes and skips repeated work for an identical avatar', async () => {
+    const tree = (name: string) => <Avatar name={name} uri="https://img.example.com/stable.png" contentSource="v2ex" />;
+    const view = await render(tree('李'));
+    const nativeSource = view.getByTestId('native-avatar', includeHidden).props.source;
+    await view.rerender(tree('王'));
+    expect(view.getByTestId('native-avatar', includeHidden).props.source).toBe(nativeSource);
+    const segment = jest.spyOn(Intl.Segmenter.prototype, 'segment');
+    try {
+      await view.rerender(tree('王'));
+      expect(segment).not.toHaveBeenCalled();
+    } finally {
+      segment.mockRestore();
+    }
+  });
+
+  it('reuses grapheme segmentation across names while preserving combined emoji', () => {
+    const segment = jest.spyOn(Intl.Segmenter.prototype, 'segment');
+    try {
+      expect(avatarInitial('👩‍🔬 科学')).toBe('👩‍🔬');
+      expect(avatarInitial('中文')).toBe('中');
+      expect(new Set(segment.mock.contexts).size).toBe(1);
+    } finally {
+      segment.mockRestore();
+    }
+  });
+
   it('does not probe SVG when the large native bitmap succeeds', async () => {
     mockLoadRemoteAvatarSvgText.mockResolvedValue(null);
 
@@ -229,7 +255,7 @@ describe('Avatar request ownership', () => {
     try {
       await act(async () =>
         root.render(
-          <ReaderStyleProvider value={{ settings, theme: createTheme(settings) }}>
+          <ReaderStyleProvider value={{ settings: resolveReaderStyleSettings(settings), theme: createTheme(settings) }}>
             <Harness />
           </ReaderStyleProvider>
         )

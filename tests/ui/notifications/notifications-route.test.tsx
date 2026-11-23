@@ -415,6 +415,30 @@ async function renderNotificationSettings(openSystemSettings?: NotificationRoute
   return { view, navigation, followLink };
 }
 describe('notification routes', () => {
+  it('claims a settings operation before two switch events can start the same change', async () => {
+    const runtime = routeRuntime({} as NotificationRouteRuntimeValue['gateway']);
+    runtime.state = { ...defaultNotificationState(), hasOptedIn: true };
+    const pending = Promise.withResolvers<boolean>();
+    runtime.setGlobalEnabled = jest.fn(() => pending.promise);
+    const view = await render(
+      <NotificationRouteRuntimeProvider value={runtime}>
+        <NavigationContainer>
+          <FocusTestStack.Navigator>
+            <FocusTestStack.Screen name="NotificationSettings" component={NotificationSettingsRoute} />
+          </FocusTestStack.Navigator>
+        </NavigationContainer>
+      </NotificationRouteRuntimeProvider>,
+      { wrapper: QueryTestWrapper }
+    );
+    const toggle = view.getByTestId('notification-global-switch').props.onChange;
+    const event = { nativeEvent: { value: true } };
+    await act(async () => {
+      toggle(event);
+      toggle(event);
+    });
+    expect(runtime.setGlobalEnabled).toHaveBeenCalledTimes(1);
+    await act(async () => pending.resolve(true));
+  });
   it.each(['left', 'returned', 'current'] as const)(
     'applies first Android notification opt-in once with current settings focus after %s',
     async (transition) => {
@@ -3992,6 +4016,44 @@ describe('notification routes', () => {
     expect(listPage).toHaveBeenLastCalledWith('nodeseek', expect.objectContaining({ cursor: '30' }));
   });
 
+  it.each(['all', 'nodeseek'] as const)(
+    'aborts the current %s notification read when another route opens',
+    async (source) => {
+      appQueryClient.clear();
+      let observed: AbortSignal | undefined;
+      const gateway = {
+        listAllPage: ({ signal }: { signal: AbortSignal }) => {
+          if (source === 'all') observed = signal;
+          return new Promise(() => {});
+        },
+        getCategories: (_site: string, _identity: string, signal: AbortSignal) => {
+          observed = signal;
+          return new Promise(() => {});
+        }
+      } as unknown as NotificationRouteRuntimeValue['gateway'];
+      const navigation = createNavigationContainerRef<FocusTestStackParamList>();
+      await render(
+        <NotificationRouteRuntimeProvider value={routeRuntime(gateway)}>
+          <NavigationContainer ref={navigation}>
+            <FocusTestStack.Navigator>
+              <FocusTestStack.Screen
+                name="notifications"
+                initialParams={{ source: source === 'all' ? undefined : source }}
+              >
+                {(props) => <NotificationsRoute navigation={props.navigation as never} route={props.route as never} />}
+              </FocusTestStack.Screen>
+              <FocusTestStack.Screen name="Other">{() => null}</FocusTestStack.Screen>
+            </FocusTestStack.Navigator>
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>,
+        { wrapper: QueryTestWrapper }
+      );
+      await waitFor(() => expect(observed).toBeDefined());
+      await act(async () => navigation.navigate('Other'));
+      expect(observed?.aborted).toBe(true);
+    }
+  );
+
   it('stops the mounted notification list from reading after it loses focus', async () => {
     appQueryClient.clear();
     const listAllPage = jest.fn(async () => ({
@@ -4345,6 +4407,90 @@ describe('notification routes', () => {
       expect(gateway.listPage).not.toHaveBeenCalled();
       await fireEvent.press(view.getByRole('button', { name: '去登录 妖火' }));
       expect(runtime.openAccountSurface).toHaveBeenCalledWith('yaohuo', '请登录并确认账号身份。');
+    }
+  );
+
+  it.each([false, true])(
+    'loads newly confirmed sources into the same active aggregate during refetch %s',
+    async (refetching) => {
+      appQueryClient.clear();
+      const check = Promise.withResolvers<AccountReconcileResult>();
+      const release = Promise.withResolvers<void>();
+      let hold = false;
+      const listAllPage = jest.fn(async () => {
+        if (hold) await release.promise;
+        return {
+          items: [notification],
+          errors: {},
+          qualities: {},
+          nextCursors: { nodeseek: null },
+          hasMore: false
+        };
+      });
+      const listPage = jest.fn(async (source: 'linuxdo' | 'yaohuo') => ({
+        quality: 'complete',
+        items: [{ ...notification, source, id: source, title: source + ' 新消息' }],
+        cursor: null,
+        hasMore: false
+      }));
+      const runtime = routeRuntime({ listAllPage, listPage } as unknown as NotificationRouteRuntimeValue['gateway']);
+      runtime.identityKeys.linuxdo = 'linuxdo:alice';
+      runtime.identityKeys.yaohuo = 'yaohuo:7';
+      runtime.sessions.linuxdo = { ...runtime.sessions.linuxdo, identityTrust: 'unknown' };
+      runtime.sessions.yaohuo = { ...runtime.sessions.yaohuo, identityTrust: 'unknown' };
+      runtime.reconcileAccountStatus = jest.fn(() => check.promise);
+      const tree = (value: NotificationRouteRuntimeValue) => (
+        <NotificationRouteRuntimeProvider value={value}>
+          <NavigationContainer>
+            <NotificationsRoute
+              navigation={{ navigate: jest.fn(), setParams: jest.fn() } as never}
+              route={{ key: 'notifications', name: 'notifications', params: undefined }}
+            />
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>
+      );
+      const view = await render(tree(runtime), { wrapper: QueryTestWrapper });
+      expect(await view.findByText(notification.title)).toBeTruthy();
+      let refresh: Promise<void> | undefined;
+      if (refetching) {
+        hold = true;
+        await act(async () => {
+          refresh = appQueryClient.refetchQueries({
+            queryKey: forumQueryKeys.notificationList({
+              source: 'all',
+              identityKey: runtime.identitySignature,
+              unreadOnly: false
+            }),
+            exact: true
+          });
+        });
+        expect(listAllPage).toHaveBeenCalledTimes(2);
+      }
+      await fireEvent.press(view.getByRole('button', { name: '重试账号核对 linux.do' }));
+      await act(async () => {
+        check.resolve({ status: 'same', session: createSiteSessionStates().linuxdo });
+      });
+      await fireEvent.press(view.getByRole('button', { name: '重试账号核对 妖火' }));
+      await view.rerender(
+        tree({
+          ...runtime,
+          activeSources: ['nodeseek', 'linuxdo', 'yaohuo'],
+          sessions: {
+            ...runtime.sessions,
+            linuxdo: { ...runtime.sessions.linuxdo, identityTrust: 'confirmed' },
+            yaohuo: { ...runtime.sessions.yaohuo, identityTrust: 'confirmed' }
+          }
+        })
+      );
+      await act(async () => {
+        release.resolve();
+        await refresh;
+      });
+      expect(await view.findByText('linuxdo 新消息')).toBeTruthy();
+      expect(await view.findByText('yaohuo 新消息')).toBeTruthy();
+      expect(listPage).toHaveBeenCalledTimes(2);
+      expect(listAllPage).toHaveBeenCalledTimes(refetching ? 2 : 1);
+      expect(view.getByText(notification.title)).toBeTruthy();
     }
   );
 

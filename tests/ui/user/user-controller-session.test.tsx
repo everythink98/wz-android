@@ -437,6 +437,39 @@ describe('user query controller', () => {
     }
   });
 
+  it('waits for a cached Yaohuo profile retry before reporting its result', async () => {
+    const profile: UserProfile = { ...user, source: 'yaohuo', id: '7', url: 'https://www.yaohuo.me/space-7.html' };
+    const retry = Promise.withResolvers<UserProfile>();
+    const getUserProfile = jest
+      .fn<UserFixtureRead>()
+      .mockResolvedValueOnce(profile)
+      .mockRejectedValueOnce(Object.assign(new Error('妖火需要登录'), { kind: 'login-required', source: 'yaohuo' }))
+      .mockImplementationOnce(() => retry.promise);
+    const showYaohuoLogin = jest.fn();
+    let requestedUser = profile;
+    const hook = await renderUserController({ getUser: () => requestedUser, getUserProfile, showYaohuoLogin });
+    await waitFor(() => expect(hook.result.current.userProfile?.id).toBe('7'));
+    await act(async () => {
+      await hook.result.current.refreshUser();
+    });
+    await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(1));
+    let pending: Promise<unknown> | undefined;
+    await act(async () => {
+      pending = hook.result.current.retryUserProfile();
+    });
+    await waitFor(() => expect(getUserProfile).toHaveBeenCalledTimes(3));
+    try {
+      requestedUser = { ...profile, displayName: '更新后的昵称' };
+      await act(async () => hook.rerender(undefined));
+      expect(showYaohuoLogin).toHaveBeenCalledTimes(1);
+    } finally {
+      await act(async () => {
+        retry.resolve(profile);
+        await pending;
+      });
+    }
+  });
+
   it('deduplicates concurrent Yaohuo activity failures and rearms each explicit lane retry', async () => {
     const profile: UserProfile = {
       ...user,

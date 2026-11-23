@@ -16,6 +16,7 @@ import { browserFetchIntentFromInit } from '@/platform/network/browserFetchInten
 import type { Fetcher } from '@/platform/network/request';
 import { registerForumReadResponseEvidence } from './forumSourceReadAttempt';
 import { beginDiagnosticTrace, setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
+import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { getDefaultAndroidWebViewUserAgent } from '@/platform/android/androidWebViewUserAgent';
 import * as v2exReader from '@/sources/v2ex/reader';
 
@@ -81,21 +82,23 @@ const nodeSeekPayload = Buffer.from(
 ).toString('base64');
 
 describe('feed read', () => {
-  it('keeps older pinned rows in the source share of the aggregate preview and final page', async () => {
-    const row = (id: number, date: string, marker = '') => `
-      <li class="post-list-item"><div class="post-title"><a href="/post-${id}-1">Topic ${id}</a>${marker}</div>
-        <span class="info-last-comment-time"><time datetime="${date}"></time></span></li>`;
-    const marker = '<span title="置顶"><svg class="pined"><use href="#pin" /></svg></span>';
+  const nodeSeekRow = (id: number, date: string, pinned = false) => `
+    <li class="post-list-item"><div class="post-title"><a href="/post-${id}-1">Topic ${id}</a>${
+      pinned ? '<span title="置顶"><svg class="pined"><use href="#pin" /></svg></span>' : ''
+    }</div><span class="info-last-comment-time"><time datetime="${date}"></time></span></li>`;
+
+  it('excludes pinned topics from the aggregate preview and page while keeping them in the source feed', async () => {
     const fetcher = vi.fn(
       async (url: string) =>
         new Response(
           new URL(url).hostname === 'www.v2ex.com'
-            ? `<div class="cell item"><a class="topic-link" href="/t/5">V2EX 5</a></div>
+            ? `<div class="cell item"><a class="topic-link" href="/t/1">V2EX 1</a></div>
          <div class="cell item"><a class="topic-link" href="/t/6">V2EX 6</a></div>`
-            : row(1, '2026-03-01T00:00:00Z', marker) +
-                row(2, '2026-02-01T00:00:00Z', marker) +
-                row(3, '2026-09-01T00:00:00Z') +
-                row(4, '2026-08-01T00:00:00Z')
+            : nodeSeekRow(1, '2026-03-01T00:00:00Z', true) +
+                nodeSeekRow(2, '2026-02-01T00:00:00Z', true) +
+                nodeSeekRow(1, '2026-10-01T00:00:00Z') +
+                nodeSeekRow(3, '2026-09-01T00:00:00Z') +
+                nodeSeekRow(4, '2026-08-01T00:00:00Z')
         )
     );
     const onProgress = vi.fn<(response: FeedResponse) => void>();
@@ -108,9 +111,95 @@ describe('feed read', () => {
     });
     expect(
       onProgress.mock.lastCall?.[0].items.filter((item) => item.source === 'nodeseek').map((item) => item.id)
-    ).toEqual(['1', '2']);
-    expect(result.items.filter((item) => item.source === 'nodeseek').map((item) => item.id)).toEqual(['1', '2']);
-    expect(result.items.filter((item) => item.source === 'v2ex').map((item) => item.id)).toEqual(['5', '6']);
+    ).toEqual(['3', '4']);
+    expect(result.items.filter((item) => item.source === 'nodeseek').map((item) => item.id)).toEqual(['3', '4']);
+    expect(result.items.filter((item) => item.source === 'v2ex').map((item) => item.id)).toEqual(['1', '6']);
+    expect(result.hasMore).toBe(false);
+
+    const singleSource = await getFeed({ source: 'nodeseek', limit: 5, fetcher });
+    expect(singleSource.items.filter((item) => item.pinned).map((item) => item.id)).toEqual(['1', '2']);
+  });
+
+  it('keeps the next page available when the aggregate first page contains only pinned topics', async () => {
+    const fetcher = vi.fn(
+      async (url: string) =>
+        new Response(
+          new URL(url).pathname === '/recent'
+            ? '<div class="cell item"><a class="topic-link" href="/t/3">Regular topic</a></div>'
+            : [1, 2]
+                .map(
+                  (id) => `<div class="cell item" style="background-image: url(/corner_star.png)">
+                  <a class="topic-link" href="/t/${id}">Pinned topic ${id}</a></div>`
+                )
+                .join('')
+        )
+    );
+    const options = { source: 'all', includedSources: ['v2ex'], limit: 1, fetcher } satisfies Parameters<
+      typeof getFeed
+    >[0];
+    const onProgress = vi.fn();
+    const first = await getFeed({ ...options, onProgress });
+    expect(first).toMatchObject({ items: [], errors: {}, hasMore: true, nextPage: 2 });
+    expect(onProgress).not.toHaveBeenCalled();
+    expect(sourceDiagnosticSummary(first)).toMatchObject({ isExpectedEmpty: true, isParseEmpty: false });
+
+    const second = await getFeed({ ...options, page: 2, cursor: first.nextCursor ?? undefined });
+    expect(second.items.map(({ id }) => id)).toEqual(['3']);
+  });
+
+  it('refills the aggregate buffer and drops topics pinned in the cursor or the next source page', async () => {
+    const oldPin = {
+      source: 'nodeseek',
+      id: '99',
+      title: 'Old pin',
+      url: 'https://www.nodeseek.com/post-99-1',
+      createdAt: '',
+      pinned: true
+    };
+    const cachedTopic = {
+      ...oldPin,
+      id: '1',
+      title: 'Cached topic',
+      url: 'https://www.nodeseek.com/post-1-1',
+      pinned: false
+    };
+    const cursor = encodeURIComponent(
+      JSON.stringify({ buffers: { nodeseek: [oldPin, cachedTopic] }, nextPages: { nodeseek: 2 } })
+    );
+    const fetcher = vi.fn(
+      async () => new Response(nodeSeekRow(1, '2026-10-01T00:00:00Z', true) + nodeSeekRow(2, '2026-09-01T00:00:00Z'))
+    );
+    const result = await getFeed({ source: 'all', includedSources: ['nodeseek'], page: 2, cursor, limit: 2, fetcher });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(result.items.map(({ id }) => id)).toEqual(['2']);
+    expect(result.hasMore).toBe(false);
+  });
+
+  it('excludes a known pinned topic when it returns without its badge on a later source page', async () => {
+    const fetcher = vi.fn(
+      async (url: string) =>
+        new Response(
+          new URL(url).pathname === '/page-2'
+            ? nodeSeekRow(1, '2026-10-01T00:00:00Z') + nodeSeekRow(3, '2026-08-01T00:00:00Z')
+            : nodeSeekRow(1, '2026-10-01T00:00:00Z', true) +
+                nodeSeekRow(2, '2026-09-01T00:00:00Z') +
+                '<a href="/page-2">下一页</a>'
+        )
+    );
+    const options = { source: 'all', includedSources: ['nodeseek'], limit: 2, fetcher } satisfies Parameters<
+      typeof getFeed
+    >[0];
+    const first = await getFeed(options);
+    expect(first.items.map(({ id }) => id)).toEqual(['2']);
+    expect(first.hasMore).toBe(true);
+
+    const second = await getFeed({ ...options, page: 2, cursor: first.nextCursor ?? undefined });
+    expect(second.items.map(({ id }) => id)).toEqual(['3']);
+    expect(second.hasMore).toBe(false);
+
+    fetcher.mockResolvedValueOnce(new Response(nodeSeekRow(1, '2026-10-01T00:00:00Z')));
+    const refreshed = await getFeed(options);
+    expect(refreshed.items.map(({ id }) => id)).toEqual(['1']);
   });
 
   it.each([
@@ -524,7 +613,7 @@ describe('feed read', () => {
     const list = Array.from(
       { length: 31 },
       (_, index) =>
-        `<div class="listdata"><a href="/bbs-${index + 1}.html">excluded ${index}</a>/alice/阅1/05-20 10:00</div>`
+        `<div class="listdata"><a href="/bbs-${index + 1}.html">test ${index}${index === 0 ? ' excluded' : ''}</a>/alice/阅1/05-20 10:00</div>`
     ).join('');
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('book_list.aspx')) return new Response(list);
@@ -549,9 +638,9 @@ describe('feed read', () => {
       filter: { source: 'yaohuo', category: '177' },
       fetcher
     });
-    expect(search.items).toHaveLength(30);
-    expect(new URL(fetcher.mock.calls[1][0]).searchParams.get('key')).toBe('test -excluded');
-    expect(search.items[0]).toMatchObject({ categoryId: '177', title: 'excluded 0' });
+    expect(new URL(fetcher.mock.calls[1][0]).searchParams.get('key')).toBe('test');
+    expect(search.items.map((item) => item.title)).toEqual(Array.from({ length: 29 }, (_, i) => `test ${i + 1}`));
+    expect(search.items[0]).toMatchObject({ categoryId: '177' });
     await expect(getTopic({ source: 'yaohuo', id: '1', topic: feed.items[0], fetcher })).resolves.toMatchObject({
       id: '1',
       contentHtml: expect.stringContaining('正文')

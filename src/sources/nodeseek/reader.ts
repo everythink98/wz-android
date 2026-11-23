@@ -29,7 +29,7 @@ import {
   NODESEEK_FLOORS_PER_PAGE,
   arrayField,
   assertNodeSeekTopicIdentity,
-  isNodeSeekChallengeResponse,
+  throwIfNodeSeekChallenge,
   lastNodeSeekPostPage,
   nextNodeSeekListPage,
   nextNodeSeekPostPage,
@@ -89,7 +89,6 @@ import {
 import { orientReplyWindow } from '@/sources/replyWindows';
 
 const BASE_URL = NODESEEK_BASE_URL;
-const NODESEEK_CLOUDFLARE_MESSAGE = 'NodeSeek 需要完成 Cloudflare 验证';
 const NODESEEK_READ_TIMEOUT_MS = 30000;
 
 export interface NodeSeekOptions {
@@ -117,14 +116,16 @@ async function readNodeSeekPollsFromVoteLinks(
     await Promise.all(
       missingIds.map(async (id) => {
         try {
-          const poll = normalizeNodeSeekVoteInfo(
-            await fetchNodeSeekJson(`/api/vote/info/${encodeURIComponent(id)}`, options, NODESEEK_VOTE_API_HEADERS),
-            id
+          const { response, text } = await fetchNodeSeekTextResult(
+            `/api/vote/info/${encodeURIComponent(id)}`,
+            options,
+            NODESEEK_VOTE_API_HEADERS
           );
-          if (!poll) {
-            partialErrorCount += 1;
-          }
-          return poll;
+          return await proveForumReadResponse(response, () => {
+            const poll = normalizeNodeSeekVoteInfo(parseNodeSeekJsonText(text), id);
+            if (!poll) throw new Error('NodeSeek 未返回有效投票');
+            return poll;
+          });
         } catch {
           partialErrorCount += 1;
           return null;
@@ -172,13 +173,6 @@ function prepareNodeSeekRepliesWithPolls(
   });
 }
 
-function nodeSeekCloudflareError() {
-  return Object.assign(new Error(NODESEEK_CLOUDFLARE_MESSAGE), {
-    source: 'nodeseek',
-    reason: 'cloudflare'
-  });
-}
-
 export async function fetchNodeSeekTextResult(
   path: string,
   options: NodeSeekOptions = {},
@@ -209,11 +203,9 @@ export async function fetchNodeSeekTextResult(
   if (bodyReadyTrace) markDiagnosticStage(bodyReadyTrace, 'parse', { source: 'nodeseek', state: 'body-ready' });
   const pageDocument =
     /html/i.test(response.headers.get('content-type') || '') || /^\s*</.test(text)
-      ? parseNodeSeekPageDocument(text)
+      ? parseNodeSeekPageDocument(text, response)
       : undefined;
-  if (isNodeSeekChallengeResponse(response, text, `${BASE_URL}${path}`, pageDocument)) {
-    throw nodeSeekCloudflareError();
-  }
+  throwIfNodeSeekChallenge(response, text, `${BASE_URL}${path}`, pageDocument);
   if (!response.ok && requestOptions.browserFetchIntent?.owner === 'account') {
     throw new Error(`HTTP ${response.status}`);
   }
@@ -232,13 +224,15 @@ export async function fetchNodeSeekJson(
   requestHeaders: Record<string, string> = {}
 ) {
   const { response, text } = await fetchNodeSeekTextResult(path, options, requestHeaders);
-  return proveForumReadResponse(response, () => {
-    try {
-      return JSON.parse(extractNodeSeekJsonText(text)) as unknown;
-    } catch {
-      throw new Error('NodeSeek 数据解析失败');
-    }
-  });
+  return proveForumReadResponse(response, () => parseNodeSeekJsonText(text));
+}
+
+function parseNodeSeekJsonText(text: string): unknown {
+  try {
+    return JSON.parse(extractNodeSeekJsonText(text));
+  } catch {
+    throw new Error('NodeSeek 数据解析失败');
+  }
 }
 
 function extractNodeSeekJsonText(text: string) {
@@ -858,6 +852,7 @@ async function getNodeSeekRepliesChronological(
     }));
     const embeddedReplies = postData
       ? normalizeReplies(arrayField(postData.comments), {
+          contentOverrides: renderedSource.filter((reply) => reply.contentHtml),
           skipFirst: page <= 1,
           floorOffset: page <= 1 ? 0 : floorOffset
         })

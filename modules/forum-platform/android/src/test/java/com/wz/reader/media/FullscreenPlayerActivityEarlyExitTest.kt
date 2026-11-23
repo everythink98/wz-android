@@ -12,6 +12,7 @@ import android.widget.ImageView
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import expo.modules.video.FullscreenPlayerActivity
+import expo.modules.video.listeners.VideoManagerListener
 import expo.modules.video.managers.VideoManager
 import java.lang.reflect.Proxy
 import java.util.ArrayDeque
@@ -33,6 +34,26 @@ import org.robolectric.annotation.LooperMode
 @LooperMode(LooperMode.Mode.PAUSED)
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class FullscreenPlayerActivityEarlyExitTest {
+  @Test
+  fun removingAListenerDuringForegroundDeliveryKeepsTheOtherListeners() {
+    val observed = mutableListOf<String>()
+    val first = object : VideoManagerListener {
+      override fun onAppForegrounded() { observed.add("first"); VideoManager.unregisterListener(this) }
+    }
+    val second = object : VideoManagerListener {
+      override fun onAppForegrounded() { observed.add("second") }
+    }
+    VideoManager.registerListener(first)
+    VideoManager.registerListener(second)
+    try {
+      VideoManager.onAppForegrounded()
+      assertEquals(listOf("first", "second"), observed)
+    } finally {
+      VideoManager.unregisterListener(first)
+      VideoManager.unregisterListener(second)
+    }
+  }
+
   @Test
   fun missingTokenFinishesAndDestroysWithoutInitializedView() {
     val intent = Intent(RuntimeEnvironment.getApplication(), FullscreenPlayerActivity::class.java)

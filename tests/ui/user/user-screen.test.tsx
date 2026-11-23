@@ -290,6 +290,20 @@ describe('User screen behavior', () => {
     expect(view.queryByText('用户主题')).toBeNull();
   });
 
+  it('keeps the selected activity when a username-only route resolves its canonical profile again', async () => {
+    const requestedUser = {
+      source: 'nodeseek' as const,
+      username: 'alice',
+      url: 'https://www.nodeseek.com/member?t=alice'
+    };
+    const canonical = { ...profile, source: 'nodeseek' as const, id: '42' };
+    const view = await render(userScreen({ requestedUser, profile: canonical }));
+    await fireEvent.press(view.getByLabelText('回复'));
+    await view.rerender(userScreen({ requestedUser, profile: null, busy: true }));
+    await view.rerender(userScreen({ requestedUser, profile: canonical }));
+    expect(view.getByText('回复摘要')).toBeTruthy();
+  });
+
   it('keeps topic and reply pagination busy states independent', async () => {
     const onLoadMoreReplies = jest.fn<() => void>();
     const view = await render(userScreen({ loadingMoreTopics: true, onLoadMoreReplies }));
@@ -510,7 +524,8 @@ describe('User screen behavior', () => {
 
     await view.rerender(userScreen({ profile: bioProfile, busy: true }));
     expect(view.getByTestId('user-bio-text').props.numberOfLines).toBeUndefined();
-    await view.rerender(userScreen({ profile: { ...bioProfile, id: 'another-user' } }));
+    const anotherUser = { ...bioProfile, id: 'another-user' };
+    await view.rerender(userScreen({ profile: anotherUser, requestedUser: anotherUser }));
     expect(view.getByTestId('user-screen-loaded') === activityList).toBe(false);
     expect(view.getByTestId('user-bio-text').props.numberOfLines).toBe(2);
   });

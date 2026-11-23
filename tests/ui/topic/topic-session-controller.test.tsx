@@ -26,8 +26,7 @@ import { readHistoryReplyBaseline } from '@/platform/storage/readerDataStore';
 import { withAbortableTimeout } from '@/platform/network/request';
 import { MemoizedReplyItem } from '@/features/topic/components/ReplyItem';
 import { createTopicStyles } from '@/features/topic/styles';
-import { createTheme } from '@/ui/theme/tokens';
-import * as avatarComponents from '@/ui/avatar/Avatar';
+import { resolveReaderStyleSettings, createTheme } from '@/ui/theme/tokens';
 import { render } from '../render';
 
 const firstTopic: Topic = {
@@ -323,10 +322,11 @@ describe('topic query controller', () => {
     );
     const bodyContent = reply.preparedContent.contentPlan.rows[0];
     if (bodyContent?.type !== 'codeBlock') throw new Error('Expected one production code block');
+    const decisionFor = jest.fn(() => ({ allowed: false, reason: 'login-required' }) as const);
     const props: ComponentProps<typeof MemoizedReplyItem> = {
       actionBusy: false,
       bodyContent,
-      decisionFor: () => ({ allowed: false, reason: 'login-required' }),
+      decisionFor,
       contentWidth: 360,
       expandedQuotes: {},
       loadedQuotedReplies: {},
@@ -338,7 +338,7 @@ describe('topic query controller', () => {
       replyFloor: 1,
       repliesByFloor: new Map([[1, reply]]),
       source: 'nodeseek',
-      styles: createTopicStyles(theme, settings),
+      styles: createTopicStyles(theme, resolveReaderStyleSettings(settings)),
       theme,
       topicId: firstTopic.id,
       topicStateKey: 'nodeseek:1',
@@ -352,14 +352,12 @@ describe('topic query controller', () => {
       onVotePoll: jest.fn(),
       onToggleReplyQuote: hook.result.current.controller.toggleReplyQuote
     };
-    // Avatar is a plain production child, so a reply render cannot hide behind another memo boundary.
-    const avatarRender = jest.spyOn(avatarComponents, 'Avatar');
+    // The reply row checks its available actions during render.
     const control = await render(<MemoizedReplyItem {...props} />);
     try {
       expect(control.getByText('original reply')).toBeTruthy();
-      expect(avatarRender).toHaveBeenCalled();
-      avatarRender.mockClear();
-      const replyRendersAfterDraft: number[] = [];
+      expect(decisionFor).toHaveBeenCalled();
+      decisionFor.mockClear();
       for (const draft of ['first draft', 'second draft', 'third draft']) {
         await act(async () => hook.result.current.session.commands.composer.changeContent(draft));
         await control.rerender(
@@ -370,9 +368,8 @@ describe('topic query controller', () => {
             onToggleReplyQuote={hook.result.current.controller.toggleReplyQuote}
           />
         );
-        replyRendersAfterDraft.push(avatarRender.mock.calls.length);
+        expect(decisionFor).not.toHaveBeenCalled();
       }
-      expect(replyRendersAfterDraft).toEqual([0, 0, 0]);
       expect(control.getByText('original reply')).toBeTruthy();
       expect(hook.result.current.session.state.replyContent).toBe('third draft');
       for (const group of ['topic', 'view', 'composer'] as const)
@@ -398,11 +395,10 @@ describe('topic query controller', () => {
       if (changedBody?.type !== 'codeBlock') throw new Error('Expected one changed code block');
       await control.rerender(<MemoizedReplyItem {...props} reply={changed} bodyContent={changedBody} />);
       expect(control.getByText('changed reply')).toBeTruthy();
-      expect(avatarRender).toHaveBeenCalled();
+      expect(decisionFor).toHaveBeenCalled();
     } finally {
       await control.unmount();
       await hook.unmount();
-      avatarRender.mockRestore();
     }
   });
 

@@ -242,7 +242,7 @@ jest.mock('@/platform/update/useAppUpdateRuntime', () => ({
     return {
       appUpdateBusy: false,
       appUpdateInfo: null,
-      appUpdateDownloadProgress: mockUpdateProgress
+      downloadProgress: { getSnapshot: () => mockUpdateProgress }
     };
   }
 }));
@@ -362,7 +362,7 @@ describe('app runtime startup', () => {
       mockUpdateProgress = formatAppUpdateDownloadProgress('2.0.0', percent, 100);
       await act(async () => hook.rerender({ revision: percent }));
       const current = hook.result.current.routes!.moreRouteRuntime;
-      expect(current.update.appUpdateDownloadProgress?.percent).toBe(percent);
+      expect(current.update.downloadProgress.getSnapshot()?.percent).toBe(percent);
       expect(current.account).toBe(original.account);
       expect(current.proxy).toBe(original.proxy);
       expect(current.library).toBe(original.library);
@@ -830,7 +830,7 @@ describe('app runtime startup', () => {
       expect(runtime.enabledSources).toEqual([]);
     }
     expect(mockUseAccountRuntime).toHaveBeenLastCalledWith(
-      expect.objectContaining({ ready: true, enabledSources: [] })
+      expect.objectContaining({ ready: true, contentSourcesReady: false, enabledSources: [] })
     );
     expect(mockUseNotificationsRuntime).toHaveBeenLastCalledWith(
       expect.objectContaining({ contentSourcesReady: false, enabledNotificationSources: [] })

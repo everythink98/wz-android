@@ -1,5 +1,6 @@
 import { createImageTouch } from '../imageTouchFixture';
 import { describe, expect, it, jest } from '@jest/globals';
+import { createStardustPayments } from '@/features/topic/actions/stardustPayments';
 import { inactivePostInteractionActions } from '../topicInteractionFixture';
 import { LinuxDoPacketViewer } from '@/ui/content/LinuxDoPacketCover';
 import React, { type ReactNode, type RefObject } from 'react';
@@ -14,7 +15,7 @@ import RenderHTML, {
   useSharedProps,
   type CustomTextualRenderer
 } from 'react-native-render-html';
-import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { createEmptyReaderData, type ReaderSettings } from '@/domain/reader/readerData';
 import { compileForumContent, prepareTopicContent, prepareReplyContent } from '@/domain/forum/topicContentSplit';
 import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
 import { TopicContentList } from '@/features/topic/components/TopicContentList';
@@ -23,7 +24,7 @@ import { useForumContentWidth } from '@/ui/content/ForumContentWidth';
 import { useTopicSessionController } from '@/features/topic/useTopicSessionController';
 import { createHtmlCustomElementModels } from '@/features/topic/rendering/htmlElementModels';
 import { buildHtmlRenderingStyles } from '@/ui/content/forumHtmlStyles';
-import { createTheme } from '@/ui/theme/tokens';
+import { resolveReaderStyleSettings, createTheme, READER_APP_FONT_FAMILY } from '@/ui/theme/tokens';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
 import type { Reply, TopicDetail } from '@/domain/forum/models';
@@ -44,6 +45,7 @@ let mockReadingList: {
 };
 
 let mockPreventRemove = false;
+const mockSelectionEventRebuilds = jest.fn<(name: string) => void>();
 let mockRecycledGallerySlot = false;
 const mockCancelNativeSelection = jest.fn<() => Promise<void>>(() => Promise.resolve());
 const mockReadingImages = new Map<
@@ -115,7 +117,10 @@ jest.mock('react-native-reanimated', () => {
       jest.requireActual<typeof import('react-native-reanimated')>('react-native-reanimated').useReducedMotion,
     isSharedValue: (value: unknown) => Boolean(value && typeof value === 'object' && 'value' in value),
     useSharedValue: <T,>(value: T) => ReactModule.useRef(actual.useSharedValue(value)).current,
-    useEvent: (handler: (event: unknown) => void) => (event: { nativeEvent: unknown }) => handler(event.nativeEvent)
+    useEvent: (handler: (event: unknown) => void, names?: string[], rebuild?: boolean) => {
+      if (rebuild && names?.[0]) mockSelectionEventRebuilds(names[0]);
+      return (event: { nativeEvent: unknown }) => handler(event.nativeEvent);
+    }
   };
 });
 
@@ -567,6 +572,7 @@ function ProductionContentList({
   const unexpected = React.useCallback(() => {
     throw new Error('Selection fixture must not perform a read or write transaction.');
   }, []);
+  const [stardustPayments] = React.useState(createStardustPayments);
   return (
     <TopicContentList
       commentSearchFocused={false}
@@ -590,6 +596,8 @@ function ProductionContentList({
         loadNodeSeekStardustStatus: unexpected,
         lockNodeSeekPoll: unexpected,
         payNodeSeekStardust: unexpected,
+        stardustPayments,
+        stardustPayer: 'nodeseek:fixture',
         submitReply: unexpected,
         uploadReplyImage: unexpected,
         uploadReplyImageMarkup: unexpected,
@@ -1242,8 +1250,10 @@ describe('topic rich-text selection', () => {
       const pageStyle = StyleSheet.flatten(gallery.getByTestId('__CAROUSEL_ITEM_0__').props.style);
       expect(viewportSize.width % 1).not.toBe(0);
       expect(pageStyle.width).toBe(viewportSize.width);
+      const listData = mockReadingList.data;
       for (let page = 0; page < 4; page++) await fireEvent.press(gallery.getByLabelText('下一张图片'));
       expect(gallery.getByText('5 / 10')).toBeTruthy();
+      expect(mockReadingList.data === listData).toBe(true);
       await act(async () => mockReadingList.showCells(false));
       expect(view.queryByTestId('topic-image-gallery')).toBeNull();
       await act(async () => mockReadingList.showCells(true));
@@ -1395,7 +1405,7 @@ describe('topic rich-text selection', () => {
       ...selectionTopic,
       contentHtml: '<table><tr><th>项目</th><th>内容</th></tr><tr><td>表格</td><td>保持位置</td></tr></table>'
     });
-    const initialStyle = { settings: selectionReaderData.settings, theme: selectionTheme };
+    const initialStyle = { settings: resolveReaderStyleSettings(selectionReaderData.settings), theme: selectionTheme };
     const tree = (active: boolean, style = initialStyle, contentWidth = 320) => (
       <ReaderStyleProvider value={style}>
         <QueryTestWrapper>
@@ -1421,7 +1431,9 @@ describe('topic rich-text selection', () => {
       [{ ...selectionReaderData.settings, listDensity: 'compact' }, 320],
       [{ ...selectionReaderData.settings, contentWidth: 'wide' }, 400]
     ] satisfies [typeof selectionReaderData.settings, number][]) {
-      await view.rerender(tree(true, { settings, theme: selectionTheme }, contentWidth));
+      await view.rerender(
+        tree(true, { settings: resolveReaderStyleSettings(settings), theme: selectionTheme }, contentWidth)
+      );
       expect(view.getByTestId('topic-html-table-scroll') === scroll).toBe(true);
       expect(view.getByText('保持位置') === cell).toBe(true);
     }
@@ -1577,6 +1589,10 @@ describe('topic rich-text selection', () => {
     );
     const view = await render(tree(true));
     const old = view.getByTestId('topic-selection-surface').props;
+    mockSelectionEventRebuilds.mockClear();
+    await view.rerender(tree(true));
+    expect(mockSelectionEventRebuilds).not.toHaveBeenCalled();
+    expect(view.getByTestId('topic-selection-surface').props.horizontalTargets).toBe(old.horizontalTargets);
     await act(async () => old.onSelectionChange({ nativeEvent: { active: true, revision: old.revision } }));
     expect(mockPreventRemove).toBe(true);
     expect(renders).toHaveBeenCalledTimes(1);
@@ -1768,7 +1784,7 @@ describe('topic rich-text selection', () => {
     expect(scrollToOffset).toHaveBeenCalledTimes(1);
   });
 
-  it('connects visible opening markers and real code selection while excluding replies, signatures, and accepted answers', async () => {
+  it('keeps opening selection and text after an inline image in compact bundled typography', async () => {
     const reply = prepareReplyContent(
       {
         author: 'reply-author',
@@ -1809,21 +1825,34 @@ describe('topic rich-text selection', () => {
       replies: [reply],
       replyCount: 1,
       contentHtml:
-        '<p>opening body</p><table><tr><td>opening cell</td></tr></table><pre>opening code</pre>' +
+        '<p>opening body<img src="https://img.example/inline.png" alt="行内图" width="20" height="20">图后正文</p>' +
+        '<table><tr><td>opening cell</td></tr></table><pre>opening code</pre>' +
         '<details open><summary>opening details</summary><p>details body</p></details>' +
         '<details><summary>collapsed details</summary><p>collapsed details body</p></details>' +
         '<aside class="quote" data-post="9" data-topic="quoted-topic" data-username="quoted-author"><div class="title">quoted-author:</div><blockquote>quote preview</blockquote></aside>' +
         '<forum-terminal-report><forum-terminal-tab title="Visible"><div class="forum-terminal-code">visible terminal body</div></forum-terminal-tab>' +
         '<forum-terminal-tab title="Hidden"><div class="forum-terminal-code">hidden terminal body</div></forum-terminal-tab></forum-terminal-report>'
     });
-    const screen = await render(
-      <QueryTestWrapper>
-        <ProductionContentList
-          topic={topic}
-          quotedReplies={{ 'linuxdo:selection-topic:42': accepted, 'linuxdo:quoted-topic:9': quoted }}
-        />
-      </QueryTestWrapper>
+    const compactSettings: ReaderSettings = {
+      ...selectionReaderData.settings,
+      fontFamily: 'app',
+      fontScale: 1.4,
+      lineHeight: 'compact',
+      uiFontFamily: 'system',
+      uiFontScale: 0.85
+    };
+    const tree = (settings: ReaderSettings) => (
+      <ReaderStyleProvider value={{ settings: resolveReaderStyleSettings(settings), theme: selectionTheme }}>
+        <QueryTestWrapper>
+          <ProductionContentList
+            settings={settings}
+            topic={topic}
+            quotedReplies={{ 'linuxdo:selection-topic:42': accepted, 'linuxdo:quoted-topic:9': quoted }}
+          />
+        </QueryTestWrapper>
+      </ReaderStyleProvider>
     );
+    const screen = await render(tree(compactSettings));
     await fireEvent.press(screen.getByLabelText('查看完整解决方案，第 42 楼'));
     await fireEvent.press(within(screen.getByTestId('topic-quote-quoted-topic-9')).getByLabelText('展开'));
     const surface = screen.getByTestId('topic-selection-surface');
@@ -1831,6 +1860,7 @@ describe('topic rich-text selection', () => {
     const manifest = nativeRows.map((row) => row.selectionToken).join('\n');
     for (const visible of [
       'opening body',
+      '图后正文',
       'opening cell',
       'opening code',
       'details body',
@@ -1862,6 +1892,12 @@ describe('topic rich-text selection', () => {
     expect(screen.getByText('accepted code').parent?.props.selectable).toBe(false);
     expect(screen.getByText('reply code').parent?.props.selectable).toBe(false);
     expect(screen.getByText('reply signature')).toBeTruthy();
+    expect(screen.getByTestId('topic-inline-image-attachment')).toBeTruthy();
+    expect(screen.getByText(/图后正文/)).toHaveStyle({
+      fontFamily: READER_APP_FONT_FAMILY,
+      fontSize: 22,
+      lineHeight: 31
+    });
     await fireEvent.press(screen.getByText('Hidden'));
     const changed = screen
       .getByTestId('topic-selection-surface')
@@ -1871,6 +1907,12 @@ describe('topic rich-text selection', () => {
     expect(changed).not.toContain('visible terminal body');
     await fireEvent.press(screen.getByText('Visible'));
     expect(screen.getByTestId('topic-selection-surface').props.rows).toEqual(nativeRows);
+    const revision = screen.getByTestId('topic-selection-surface').props.revision;
+    const largerInterface: ReaderSettings = { ...compactSettings, uiFontFamily: 'app', uiFontScale: 1.4 };
+    await screen.rerender(tree(largerInterface));
+    expect(screen.getByTestId('topic-selection-surface').props.revision).toBe(revision);
+    await screen.rerender(tree({ ...largerInterface, fontScale: 1.2 }));
+    expect(screen.getByTestId('topic-selection-surface').props.revision).not.toBe(revision);
   });
 
   it('fails closed before mounting repeated rows into the native coordinator', async () => {

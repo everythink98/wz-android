@@ -187,4 +187,26 @@ describe('Composer keyboard native host', () => {
     await view.rerender(<ComposerKeyboardHost ref={ref} enabled testID="ordinary-host" />);
     expect(view.getByTestId('ordinary-host').props.trackImeInsets).not.toBe(true);
   });
+
+  it('reopens without the height from an unsubscribed modal IME host', async () => {
+    const ref = createRef<ComposerKeyboardHostHandle>();
+    const frame = (visible: boolean) => (
+      <ModalSheetFrame
+        keyboardHostRef={ref}
+        visible={visible}
+        backdropLabel="关闭面板"
+        onRequestClose={() => undefined}
+      >
+        <ReactNative.TextInput />
+      </ModalSheetFrame>
+    );
+    const view = await render(frame(true));
+    await fireEvent(view.getByTestId('composer-modal-keyboard-host'), 'imeInsets', { nativeEvent: { bottom: 336 } });
+    await view.rerender(frame(false));
+    await view.rerender(frame(true));
+    const padding = [...mockInsetStyles]
+      .map((read) => read())
+      .findLast((style) => typeof style.paddingBottom === 'number');
+    expect(padding?.paddingBottom).toBe(0);
+  });
 });

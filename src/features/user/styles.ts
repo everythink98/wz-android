@@ -1,18 +1,22 @@
 import { StyleSheet } from 'react-native';
 import {
   createReaderFontSizer,
+  createUiFontSizer,
   readerRadii,
   type ReaderStyleSettings,
   type ReaderTheme,
-  fontFamilyValue
+  fontFamilyValue,
+  textSizeStyle,
+  topicListSpacing
 } from '@/ui/theme/tokens';
 
 export function createUserStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontSize = createReaderFontSizer(settings);
-  const listFontScale = Math.max(0.9, Math.min(settings.fontScale, 1.08) * 0.96);
-  const densityPadding = settings.listDensity === 'compact' ? 11 : settings.listDensity === 'loose' ? 16 : 14;
+  const densityPadding = topicListSpacing[settings.listDensity].padding;
   const appFontFamily = fontFamilyValue(settings.fontFamily);
   const topicRowBackground = theme.surface;
+  const uiFontSize = createUiFontSizer(settings);
+  const uiFontFamily = fontFamilyValue(settings.uiFontFamily);
   return StyleSheet.create({
     actions: {
       alignItems: 'center',
@@ -25,17 +29,15 @@ export function createUserStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     articleTitle: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: fontSize(20),
-      fontWeight: '700',
-      lineHeight: fontSize(28)
+      ...textSizeStyle(fontSize(20), fontSize(28)),
+      fontWeight: '700'
     },
     cardTitle: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: Math.round(17 * listFontScale),
+      ...textSizeStyle(fontSize(16), fontSize(23)),
       fontWeight: '500',
-      letterSpacing: 0,
-      lineHeight: Math.round(24 * listFontScale)
+      letterSpacing: 0
     },
     content: {
       flex: 1
@@ -50,21 +52,18 @@ export function createUserStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     },
     errorText: {
       color: theme.danger,
-      fontFamily: appFontFamily,
-      fontSize: fontSize(13),
-      lineHeight: fontSize(19)
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(13), uiFontSize(19))
     },
     excerpt: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: fontSize(12),
-      lineHeight: fontSize(18)
+      ...textSizeStyle(fontSize(12), fontSize(18))
     },
     meta: {
       color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: fontSize(12),
-      lineHeight: fontSize(18)
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(12), uiFontSize(18))
     },
     bioSection: {
       gap: 4
@@ -76,8 +75,7 @@ export function createUserStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     bio: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: fontSize(14),
-      lineHeight: fontSize(21)
+      ...textSizeStyle(fontSize(14), fontSize(21))
     },
     bioMeasure: {
       position: 'absolute',
@@ -97,8 +95,8 @@ export function createUserStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     },
     bioToggleText: {
       color: theme.dark ? theme.primary : theme.primaryStrong,
-      fontFamily: appFontFamily,
-      fontSize: fontSize(12),
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(12)),
       fontWeight: '600'
     },
     profileActions: {
@@ -162,8 +160,8 @@ export function createUserStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     },
     activityTabText: {
       color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: fontSize(14),
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(14)),
       fontWeight: '500'
     },
     activityTabTextSelected: {
@@ -181,8 +179,7 @@ export function createUserStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     replyMeta: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: fontSize(12),
-      lineHeight: fontSize(17),
+      ...textSizeStyle(fontSize(12), fontSize(17)),
       fontVariant: ['tabular-nums']
     },
     topicAuthorMeta: {
@@ -216,11 +213,9 @@ export function createUserStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     topicSourceBadge: {
       overflow: 'hidden',
       color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 11,
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(11), uiFontSize(16)),
       fontWeight: '600',
-      includeFontPadding: false,
-      lineHeight: 16,
       backgroundColor: 'transparent',
       borderColor: theme.line,
       borderRadius: readerRadii.badge,
@@ -259,20 +254,20 @@ export function createUserStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     },
     profileStatLabel: {
       color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: fontSize(12),
+      fontFamily: uiFontFamily,
+      fontSize: uiFontSize(12),
       fontWeight: '400',
       includeFontPadding: false,
-      lineHeight: fontSize(18)
+      lineHeight: uiFontSize(18)
     },
     profileStatValue: {
       flexShrink: 1,
       color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: fontSize(16),
+      fontFamily: uiFontFamily,
+      fontSize: uiFontSize(16),
       fontWeight: '700',
       includeFontPadding: false,
-      lineHeight: fontSize(22),
+      lineHeight: uiFontSize(22),
       fontVariant: ['tabular-nums']
     }
   });

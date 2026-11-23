@@ -25,7 +25,8 @@ const theme = {
   primary: '#1267d6',
   primarySoft: '#e8f2ff',
   danger: '#b3261e',
-  fontScale: 1
+  fontScale: 1,
+  uiFontScale: 1
 };
 
 afterEach(async () => {
@@ -115,7 +116,7 @@ describe('composer DOM and bridge pressure', () => {
         payload: { documentEpoch: 7, revision: 0 }
       });
       const richDocument = host.querySelector('.composer-document') as HTMLElement & { editor: Editor };
-      expect(richDocument.querySelectorAll('img')).toHaveLength(images);
+      expect(richDocument.querySelectorAll('img')).toHaveLength(mode === 'rich' ? images : 0);
       const serialization = vi.spyOn(richDocument.editor, 'getMarkdown');
       outgoing.length = 0;
       const durations: number[] = [];
@@ -154,6 +155,12 @@ describe('composer DOM and bridge pressure', () => {
           bridgeBytes: outgoing.reduce((sum, raw) => sum + Buffer.byteLength(raw), 0)
         })
       );
+      if (mode === 'source') {
+        await act(async () => send({ type: 'SET_MODE', payload: { mode: 'rich' } }));
+        expect(Array.from(richDocument.querySelectorAll('img'), (image) => image.getAttribute('src'))).toEqual(
+          Array.from({ length: images }, (_, index) => `https://editor-stress.invalid/image-${index}.png`)
+        );
+      }
     },
     30_000
   );

@@ -24,6 +24,7 @@ export const ReadingSettingsScreen = memo(function ReadingSettingsScreen({
       keyboardShouldPersistTaps="handled"
     >
       <AppearancePanel
+        readingOnly
         settings={settings}
         showSettingsPanel
         styles={styles}

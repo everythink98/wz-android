@@ -12,13 +12,14 @@ let snapshot: ReadNetworkRuntimeSnapshot = {
 };
 
 const listeners = new Set<() => void>();
+const sourceGenerations = new Map<Source, number>();
 
 export function getReadNetworkRuntimeSnapshot() {
   return snapshot;
 }
 
-export function currentReadNetworkRuntimeGeneration() {
-  return snapshot.generation;
+export function currentReadNetworkRuntimeGeneration(source?: Source) {
+  return source ? (sourceGenerations.get(source) ?? 0) : snapshot.generation;
 }
 
 export function publishReadNetworkRuntimeRotation(generation: number, triggerSource: Source) {
@@ -26,6 +27,7 @@ export function publishReadNetworkRuntimeRotation(generation: number, triggerSou
     return snapshot;
   }
   snapshot = { generation, triggerSource };
+  sourceGenerations.set(triggerSource, generation);
   listeners.forEach((listener) => listener());
   return snapshot;
 }
@@ -44,6 +46,6 @@ export function useReadNetworkRuntimeSnapshot() {
 }
 
 export function useReadNetworkRuntimeGeneration(source: Source | null | undefined) {
-  const current = useReadNetworkRuntimeSnapshot();
-  return current.triggerSource === source ? current.generation : 0;
+  const getGeneration = () => (source ? currentReadNetworkRuntimeGeneration(source) : 0);
+  return useSyncExternalStore(subscribeReadNetworkRuntime, getGeneration, getGeneration);
 }

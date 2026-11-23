@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native-paper/lib/module/components/ActivityIndicator.js b/node_modules/react-native-paper/lib/module/components/ActivityIndicator.js
-index 9806da3..0ac0113 100644
+index 9806da3c..8adcda3c 100644
 --- a/node_modules/react-native-paper/lib/module/components/ActivityIndicator.js
 +++ b/node_modules/react-native-paper/lib/module/components/ActivityIndicator.js
 @@ -103,7 +103,7 @@ const ActivityIndicator = ({
@@ -12,10 +12,10 @@ index 9806da3..0ac0113 100644
      accessibilityState: {
        busy: animating
 diff --git a/node_modules/react-native-paper/lib/module/components/Button/Button.js b/node_modules/react-native-paper/lib/module/components/Button/Button.js
-index fd9076c..447c83b 100644
+index fd9076cd..447c83b7 100644
 --- a/node_modules/react-native-paper/lib/module/components/Button/Button.js
 +++ b/node_modules/react-native-paper/lib/module/components/Button/Button.js
-@@ -42,6 +42,7 @@
+@@ -42,6 +42,7 @@ const Button = ({
    accessibilityLabel,
    accessibilityHint,
    accessibilityRole = 'button',
@@ -23,7 +23,7 @@ index fd9076c..447c83b 100644
    hitSlop,
    onPress,
    onPressIn,
-@@ -171,6 +172,7 @@
+@@ -171,6 +172,7 @@ const Button = ({
          borderRadius: touchableStyle.borderRadius
        }]
      }), /*#__PURE__*/_jsx(TouchableRipple, {
@@ -31,7 +31,7 @@ index fd9076c..447c83b 100644
        borderless: true,
        background: background,
        onPress: onPress,
-@@ -182,6 +184,7 @@
+@@ -182,6 +184,7 @@ const Button = ({
        accessibilityHint: accessibilityHint,
        accessibilityRole: accessibilityRole,
        accessibilityState: {
@@ -39,77 +39,458 @@ index fd9076c..447c83b 100644
          disabled
        },
        accessible: accessible,
+diff --git a/node_modules/react-native-paper/lib/module/components/TextInput/TextInput.js b/node_modules/react-native-paper/lib/module/components/TextInput/TextInput.js
+index 92f39712..cd06d578 100644
+--- a/node_modules/react-native-paper/lib/module/components/TextInput/TextInput.js
++++ b/node_modules/react-native-paper/lib/module/components/TextInput/TextInput.js
+@@ -78,6 +78,7 @@ function TextInput(props) {
+     input,
+     isDisabled,
+     isEditable,
++    isRTL,
+     hasPrefix,
+     hasSuffix,
+     hasCounter,
+@@ -87,9 +88,11 @@ function TextInput(props) {
+     fieldStyles,
+     disabledBackgroundStyles,
+     outlineStyles,
++    onFieldLayout,
++    onLabelLayout,
+     animatedActiveOutlineStyles,
+     animatedLabelWrapperStyles,
+-    animatedLabelTextStyles,
++    labelTextStyles,
+     animatedContainerStyle,
+     containerStyles,
+     inputStyles,
+@@ -116,6 +119,7 @@ function TextInput(props) {
+     role: "none",
+     children: [/*#__PURE__*/_jsxs(View, {
+       style: fieldStyles,
++      onLayout: onFieldLayout,
+       children: [!!disabledBackgroundStyles && /*#__PURE__*/_jsx(View, {
+         style: disabledBackgroundStyles
+       }), /*#__PURE__*/_jsx(View, {
+@@ -124,9 +128,16 @@ function TextInput(props) {
+         style: animatedActiveOutlineStyles
+       }), !!label && /*#__PURE__*/_jsx(Animated.View, {
+         "aria-hidden": true,
+-        style: animatedLabelWrapperStyles,
+-        children: /*#__PURE__*/_jsx(Animated.Text, {
+-          style: animatedLabelTextStyles,
++        style: [animatedLabelWrapperStyles, {
++          top: 0,
++          transformOrigin: isRTL ? 'right top' : 'left top'
++        }],
++        children: /*#__PURE__*/_jsx(Text, {
++          style: labelTextStyles,
++          numberOfLines: 1,
++          onLayout: onLabelLayout,
++          allowFontScaling: textInputProps.allowFontScaling,
++          maxFontSizeMultiplier: textInputProps.maxFontSizeMultiplier,
+           children: label
+         })
+       }), renderLeadingAccessory ? renderLeadingAccessory({
+diff --git a/node_modules/react-native-paper/lib/module/components/TextInput/constants.js b/node_modules/react-native-paper/lib/module/components/TextInput/constants.js
+index 81df454f..3106c7c9 100644
+--- a/node_modules/react-native-paper/lib/module/components/TextInput/constants.js
++++ b/node_modules/react-native-paper/lib/module/components/TextInput/constants.js
+@@ -5,8 +5,6 @@ import { Easing } from 'react-native-reanimated';
+ import { tokens } from '../../theme/tokens';
+ import { motionDuration, motionEasing } from '../../theme/tokens/sys/motion';
+ import { defaultShapes } from '../../theme/tokens/sys/shape';
+-export const fontScale = PixelRatio.getFontScale();
+-
+ /**
+  * Common constants for the text input component.
+  */
+@@ -15,8 +13,6 @@ export const BASELINE_TEXT_INPUT_HEIGHT = 56;
+ export const BASELINE_TEXT_INPUT_PADDING_VERTICAL = 8;
+ export const TEXT_INPUT_INPUT_WRAPPER_PADDING_HORIZONTAL = 16;
+ export const TEXT_INPUT_ACCESSORY_MARGIN_HORIZONTAL = 12;
+-export const TEXT_INPUT_HEIGHT = Math.ceil(BASELINE_TEXT_INPUT_HEIGHT * fontScale);
+-export const TEXT_INPUT_PADDING_VERTICAL = Math.ceil(BASELINE_TEXT_INPUT_PADDING_VERTICAL * fontScale);
+ export const TEXT_INPUT_BORDER_RADIUS = defaultShapes.corner.extraSmall;
+ export const LABEL_START_OFFSET_WITHOUT_ACCESSORY = TEXT_INPUT_INPUT_WRAPPER_PADDING_HORIZONTAL;
+ export const ACCESSORY_SIZE = 24;
+@@ -26,6 +22,7 @@ export const ERROR_ICON_SIZE = 16;
+ export const INPUT_FONT_SIZE = tokens.md.sys.typescale.bodyLarge.fontSize;
+ export const ACTIVE_LABEL_FONT_SIZE = tokens.md.sys.typescale.bodySmall.fontSize;
+ export const INACTIVE_LABEL_FONT_SIZE = INPUT_FONT_SIZE;
++export const FLOATING_LABEL_SCALE = ACTIVE_LABEL_FONT_SIZE / INACTIVE_LABEL_FONT_SIZE;
+ export const SUPPORTING_TEXT_FONT_SIZE = tokens.md.sys.typescale.bodySmall.fontSize;
+ export const SUPPORTING_TEXT_MARGIN_TOP = 4;
+ export const ANIMATION_DURATION_MS = motionDuration.short3;
+@@ -42,23 +39,30 @@ export const TIMING_CONFIG = {
+ 
+ const FILLED_LINE_HEIGHT_DELTA = 3;
+ export const FILLED_LABEL_START_OFFSET_WITH_ACCESSORY = ACCESSORY_SIZE + TEXT_INPUT_ACCESSORY_MARGIN_HORIZONTAL + TEXT_INPUT_INPUT_WRAPPER_PADDING_HORIZONTAL;
+-export const FILLED_ACTIVE_LABEL_TOP_POSITION = TEXT_INPUT_PADDING_VERTICAL;
+-export const FILLED_INACTIVE_LABEL_TOP_POSITION = Math.ceil(((BASELINE_TEXT_INPUT_HEIGHT - 2 * BASELINE_TEXT_INPUT_PADDING_VERTICAL - INPUT_FONT_SIZE) / 2 + BASELINE_TEXT_INPUT_PADDING_VERTICAL) * fontScale);
+-export const FILLED_MULTILINE_PADDING_TOP = Math.ceil(ACTIVE_LABEL_FONT_SIZE * fontScale) + TEXT_INPUT_PADDING_VERTICAL;
+ export const FILLED_DISABLED_CONTAINER_OPACITY = 0.04;
+-export const FILLED_PADDING_BOTTOM = TEXT_INPUT_PADDING_VERTICAL + FILLED_LINE_HEIGHT_DELTA;
+-
+ /**
+  * Constants for the outlined variant.
+  */
+ 
+ const OUTLINED_LINE_HEIGHT_DELTA = 2;
+ export const OUTLINED_DISABLED_OUTLINE_OPACITY = 0.12;
+-export const OUTLINED_MULTILINE_PADDING_TOP = Math.ceil(((BASELINE_TEXT_INPUT_HEIGHT - 2 * BASELINE_TEXT_INPUT_PADDING_VERTICAL - INPUT_FONT_SIZE) / 2 - OUTLINED_LINE_HEIGHT_DELTA) * fontScale);
+ export const OUTLINED_LABEL_PADDING_HORIZONTAL = 4;
+ export const OUTLINED_LABEL_START_OFFSET_WITH_ACCESSORY = ACCESSORY_SIZE + TEXT_INPUT_ACCESSORY_MARGIN_HORIZONTAL + TEXT_INPUT_INPUT_WRAPPER_PADDING_HORIZONTAL - OUTLINED_LABEL_PADDING_HORIZONTAL;
+-export const OUTLINED_ACTIVE_LABEL_TOP_POSITION = Math.ceil((-BASELINE_TEXT_INPUT_PADDING_VERTICAL + OUTLINED_LINE_HEIGHT_DELTA) * fontScale);
+-export const OUTLINED_INACTIVE_LABEL_TOP_POSITION = Math.ceil(((BASELINE_TEXT_INPUT_HEIGHT - 2 * BASELINE_TEXT_INPUT_PADDING_VERTICAL - INPUT_FONT_SIZE) / 2 + BASELINE_TEXT_INPUT_PADDING_VERTICAL - OUTLINED_LINE_HEIGHT_DELTA) * fontScale);
++export function getTextInputMetrics(fontScale, labelFontSize) {
++  const minHeight = Math.ceil(BASELINE_TEXT_INPUT_HEIGHT * fontScale);
++  const paddingVertical = Math.ceil(BASELINE_TEXT_INPUT_PADDING_VERTICAL * fontScale);
++  const floatingLabelSize = labelFontSize * FLOATING_LABEL_SCALE;
++  return {
++    minHeight,
++    paddingVertical,
++    filledPaddingBottom: paddingVertical + FILLED_LINE_HEIGHT_DELTA,
++    filledMultilinePaddingTop: Math.ceil(floatingLabelSize * fontScale) + paddingVertical,
++    outlinedMultilinePaddingTop: Math.ceil(
++      ((BASELINE_TEXT_INPUT_HEIGHT - 2 * BASELINE_TEXT_INPUT_PADDING_VERTICAL - INPUT_FONT_SIZE) / 2 -
++        OUTLINED_LINE_HEIGHT_DELTA) * fontScale
++    ),
++  };
++}
+ 
+ /** Positive distance; apply sign in animation using `isRTL` from `useLocale`. */
+ export const OUTLINED_LABEL_TRANSLATE_DISTANCE_WITH_ACCESSORY = ACCESSORY_SIZE + TEXT_INPUT_INPUT_WRAPPER_PADDING_HORIZONTAL - OUTLINED_LABEL_PADDING_HORIZONTAL;
 diff --git a/node_modules/react-native-paper/lib/module/components/TextInput/hooks.js b/node_modules/react-native-paper/lib/module/components/TextInput/hooks.js
-index 6451e70..1083ffc 100644
+index 6451e70a..dcce2291 100644
 --- a/node_modules/react-native-paper/lib/module/components/TextInput/hooks.js
 +++ b/node_modules/react-native-paper/lib/module/components/TextInput/hooks.js
 @@ -1,8 +1,9 @@
  "use strict";
  
  import { useEffect, useImperativeHandle, useRef, useState } from 'react';
-+import { StyleSheet } from 'react-native';
++import { StyleSheet, useWindowDimensions } from 'react-native';
  import { interpolate, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 -import { ACTIVE_LABEL_FONT_SIZE, INACTIVE_LABEL_FONT_SIZE, TIMING_CONFIG } from './constants';
-+import { ACTIVE_LABEL_FONT_SIZE, fontScale, INACTIVE_LABEL_FONT_SIZE, TIMING_CONFIG } from './constants';
++import { FLOATING_LABEL_SCALE, getTextInputMetrics, TIMING_CONFIG } from './constants';
  import { getAccentColors, getAccessibilityData, getFilledTextInputData, getOutlinedTextInputData, getTextInputAnimationLayout } from './utils';
  import { useLocale } from '../../core/locale';
  import { useInternalTheme } from '../../core/theming';
-@@ -11,9 +12,12 @@ const useTextInputAnimation = ({
+@@ -11,20 +12,25 @@ const useTextInputAnimation = ({
    isRTL,
    hasAccessory,
    value,
 -  defaultValue
 +  defaultValue,
-+  style
++  fontSize,
++  fontScale,
++  multiline,
++  metrics,
  }) => {
    const initialText = value ?? defaultValue ?? '';
-+  const { fontFamily, fontSize = INACTIVE_LABEL_FONT_SIZE } = StyleSheet.flatten(style) ?? {};
-+  const labelScale = fontSize / INACTIVE_LABEL_FONT_SIZE;
    const focusSV = useSharedValue(0);
    const floatSV = useSharedValue(initialText.length > 0 ? 1 : 0);
-   const {
-@@ -39,7 +43,7 @@ const useTextInputAnimation = ({
+-  const {
+-    activeTop,
+-    inactiveTop,
+-    translateXEnd
+-  } = getTextInputAnimationLayout({
+-    variant,
+-    hasAccessory,
+-    isRTL
+-  });
++  const translateXEnd = variant === 'outlined' ? getTextInputAnimationLayout({ hasAccessory, isRTL }) : 0;
++  const measuredLabelHeight = useSharedValue(0);
++  const measuredFieldHeight = useSharedValue(0);
++  const onLabelLayout = ({ nativeEvent }) => {
++    measuredLabelHeight.value = nativeEvent.layout.height;
++  };
++  const onFieldLayout = ({ nativeEvent }) => {
++    measuredFieldHeight.value = nativeEvent.layout.height;
++  };
++
+   const runFocusAnimation = hasText => {
+     focusSV.value = withTiming(1, TIMING_CONFIG);
+     if (!hasText) {
+@@ -39,22 +45,22 @@ const useTextInputAnimation = ({
      floatSV.value = withTiming(hasText ? 1 : 0, TIMING_CONFIG);
    };
    const animatedLabelWrapperStyle = useAnimatedStyle(() => {
 -    const top = interpolate(floatSV.value, [0, 1], [inactiveTop, activeTop]);
-+    const top = interpolate(floatSV.value, [0, 1], [inactiveTop - (fontSize - INACTIVE_LABEL_FONT_SIZE) * fontScale / 2, variant === 'outlined' ? activeTop * labelScale : activeTop]);
-     if (variant === 'filled') {
-       return {
-         top
-@@ -53,7 +57,8 @@ const useTextInputAnimation = ({
+-    if (variant === 'filled') {
+-      return {
+-        top
+-      };
+-    }
++    // Keep the native Text measurement at full size and transform the label and its background together.
++    const labelHeight = measuredLabelHeight.value || fontSize * fontScale;
++    const fieldHeight = measuredFieldHeight.value || metrics.minHeight;
++    const inactiveTop = ((multiline ? metrics.minHeight : fieldHeight) - labelHeight) / 2;
++    const activeTop = variant === 'outlined' ? -(labelHeight * FLOATING_LABEL_SCALE) / 2 : metrics.paddingVertical;
++    const progress = floatSV.value;
+     return {
+-      top,
+       transform: [{
+-        translateX: interpolate(floatSV.value, [0, 1], [0, translateXEnd])
++        translateX: interpolate(progress, [0, 1], [0, translateXEnd])
++      }, {
++        translateY: interpolate(progress, [0, 1], [inactiveTop, activeTop])
++      }, {
++        scale: interpolate(progress, [0, 1], [1, FLOATING_LABEL_SCALE])
+       }]
      };
    });
-   const animatedLabelTextStyle = useAnimatedStyle(() => ({
+-  const animatedLabelTextStyle = useAnimatedStyle(() => ({
 -    fontSize: interpolate(floatSV.value, [0, 1], [INACTIVE_LABEL_FONT_SIZE, ACTIVE_LABEL_FONT_SIZE])
-+    fontFamily,
-+    fontSize: interpolate(floatSV.value, [0, 1], [fontSize, ACTIVE_LABEL_FONT_SIZE * labelScale])
-   }));
+-  }));
    const animatedContainerStyle = useAnimatedStyle(() => ({
      opacity: floatSV.value
-@@ -231,7 +236,8 @@ export const useTextInput = props => {
+   }));
+@@ -65,12 +71,13 @@ const useTextInputAnimation = ({
+   }));
+   return {
+     animatedLabelWrapperStyle,
+-    animatedLabelTextStyle,
+     animatedContainerStyle,
+     animatedActiveOutlineStyle: variant === 'filled' ? animatedActiveOutlineStyle : undefined,
+     runFocusAnimation,
+     runBlurAnimation,
+-    syncFloatToValue
++    syncFloatToValue,
++    onFieldLayout,
++    onLabelLayout
+   };
+ };
+ const useTextInputInput = props => {
+@@ -154,7 +161,9 @@ const useTextInputLayout = ({
+   theme,
+   flags,
+   isFocused,
+-  animation
++  animation,
++  labelTextStyle,
++  metrics,
+ }) => {
+   const {
+     isRTL,
+@@ -165,7 +174,6 @@ const useTextInputLayout = ({
+   } = flags;
+   const {
+     animatedLabelWrapperStyle,
+-    animatedLabelTextStyle,
+     animatedActiveOutlineStyle
+   } = animation;
+   const {
+@@ -184,8 +192,9 @@ const useTextInputLayout = ({
+     hasError,
+     hasSuffix,
+     animatedLabelWrapperStyle,
+-    animatedLabelTextStyle,
+-    animatedActiveOutlineStyle
++    labelTextStyle,
++    animatedActiveOutlineStyle,
++    metrics
+   }, props) : getOutlinedTextInputData({
+     input,
+     theme,
+@@ -196,8 +205,9 @@ const useTextInputLayout = ({
+     hasError,
+     hasSuffix,
+     animatedLabelWrapperStyle,
+-    animatedLabelTextStyle,
+-    animatedActiveOutlineStyle
++    labelTextStyle,
++    animatedActiveOutlineStyle,
++    metrics
+   }, props);
+   void _input;
+   void _isDisabled;
+@@ -226,12 +236,25 @@ export const useTextInput = props => {
+     getHasText,
+     onChangeText
+   } = useTextInputInput(props);
++  const { fontScale: systemFontScale } = useWindowDimensions();
++  const { maxFontSizeMultiplier, allowFontScaling } = props;
++  const fontScale = allowFontScaling === false ? 1 :
++    maxFontSizeMultiplier ? Math.min(systemFontScale, maxFontSizeMultiplier) : systemFontScale;
++  const {
++    fontFamily = theme.fonts.bodyLarge.fontFamily,
++    fontSize = theme.fonts.bodyLarge.fontSize,
++  } = StyleSheet.flatten(props.style) ?? {};
++  const metrics = getTextInputMetrics(fontScale, fontSize);
+   const animation = useTextInputAnimation({
+     variant,
      isRTL,
      hasAccessory,
      value: props.value,
 -    defaultValue: props.defaultValue
 +    defaultValue: props.defaultValue,
-+    style: props.style
++    fontSize,
++    fontScale,
++    multiline: props.multiline,
++    metrics,
    });
    const {
      isFocused,
+@@ -290,8 +313,11 @@ export const useTextInput = props => {
+     theme,
+     flags,
+     isFocused,
+-    animation
++    animation,
++    labelTextStyle: { fontFamily, fontSize },
++    metrics,
+   });
++
+   const accessibilityProps = getAccessibilityData({
+     hasError: flags.hasError,
+     hasCounter: flags.hasCounter,
+@@ -318,6 +344,8 @@ export const useTextInput = props => {
+     cursorColor,
+     animatedActiveOutlineStyles: undefined,
+     animatedContainerStyle: animation.animatedContainerStyle,
++    onFieldLayout: animation.onFieldLayout,
++    onLabelLayout: animation.onLabelLayout,
+     placeholder,
+     counterText,
+     accessibilityProps,
+diff --git a/node_modules/react-native-paper/lib/module/components/TextInput/styles.js b/node_modules/react-native-paper/lib/module/components/TextInput/styles.js
+index 4ba6b550..0a6f7113 100644
+--- a/node_modules/react-native-paper/lib/module/components/TextInput/styles.js
++++ b/node_modules/react-native-paper/lib/module/components/TextInput/styles.js
+@@ -1,7 +1,7 @@
+ "use strict";
+ 
+ import { StyleSheet } from 'react-native';
+-import { ACCESSORY_SIZE, FILLED_DISABLED_CONTAINER_OPACITY, OUTLINED_LABEL_PADDING_HORIZONTAL, SUPPORTING_TEXT_FONT_SIZE, SUPPORTING_TEXT_MARGIN_TOP, TEXT_INPUT_ACCESSORY_MARGIN_HORIZONTAL, TEXT_INPUT_BORDER_RADIUS, TEXT_INPUT_HEIGHT, TEXT_INPUT_INPUT_WRAPPER_PADDING_HORIZONTAL, TEXT_INPUT_PADDING_VERTICAL } from './constants';
++import { ACCESSORY_SIZE, FILLED_DISABLED_CONTAINER_OPACITY, OUTLINED_LABEL_PADDING_HORIZONTAL, SUPPORTING_TEXT_FONT_SIZE, SUPPORTING_TEXT_MARGIN_TOP, TEXT_INPUT_ACCESSORY_MARGIN_HORIZONTAL, TEXT_INPUT_BORDER_RADIUS, TEXT_INPUT_INPUT_WRAPPER_PADDING_HORIZONTAL } from './constants';
+ import { tokens } from '../../theme/tokens';
+ const {
+   bodyLarge,
+@@ -15,9 +15,7 @@ export const styles = StyleSheet.create({
+     fontWeight: bodyLarge.fontWeight
+   },
+   field: {
+-    flexDirection: 'row',
+-    minHeight: TEXT_INPUT_HEIGHT,
+-    paddingVertical: TEXT_INPUT_PADDING_VERTICAL
++    flexDirection: 'row'
+   },
+   addendum: {
+     flexDirection: 'row'
 diff --git a/node_modules/react-native-paper/lib/module/components/TextInput/utils.js b/node_modules/react-native-paper/lib/module/components/TextInput/utils.js
-index d003754..9c8a4d5 100644
+index d003754d..cc8ecdde 100644
 --- a/node_modules/react-native-paper/lib/module/components/TextInput/utils.js
 +++ b/node_modules/react-native-paper/lib/module/components/TextInput/utils.js
-@@ -1,6 +1,6 @@
+@@ -1,22 +1,15 @@
  "use strict";
  
 -import { Platform } from 'react-native';
+-import { ACTIVE_INDICATOR_SIZE, FILLED_ACTIVE_LABEL_TOP_POSITION, FILLED_INACTIVE_LABEL_TOP_POSITION, FILLED_LABEL_START_OFFSET_WITH_ACCESSORY, FILLED_MULTILINE_PADDING_TOP, INACTIVE_INDICATOR_SIZE, INPUT_FONT_SIZE, LABEL_START_OFFSET_WITHOUT_ACCESSORY, OUTLINED_ACTIVE_LABEL_TOP_POSITION, OUTLINED_DISABLED_OUTLINE_OPACITY, OUTLINED_INACTIVE_LABEL_TOP_POSITION, OUTLINED_LABEL_START_OFFSET_WITH_ACCESSORY, OUTLINED_LABEL_TRANSLATE_DISTANCE_WITHOUT_ACCESSORY, OUTLINED_LABEL_TRANSLATE_DISTANCE_WITH_ACCESSORY, OUTLINED_MULTILINE_PADDING_TOP, PREFIX_END_PADDING, SUFFIX_START_PADDING, TEXT_INPUT_BORDER_RADIUS, FILLED_PADDING_BOTTOM } from './constants';
 +import { Platform, StyleSheet } from 'react-native';
- import { ACTIVE_INDICATOR_SIZE, FILLED_ACTIVE_LABEL_TOP_POSITION, FILLED_INACTIVE_LABEL_TOP_POSITION, FILLED_LABEL_START_OFFSET_WITH_ACCESSORY, FILLED_MULTILINE_PADDING_TOP, INACTIVE_INDICATOR_SIZE, INPUT_FONT_SIZE, LABEL_START_OFFSET_WITHOUT_ACCESSORY, OUTLINED_ACTIVE_LABEL_TOP_POSITION, OUTLINED_DISABLED_OUTLINE_OPACITY, OUTLINED_INACTIVE_LABEL_TOP_POSITION, OUTLINED_LABEL_START_OFFSET_WITH_ACCESSORY, OUTLINED_LABEL_TRANSLATE_DISTANCE_WITHOUT_ACCESSORY, OUTLINED_LABEL_TRANSLATE_DISTANCE_WITH_ACCESSORY, OUTLINED_MULTILINE_PADDING_TOP, PREFIX_END_PADDING, SUFFIX_START_PADDING, TEXT_INPUT_BORDER_RADIUS, FILLED_PADDING_BOTTOM } from './constants';
++import { ACTIVE_INDICATOR_SIZE, FILLED_LABEL_START_OFFSET_WITH_ACCESSORY, INACTIVE_INDICATOR_SIZE, LABEL_START_OFFSET_WITHOUT_ACCESSORY, OUTLINED_DISABLED_OUTLINE_OPACITY, OUTLINED_LABEL_START_OFFSET_WITH_ACCESSORY, OUTLINED_LABEL_TRANSLATE_DISTANCE_WITHOUT_ACCESSORY, OUTLINED_LABEL_TRANSLATE_DISTANCE_WITH_ACCESSORY, PREFIX_END_PADDING, SUFFIX_START_PADDING, TEXT_INPUT_BORDER_RADIUS } from './constants';
  import { filledStyles, outlinedStyles, styles } from './styles';
  export const getTextInputAnimationLayout = ({
-@@ -312,6 +312,7 @@ export const getOutlinedTextInputData = (api, props) => {
+-  variant,
+   hasAccessory,
+   isRTL
+ }) => {
+-  const activeTop = variant === 'filled' ? FILLED_ACTIVE_LABEL_TOP_POSITION : OUTLINED_ACTIVE_LABEL_TOP_POSITION;
+-  const inactiveTop = variant === 'filled' ? FILLED_INACTIVE_LABEL_TOP_POSITION : OUTLINED_INACTIVE_LABEL_TOP_POSITION;
+   const distance = hasAccessory ? OUTLINED_LABEL_TRANSLATE_DISTANCE_WITH_ACCESSORY : OUTLINED_LABEL_TRANSLATE_DISTANCE_WITHOUT_ACCESSORY;
+   const translateXEnd = (isRTL ? 1 : -1) * distance;
+-  return {
+-    activeTop,
+-    inactiveTop,
+-    translateXEnd
+-  };
++  return translateXEnd;
+ };
+ export const getAccentColors = ({
+   theme,
+@@ -149,7 +142,7 @@ export const getSharedTextInputStyleData = api => {
+     hasError,
+     isFocused,
+     isRTL,
+-    animatedLabelTextStyle
++    labelTextStyle
+   } = api;
+   const labelColor = getLabelColor({
+     theme,
+@@ -167,24 +160,26 @@ export const getSharedTextInputStyleData = api => {
+       onSurfaceVariant
+     }
+   } = theme;
+-  const animatedLabelTextStyles = [styles.input, {
++  const labelTextStyles = [styles.input, {
+     color: labelColor
+-  }, animatedLabelTextStyle, isDisabled && styles.disabled];
+-  const supportingTextStyles = [styles.supportingText, {
++  }, labelTextStyle, isDisabled && styles.disabled];
++  const supportingTextStyles = [styles.supportingText, theme.fonts.bodySmall, {
+     color: supportingTextColor,
+     writingDirection: isRTL ? 'rtl' : 'ltr'
+   }, isDisabled && styles.disabled];
+-  const counterStyles = [styles.counter, {
++  const counterStyles = [styles.counter, theme.fonts.bodySmall, {
+     color: supportingTextColor,
+     writingDirection: isRTL ? 'rtl' : 'ltr'
+   }, isDisabled && styles.disabled];
+   const prefixStyles = [styles.input, {
+-    fontSize: INPUT_FONT_SIZE,
++    fontFamily: theme.fonts.bodyLarge.fontFamily,
++      fontSize: theme.fonts.bodyLarge.fontSize,
+     color: onSurfaceVariant,
+     paddingEnd: PREFIX_END_PADDING
+   }, isDisabled && styles.disabled];
+   const suffixStyles = [styles.input, {
+-    fontSize: INPUT_FONT_SIZE,
++    fontFamily: theme.fonts.bodyLarge.fontFamily,
++      fontSize: theme.fonts.bodyLarge.fontSize,
+     color: onSurfaceVariant,
+     paddingStart: SUFFIX_START_PADDING
+   }, isDisabled && styles.disabled];
+@@ -192,7 +187,7 @@ export const getSharedTextInputStyleData = api => {
+   const trailingAccessoryStyles = [styles.trailingAccessory, isDisabled && styles.disabled];
+   return {
+     isRTL,
+-    animatedLabelTextStyles,
++    labelTextStyles,
+     supportingTextStyles,
+     counterStyles,
+     prefixStyles,
+@@ -253,11 +248,11 @@ export const getFilledTextInputData = (api, props) => {
+    */
+ 
+   const animatedLabelWrapperStyles = [filledStyles.labelWrapper, {
+-    left: hasAccessory ? FILLED_LABEL_START_OFFSET_WITH_ACCESSORY : LABEL_START_OFFSET_WITHOUT_ACCESSORY
++    start: hasAccessory ? FILLED_LABEL_START_OFFSET_WITH_ACCESSORY : LABEL_START_OFFSET_WITHOUT_ACCESSORY
+   }, animatedLabelWrapperStyle];
+   const containerStyles = [filledStyles.container, isDisabled && styles.disabled];
+-  const fieldStyles = [styles.field, {
+-    paddingBottom: FILLED_PADDING_BOTTOM,
++  const fieldStyles = [styles.field, { minHeight: api.metrics.minHeight, paddingVertical: api.metrics.paddingVertical }, {
++    paddingBottom: api.metrics.filledPaddingBottom,
+     backgroundColor: fieldBackgroundColor,
+     borderTopStartRadius: TEXT_INPUT_BORDER_RADIUS,
+     borderTopEndRadius: TEXT_INPUT_BORDER_RADIUS,
+@@ -281,12 +276,13 @@ export const getFilledTextInputData = (api, props) => {
+   const inputStyles = [styles.input, {
+     flex: 1,
+     color: onSurface,
+-    fontSize: INPUT_FONT_SIZE,
++    fontFamily: theme.fonts.bodyLarge.fontFamily,
++      fontSize: theme.fonts.bodyLarge.fontSize,
+     textAlign: hasSuffix === shared.isRTL ? 'left' : 'right',
+     writingDirection: shared.isRTL ? 'rtl' : 'ltr'
+   }, textInputProps.multiline && {
+     height: 'auto',
+-    paddingTop: FILLED_MULTILINE_PADDING_TOP
++    paddingTop: api.metrics.filledMultilinePaddingTop
+   },
+   //@ts-expect-error - RN’s defs are narrower than CSS and RNW does not ship TS extensions that fix that
+   Platform.OS === 'web' && {
+@@ -312,6 +308,7 @@ export const getOutlinedTextInputData = (api, props) => {
      style: inputStyleOverride,
      ...textInputProps
    } = props;
@@ -117,16 +498,18 @@ index d003754..9c8a4d5 100644
    const {
      input,
      theme,
-@@ -352,7 +353,7 @@ export const getOutlinedTextInputData = (api, props) => {
+@@ -351,8 +348,8 @@ export const getOutlinedTextInputData = (api, props) => {
+    */
  
    const containerStyles = [outlinedStyles.container, isDisabled && styles.disabled];
-   const fieldStyles = [styles.field, {
+-  const fieldStyles = [styles.field, {
 -    borderRadius: TEXT_INPUT_BORDER_RADIUS
++  const fieldStyles = [styles.field, { minHeight: api.metrics.minHeight, paddingVertical: api.metrics.paddingVertical }, {
 +    borderRadius
    }, textInputProps.multiline && {
      alignItems: 'flex-start'
    }];
-@@ -361,6 +362,7 @@ export const getOutlinedTextInputData = (api, props) => {
+@@ -361,25 +358,27 @@ export const getOutlinedTextInputData = (api, props) => {
       `opacity` here is safe and lets us pass `outlineColor` through unchanged
       (including PlatformColor values on Android). */
    const outlineStyles = [outlinedStyles.outline, {
@@ -134,8 +517,31 @@ index d003754..9c8a4d5 100644
      borderWidth: isFocused ? 2 : 1,
      borderColor: outlineColor
    }, isDisabled && {
+     opacity: OUTLINED_DISABLED_OUTLINE_OPACITY
+   }];
+   const animatedLabelWrapperStyles = [outlinedStyles.labelWrapper, {
+-    left: hasAccessory ? OUTLINED_LABEL_START_OFFSET_WITH_ACCESSORY : LABEL_START_OFFSET_WITHOUT_ACCESSORY,
++    start: hasAccessory ? OUTLINED_LABEL_START_OFFSET_WITH_ACCESSORY : LABEL_START_OFFSET_WITHOUT_ACCESSORY,
+     backgroundColor: labelBackgroundColor
+   }, animatedLabelWrapperStyle];
+   const inputStyles = [styles.input, {
+     flex: 1,
+     color: onSurface,
+-    fontSize: INPUT_FONT_SIZE,
++    fontFamily: theme.fonts.bodyLarge.fontFamily,
++      fontSize: theme.fonts.bodyLarge.fontSize,
+     textAlign: hasSuffix === shared.isRTL ? 'left' : 'right',
+     writingDirection: shared.isRTL ? 'rtl' : 'ltr'
+   }, textInputProps.multiline && {
+     height: 'auto',
+     textAlignVertical: 'top',
+-    paddingTop: OUTLINED_MULTILINE_PADDING_TOP
++    paddingTop: api.metrics.outlinedMultilinePaddingTop
+   },
+   //@ts-expect-error - RN’s defs are narrower than CSS and RNW does not ship TS extensions that fix that
+   Platform.OS === 'web' && {
 diff --git a/node_modules/react-native-paper/src/components/ActivityIndicator.tsx b/node_modules/react-native-paper/src/components/ActivityIndicator.tsx
-index 9436979..c4e32c8 100644
+index 94369792..c4e32c88 100644
 --- a/node_modules/react-native-paper/src/components/ActivityIndicator.tsx
 +++ b/node_modules/react-native-paper/src/components/ActivityIndicator.tsx
 @@ -145,7 +145,7 @@ const ActivityIndicator = ({
@@ -148,10 +554,10 @@ index 9436979..c4e32c8 100644
        accessibilityState={{ busy: animating }}
      >
 diff --git a/node_modules/react-native-paper/src/components/Button/Button.tsx b/node_modules/react-native-paper/src/components/Button/Button.tsx
-index b2a1a21..d1999b0 100644
+index b2a1a21f..d1999b0a 100644
 --- a/node_modules/react-native-paper/src/components/Button/Button.tsx
 +++ b/node_modules/react-native-paper/src/components/Button/Button.tsx
-@@ -172,6 +172,7 @@
+@@ -172,6 +172,7 @@ const Button = ({
    accessibilityLabel,
    accessibilityHint,
    accessibilityRole = 'button',
@@ -159,7 +565,7 @@ index b2a1a21..d1999b0 100644
    hitSlop,
    onPress,
    onPressIn,
-@@ -345,6 +346,7 @@
+@@ -345,6 +346,7 @@ const Button = ({
          />
        )}
        <TouchableRipple
@@ -167,7 +573,7 @@ index b2a1a21..d1999b0 100644
          borderless
          background={background}
          onPress={onPress}
-@@ -355,7 +357,7 @@
+@@ -355,7 +357,7 @@ const Button = ({
          accessibilityLabel={accessibilityLabel}
          accessibilityHint={accessibilityHint}
          accessibilityRole={accessibilityRole}
@@ -176,90 +582,678 @@ index b2a1a21..d1999b0 100644
          accessible={accessible}
          hitSlop={hitSlop}
          disabled={disabled}
+diff --git a/node_modules/react-native-paper/src/components/TextInput/TextInput.tsx b/node_modules/react-native-paper/src/components/TextInput/TextInput.tsx
+index 806dd458..c770464c 100644
+--- a/node_modules/react-native-paper/src/components/TextInput/TextInput.tsx
++++ b/node_modules/react-native-paper/src/components/TextInput/TextInput.tsx
+@@ -11,6 +11,7 @@ import type {
+   BlurEvent,
+   ColorValue,
+   FocusEvent,
++  LayoutChangeEvent,
+   StyleProp,
+   TextStyle,
+   ViewStyle,
+@@ -20,6 +21,7 @@ import Animated from 'react-native-reanimated';
+ import type { AnimatedStyle } from 'react-native-reanimated';
+ 
+ import { useTextInput } from './hooks';
++import type { getTextInputMetrics } from './constants';
+ import { styles } from './styles';
+ import TextInputErrorIcon from './TextInputErrorIcon';
+ import type { TextInputAccessoryProps } from './TextInputIcon';
+@@ -27,7 +29,6 @@ import type { InternalTheme, ThemeProp } from '../../types';
+ 
+ export type TextInputAnimationState = {
+   animatedLabelWrapperStyle: StyleProp<AnimatedStyle<StyleProp<ViewStyle>>>;
+-  animatedLabelTextStyle: StyleProp<AnimatedStyle<StyleProp<TextStyle>>>;
+   animatedContainerStyle: StyleProp<AnimatedStyle<StyleProp<ViewStyle>>>;
+   animatedActiveOutlineStyle?: StyleProp<AnimatedStyle<StyleProp<ViewStyle>>>;
+ };
+@@ -36,6 +37,8 @@ export type TextInputAnimationHandlers = {
+   runFocusAnimation: (hasText: boolean) => void;
+   runBlurAnimation: (hasText: boolean) => void;
+   syncFloatToValue: (hasText: boolean) => void;
++  onFieldLayout: (event: LayoutChangeEvent) => void;
++  onLabelLayout: (event: LayoutChangeEvent) => void;
+ };
+ 
+ export type TextInputFlags = {
+@@ -73,6 +76,7 @@ export type GetAccessibilityDataProps = {
+ export type TextInputVariant = 'filled' | 'outlined';
+ 
+ export type TextInputSharedApi = {
++  metrics: ReturnType<typeof getTextInputMetrics>;
+   input: React.RefObject<NativeTextInput | null>;
+   theme: InternalTheme;
+   isFocused: boolean;
+@@ -82,13 +86,13 @@ export type TextInputSharedApi = {
+   hasError: boolean;
+   hasSuffix: boolean;
+   animatedLabelWrapperStyle: StyleProp<AnimatedStyle<StyleProp<ViewStyle>>>;
+-  animatedLabelTextStyle: StyleProp<AnimatedStyle<StyleProp<TextStyle>>>;
++  labelTextStyle: Pick<TextStyle, 'fontFamily' | 'fontSize'>;
+   animatedActiveOutlineStyle?: StyleProp<AnimatedStyle<StyleProp<ViewStyle>>>;
+ };
+ 
+ export type SharedTextInputStyleData = {
+   isRTL: boolean;
+-  animatedLabelTextStyles: StyleProp<AnimatedStyle<StyleProp<TextStyle>>>;
++  labelTextStyles: StyleProp<TextStyle>;
+   supportingTextStyles: StyleProp<TextStyle>;
+   counterStyles: StyleProp<TextStyle>;
+   prefixStyles: StyleProp<TextStyle>;
+@@ -167,6 +171,8 @@ export type TextInputHookReturn = SharedTextInputStyleData & {
+   onFocus: (e: FocusEvent) => void;
+   onBlur: (e: BlurEvent) => void;
+   focusInput: () => void;
++  onFieldLayout: (event: LayoutChangeEvent) => void;
++  onLabelLayout: (event: LayoutChangeEvent) => void;
+ };
+ 
+ export type TextInputRenderProps = React.ComponentPropsWithoutRef<
+@@ -315,6 +321,7 @@ function TextInput(props: TextInputProps) {
+     input,
+     isDisabled,
+     isEditable,
++    isRTL,
+     hasPrefix,
+     hasSuffix,
+     hasCounter,
+@@ -324,9 +331,11 @@ function TextInput(props: TextInputProps) {
+     fieldStyles,
+     disabledBackgroundStyles,
+     outlineStyles,
++    onFieldLayout,
++    onLabelLayout,
+     animatedActiveOutlineStyles,
+     animatedLabelWrapperStyles,
+-    animatedLabelTextStyles,
++    labelTextStyles,
+     animatedContainerStyle,
+     containerStyles,
+     inputStyles,
+@@ -350,7 +359,7 @@ function TextInput(props: TextInputProps) {
+ 
+   return (
+     <Pressable onPress={focusInput} accessible={false} role="none">
+-      <View style={fieldStyles}>
++      <View style={fieldStyles} onLayout={onFieldLayout}>
+         {/* Disabled tint overlay — filled variant only. A childless
+           absolutely-positioned View whose translucent fill is applied via the
+           `opacity` style, so it never affects label/input rendering and works
+@@ -371,10 +380,22 @@ function TextInput(props: TextInputProps) {
+         )}
+ 
+         {!!label && (
+-          <Animated.View aria-hidden style={animatedLabelWrapperStyles}>
+-            <Animated.Text style={animatedLabelTextStyles}>
++          <Animated.View
++            aria-hidden
++            style={[
++              animatedLabelWrapperStyles,
++              { top: 0, transformOrigin: isRTL ? 'right top' : 'left top' },
++            ]}
++          >
++            <Text
++              style={labelTextStyles}
++              numberOfLines={1}
++              onLayout={onLabelLayout}
++              allowFontScaling={textInputProps.allowFontScaling}
++              maxFontSizeMultiplier={textInputProps.maxFontSizeMultiplier}
++            >
+               {label}
+-            </Animated.Text>
++            </Text>
+           </Animated.View>
+         )}
+ 
+diff --git a/node_modules/react-native-paper/src/components/TextInput/constants.ts b/node_modules/react-native-paper/src/components/TextInput/constants.ts
+index 52459327..53d8bd32 100644
+--- a/node_modules/react-native-paper/src/components/TextInput/constants.ts
++++ b/node_modules/react-native-paper/src/components/TextInput/constants.ts
+@@ -1,13 +1,9 @@
+-import { PixelRatio } from 'react-native';
+-
+ import { Easing } from 'react-native-reanimated';
+ 
+ import { tokens } from '../../theme/tokens';
+ import { motionDuration, motionEasing } from '../../theme/tokens/sys/motion';
+ import { defaultShapes } from '../../theme/tokens/sys/shape';
+ 
+-export const fontScale = PixelRatio.getFontScale();
+-
+ /**
+  * Common constants for the text input component.
+  */
+@@ -18,13 +14,6 @@ export const BASELINE_TEXT_INPUT_PADDING_VERTICAL = 8;
+ export const TEXT_INPUT_INPUT_WRAPPER_PADDING_HORIZONTAL = 16;
+ export const TEXT_INPUT_ACCESSORY_MARGIN_HORIZONTAL = 12;
+ 
+-export const TEXT_INPUT_HEIGHT = Math.ceil(
+-  BASELINE_TEXT_INPUT_HEIGHT * fontScale
+-);
+-export const TEXT_INPUT_PADDING_VERTICAL = Math.ceil(
+-  BASELINE_TEXT_INPUT_PADDING_VERTICAL * fontScale
+-);
+-
+ export const TEXT_INPUT_BORDER_RADIUS = defaultShapes.corner.extraSmall;
+ 
+ export const LABEL_START_OFFSET_WITHOUT_ACCESSORY =
+@@ -41,6 +30,7 @@ export const INPUT_FONT_SIZE = tokens.md.sys.typescale.bodyLarge.fontSize;
+ export const ACTIVE_LABEL_FONT_SIZE =
+   tokens.md.sys.typescale.bodySmall.fontSize;
+ export const INACTIVE_LABEL_FONT_SIZE = INPUT_FONT_SIZE;
++export const FLOATING_LABEL_SCALE = ACTIVE_LABEL_FONT_SIZE / INACTIVE_LABEL_FONT_SIZE;
+ export const SUPPORTING_TEXT_FONT_SIZE =
+   tokens.md.sys.typescale.bodySmall.fontSize;
+ 
+@@ -67,25 +57,8 @@ export const FILLED_LABEL_START_OFFSET_WITH_ACCESSORY =
+   TEXT_INPUT_ACCESSORY_MARGIN_HORIZONTAL +
+   TEXT_INPUT_INPUT_WRAPPER_PADDING_HORIZONTAL;
+ 
+-export const FILLED_ACTIVE_LABEL_TOP_POSITION = TEXT_INPUT_PADDING_VERTICAL;
+-
+-export const FILLED_INACTIVE_LABEL_TOP_POSITION = Math.ceil(
+-  ((BASELINE_TEXT_INPUT_HEIGHT -
+-    2 * BASELINE_TEXT_INPUT_PADDING_VERTICAL -
+-    INPUT_FONT_SIZE) /
+-    2 +
+-    BASELINE_TEXT_INPUT_PADDING_VERTICAL) *
+-    fontScale
+-);
+-
+-export const FILLED_MULTILINE_PADDING_TOP =
+-  Math.ceil(ACTIVE_LABEL_FONT_SIZE * fontScale) + TEXT_INPUT_PADDING_VERTICAL;
+-
+ export const FILLED_DISABLED_CONTAINER_OPACITY = 0.04;
+ 
+-export const FILLED_PADDING_BOTTOM =
+-  TEXT_INPUT_PADDING_VERTICAL + FILLED_LINE_HEIGHT_DELTA;
+-
+ /**
+  * Constants for the outlined variant.
+  */
+@@ -94,15 +67,6 @@ const OUTLINED_LINE_HEIGHT_DELTA = 2;
+ 
+ export const OUTLINED_DISABLED_OUTLINE_OPACITY = 0.12;
+ 
+-export const OUTLINED_MULTILINE_PADDING_TOP = Math.ceil(
+-  ((BASELINE_TEXT_INPUT_HEIGHT -
+-    2 * BASELINE_TEXT_INPUT_PADDING_VERTICAL -
+-    INPUT_FONT_SIZE) /
+-    2 -
+-    OUTLINED_LINE_HEIGHT_DELTA) *
+-    fontScale
+-);
+-
+ export const OUTLINED_LABEL_PADDING_HORIZONTAL = 4;
+ 
+ export const OUTLINED_LABEL_START_OFFSET_WITH_ACCESSORY =
+@@ -111,20 +75,21 @@ export const OUTLINED_LABEL_START_OFFSET_WITH_ACCESSORY =
+   TEXT_INPUT_INPUT_WRAPPER_PADDING_HORIZONTAL -
+   OUTLINED_LABEL_PADDING_HORIZONTAL;
+ 
+-export const OUTLINED_ACTIVE_LABEL_TOP_POSITION = Math.ceil(
+-  (-BASELINE_TEXT_INPUT_PADDING_VERTICAL + OUTLINED_LINE_HEIGHT_DELTA) *
+-    fontScale
+-);
+-
+-export const OUTLINED_INACTIVE_LABEL_TOP_POSITION = Math.ceil(
+-  ((BASELINE_TEXT_INPUT_HEIGHT -
+-    2 * BASELINE_TEXT_INPUT_PADDING_VERTICAL -
+-    INPUT_FONT_SIZE) /
+-    2 +
+-    BASELINE_TEXT_INPUT_PADDING_VERTICAL -
+-    OUTLINED_LINE_HEIGHT_DELTA) *
+-    fontScale
+-);
++export function getTextInputMetrics(fontScale: number, labelFontSize: number) {
++  const minHeight = Math.ceil(BASELINE_TEXT_INPUT_HEIGHT * fontScale);
++  const paddingVertical = Math.ceil(BASELINE_TEXT_INPUT_PADDING_VERTICAL * fontScale);
++  const floatingLabelSize = labelFontSize * FLOATING_LABEL_SCALE;
++  return {
++    minHeight,
++    paddingVertical,
++    filledPaddingBottom: paddingVertical + FILLED_LINE_HEIGHT_DELTA,
++    filledMultilinePaddingTop: Math.ceil(floatingLabelSize * fontScale) + paddingVertical,
++    outlinedMultilinePaddingTop: Math.ceil(
++      ((BASELINE_TEXT_INPUT_HEIGHT - 2 * BASELINE_TEXT_INPUT_PADDING_VERTICAL - INPUT_FONT_SIZE) / 2 -
++        OUTLINED_LINE_HEIGHT_DELTA) * fontScale
++    ),
++  };
++}
+ 
+ /** Positive distance; apply sign in animation using `isRTL` from `useLocale`. */
+ export const OUTLINED_LABEL_TRANSLATE_DISTANCE_WITH_ACCESSORY =
 diff --git a/node_modules/react-native-paper/src/components/TextInput/hooks.ts b/node_modules/react-native-paper/src/components/TextInput/hooks.ts
-index 1cc033f..ccecb68 100644
+index 1cc033fd..e5d62877 100644
 --- a/node_modules/react-native-paper/src/components/TextInput/hooks.ts
 +++ b/node_modules/react-native-paper/src/components/TextInput/hooks.ts
-@@ -5,7 +5,7 @@ import {
+@@ -5,8 +5,8 @@ import {
    useState,
    type RefObject,
  } from 'react';
 -import { TextInput as NativeTextInput } from 'react-native';
-+import { StyleSheet, TextInput as NativeTextInput } from 'react-native';
- import type { BlurEvent, FocusEvent } from 'react-native';
+-import type { BlurEvent, FocusEvent } from 'react-native';
++import { StyleSheet, TextInput as NativeTextInput, useWindowDimensions } from 'react-native';
++import type { BlurEvent, FocusEvent, LayoutChangeEvent } from 'react-native';
  
  import {
-@@ -17,6 +17,7 @@ import {
+   interpolate,
+@@ -16,8 +16,8 @@ import {
+ } from 'react-native-reanimated';
  
  import {
-   ACTIVE_LABEL_FONT_SIZE,
-+  fontScale,
-   INACTIVE_LABEL_FONT_SIZE,
+-  ACTIVE_LABEL_FONT_SIZE,
+-  INACTIVE_LABEL_FONT_SIZE,
++  FLOATING_LABEL_SCALE,
++  getTextInputMetrics,
    TIMING_CONFIG,
  } from './constants';
-@@ -46,14 +47,18 @@ const useTextInputAnimation = ({
+ import type {
+@@ -27,6 +27,7 @@ import type {
+   TextInputHookReturn,
+   TextInputLayoutState,
+   TextInputProps,
++  TextInputSharedApi,
+   TextInputVariant,
+ } from './TextInput';
+ import {
+@@ -46,25 +47,36 @@ const useTextInputAnimation = ({
    hasAccessory,
    value,
    defaultValue,
-+  style,
++  fontSize,
++  fontScale,
++  multiline,
++  metrics,
  }: {
    variant: TextInputVariant;
    isRTL: boolean;
    hasAccessory: boolean;
    value: string | undefined;
    defaultValue: string | undefined;
-+  style: TextInputProps['style'];
++  fontSize: number;
++  fontScale: number;
++  multiline: boolean | undefined;
++  metrics: ReturnType<typeof getTextInputMetrics>;
  }): TextInputAnimationState & TextInputAnimationHandlers => {
    const initialText = value ?? defaultValue ?? '';
-+  const { fontFamily, fontSize = INACTIVE_LABEL_FONT_SIZE } = StyleSheet.flatten(style) ?? {};
-+  const labelScale = fontSize / INACTIVE_LABEL_FONT_SIZE;
- 
+-
    const focusSV = useSharedValue(0);
    const floatSV = useSharedValue(initialText.length > 0 ? 1 : 0);
-@@ -85,7 +90,10 @@ const useTextInputAnimation = ({
+ 
+-  const { activeTop, inactiveTop, translateXEnd } = getTextInputAnimationLayout(
+-    {
+-      variant,
+-      hasAccessory,
+-      isRTL,
+-    }
+-  );
++  const translateXEnd = variant === 'outlined'
++    ? getTextInputAnimationLayout({ hasAccessory, isRTL })
++    : 0;
++  const measuredLabelHeight = useSharedValue(0);
++  const measuredFieldHeight = useSharedValue(0);
++  const onLabelLayout = ({ nativeEvent }: LayoutChangeEvent) => {
++    measuredLabelHeight.value = nativeEvent.layout.height;
++  };
++  const onFieldLayout = ({ nativeEvent }: LayoutChangeEvent) => {
++    measuredFieldHeight.value = nativeEvent.layout.height;
++  };
+ 
+   const runFocusAnimation = (hasText: boolean) => {
+     focusSV.value = withTiming(1, TIMING_CONFIG);
+@@ -85,28 +97,24 @@ const useTextInputAnimation = ({
    };
  
    const animatedLabelWrapperStyle = useAnimatedStyle(() => {
 -    const top = interpolate(floatSV.value, [0, 1], [inactiveTop, activeTop]);
-+    const top = interpolate(floatSV.value, [0, 1], [
-+      inactiveTop - (fontSize - INACTIVE_LABEL_FONT_SIZE) * fontScale / 2,
-+      variant === 'outlined' ? activeTop * labelScale : activeTop,
-+    ]);
+-
+-    if (variant === 'filled') {
+-      return { top };
+-    }
++    // Keep the native Text measurement at full size and transform the label and its background together.
++    const labelHeight = measuredLabelHeight.value || fontSize * fontScale;
++    const fieldHeight = measuredFieldHeight.value || metrics.minHeight;
++    const inactiveTop = ((multiline ? metrics.minHeight : fieldHeight) - labelHeight) / 2;
++    const activeTop = variant === 'outlined'
++      ? -(labelHeight * FLOATING_LABEL_SCALE) / 2
++      : metrics.paddingVertical;
++    const progress = floatSV.value;
  
-     if (variant === 'filled') {
-       return { top };
-@@ -100,10 +108,11 @@ const useTextInputAnimation = ({
+     return {
+-      top,
+       transform: [
+-        { translateX: interpolate(floatSV.value, [0, 1], [0, translateXEnd]) },
++        { translateX: interpolate(progress, [0, 1], [0, translateXEnd]) },
++        { translateY: interpolate(progress, [0, 1], [inactiveTop, activeTop]) },
++        { scale: interpolate(progress, [0, 1], [1, FLOATING_LABEL_SCALE]) },
+       ],
+     };
    });
  
-   const animatedLabelTextStyle = useAnimatedStyle(() => ({
-+    fontFamily,
-     fontSize: interpolate(
-       floatSV.value,
-       [0, 1],
+-  const animatedLabelTextStyle = useAnimatedStyle(() => ({
+-    fontSize: interpolate(
+-      floatSV.value,
+-      [0, 1],
 -      [INACTIVE_LABEL_FONT_SIZE, ACTIVE_LABEL_FONT_SIZE]
-+      [fontSize, ACTIVE_LABEL_FONT_SIZE * labelScale]
-     ),
+-    ),
+-  }));
+-
+   const animatedContainerStyle = useAnimatedStyle(() => ({
+     opacity: floatSV.value,
    }));
+@@ -117,13 +125,14 @@ const useTextInputAnimation = ({
  
-@@ -342,6 +351,7 @@ export const useTextInput = (props: TextInputProps): TextInputHookReturn => {
+   return {
+     animatedLabelWrapperStyle,
+-    animatedLabelTextStyle,
+     animatedContainerStyle,
+     animatedActiveOutlineStyle:
+       variant === 'filled' ? animatedActiveOutlineStyle : undefined,
+     runFocusAnimation,
+     runBlurAnimation,
+     syncFloatToValue,
++    onFieldLayout,
++    onLabelLayout,
+   };
+ };
+ 
+@@ -254,6 +263,8 @@ const useTextInputLayout = ({
+   flags,
+   isFocused,
+   animation,
++  labelTextStyle,
++  metrics,
+ }: {
+   variant: TextInputVariant;
+   props: TextInputProps;
+@@ -262,12 +273,13 @@ const useTextInputLayout = ({
+   flags: TextInputFlags;
+   isFocused: boolean;
+   animation: TextInputAnimationState;
++  labelTextStyle: TextInputSharedApi['labelTextStyle'];
++  metrics: ReturnType<typeof getTextInputMetrics>;
+ }): TextInputLayoutState => {
+   const { isRTL, isDisabled, hasError, hasAccessory, hasSuffix } = flags;
+ 
+   const {
+     animatedLabelWrapperStyle,
+-    animatedLabelTextStyle,
+     animatedActiveOutlineStyle,
+   } = animation;
+ 
+@@ -289,8 +301,9 @@ const useTextInputLayout = ({
+           hasError,
+           hasSuffix,
+           animatedLabelWrapperStyle,
+-          animatedLabelTextStyle,
++          labelTextStyle,
+           animatedActiveOutlineStyle,
++          metrics,
+         },
+         props
+       )
+@@ -305,8 +318,9 @@ const useTextInputLayout = ({
+           hasError,
+           hasSuffix,
+           animatedLabelWrapperStyle,
+-          animatedLabelTextStyle,
++          labelTextStyle,
+           animatedActiveOutlineStyle,
++          metrics,
+         },
+         props
+       );
+@@ -336,12 +350,25 @@ export const useTextInput = (props: TextInputProps): TextInputHookReturn => {
+   const { hasValue, inputLength, getHasText, onChangeText } =
+     useTextInputInput(props);
+ 
++  const { fontScale: systemFontScale } = useWindowDimensions();
++  const { maxFontSizeMultiplier, allowFontScaling } = props;
++  const fontScale = allowFontScaling === false ? 1 :
++    maxFontSizeMultiplier ? Math.min(systemFontScale, maxFontSizeMultiplier) : systemFontScale;
++  const {
++    fontFamily = theme.fonts.bodyLarge.fontFamily,
++    fontSize = theme.fonts.bodyLarge.fontSize,
++  } = StyleSheet.flatten(props.style) ?? {};
++  const metrics = getTextInputMetrics(fontScale, fontSize);
+   const animation = useTextInputAnimation({
+     variant,
+     isRTL,
      hasAccessory,
      value: props.value,
      defaultValue: props.defaultValue,
-+    style: props.style,
++    fontSize,
++    fontScale,
++    multiline: props.multiline,
++    metrics,
    });
  
    const { isFocused, onFocus, onBlur, focusInput } = useTextInputFocus(
+@@ -417,6 +444,8 @@ export const useTextInput = (props: TextInputProps): TextInputHookReturn => {
+     flags,
+     isFocused,
+     animation,
++    labelTextStyle: { fontFamily, fontSize },
++    metrics,
+   });
+ 
+   const accessibilityProps = getAccessibilityData({
+@@ -453,6 +482,8 @@ export const useTextInput = (props: TextInputProps): TextInputHookReturn => {
+     cursorColor,
+     animatedActiveOutlineStyles: undefined,
+     animatedContainerStyle: animation.animatedContainerStyle,
++    onFieldLayout: animation.onFieldLayout,
++    onLabelLayout: animation.onLabelLayout,
+     placeholder,
+     counterText,
+     accessibilityProps,
+diff --git a/node_modules/react-native-paper/src/components/TextInput/styles.ts b/node_modules/react-native-paper/src/components/TextInput/styles.ts
+index 0a65662a..6f77b570 100644
+--- a/node_modules/react-native-paper/src/components/TextInput/styles.ts
++++ b/node_modules/react-native-paper/src/components/TextInput/styles.ts
+@@ -8,9 +8,7 @@ import {
+   SUPPORTING_TEXT_MARGIN_TOP,
+   TEXT_INPUT_ACCESSORY_MARGIN_HORIZONTAL,
+   TEXT_INPUT_BORDER_RADIUS,
+-  TEXT_INPUT_HEIGHT,
+   TEXT_INPUT_INPUT_WRAPPER_PADDING_HORIZONTAL,
+-  TEXT_INPUT_PADDING_VERTICAL,
+ } from './constants';
+ import { tokens } from '../../theme/tokens';
+ 
+@@ -25,8 +23,6 @@ export const styles = StyleSheet.create({
+   },
+   field: {
+     flexDirection: 'row',
+-    minHeight: TEXT_INPUT_HEIGHT,
+-    paddingVertical: TEXT_INPUT_PADDING_VERTICAL,
+   },
+   addendum: {
+     flexDirection: 'row',
 diff --git a/node_modules/react-native-paper/src/components/TextInput/utils.ts b/node_modules/react-native-paper/src/components/TextInput/utils.ts
-index e8da1a4..525b95c 100644
+index e8da1a4d..0f0d3afe 100644
 --- a/node_modules/react-native-paper/src/components/TextInput/utils.ts
 +++ b/node_modules/react-native-paper/src/components/TextInput/utils.ts
-@@ -1,4 +1,4 @@
+@@ -1,28 +1,20 @@
 -import { Platform } from 'react-native';
 +import { Platform, StyleSheet } from 'react-native';
  import type { ColorValue, StyleProp, TextStyle, ViewStyle } from 'react-native';
  
  import type { AnimatedStyle } from 'react-native-reanimated';
-@@ -454,6 +454,7 @@ export const getOutlinedTextInputData = (
+ 
+ import {
+   ACTIVE_INDICATOR_SIZE,
+-  FILLED_ACTIVE_LABEL_TOP_POSITION,
+-  FILLED_INACTIVE_LABEL_TOP_POSITION,
+   FILLED_LABEL_START_OFFSET_WITH_ACCESSORY,
+-  FILLED_MULTILINE_PADDING_TOP,
+   INACTIVE_INDICATOR_SIZE,
+-  INPUT_FONT_SIZE,
+   LABEL_START_OFFSET_WITHOUT_ACCESSORY,
+-  OUTLINED_ACTIVE_LABEL_TOP_POSITION,
+   OUTLINED_DISABLED_OUTLINE_OPACITY,
+-  OUTLINED_INACTIVE_LABEL_TOP_POSITION,
+   OUTLINED_LABEL_START_OFFSET_WITH_ACCESSORY,
+   OUTLINED_LABEL_TRANSLATE_DISTANCE_WITHOUT_ACCESSORY,
+   OUTLINED_LABEL_TRANSLATE_DISTANCE_WITH_ACCESSORY,
+-  OUTLINED_MULTILINE_PADDING_TOP,
+   PREFIX_END_PADDING,
+   SUFFIX_START_PADDING,
+   TEXT_INPUT_BORDER_RADIUS,
+-  FILLED_PADDING_BOTTOM,
+ } from './constants';
+ import { filledStyles, outlinedStyles, styles } from './styles';
+ import type {
+@@ -30,7 +22,6 @@ import type {
+   OutlinedTextInputHookData,
+   TextInputProps,
+   TextInputSharedApi,
+-  TextInputVariant,
+   SharedTextInputStyleData,
+   GetAccessibilityDataProps,
+   GetAccessibilityDataReturn,
+@@ -38,31 +29,19 @@ import type {
+ import type { InternalTheme } from '../../types';
+ 
+ export const getTextInputAnimationLayout = ({
+-  variant,
+   hasAccessory,
+   isRTL,
+ }: {
+-  variant: TextInputVariant;
+   hasAccessory: boolean;
+   isRTL: boolean;
+ }) => {
+-  const activeTop =
+-    variant === 'filled'
+-      ? FILLED_ACTIVE_LABEL_TOP_POSITION
+-      : OUTLINED_ACTIVE_LABEL_TOP_POSITION;
+-
+-  const inactiveTop =
+-    variant === 'filled'
+-      ? FILLED_INACTIVE_LABEL_TOP_POSITION
+-      : OUTLINED_INACTIVE_LABEL_TOP_POSITION;
+-
+   const distance = hasAccessory
+     ? OUTLINED_LABEL_TRANSLATE_DISTANCE_WITH_ACCESSORY
+     : OUTLINED_LABEL_TRANSLATE_DISTANCE_WITHOUT_ACCESSORY;
+ 
+   const translateXEnd = (isRTL ? 1 : -1) * distance;
+ 
+-  return { activeTop, inactiveTop, translateXEnd };
++  return translateXEnd;
+ };
+ 
+ export const getAccentColors = ({
+@@ -218,7 +197,7 @@ export const getSharedTextInputStyleData = (
+     hasError,
+     isFocused,
+     isRTL,
+-    animatedLabelTextStyle,
++    labelTextStyle,
+   } = api;
+ 
+   const labelColor = getLabelColor({ theme, hasError, isFocused, isDisabled });
+@@ -232,17 +211,16 @@ export const getSharedTextInputStyleData = (
+     colors: { onSurfaceVariant },
+   } = theme;
+ 
+-  const animatedLabelTextStyles: StyleProp<
+-    AnimatedStyle<StyleProp<TextStyle>>
+-  > = [
++  const labelTextStyles: StyleProp<TextStyle> = [
+     styles.input,
+     { color: labelColor },
+-    animatedLabelTextStyle,
++    labelTextStyle,
+     isDisabled && styles.disabled,
+   ];
+ 
+   const supportingTextStyles: StyleProp<TextStyle> = [
+     styles.supportingText,
++    theme.fonts.bodySmall,
+     {
+       color: supportingTextColor,
+       writingDirection: isRTL ? 'rtl' : 'ltr',
+@@ -252,6 +230,7 @@ export const getSharedTextInputStyleData = (
+ 
+   const counterStyles: StyleProp<TextStyle> = [
+     styles.counter,
++    theme.fonts.bodySmall,
+     {
+       color: supportingTextColor,
+       writingDirection: isRTL ? 'rtl' : 'ltr',
+@@ -262,7 +241,8 @@ export const getSharedTextInputStyleData = (
+   const prefixStyles: StyleProp<TextStyle> = [
+     styles.input,
+     {
+-      fontSize: INPUT_FONT_SIZE,
++      fontFamily: theme.fonts.bodyLarge.fontFamily,
++      fontSize: theme.fonts.bodyLarge.fontSize,
+       color: onSurfaceVariant,
+       paddingEnd: PREFIX_END_PADDING,
+     },
+@@ -272,7 +252,8 @@ export const getSharedTextInputStyleData = (
+   const suffixStyles: StyleProp<TextStyle> = [
+     styles.input,
+     {
+-      fontSize: INPUT_FONT_SIZE,
++      fontFamily: theme.fonts.bodyLarge.fontFamily,
++      fontSize: theme.fonts.bodyLarge.fontSize,
+       color: onSurfaceVariant,
+       paddingStart: SUFFIX_START_PADDING,
+     },
+@@ -291,7 +272,7 @@ export const getSharedTextInputStyleData = (
+ 
+   return {
+     isRTL,
+-    animatedLabelTextStyles,
++    labelTextStyles,
+     supportingTextStyles,
+     counterStyles,
+     prefixStyles,
+@@ -356,7 +337,7 @@ export const getFilledTextInputData = (
+   > = [
+     filledStyles.labelWrapper,
+     {
+-      left: hasAccessory
++      start: hasAccessory
+         ? FILLED_LABEL_START_OFFSET_WITH_ACCESSORY
+         : LABEL_START_OFFSET_WITHOUT_ACCESSORY,
+     },
+@@ -370,8 +351,9 @@ export const getFilledTextInputData = (
+ 
+   const fieldStyles: StyleProp<ViewStyle> = [
+     styles.field,
++    { minHeight: api.metrics.minHeight, paddingVertical: api.metrics.paddingVertical },
+     {
+-      paddingBottom: FILLED_PADDING_BOTTOM,
++      paddingBottom: api.metrics.filledPaddingBottom,
+       backgroundColor: fieldBackgroundColor,
+       borderTopStartRadius: TEXT_INPUT_BORDER_RADIUS,
+       borderTopEndRadius: TEXT_INPUT_BORDER_RADIUS,
+@@ -417,13 +399,14 @@ export const getFilledTextInputData = (
+     {
+       flex: 1,
+       color: onSurface,
+-      fontSize: INPUT_FONT_SIZE,
++      fontFamily: theme.fonts.bodyLarge.fontFamily,
++      fontSize: theme.fonts.bodyLarge.fontSize,
+       textAlign: hasSuffix === shared.isRTL ? 'left' : 'right',
+       writingDirection: shared.isRTL ? 'rtl' : 'ltr',
+     },
+     textInputProps.multiline && {
+       height: 'auto',
+-      paddingTop: FILLED_MULTILINE_PADDING_TOP,
++      paddingTop: api.metrics.filledMultilinePaddingTop,
+     },
+     //@ts-expect-error - RN’s defs are narrower than CSS and RNW does not ship TS extensions that fix that
+     Platform.OS === 'web' && {
+@@ -454,6 +437,7 @@ export const getOutlinedTextInputData = (
    props: TextInputProps
  ): OutlinedTextInputHookData => {
    const { style: inputStyleOverride, ...textInputProps } = props;
@@ -267,16 +1261,18 @@ index e8da1a4..525b95c 100644
  
    const {
      input,
-@@ -499,7 +500,7 @@ export const getOutlinedTextInputData = (
+@@ -498,8 +482,9 @@ export const getOutlinedTextInputData = (
+ 
    const fieldStyles: StyleProp<ViewStyle> = [
      styles.field,
++    { minHeight: api.metrics.minHeight, paddingVertical: api.metrics.paddingVertical },
      {
 -      borderRadius: TEXT_INPUT_BORDER_RADIUS,
 +      borderRadius,
      },
      textInputProps.multiline && { alignItems: 'flex-start' },
    ];
-@@ -510,6 +511,7 @@ export const getOutlinedTextInputData = (
+@@ -510,6 +495,7 @@ export const getOutlinedTextInputData = (
    const outlineStyles: StyleProp<ViewStyle> = [
      outlinedStyles.outline,
      {
@@ -284,3 +1280,30 @@ index e8da1a4..525b95c 100644
        borderWidth: isFocused ? 2 : 1,
        borderColor: outlineColor,
      },
+@@ -521,7 +507,7 @@ export const getOutlinedTextInputData = (
+   > = [
+     outlinedStyles.labelWrapper,
+     {
+-      left: hasAccessory
++      start: hasAccessory
+         ? OUTLINED_LABEL_START_OFFSET_WITH_ACCESSORY
+         : LABEL_START_OFFSET_WITHOUT_ACCESSORY,
+       backgroundColor: labelBackgroundColor,
+@@ -534,14 +520,15 @@ export const getOutlinedTextInputData = (
+     {
+       flex: 1,
+       color: onSurface,
+-      fontSize: INPUT_FONT_SIZE,
++      fontFamily: theme.fonts.bodyLarge.fontFamily,
++      fontSize: theme.fonts.bodyLarge.fontSize,
+       textAlign: hasSuffix === shared.isRTL ? 'left' : 'right',
+       writingDirection: shared.isRTL ? 'rtl' : 'ltr',
+     },
+     textInputProps.multiline && {
+       height: 'auto',
+       textAlignVertical: 'top',
+-      paddingTop: OUTLINED_MULTILINE_PADDING_TOP,
++      paddingTop: api.metrics.outlinedMultilinePaddingTop,
+     },
+     //@ts-expect-error - RN’s defs are narrower than CSS and RNW does not ship TS extensions that fix that
+     Platform.OS === 'web' && {

@@ -101,6 +101,7 @@ export function createTopicEditTransport(source: TopicCreationSource, userId = '
             post_number: 1,
             topic_id: 123,
             user_id: state.owner,
+            username: state.owner,
             raw: state.body,
             can_edit: state.canEditBody
           });

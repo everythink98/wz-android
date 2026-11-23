@@ -26,6 +26,12 @@ function materializeText(segments: ForumTextSegment[]) {
 }
 
 describe('scoped HTML queries', () => {
+  it('keeps a comparison and quoted prose before real tags', () => {
+    expect(textExcerpt("left 3 < 5, 'inline <b>keep</b>' <i>end</i> after")).toBe(
+      "left 3 < 5, 'inline keep ' end after"
+    );
+  });
+
   it('leaves an unselected document untouched without reading its nodes', () => {
     const markup = '<section><p>keep<span>child</span></p><p>also keep</p></section>';
     const root = parseForumContentHtml(markup);

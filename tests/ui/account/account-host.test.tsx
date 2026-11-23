@@ -6,7 +6,7 @@ import type { WebView } from 'react-native-webview';
 import { createAccountSessionSnapshot, createAccountSessionViewModel } from '@/domain/session/siteSessionState';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { createAccountHostStyles } from '@/features/account/accountHostStyles';
-import { createTheme } from '@/ui/theme/tokens';
+import { resolveReaderStyleSettings, createTheme } from '@/ui/theme/tokens';
 
 let nodeImageWebViewProps: Record<string, unknown> = {};
 let nodeImageWebViewMounts = 0;
@@ -83,8 +83,12 @@ describe('AccountHost NodeImage authorization boundary', () => {
       setNodeImageAuthError: jest.fn(),
       showLinuxDoPanel: false,
       showNodeImageAuthPanel: true,
-      styles: createAccountHostStyles(createTheme({ theme: 'light' }), createEmptyReaderData().settings),
+      styles: createAccountHostStyles(
+        createTheme({ theme: 'light' }),
+        resolveReaderStyleSettings(createEmptyReaderData().settings)
+      ),
       webViewBlockMessage: '',
+      nodeImageWebViewBlockMessage: '',
       changeLinuxDoPanel: jest.fn(),
       checkLinuxDoCookie: jest.fn(),
       clearLinuxDoCookie: jest.fn()
@@ -139,9 +143,12 @@ describe('AccountHost NodeImage authorization boundary', () => {
     expect(nodeImageModalProps.refreshAction).toBeUndefined();
     expect(nodeImageModalProps.actions).toBeUndefined();
 
-    await view.rerender(<AccountHost {...baseProps} webViewBlockMessage="代理状态切换中" />);
+    await view.rerender(<AccountHost {...baseProps} webViewBlockMessage="linux.do 登录会话保存失败" />);
+    expect(view.getByTestId('nodeimage-webview', { includeHiddenElements: true })).toBeTruthy();
+    const mountsBeforeProxyBlock = nodeImageWebViewMounts;
+    await view.rerender(<AccountHost {...baseProps} nodeImageWebViewBlockMessage="代理状态切换中" />);
     expect(nodeImageModalProps.error).toBe('代理状态切换中');
     expect(view.queryByTestId('nodeimage-webview', { includeHiddenElements: true })).toBeNull();
-    expect(nodeImageWebViewMounts).toBe(3);
+    expect(nodeImageWebViewMounts).toBe(mountsBeforeProxyBlock);
   });
 });

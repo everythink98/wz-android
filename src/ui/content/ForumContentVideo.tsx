@@ -18,6 +18,7 @@ import {
   retainReadNetworkRuntimeGeneration
 } from '@/platform/network/networkProxy';
 import {
+  currentReadNetworkRuntimeGeneration,
   getReadNetworkRuntimeSnapshot,
   useReadNetworkRuntimeSnapshot,
   type ReadNetworkRuntimeSnapshot
@@ -80,7 +81,7 @@ type PhysicalVideoLease = 'unclaimed' | 'held' | 'release-scheduled' | 'released
 class VideoRuntimeLease {
   private phase: 'acquiring' | 'resolving' | 'retained' | 'failed' | 'retired' = 'acquiring';
   private physicalLease: PhysicalVideoLease = 'unclaimed';
-  private handle: MediaPlaybackHandle | null = null;
+  private players = 0;
   private readonly diagnostic: ReturnType<typeof playerLoadDiagnosticAttempt>;
 
   constructor(
@@ -150,8 +151,12 @@ class VideoRuntimeLease {
     return this.phase === 'retired';
   }
 
-  attach(handle: MediaPlaybackHandle) {
-    this.handle = handle;
+  retainPlayer() {
+    this.players += 1;
+    return () => {
+      this.players -= 1;
+      if (!this.players && this.physicalLease === 'release-scheduled') this.release();
+    };
   }
 
   status(status: string, error?: unknown) {
@@ -169,6 +174,7 @@ class VideoRuntimeLease {
   private failed(error?: unknown) {
     if (this.phase === 'retired') return;
     this.phase = 'failed';
+    this.release();
     this.diagnostic.failed(error);
     this.snapshot({ status: 'failed' });
     this.admission.settle('error');
@@ -180,14 +186,12 @@ class VideoRuntimeLease {
     this.diagnostic.canceled();
     if (this.physicalLease !== 'held') return;
     this.physicalLease = 'release-scheduled';
-    if (this.handle) this.handle.afterDispose(() => this.release());
-    else this.release();
+    if (!this.players) this.release();
   }
 
   private release() {
     if (this.physicalLease !== 'held' && this.physicalLease !== 'release-scheduled') return;
     this.physicalLease = 'released';
-    this.handle = null;
     void releaseReadNetworkRuntimeGeneration(this.generation).catch(() => undefined);
   }
 }
@@ -222,7 +226,7 @@ function ForumContentVideoRuntime({
     runtimeSnapshot: ReadNetworkRuntimeSnapshot | null;
   }) {
   const retryRuntimeGeneration =
-    runtimeSnapshot?.triggerSource === mediaContext.contentSource ? runtimeSnapshot.generation : 0;
+    runtimeSnapshot && mediaContext.contentSource ? currentReadNetworkRuntimeGeneration(mediaContext.contentSource) : 0;
   const [playerGeneration, setPlayerGeneration] = useState(() => getReadNetworkRuntimeSnapshot().generation);
   const [playerStatus, setPlayerStatus] = useState('idle');
   const [runtimeLease, setRuntimeLease] = useState<VideoRuntimeLeaseSnapshot | null>(null);
@@ -234,12 +238,6 @@ function ForumContentVideoRuntime({
   const activeLease = useRef<VideoRuntimeLease | null>(null);
   const leaseKey = JSON.stringify([admission.attemptId, playerGeneration, requestKey]);
   const renderingLease = runtimeLease?.status === 'retained' ? runtimeLease.owner : null;
-  const handlePlayer = useCallback(
-    (handle: MediaPlaybackHandle) => {
-      if (renderingLease && activeLease.current === renderingLease) renderingLease.attach(handle);
-    },
-    [renderingLease]
-  );
 
   useEffect(() => {
     if (retryRuntimeGeneration > playerGeneration) {
@@ -363,7 +361,7 @@ function ForumContentVideoRuntime({
       src={src}
       theme={theme}
       onProgress={admission.progress}
-      onHandle={handlePlayer}
+      lease={runtimeLease.owner}
       onStatusChange={handleStatusChange}
     />
   );
@@ -371,32 +369,41 @@ function ForumContentVideoRuntime({
 
 function ForumContentVideoPlayer({
   boundarySpacing,
+  lease,
   mediaContext,
   onProgress,
-  onHandle,
   onStatusChange,
   source,
   src,
   theme
 }: Omit<ForumContentVideoProps, 'admission' | 'nodeSeekMediaUserAgent' | 'referrerPolicy'> & {
   onProgress: (value: number) => void;
-  onHandle: (handle: MediaPlaybackHandle) => void;
+  lease: VideoRuntimeLease;
   onStatusChange: (status: string, error?: unknown) => void;
   source: ForumMediaPlayerSource;
 }) {
   const sourceKey = JSON.stringify(source);
-  const releaseHandles = useRef(new WeakMap<VideoPlayer, MediaPlaybackHandle>());
+  const releaseHandles = useRef(new WeakMap<VideoPlayer, { handle?: MediaPlaybackHandle; releaseLease: () => void }>());
   const player = useReleasingSharedObjectWithLifecycle(
     {
       factory: () => {
         const player = createVideoPlayer(null);
         player.timeUpdateEventInterval = VIDEO_TIME_UPDATE_INTERVAL_SECONDS;
+        releaseHandles.current.set(player, { releaseLease: lease.retainPlayer() });
         return player;
       },
       release: (player) => {
-        const handle = releaseHandles.current.get(player);
-        if (handle) handle.detach(() => player.release());
-        else player.release();
+        const attachment = releaseHandles.current.get(player);
+        const release = () => {
+          try {
+            player.release();
+          } finally {
+            releaseHandles.current.delete(player);
+            attachment?.releaseLease();
+          }
+        };
+        if (attachment?.handle) attachment.handle.detach(release);
+        else release();
       }
     },
     [sourceKey]
@@ -452,12 +459,12 @@ function ForumContentVideoPlayer({
     const handle = playback.attach(player, mediaIdentity, 'video', {
       onTimeout: () => statusCallback.current('error', new Error('Video buffering timed out'))
     });
-    releaseHandles.current.set(player, handle);
-    onHandle(handle);
+    const attachment = releaseHandles.current.get(player);
+    if (attachment) attachment.handle = handle;
     return () => {
       handle.detach(() => undefined);
     };
-  }, [mediaIdentity, onHandle, playback, player]);
+  }, [mediaIdentity, playback, player]);
   const ended = presentation.player === player && presentation.playback === 'ended';
   const hasReadyFrame = presentation.player === player && presentation.frame === 'rendered';
   useEffect(() => {

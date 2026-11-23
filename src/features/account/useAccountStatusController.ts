@@ -74,6 +74,7 @@ type AccountProbeState =
       generation: number;
       controller: AbortController;
       promise: Promise<AccountReconcileResult>;
+      policy: { publishAnonymous: boolean; afterHandoff: boolean };
       surfaceGeneration: number;
       trace: DiagnosticTrace;
     };
@@ -318,7 +319,18 @@ export function useAccountStatusController({
       }
       const requestedSurfaceGeneration = options.surfaceGeneration || 0;
       const activeProbe = probesRef.current[source];
-      if (activeProbe.kind === 'running' && requestedSurfaceGeneration <= activeProbe.surfaceGeneration) {
+      if (
+        activeProbe.kind === 'running' &&
+        requestedSurfaceGeneration > 0 &&
+        requestedSurfaceGeneration < activeProbe.surfaceGeneration
+      )
+        return Promise.resolve({ status: 'stale' });
+      if (
+        activeProbe.kind === 'running' &&
+        requestedSurfaceGeneration <= activeProbe.surfaceGeneration &&
+        (!options.beforeProbe || activeProbe.policy.afterHandoff)
+      ) {
+        if (options.publishAnonymous !== false) activeProbe.policy.publishAnonymous = true;
         markDiagnosticStage(activeProbe.trace, 'guard', {
           source,
           state: 'busy',
@@ -354,6 +366,10 @@ export function useAccountStatusController({
         return result;
       };
       const controller = new AbortController();
+      const policy = {
+        publishAnonymous: options.publishAnonymous !== false,
+        afterHandoff: Boolean(options.beforeProbe)
+      };
       const isCurrent = () =>
         !owner.aborted &&
         lifetimeRef.current.signal === owner &&
@@ -414,7 +430,7 @@ export function useAccountStatusController({
               { state: 'unconfirmed', reason: 'invalid_response' }
             );
           }
-          if (observed.identityTrust === 'none' && options.publishAnonymous === false) {
+          if (observed.identityTrust === 'none' && !policy.publishAnonymous) {
             return settle(
               { status: 'anonymous', session: observed, partial: observation.failed },
               observation.failed ? 'partial' : 'success',
@@ -491,6 +507,7 @@ export function useAccountStatusController({
         generation,
         controller,
         promise,
+        policy,
         trace,
         surfaceGeneration: requestedSurfaceGeneration
       };

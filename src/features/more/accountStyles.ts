@@ -1,23 +1,24 @@
 import { StyleSheet } from 'react-native';
 import {
-  createReaderFontSizer,
+  createUiFontSizer,
   readerRadii,
   type ReaderStyleSettings,
   type ReaderTheme,
   alphaColor,
-  fontFamilyValue
+  fontFamilyValue,
+  textSizeStyle
 } from '@/ui/theme/tokens';
 
 export function createMoreSiteSettingStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
-  const fontFamily = fontFamilyValue(settings.fontFamily);
-  const fontSize = createReaderFontSizer(settings);
+  const fontFamily = fontFamilyValue(settings.uiFontFamily);
+  const fontSize = createUiFontSizer(settings);
   return StyleSheet.create({
     row: { paddingVertical: 0, paddingRight: 0 },
     rowContainer: { alignItems: 'center', minHeight: 64, marginVertical: 0 },
     rowContent: { paddingLeft: 0, paddingRight: 12, minWidth: 0 },
-    title: { color: theme.ink, fontFamily, fontSize: fontSize(14), fontWeight: '500', lineHeight: fontSize(20) },
-    description: { color: theme.muted, fontFamily, fontSize: fontSize(12), lineHeight: fontSize(18) },
-    input: { backgroundColor: theme.surface, fontFamily, fontSize: fontSize(14) },
+    title: { color: theme.ink, fontFamily, ...textSizeStyle(fontSize(14), fontSize(20)), fontWeight: '500' },
+    description: { color: theme.muted, fontFamily, ...textSizeStyle(fontSize(12), fontSize(18)) },
+    input: { backgroundColor: theme.surface, fontFamily, ...textSizeStyle(fontSize(14)) },
     divider: { backgroundColor: theme.line, marginVertical: 4 },
     actions: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingVertical: 4 },
     section: { gap: 8, paddingBottom: 8 },
@@ -31,8 +32,8 @@ export function createMoreSiteSettingStyles(theme: ReaderTheme, settings: Reader
 }
 
 export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
-  const fontSize = createReaderFontSizer(settings);
-  const appFontFamily = fontFamilyValue(settings.fontFamily);
+  const fontSize = createUiFontSizer(settings);
+  const appFontFamily = fontFamilyValue(settings.uiFontFamily);
   const levelRiskSafe = theme.dark ? '#78D69C' : '#2F7D4C';
   return StyleSheet.create({
     levelSummary: {
@@ -59,17 +60,15 @@ export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderStyl
     levelEyebrow: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: 12,
-      fontWeight: '500',
-      lineHeight: 16
+      ...textSizeStyle(fontSize(12), fontSize(16)),
+      fontWeight: '500'
     },
     levelTitle: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: fontSize(18),
+      ...textSizeStyle(fontSize(18), fontSize(24)),
       fontWeight: '600',
-      letterSpacing: 0,
-      lineHeight: fontSize(24)
+      letterSpacing: 0
     },
     levelMetaRow: {
       flex: 1,
@@ -83,9 +82,8 @@ export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderStyl
       overflow: 'hidden',
       color: theme.primary,
       fontFamily: appFontFamily,
-      fontSize: 11,
+      ...textSizeStyle(fontSize(11), fontSize(16)),
       fontWeight: '700',
-      lineHeight: 16,
       backgroundColor: theme.surface,
       borderColor: alphaColor(theme.primary, theme.dark ? 0.22 : 0.16),
       borderRadius: readerRadii.badge,
@@ -111,9 +109,8 @@ export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderStyl
     levelTabText: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: fontSize(13),
-      fontWeight: '500',
-      lineHeight: fontSize(18)
+      ...textSizeStyle(fontSize(13), fontSize(18)),
+      fontWeight: '500'
     },
     levelTabTextActive: {
       color: theme.primary,
@@ -135,17 +132,15 @@ export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderStyl
       flex: 1,
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: 13,
-      fontWeight: '600',
-      lineHeight: 18
+      ...textSizeStyle(fontSize(13), fontSize(18)),
+      fontWeight: '600'
     },
     levelRequirementValue: {
       flexShrink: 1,
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: 12,
+      ...textSizeStyle(fontSize(12), fontSize(17)),
       fontWeight: '600',
-      lineHeight: 17,
       fontVariant: ['tabular-nums'],
       textAlign: 'right'
     },
@@ -193,9 +188,8 @@ export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderStyl
       flexShrink: 1,
       color: theme.primary,
       fontFamily: appFontFamily,
-      fontSize: 12,
+      ...textSizeStyle(fontSize(12), fontSize(17)),
       fontWeight: '600',
-      lineHeight: 17,
       textAlign: 'right'
     },
     levelChangeDanger: {
@@ -244,16 +238,14 @@ export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderStyl
     levelStatLabel: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: 11,
-      fontWeight: '500',
-      lineHeight: 15
+      ...textSizeStyle(fontSize(11), fontSize(15)),
+      fontWeight: '500'
     },
     levelStatValue: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: 15,
+      ...textSizeStyle(fontSize(15), fontSize(20)),
       fontWeight: '700',
-      lineHeight: 20,
       fontVariant: ['tabular-nums']
     },
     levelEmptyState: {

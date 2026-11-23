@@ -4,6 +4,7 @@
     "modules": [
       "com.wz.reader.BackupExportModule",
       "com.wz.reader.ImageDownloadModule",
+      "com.wz.reader.ReaderFontsModule",
       "com.wz.reader.TopicShareCaptureModule"
     ]
   }

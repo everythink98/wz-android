@@ -375,6 +375,24 @@ describe('source user read', () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
+  it('dates December activity in the previous year when reading in January', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-01-03T12:00:00Z'));
+      const result = await getUserReplies({
+        source: 'v2ex',
+        profile: { source: 'v2ex', id: 'alice', username: 'alice', url: 'https://www.v2ex.com/member/alice' },
+        fetcher: async () =>
+          new Response(
+            '<div class="dock_area">12 月 28 日回复了 alice 创建的主题 › <a href="/t/123#reply5">主题</a></div><div class="reply_content">回复</div>'
+          )
+      });
+      expect(result.replies?.[0]?.createdAt).toBe('2025-12-28T00:00:00.000Z');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('does not turn an authored V2EX reply link into a member activity cursor', async () => {
     const result = await getUserReplies({
       source: 'v2ex',

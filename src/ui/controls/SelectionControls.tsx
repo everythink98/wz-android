@@ -4,17 +4,18 @@ import { TouchableRipple } from 'react-native-paper';
 import { ScrollView } from 'react-native-gesture-handler';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import {
-  createReaderFontSizer,
+  createUiFontSizer,
   readerRadii,
   type ReaderStyleSettings,
   fontFamilyValue,
-  type ReaderTheme
+  type ReaderTheme,
+  textSizeStyle
 } from '@/ui/theme/tokens';
 import { TOUCH_HIT_SLOP } from './touchTarget';
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
-  const fontFamily = fontFamilyValue(settings.fontFamily);
-  const fontSize = createReaderFontSizer(settings);
+  const fontFamily = fontFamilyValue(settings.uiFontFamily);
+  const fontSize = createUiFontSizer(settings);
   const selectedColor = theme.dark ? theme.primary : theme.primaryStrong;
   return StyleSheet.create({
     pillRail: { gap: 2, paddingRight: 0, paddingVertical: 0 },
@@ -97,7 +98,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     },
     tabTextActive: { color: selectedColor, fontWeight: '600' },
     settingGroup: { gap: 7 },
-    panelTitle: { color: theme.ink, fontFamily, fontSize: fontSize(15), fontWeight: '600' }
+    panelTitle: { color: theme.ink, fontFamily, ...textSizeStyle(fontSize(15)), fontWeight: '600' }
   });
 }
 

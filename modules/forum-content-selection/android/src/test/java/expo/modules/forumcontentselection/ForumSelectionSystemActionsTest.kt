@@ -10,6 +10,12 @@ import java.util.concurrent.Executors
 
 class ForumSelectionSystemActionsTest {
   @Test
+  fun rejectedPlatformClipboardWriteAllowsRetry() {
+    assertFalse(writeForumClipboard { throw RuntimeException("platform clipboard unavailable") })
+    assertTrue(writeForumClipboard {})
+  }
+
+  @Test
   fun parcelSafeTrimDoesNotSplitASurrogatePair() {
     assertEquals("a", "a\uD83D\uDE00b".trimToForumParcelableSize(maxLength = 2))
     assertEquals("ab", "abc".trimToForumParcelableSize(maxLength = 2))

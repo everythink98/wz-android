@@ -3,16 +3,15 @@ import { Pressable, StyleSheet, Text } from 'react-native';
 import type { UserReference } from '@/domain/forum/models';
 import { Avatar } from '@/ui/avatar/Avatar';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { fontFamilyValue, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
+import { fontFamilyValue, type ReaderStyleSettings, type ReaderTheme, textSizeStyle } from '@/ui/theme/tokens';
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   return StyleSheet.create({
     title: { minHeight: 48, alignItems: 'center', flexDirection: 'row', gap: 8, flexShrink: 1 },
     name: {
       color: theme.ink,
-      fontFamily: fontFamilyValue(settings.fontFamily),
-      fontSize: Math.round(16 * settings.fontScale),
-      lineHeight: Math.round(23 * settings.fontScale),
+      fontFamily: fontFamilyValue(settings.uiFontFamily),
+      ...textSizeStyle(Math.round(16 * settings.uiFontScale), Math.round(23 * settings.uiFontScale)),
       fontWeight: '600',
       flexShrink: 1
     }

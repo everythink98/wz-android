@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { inactivePostInteractionActions } from '../topicInteractionFixture';
+import { createStardustPayments } from '@/features/topic/actions/stardustPayments';
 import { projectTestAccountSessions, testAccountUser } from '../../helpers/accountSessions';
 import { act, fireEvent, render, waitFor, within } from '../render';
 import React, { useEffect, useRef, useState } from 'react';
@@ -43,7 +44,7 @@ import { sanitizeLinuxDoContentHtml } from '@/sources/linuxdo/parser';
 import { buildHtmlRenderingStyles } from '@/ui/content/forumHtmlStyles';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { TopicScreen } from '@/features/topic/TopicScreen';
-import { createTheme, readerRadii } from '@/ui/theme/tokens';
+import { resolveReaderStyleSettings, createTheme, readerRadii } from '@/ui/theme/tokens';
 import type { InteractionType } from '@/domain/forum/topicActionState';
 import { decideTopicAction, type TopicActionDecisionFor } from '@/features/topic/actions/topicActionDecision';
 import { createSiteSessionStates } from '@/domain/session/siteSessionState';
@@ -93,6 +94,7 @@ const mockMeasureTopicViewport = jest.fn<View['measureInWindow']>();
 const mockNativeTopicViewport = { measureInWindow: mockMeasureTopicViewport };
 const mockTopicScrollView = { getNativeScrollRef: () => mockNativeTopicViewport };
 const mockCompileForumContent = jest.fn();
+const mockHtmlConfigMounted = jest.fn<(selectable?: boolean) => void>();
 const mockAvatarLifecycle = jest.fn<(event: 'mount' | 'unmount', uri: string | undefined) => void>();
 const mockAvatarComponentLifecycle = jest.fn<(event: 'mount' | 'unmount', initialUri: string | undefined) => void>();
 const mockViewportCellRender = jest.fn<(floor: number | undefined) => void>();
@@ -243,6 +245,7 @@ jest.mock('@shopify/flash-list', () => {
       lastFlashListProps = {
         ...props,
         data,
+        renderItem,
         ListHeaderComponent,
         onLoad: (event: unknown) => {
           didLoad.current = true;
@@ -363,11 +366,14 @@ jest.mock('react-native-render-html', () => {
     HTMLElementModel: { fromCustomModel: () => ({}) },
     RenderHTMLConfigProvider: ({
       children,
+      defaultTextProps,
       renderers = {}
     }: {
       children?: React.ReactNode;
+      defaultTextProps?: { selectable?: boolean };
       renderers?: Record<string, React.ComponentType<any>>;
     }) => {
+      ReactModule.useEffect(() => mockHtmlConfigMounted(defaultTextProps?.selectable), [defaultTextProps?.selectable]);
       return ReactModule.createElement(RenderersContext.Provider, { value: renderers }, children);
     },
     TChildrenRenderer: ({ tchildren }: { tchildren: { children?: unknown[]; data?: unknown; nodeIndex?: number }[] }) =>
@@ -945,6 +951,7 @@ function TopicFilterHarness({
   yaohuoVisualBookmarked?: boolean;
 } = {}) {
   const [commentQuery, setCommentQuery] = useState('');
+  const [stardustPayments] = useState(createStardustPayments);
   const [replyFilter, setReplyFilter] = useState<ReplyFilter>('all');
   const [replyOrder, setReplyOrder] = useState<ReplyOrder>('oldest');
   const topicScrollRef = useRef(null);
@@ -1005,6 +1012,8 @@ function TopicFilterHarness({
     loadNodeSeekStardustStatus: async () => ({ participantCount: 0, totalAmount: 0, paid: false, closed: false }),
     lockNodeSeekPoll: async () => undefined,
     payNodeSeekStardust: async () => 'canceled' as const,
+    stardustPayments,
+    stardustPayer: 'nodeseek:fixture',
     submitReply: async () => undefined,
     uploadReplyImage: async () => undefined,
     uploadReplyImageMarkup: async () => undefined,
@@ -1156,6 +1165,15 @@ describe('NodeSeek reply count availability', () => {
 });
 
 describe('Topic reply filters', () => {
+  it('shares the non-selectable HTML configuration across mounted replies', async () => {
+    mockHtmlConfigMounted.mockClear();
+    const detail = { ...topic, contentHtml: '' };
+    const view = await render(<TopicFilterHarness selectedTopic={detail} topicDetail={detail} />);
+    expect(view.getByTestId('topic-detail-loaded')).toBeTruthy();
+    expect(lastFlashListItemTypes.filter((type) => type.startsWith('reply')).length).toBeGreaterThan(1);
+    expect(mockHtmlConfigMounted.mock.calls.filter(([selectable]) => selectable === false)).toHaveLength(1);
+  });
+
   it.each([false, true])(
     'scrolls to the sorted replies only while that gesture is current (dragged: %s)',
     async (dragged) => {
@@ -1238,6 +1256,8 @@ describe('Topic reply filters', () => {
       mockViewportBodyRender.mockClear();
       mockViewportBodyCommit.mockClear();
       mockAvatarComponentLifecycle.mockClear();
+      const renderItemBeforeMove = lastFlashListProps.renderItem;
+      expect(typeof renderItemBeforeMove).toBe('function');
       await observe([4, 5]);
       const moved = {
         bodyRenderA: callsFor(mockViewportBodyRender.mock.calls, uriA),
@@ -1246,6 +1266,7 @@ describe('Topic reply filters', () => {
         bodyCommitB: callsFor(mockViewportBodyCommit.mock.calls, uriB)
       };
       expect(lastFlashListProps.data).toBe(data);
+      expect(lastFlashListProps.renderItem === renderItemBeforeMove).toBe(true);
       for (const [floor, before] of [
         [3, beforeA],
         [4, beforeB]
@@ -2512,6 +2533,24 @@ describe('Topic reply filters', () => {
     } finally {
       mockFlashListLayoutReady = true;
     }
+  });
+
+  it('keeps new filters after a missing floor request has finished', async () => {
+    const replies = [...sourceReplies, { ...sourceReplies[0], floor: 10, replyTarget: { floor: 181 } }];
+    const selected = { ...topic, source: 'nodeseek' as const, replies, replyCount: 250 };
+    const locate = jest.fn(async () => 'failed');
+    const view = await render(
+      <TopicFilterHarness
+        selectedTopic={selected}
+        topicDetail={selected}
+        topicReplies={replies}
+        onLocateReply={locate}
+      />
+    );
+    await fireEvent.press(view.getByRole('link', { name: '定位回复目标，第 181 楼' }));
+    expect(locate).toHaveBeenCalledWith({ floor: 181 });
+    await fireEvent.changeText(view.getByLabelText('评论内查找'), '新的查找词');
+    expect(view.getByLabelText('评论内查找').props.value).toBe('新的查找词');
   });
 
   it.each([false, true])('keeps a late reply location subordinate to a newer reader drag=%s', async (readerDragged) => {
@@ -5936,7 +5975,23 @@ describe('Topic reply filters', () => {
     expect(view.queryByLabelText('楼层编号')).toBeNull();
   });
 
-  it('shows the first visible floor and lets the reader select a floor directly', async () => {
+  it('fits a five-digit floor label at a doubled system font scale', async () => {
+    const original = Dimensions.get('window');
+    await act(async () => Dimensions.set({ window: { ...original, width: 360, fontScale: 2 } }));
+    try {
+      jest.mocked(View.prototype.measureInWindow).mockImplementation((callback) => callback(16, 650, 112, 56));
+      const largeTopic: TopicDetail = { ...topic, source: 'linuxdo', replyWatermark: 90_000 };
+      const view = await render(<TopicFilterHarness selectedTopic={largeTopic} topicDetail={largeTopic} />);
+      await fireEvent.press(view.getByLabelText('跳到楼层'));
+      const width = StyleSheet.flatten(view.getByTestId('topic-reply-floor-menu').props.style).width;
+      expect(width).toBeGreaterThanOrEqual(24 + 28 * (2 + 5 / 2));
+      expect(width).toBeLessThanOrEqual(344);
+    } finally {
+      await act(async () => Dimensions.set({ window: original }));
+    }
+  });
+
+  it('shows the last visible floor at the end and lets the reader select a floor directly', async () => {
     mockGetLayout.mockImplementation((index) => ({
       x: 0,
       y: index * 100,
@@ -5982,39 +6037,92 @@ describe('Topic reply filters', () => {
           viewableItems: indices.map((index) => ({ item: rows[index], index, isViewable: true }))
         })
       );
-    const footerValue = () => view.getByLabelText('跳到楼层').props.accessibilityValue?.text;
+    const footerValue = () =>
+      view.getByLabelText('跳到楼层', { includeHiddenElements: true }).props.accessibilityValue?.text;
     await report(third, second);
     expect(footerValue()).toBe('楼层');
     expect(view.getByLabelText('跳到楼层')).toBeDisabled();
     await view.rerender(screen(true));
-    await report(opening, second);
+    await report(opening);
     expect(footerValue()).toBe('主楼');
+
+    const viewportHeight = (third - second) * 100 + 60;
+    const contentHeight = (third + 1) * 100;
+    const scroll = (y: number) =>
+      act(() =>
+        lastFlashListProps.onScroll({
+          nativeEvent: {
+            ...replyListScrollEvent(y).nativeEvent,
+            layoutMeasurement: { width: 320, height: viewportHeight },
+            contentSize: { width: 320, height: contentHeight }
+          }
+        })
+      );
+    await scroll(third * 100 - viewportHeight);
+    // Retain a pending token for a row that currently starts outside the viewport.
     await report(third, second);
     expect(footerValue()).toBe('第 2 楼');
-    await report();
+    const thirdFloorEdge = third * 100 - viewportHeight;
+    await scroll(thirdFloorEdge + 0.25 / PixelRatio.get());
     expect(footerValue()).toBe('第 2 楼');
-
-    // FlashList measures the separator as part of the preceding cell.
-    await report(second, third);
-    await act(() => lastFlashListProps.onScroll(replyListScrollEvent((second + 1) * 100 - 5)));
+    await scroll(thirdFloorEdge + 0.75 / PixelRatio.get());
     expect(footerValue()).toBe('第 3 楼');
-    await act(() => lastFlashListProps.onScroll(replyListScrollEvent((second + 1) * 100 - 45)));
-    expect(footerValue()).toBe('第 2 楼');
+    await scroll(contentHeight - viewportHeight);
+    expect(footerValue()).toBe('第 3 楼');
+    await report();
+    expect(footerValue()).toBe('第 3 楼');
+    await scroll(contentHeight - viewportHeight - 20);
+    await report(second, third);
 
     await fireEvent.press(view.getByLabelText('跳到楼层'));
     const picker = view.getByTestId('topic-reply-floor-menu');
-    expect(within(picker).getByRole('menuitem', { name: '第 2 楼', selected: true })).toBeTruthy();
-    await fireEvent.press(within(picker).getByRole('menuitem', { name: '第 3 楼' }));
+    expect(within(picker).getByRole('menuitem', { name: '第 3 楼', selected: true })).toBeTruthy();
+    await fireEvent.press(within(picker).getByRole('menuitem', { name: '第 4 楼' }));
     expect(onLocateReply).toHaveBeenCalledTimes(1);
-    expect(onLocateReply).toHaveBeenCalledWith({ floor: 3 });
+    expect(onLocateReply).toHaveBeenCalledWith({ floor: 4 });
     expect(view.queryByTestId('topic-reply-floor-menu')).toBeNull();
     expect(view.getByLabelText('跳到楼层')).toBeEnabled();
     expect(view.getByLabelText('写回复')).toBeEnabled();
     await act(() => lastFlashListProps.onScrollBeginDrag(replyListScrollEvent(third * 100)));
+    await act(() => lastFlashListProps.onScroll(replyListScrollEvent(third * 100)));
     await act(() => lastFlashListProps.onScroll(replyListScrollEvent(third * 100 + 20)));
     expect(view.queryByLabelText('跳到楼层')).toBeNull();
     await act(() => lastFlashListProps.onScroll(replyListScrollEvent(third * 100)));
     expect(view.getByLabelText('跳到楼层')).toBeEnabled();
+  });
+
+  it('reports the lowest on-screen reply in descending order even when its floor number is smaller', async () => {
+    mockGetLayout.mockImplementation((index) => ({
+      x: 0,
+      y: index * 100,
+      width: 320,
+      height: 100,
+      isHeightMeasured: true
+    }));
+    const view = await render(<TopicFilterHarness />);
+    await fireEvent.press(view.getByLabelText('回复排序，当前正序'));
+    await fireEvent.press(view.getByLabelText('倒序'));
+    await view.rerender(<TopicFilterHarness topicReplies={sourceReplies.toReversed()} />);
+    const rows: TopicListItem[] = lastFlashListProps.data;
+    const higher = rows.findIndex((row) => 'reply' in row && row.reply.floor === 3);
+    const lower = rows.findIndex((row) => 'reply' in row && row.reply.floor === 2);
+    expect(higher).toBeGreaterThanOrEqual(0);
+    expect(lower).toBeGreaterThan(higher);
+    await act(() => {
+      const offset = higher * 100 + 20;
+      lastFlashListProps.onScroll({
+        nativeEvent: {
+          ...replyListScrollEvent(offset).nativeEvent,
+          layoutMeasurement: { width: 320, height: (lower + 1) * 100 - offset }
+        }
+      });
+      lastFlashListProps.onViewableItemsChanged({
+        viewableItems: [lower, higher].map((index) => ({ item: rows[index], index, isViewable: true }))
+      });
+    });
+    expect(view.getByLabelText('跳到楼层', { includeHiddenElements: true }).props.accessibilityValue?.text).toBe(
+      '第 2 楼'
+    );
   });
 
   it('offers the floor jump for a readable V2EX topic without a reply composer', async () => {
@@ -6463,9 +6571,9 @@ describe('Topic reply filters', () => {
     }
   );
 
-  it('scales the reply order control, menu and boundary with reader text size', async () => {
-    const settings = { ...readerData.settings, fontScale: 1.3 };
-    const value = { settings, theme: createTheme(settings) };
+  it('scales the reply order control, menu and boundary with the interface text size', async () => {
+    const settings = { ...readerData.settings, uiFontScale: 1.3 };
+    const value = { settings: resolveReaderStyleSettings(settings), theme: createTheme(settings) };
     const wrapper = ({ children }: { children: React.ReactNode }) => (
       <ReaderStyleProvider value={value}>{children}</ReaderStyleProvider>
     );

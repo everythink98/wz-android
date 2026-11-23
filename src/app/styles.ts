@@ -1,8 +1,9 @@
 import { StyleSheet, StatusBar as NativeStatusBar } from 'react-native';
-import { type ReaderTheme } from '@/ui/theme/tokens';
+import { READER_APP_FONT_FAMILY, textSizeStyle, type ReaderTheme } from '@/ui/theme/tokens';
 
-export function createAppStyles(theme: ReaderTheme) {
+export function createAppStyles(theme: ReaderTheme, fontFamily: string = READER_APP_FONT_FAMILY, uiFontScale = 1) {
   return StyleSheet.create({
+    headerTitle: { fontFamily, ...textSizeStyle(Math.round(20 * uiFontScale)), fontWeight: '600' },
     screen: {
       flex: 1,
       backgroundColor: theme.background
@@ -21,7 +22,6 @@ export function createAppStyles(theme: ReaderTheme) {
       flex: 1,
       alignItems: 'stretch' as const,
       justifyContent: 'center' as const,
-      gap: 3,
       minHeight: 48,
       borderRadius: 6
     },
@@ -36,6 +36,7 @@ export function createAppStyles(theme: ReaderTheme) {
       elevation: 0
     },
     nav: {
+      height: 'auto',
       flexDirection: 'row' as const,
       borderTopColor: theme.line,
       borderTopWidth: StyleSheet.hairlineWidth,

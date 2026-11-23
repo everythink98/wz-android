@@ -817,6 +817,10 @@ class ForumContentSelectionViewTest {
         assertTrue(fixture.surface.copyFromActionModeForTest())
         assertEquals(selected, fixture.surface.selectionSnapshotForTest())
         assertTrue(fixture.surface.interactionStateForTest().hasActionMode)
+        fixture.surface.clipboardWriterForTest = { throw RuntimeException("platform clipboard unavailable") }
+        assertTrue(fixture.surface.copyFromActionModeForTest())
+        assertEquals(selected, fixture.surface.selectionSnapshotForTest())
+        assertTrue(fixture.surface.interactionStateForTest().hasActionMode)
         fixture.surface.clipboardWriterForTest = null
         assertTrue(fixture.surface.copyFromActionModeForTest())
         val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager

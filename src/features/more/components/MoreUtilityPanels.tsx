@@ -14,8 +14,9 @@ import { ContentSourcesPanel } from './ContentSourcesPanel';
 
 function appearanceSummary(settings: ReaderSettings) {
   const themeLabel = settings.theme === 'dark' ? '深色' : '浅色';
-  const densityLabel = settings.listDensity === 'compact' ? '紧凑' : settings.listDensity === 'loose' ? '宽松' : '标准';
-  return `${themeLabel} · ${Math.round(settings.fontScale * 100)}% · ${densityLabel}`;
+  const interfaceSize = Math.round((settings.uiFontScale ?? 1) * 100);
+  const readingSize = Math.round(settings.fontScale * 100);
+  return `${themeLabel} ·\u00A0界\u2060面\u00A0${interfaceSize}% ·\u00A0阅\u2060读\u00A0${readingSize}%`;
 }
 
 export type MoreUtilityCapabilities = {

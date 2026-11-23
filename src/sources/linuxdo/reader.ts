@@ -66,7 +66,10 @@ const LATEST_PINS_TIMEOUT_MS = 1_500;
 
 type LinuxDoEmojiCache = { kind: 'empty' } | { kind: 'ready'; urls: DiscourseEmojiUrlMap };
 let emojiUrlCache: LinuxDoEmojiCache = { kind: 'empty' };
-type LinuxDoCategoryMap = Map<string, { name: string; slug?: string; accessRequirement?: Topic['accessRequirement'] }>;
+type LinuxDoCategoryMap = Map<
+  string,
+  { name: string; slug?: string; parentId?: string; accessRequirement?: Topic['accessRequirement'] }
+>;
 type LinuxDoCategoryCache =
   | { scope: null }
   | {
@@ -121,6 +124,7 @@ export function categoryMapFromData(data: unknown) {
       map.set(String(category.id), {
         name: String(category.name),
         ...(typeof category.slug === 'string' ? { slug: category.slug } : {}),
+        ...(category.parent_category_id ? { parentId: String(category.parent_category_id) } : {}),
         accessRequirement: accessRequirementFromObject(category)
       });
     }
@@ -485,7 +489,7 @@ function topicStreamState(data: unknown) {
   const postStream = isRecord(data) && isRecord(data.post_stream) ? data.post_stream : {};
   const stream = Array.isArray(postStream.stream) ? postStream.stream : [];
   const embeddedPosts = Array.isArray(postStream.posts) ? postStream.posts : [];
-  return { stream, embeddedPostCount: embeddedPosts.length };
+  return { stream, embeddedPosts };
 }
 
 function linuxDoFeedRows(data: Record<string, unknown> | undefined) {
@@ -517,7 +521,20 @@ function normalizeLinuxDoFeedRows(
 
 async function latestLinuxDoPins(options: LinuxDoOptions, categoryMap: LinuxDoCategoryMap, category?: string) {
   const signedIn = options.linuxDoAccess?.authenticated === true;
-  const slug = category && (/^\d+$/.test(category) ? categoryMap.get(String(Number(category)))?.slug : category);
+  let slug = category;
+  if (signedIn && category && /^\d+$/.test(category)) {
+    const path: string[] = [];
+    const seen = new Set<string>();
+    let id: string | undefined = String(Number(category));
+    while (id) {
+      const entry = categoryMap.get(id);
+      if (!entry?.slug || seen.has(id)) return [];
+      seen.add(id);
+      path.unshift(entry.slug);
+      id = entry.parentId;
+    }
+    slug = path.join(':');
+  }
   const query = slug ? `in:pinned =category:${slug}` : 'in:pinned';
   let pins: Topic[] = [];
   await withAbortableTimeout(
@@ -563,6 +580,7 @@ export async function getLinuxDoFeed(
   const firstListPage = Math.floor(start / LIST_PAGE_SIZE) + 1;
   const firstOffset = start % LIST_PAGE_SIZE;
   let pins: Topic[] = [];
+  let emptyWindows = 0;
   let scan: LinuxDoFeedScan =
     0 < limit
       ? { kind: 'reading', page: firstListPage, items: [], droppedCount: 0, categories: new Map() }
@@ -582,10 +600,11 @@ export async function getLinuxDoFeed(
       pins = await latestLinuxDoPins(options, categoryMap, options.category);
     const droppedCount = scan.droppedCount + Math.max(0, topics.length - items.length);
     const serverHasMore = Boolean(isRecord(data.topic_list) && data.topic_list.more_topics_url);
+    emptyWindows = items.length ? 0 : emptyWindows + 1;
     scan.items.push(...(scan.page === firstListPage && firstOffset > 0 ? items.slice(firstOffset) : items));
     if (scan.items.length >= limit) {
       scan = { kind: 'ready', items: scan.items, droppedCount, hasMore: scan.items.length > limit || serverHasMore };
-    } else if (serverHasMore && (items.length > 0 || topics.length > 0)) {
+    } else if (serverHasMore && topics.length > 0 && emptyWindows < 2) {
       scan = { kind: 'reading', page: scan.page + 1, items: scan.items, droppedCount, categories: categoryMap };
     } else {
       scan = { kind: 'ready', items: scan.items, droppedCount, hasMore: false };
@@ -635,7 +654,7 @@ async function topicData(id: string, options: LinuxDoOptions, targetFloor?: numb
     `/t/${encodeURIComponent(id)}${targetFloor ? `/${targetFloor}` : ''}.json`,
     {
       ...(options.trackVisit ? { track_visit: 'true', forceLoad: 'true' } : {}),
-      ...(targetFloor ? { include_raw: 'true' } : {})
+      ...(targetFloor || options.linuxDoAccess?.authenticated ? { include_raw: 'true' } : {})
     },
     options
   );
@@ -772,7 +791,7 @@ export async function getLinuxDoTopic(
 async function fetchPosts(id: string, postIds: unknown[], options: LinuxDoOptions) {
   const data = await fetchLinuxDoJson<Record<string, unknown>>(
     `/t/${encodeURIComponent(id)}/posts.json`,
-    { 'post_ids[]': postIds.map(String) },
+    { 'post_ids[]': postIds.map(String), ...(options.linuxDoAccess?.authenticated ? { include_raw: 'true' } : {}) },
     options
   );
   return isRecord(data.post_stream) && Array.isArray(data.post_stream.posts) ? data.post_stream.posts : [];
@@ -914,7 +933,18 @@ export async function getLinuxDoReplies(
       }
     );
   }
-  const posts = await fetchPosts(id, postIds, options);
+  const wanted = new Set(postIds.map(String));
+  const posts = streamState.embeddedPosts.filter(
+    (post: unknown) =>
+      isRecord(post) &&
+      wanted.has(String(post.id)) &&
+      (post.topic_id === undefined || String(post.topic_id) === id) &&
+      (Boolean(post.deleted_at) ||
+        (typeof post.cooked === 'string' && (parsePositiveInteger(post.post_number) ?? 0) > 1))
+  );
+  const known = new Set(posts.map((post) => String(post.id)));
+  const missing = postIds.filter((postId) => !known.has(String(postId)));
+  if (missing.length) posts.push(...(await fetchPosts(id, missing, options)));
   const visiblePostIds = discourseVisiblePostIds(posts, postIds);
   const normalizedItems = await hydrateEditableReplyContent(
     posts.map((post) => normalizePost(post, id)).filter(Boolean) as Reply[],

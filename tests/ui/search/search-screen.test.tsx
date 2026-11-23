@@ -22,7 +22,7 @@ import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { defaultScheduler, notifyManager } from '@tanstack/react-query';
 import type { ReadGateway } from '@/sources/readGateway';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
-import { createTheme, readerRadii } from '@/ui/theme/tokens';
+import { resolveReaderStyleSettings, createTheme, readerRadii } from '@/ui/theme/tokens';
 
 const mockSearchScrollToOffset = jest.fn<(options: { offset: number; animated: boolean }) => void>();
 const mockSearchNavigationDispatch = jest.fn();
@@ -1061,9 +1061,12 @@ describe('Search state', () => {
   });
 
   it('invalidates the mounted result list when reader appearance changes', async () => {
-    const darkSettings: ReaderSettings = { ...createEmptyReaderData().settings, theme: 'dark' };
-    const lightSettings: ReaderSettings = { ...darkSettings, theme: 'light' };
-    const themedScreen = (settings: ReaderSettings) => (
+    const darkSettings = resolveReaderStyleSettings<ReaderSettings>({
+      ...createEmptyReaderData().settings,
+      theme: 'dark'
+    });
+    const lightSettings = { ...darkSettings, theme: 'light' as const };
+    const themedScreen = (settings: typeof darkSettings) => (
       <ReaderStyleProvider value={{ settings, theme: createTheme(settings) }}>
         <SearchScreen {...createSearchScreenProps()} />
       </ReaderStyleProvider>
@@ -1313,7 +1316,7 @@ describe('Search state', () => {
         const lightSettings: ReaderSettings = { ...createEmptyReaderData().settings, theme: 'light' };
         const darkSettings: ReaderSettings = { ...lightSettings, theme: 'dark' };
         const themedHistory = (settings: ReaderSettings) => (
-          <ReaderStyleProvider value={{ settings, theme: createTheme(settings) }}>
+          <ReaderStyleProvider value={{ settings: resolveReaderStyleSettings(settings), theme: createTheme(settings) }}>
             <RecentSearchHarness onRemoveRecentSearch={onRemoveRecentSearch} onSearch={onSearch} />
           </ReaderStyleProvider>
         );

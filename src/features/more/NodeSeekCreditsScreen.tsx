@@ -6,13 +6,19 @@ import { errorMessage } from '@/platform/network/errors';
 import { AppButton } from '@/ui/controls/ButtonControls';
 import { EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { createReaderFontSizer, type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import {
+  createUiFontSizer,
+  type ReaderStyleSettings,
+  fontFamilyValue,
+  type ReaderTheme,
+  textSizeStyle
+} from '@/ui/theme/tokens';
 import type { CreditDay } from './nodeSeekCredits';
 import type { useNodeSeekCredits } from './useNodeSeekCredits';
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
-  const fontFamily = fontFamilyValue(settings.fontFamily);
-  const size = createReaderFontSizer(settings);
+  const fontFamily = fontFamilyValue(settings.uiFontFamily);
+  const size = createUiFontSizer(settings);
   return StyleSheet.create({
     list: { flex: 1, backgroundColor: theme.surface },
     content: { paddingHorizontal: 20, paddingBottom: 16 },
@@ -22,20 +28,25 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       borderBottomColor: theme.line,
       borderBottomWidth: StyleSheet.hairlineWidth
     },
-    title: { fontFamily, color: theme.ink, fontSize: size(14), fontWeight: '600' },
+    title: { fontFamily, color: theme.ink, ...textSizeStyle(size(14)), fontWeight: '600' },
     summarySlot: { minHeight: size(40), justifyContent: 'center' },
     total: {
       fontFamily,
       color: theme.ink,
-      fontSize: size(32),
-      lineHeight: size(40),
+      ...textSizeStyle(size(32), size(40)),
       fontWeight: '700',
       fontVariant: ['tabular-nums']
     },
-    value: { fontFamily, color: theme.ink, fontSize: size(16), fontWeight: '600', fontVariant: ['tabular-nums'] },
-    text: { fontFamily, color: theme.ink, fontSize: size(14), lineHeight: size(21), flexShrink: 1 },
-    meta: { fontFamily, color: theme.muted, fontSize: size(12), lineHeight: size(18), fontVariant: ['tabular-nums'] },
-    error: { fontFamily, color: theme.danger, fontSize: size(13), lineHeight: size(19) },
+    value: {
+      fontFamily,
+      color: theme.ink,
+      ...textSizeStyle(size(16)),
+      fontWeight: '600',
+      fontVariant: ['tabular-nums']
+    },
+    text: { fontFamily, color: theme.ink, ...textSizeStyle(size(14), size(21)), flexShrink: 1 },
+    meta: { fontFamily, color: theme.muted, ...textSizeStyle(size(12), size(18)), fontVariant: ['tabular-nums'] },
+    error: { fontFamily, color: theme.danger, ...textSizeStyle(size(13), size(19)) },
     day: { gap: 4, paddingTop: 24, paddingBottom: 8 },
     entry: { gap: 6, paddingVertical: 14, borderBottomColor: theme.line, borderBottomWidth: StyleSheet.hairlineWidth },
     row: { flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap', justifyContent: 'space-between' },

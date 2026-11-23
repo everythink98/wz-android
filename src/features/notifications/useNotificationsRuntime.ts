@@ -287,7 +287,19 @@ export function useNotificationsRuntime({
         if (!identifier) return;
         const before = stateRef.current;
         const settled = await confirmDisabledNotificationDismissal(source, identityKey, identifier);
-        if (mountedRef.current && stateRef.current === before) commitState(settled);
+        const latest = stateRef.current;
+        const previous = latest.sources[source];
+        const persisted = settled.sources[source];
+        if (
+          mountedRef.current &&
+          latest.globalEnabled === before.globalEnabled &&
+          previous === before.sources[source] &&
+          previous.identityKey === persisted.identityKey &&
+          previous.intentEnabled === persisted.intentEnabled &&
+          previous.notificationIdentifier === identifier &&
+          persisted.notificationIdentifier !== identifier
+        )
+          commitState({ ...latest, sources: { ...latest.sources, [source]: persisted } });
       }),
     [commitState]
   );

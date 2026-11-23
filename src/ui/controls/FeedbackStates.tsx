@@ -12,17 +12,18 @@ import { sourceCatalog, type Source } from '@/domain/forum/sourceCatalog';
 import type { AuthNotice } from '@/domain/session/siteSessionPrompts';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import {
-  createReaderFontSizer,
+  createUiFontSizer,
   readerRadii,
   type ReaderStyleSettings,
   fontFamilyValue,
-  type ReaderTheme
+  type ReaderTheme,
+  textSizeStyle
 } from '@/ui/theme/tokens';
 import { AppButton } from './ButtonControls';
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
-  const fontFamily = fontFamilyValue(settings.fontFamily);
-  const fontSize = createReaderFontSizer(settings);
+  const fontFamily = fontFamilyValue(settings.uiFontFamily);
+  const fontSize = createUiFontSizer(settings);
   return StyleSheet.create({
     authNoticeBox: {
       gap: 8,
@@ -32,11 +33,11 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       borderWidth: StyleSheet.hairlineWidth,
       padding: 12
     },
-    authNoticeText: { fontFamily, fontSize: fontSize(13), lineHeight: fontSize(19) },
+    authNoticeText: { fontFamily, ...textSizeStyle(fontSize(13), fontSize(19)) },
     authNoticeDanger: { color: theme.danger },
     authNoticeNeutral: { color: theme.muted },
     authNoticeWarning: { color: theme.warning },
-    empty: { color: theme.muted, fontFamily, fontSize: fontSize(13), paddingVertical: 24, textAlign: 'center' },
+    empty: { color: theme.muted, fontFamily, ...textSizeStyle(fontSize(13)), paddingVertical: 24, textAlign: 'center' },
     recoverableEmpty: {
       alignItems: 'center',
       justifyContent: 'center',
@@ -87,8 +88,14 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       paddingVertical: 22
     },
     routeState: { flex: 1, margin: 16, width: undefined },
-    stateTitle: { color: theme.ink, fontFamily, fontSize: fontSize(17), fontWeight: '600', textAlign: 'center' },
-    text: { color: theme.muted, fontFamily, fontSize: fontSize(13), lineHeight: fontSize(19) },
+    stateTitle: {
+      color: theme.ink,
+      fontFamily,
+      ...textSizeStyle(fontSize(17)),
+      fontWeight: '600',
+      textAlign: 'center'
+    },
+    text: { color: theme.muted, fontFamily, ...textSizeStyle(fontSize(13), fontSize(19)) },
     centeredText: { textAlign: 'center' },
     actions: { alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 }
   });

@@ -1207,6 +1207,28 @@ describe('notification gateway', () => {
     expect(cleanup).toHaveBeenCalledTimes(1);
   });
 
+  it('stops a private Discourse upload if its route was lost after CSRF', async () => {
+    let current = true;
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+      prepareRequestToSend(init);
+      current = false;
+      return Response.json(url.endsWith('/session/csrf') ? { csrf: 'test' } : { short_url: '/uploads/test.png' });
+    });
+    const gateway = createNotificationGateway({
+      readAccess: async () => ({ userId: '7', identityKey: 'linuxdo:7', fetcher })
+    });
+    await expect(
+      gateway.uploadReplyImage('linuxdo', {
+        expectedIdentityKey: 'linuxdo:7',
+        file: { uri: 'file:///sample.png', name: 'sample.png', mimeType: 'image/png' },
+        beforeSend: () => {
+          if (!current) throw new Error('route lost');
+        }
+      })
+    ).rejects.toThrow('route lost');
+    expect(fetcher.mock.calls.map(([url]) => new URL(url).pathname)).not.toContain('/uploads.json');
+  });
+
   it('uploads private-message images through the existing NodeImage and Discourse clients', async () => {
     const file = {
       uri: 'file:///PRIVATE_IMAGE_NAME.png',

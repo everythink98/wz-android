@@ -1,15 +1,16 @@
 import { StyleSheet, StatusBar as NativeStatusBar } from 'react-native';
 import {
-  createReaderFontSizer,
+  createUiFontSizer,
   readerRadii,
   type ReaderStyleSettings,
   type ReaderTheme,
-  fontFamilyValue
+  fontFamilyValue,
+  textSizeStyle
 } from '@/ui/theme/tokens';
 
 export function createFeedStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
-  const appFontFamily = fontFamilyValue(settings.fontFamily);
-  const fontSize = createReaderFontSizer(settings);
+  const appFontFamily = fontFamilyValue(settings.uiFontFamily);
+  const fontSize = createUiFontSizer(settings);
   return StyleSheet.create({
     actions: {
       alignItems: 'center',
@@ -32,8 +33,7 @@ export function createFeedStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     errorText: {
       color: theme.danger,
       fontFamily: appFontFamily,
-      fontSize: 13,
-      lineHeight: 19
+      ...textSizeStyle(fontSize(13), fontSize(19))
     },
     feedFloatingActions: {
       position: 'absolute',
@@ -70,7 +70,7 @@ export function createFeedStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     feedSourceLabel: {
       margin: 0,
       fontFamily: appFontFamily,
-      fontSize: Math.round(14 * settings.fontScale),
+      ...textSizeStyle(Math.round(14 * settings.uiFontScale)),
       fontWeight: '600',
       textAlign: 'center'
     },
@@ -140,7 +140,7 @@ export function createFeedStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     linuxDoFilterMenuSectionText: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: fontSize(11),
+      ...textSizeStyle(fontSize(11)),
       fontWeight: '600',
       letterSpacing: 0,
       paddingHorizontal: 12,
@@ -164,15 +164,13 @@ export function createFeedStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     pageErrorText: {
       color: theme.danger,
       fontFamily: appFontFamily,
-      fontSize: fontSize(13),
-      lineHeight: fontSize(19),
+      ...textSizeStyle(fontSize(13), fontSize(19)),
       textAlign: 'center'
     },
     endOfListText: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: 12,
-      lineHeight: 17,
+      ...textSizeStyle(fontSize(12), fontSize(17)),
       paddingVertical: 18,
       textAlign: 'center'
     }

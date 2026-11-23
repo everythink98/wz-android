@@ -11,6 +11,7 @@ import { NetworkProxyScreen } from '@/features/more/components/NetworkProxyScree
 import { createMoreScreenStyles } from '@/features/more/styles';
 import { type NetworkProxyProfile, type NetworkProxyState } from '@/platform/network/networkProxy';
 import { formatAppUpdateDownloadProgress, type AppUpdateInfo } from '@/platform/update/appUpdate';
+import { createAppUpdateProgress } from '@/platform/update/appUpdateOperation';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import type { VisualScenarioDefinition } from '../../types';
 
@@ -124,7 +125,7 @@ function UpdateAvailableScenario({ phase = 'idle' }: { phase?: 'idle' | 'restori
           phase,
           artifact: null,
           restoreFailed: false,
-          progress: null,
+          progress: createAppUpdateProgress(),
           info: phase === 'idle' ? updateInfo : null,
           message: '',
           check: noop,
@@ -158,10 +159,8 @@ function UpdateProgressScenario({
               : { kind: 'partial', update: updateInfo, totalBytes: unknownTotal ? null : 80_000_000, downloadedBytes },
           info: updateInfo,
           message: '',
-          progress: formatAppUpdateDownloadProgress(
-            updateInfo.version,
-            downloadedBytes,
-            unknownTotal ? -1 : 80_000_000
+          progress: createAppUpdateProgress(
+            formatAppUpdateDownloadProgress(updateInfo.version, downloadedBytes, unknownTotal ? -1 : 80_000_000)
           ),
           check: noop,
           start: noop,
@@ -192,7 +191,7 @@ function UpdateRetainedScenario({
           info: newer
             ? { ...updateInfo, version: '1.4.1', versionName: '1.4.1', versionCode: 141, sha256: '2'.repeat(64) }
             : null,
-          progress: null,
+          progress: createAppUpdateProgress(),
           artifact: ready
             ? { kind: 'verified', update: updateInfo, bytes: 80_000_000 }
             : { kind: 'partial', update: updateInfo, totalBytes: 80_000_000, downloadedBytes: 34_000_000 },

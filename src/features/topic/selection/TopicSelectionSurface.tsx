@@ -17,6 +17,7 @@ import { type NativeSyntheticEvent, Platform, StyleSheet, View, type ViewProps }
 import Animated, { cancelAnimation, type SharedValue, useEvent, useSharedValue } from 'react-native-reanimated';
 import { useTopicSelectionBackReport } from '../useTopicRouteBeforeRemove';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
+import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { beginDiagnosticTrace, finishDiagnosticTrace, recordDiagnosticError } from '@/platform/diagnostics/diagnostics';
 import type { DiagnosticFields } from '@/platform/diagnostics/diagnosticPolicy';
 
@@ -159,6 +160,10 @@ export function TopicSelectionSurface({
       });
   }, []);
   const drag = useSharedValue<SelectionDrag>({ revision: '', dragId: 0, active: false });
+  const eventBinding = useCommittedRef({ revision, nativeEnabled, horizontalTargets });
+  const revisionChanged =
+    eventBinding.current.revision !== revision || eventBinding.current.nativeEnabled !== nativeEnabled;
+  const horizontalTargetIds = useMemo(() => Object.keys(horizontalTargets), [horizontalTargets]);
   const onSelectionDragChange = useEvent<NativeSyntheticEvent<SelectionDrag>>(
     (event) => {
       'worklet';
@@ -168,7 +173,7 @@ export function TopicSelectionSurface({
       drag.set({ revision, dragId: event.dragId, active: event.active });
     },
     ['onSelectionDragChange'],
-    true
+    revisionChanged
   );
   const onHorizontalAutoScroll = useEvent<NativeSyntheticEvent<SelectionHorizontalScroll>>(
     (event) => {
@@ -188,7 +193,7 @@ export function TopicSelectionSurface({
       target.offset.set(Math.max(0, Math.min(target.maximum.value, event.offsetDp)));
     },
     ['onHorizontalAutoScroll'],
-    true
+    revisionChanged || eventBinding.current.horizontalTargets !== horizontalTargets
   );
   const reportSelection = useTopicSelectionBackReport();
   const mounted = useRef(false);
@@ -300,7 +305,7 @@ export function TopicSelectionSurface({
         enabled={nativeEnabled}
         revision={revision}
         rows={snapshot.valid ? snapshot.rows : []}
-        horizontalTargets={Object.keys(horizontalTargets)}
+        horizontalTargets={horizontalTargetIds}
         style={styles.fill}
         testID="topic-selection-surface"
         onAutoScroll={onAutoScroll}

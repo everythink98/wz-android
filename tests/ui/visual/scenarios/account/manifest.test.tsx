@@ -1,7 +1,7 @@
 import { fireEvent, render } from '../../../render';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
-import { createTheme } from '@/ui/theme/tokens';
+import { resolveReaderStyleSettings, createTheme } from '@/ui/theme/tokens';
 import { accountVisualScenarios } from './manifest';
 
 describe('account visual scenarios', () => {
@@ -34,7 +34,7 @@ describe('account visual scenarios', () => {
       if (scenario?.kind !== 'rendered') throw new Error('Verification visual scene is missing');
       const settings = { ...createEmptyReaderData().settings, fontScale: 1.4, theme };
       const view = await render(
-        <ReaderStyleProvider value={{ settings, theme: createTheme(settings) }}>
+        <ReaderStyleProvider value={{ settings: resolveReaderStyleSettings(settings), theme: createTheme(settings) }}>
           {scenario.render()}
         </ReaderStyleProvider>
       );
@@ -73,7 +73,9 @@ describe('account visual scenarios', () => {
     if (scenario?.kind !== 'rendered') throw new Error('Login visual scene is missing');
     const settings = { ...createEmptyReaderData().settings, fontScale: 1.4, theme };
     const view = await render(
-      <ReaderStyleProvider value={{ settings, theme: createTheme(settings) }}>{scenario.render()}</ReaderStyleProvider>
+      <ReaderStyleProvider value={{ settings: resolveReaderStyleSettings(settings), theme: createTheme(settings) }}>
+        {scenario.render()}
+      </ReaderStyleProvider>
     );
     expect(view.getByText(title)).toBeTruthy();
     expect(view.getByText('代理设置正在应用，请稍候再试。')).toBeTruthy();

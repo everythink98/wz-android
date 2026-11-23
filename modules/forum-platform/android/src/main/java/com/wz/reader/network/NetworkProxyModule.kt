@@ -26,6 +26,7 @@ import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.ReadableMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
@@ -159,13 +160,14 @@ internal class OwnedProxyServerRegistry {
   }
   private val lock = Any()
   private var latestOwner = 0L
+  private var latestOwnerRetired = false
   private var ownership: Ownership = Ownership.Unowned
   private var stateGeneration = 0L
 
   // The caller holds the shared WebView operation lock through apply and confirmation.
   fun apply(owner: Long, profile: NetworkProxyProfile?, operation: () -> Int?): Int? {
     synchronized(lock) {
-      check(owner == latestOwner) { "代理 bridge 已失效" }
+      check(owner == latestOwner && !latestOwnerRetired) { "代理 bridge 已失效" }
       val current = ownership
       if (current is Ownership.Owned && current.webView is WebViewConfirmation.Confirmed &&
         current.webView.profile == profile) {
@@ -200,12 +202,13 @@ internal class OwnedProxyServerRegistry {
     synchronized(lock) {
       if (owner > latestOwner) {
         latestOwner = owner
+        latestOwnerRetired = false
       }
     }
   }
 
   fun ifLatestOwner(owner: Long, onLatest: () -> Unit): Boolean = synchronized(lock) {
-    if (owner != latestOwner) {
+    if (owner != latestOwner || latestOwnerRetired) {
       return@synchronized false
     }
     onLatest()
@@ -213,7 +216,7 @@ internal class OwnedProxyServerRegistry {
   }
 
   fun begin(owner: Long, onBegin: () -> Unit): LocalNetworkProxyServer? = synchronized(lock) {
-    check(owner == latestOwner) { "代理 bridge 已失效" }
+    check(owner == latestOwner && !latestOwnerRetired) { "代理 bridge 已失效" }
     val previous = (ownership as? Ownership.Owned)?.server
     ownership = Ownership.Owned(owner, null)
     onBegin()
@@ -242,6 +245,11 @@ internal class OwnedProxyServerRegistry {
     onRelease()
     stateGeneration += 1
     previous
+  }
+
+  fun retire(owner: Long, onRelease: () -> Unit): LocalNetworkProxyServer? = synchronized(lock) {
+    if (latestOwner == owner) latestOwnerRetired = true
+    release(owner, onRelease)
   }
 
   fun requireCurrent(owner: Long) {
@@ -282,27 +290,34 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
 
   override fun getName(): String = "NetworkProxyModule"
 
+  private inner class WorkerTask(val promise: Promise, val errorCode: String, val action: () -> Unit) : Runnable {
+    fun reject() = promise.reject(errorCode, "代理 bridge 已失效")
+    override fun run() {
+      if (invalidated) reject() else action()
+    }
+  }
+
+  private fun runOnWorker(promise: Promise, errorCode: String, action: () -> Unit) {
+    val task = WorkerTask(promise, errorCode, action)
+    try { worker.execute(task) } catch (_: RejectedExecutionException) { task.reject() }
+  }
+
   @ReactMethod
   fun getDefaultWebViewUserAgent(promise: Promise) {
-    try {
-      worker.execute {
-        try {
-          check(!invalidated) { "默认浏览器身份 bridge 已失效" }
-          val userAgent = readProcessDefaultWebViewUserAgent(reactContext)
-          check(!invalidated) { "默认浏览器身份 bridge 已失效" }
-          promise.resolve(userAgent)
-        } catch (error: Exception) {
-          promise.reject("E_DEFAULT_USER_AGENT", "默认浏览器身份读取失败", error)
-        }
+    runOnWorker(promise, "E_DEFAULT_USER_AGENT") {
+      try {
+        val userAgent = readProcessDefaultWebViewUserAgent(reactContext)
+        check(!invalidated) { "默认浏览器身份 bridge 已失效" }
+        promise.resolve(userAgent)
+      } catch (error: Exception) {
+        promise.reject("E_DEFAULT_USER_AGENT", "默认浏览器身份读取失败", error)
       }
-    } catch (error: Exception) {
-      promise.reject("E_DEFAULT_USER_AGENT", "默认浏览器身份读取失败", error)
     }
   }
 
   @ReactMethod
   fun applyProxy(profile: ReadableMap?, promise: Promise) {
-    worker.execute {
+    runOnWorker(promise, "proxy_apply_failed") {
       var transitionStarted = false
       var nextServer: LocalNetworkProxyServer? = null
       try {
@@ -383,7 +398,7 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
 
   @ReactMethod
   fun recoverForumReadChannel(source: String, expectedGeneration: Double, traceIdentity: String, promise: Promise) {
-    worker.execute {
+    runOnWorker(promise, "forum_read_channel_recovery_failed") {
       try {
         val result = NetworkProxyRuntime.recoverForumReadChannel(
           source,
@@ -489,7 +504,7 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
 
   @ReactMethod
   fun setLinuxDoCookieResponseBarrier(blocked: Boolean, reason: String, diagnostics: ReadableMap, promise: Promise) {
-    worker.execute {
+    runOnWorker(promise, "cookie_barrier_failed") {
       try {
         LinuxDoCookieResponses.store.setBarrier(blocked, reason, diagnostics.toHashMap().filterValues { it != null }.mapValues { it.value!! })
         promise.resolve(null)
@@ -501,7 +516,7 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
 
   @ReactMethod
   fun clearManagedLoginCookies(source: String, diagnostics: ReadableMap, promise: Promise) {
-    worker.execute {
+    runOnWorker(promise, "cookie_clear_failed") {
       try {
         promise.resolve(NetworkProxyRuntime.clearManagedLoginCookies(source, diagnostics.toHashMap().filterValues { it != null }.mapValues { it.value!! }))
       } catch (error: Exception) {
@@ -674,8 +689,14 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
   override fun invalidate() {
     invalidated = true
     LinuxDoCookieResponses.loginDeletionListener.compareAndSet(loginDeletionListener, null)
-    worker.shutdownNow()
-    if (releaseOwnedServer()) restoreWebViewProxyFromRuntime()
+    worker.shutdownNow().filterIsInstance<WorkerTask>().forEach { it.reject() }
+    var released = false
+    val server = proxyServers.retire(owner) {
+      released = true
+      NetworkProxyRuntime.blockNetworkRequests()
+    }
+    server?.stop()
+    if (released) restoreWebViewProxyFromRuntime()
     super.invalidate()
   }
 

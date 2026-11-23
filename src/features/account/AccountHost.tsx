@@ -35,6 +35,7 @@ export function AccountHost({
   mountLinuxDoWebView,
   nodeImageAuthDocument,
   nodeImageAuthError,
+  nodeImageWebViewBlockMessage,
   nodeImageAuthWebViewRef,
   resetLinuxDoWebView,
   checkLinuxDoCookie,
@@ -75,6 +76,7 @@ export function AccountHost({
   mountLinuxDoWebView: boolean;
   nodeImageAuthDocument: NodeImageAuthDocument | null;
   nodeImageAuthError: string;
+  nodeImageWebViewBlockMessage: string;
   nodeImageAuthWebViewRef: RefObject<WebView | null>;
   resetLinuxDoWebView: () => void;
   checkLinuxDoCookie: () => void;
@@ -130,12 +132,12 @@ export function AccountHost({
       <LoginWebViewModal
         visible={showNodeImageAuthPanel}
         title="NodeImage 授权"
-        loading={!webViewBlockMessage && loadingNodeImageAuthPage}
+        loading={!nodeImageWebViewBlockMessage && loadingNodeImageAuthPage}
         loadingText="正在打开 NodeImage..."
-        error={webViewBlockMessage || nodeImageAuthError}
+        error={nodeImageWebViewBlockMessage || nodeImageAuthError}
         onClose={closeNodeImageAuthPanel}
       >
-        {showNodeImageAuthPanel && nodeImageAuthDocument && !webViewBlockMessage ? (
+        {showNodeImageAuthPanel && nodeImageAuthDocument && !nodeImageWebViewBlockMessage ? (
           <>
             <WebView
               style={styles.webView}

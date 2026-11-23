@@ -487,6 +487,14 @@ private fun pruneSvgPosterCache(cacheDir: File, protectedName: String?) {
   pngFiles.filter { it.name in evictions }.forEach { it.delete() }
 }
 
+internal fun findCachedSvgPoster(outputFile: File, valid: (File) -> Boolean): Boolean {
+  val cacheDir = requireNotNull(outputFile.parentFile)
+  val hit = valid(outputFile)
+  if (hit) outputFile.setLastModified(System.currentTimeMillis())
+  pruneSvgPosterCache(cacheDir, outputFile.name.takeIf { hit })
+  return hit
+}
+
 private fun preparePoster(request: RenderRequest): PreparedPoster {
   request.cacheKey?.let(::validateSvgCacheKey)
   val svg = canonicalSvg(request.svgBase64)
@@ -507,11 +515,8 @@ private fun preparePoster(request: RenderRequest): PreparedPoster {
   if (!cacheDir.isDirectory) {
     throw SvgPosterException("svg_cache_failed", "SVG 海报缓存路径无效。")
   }
-  pruneSvgPosterCache(cacheDir, null)
   val outputFile = File(cacheDir, sha256PosterFileName(request.cacheKey, svg.bytes, dimensions))
-  if (validCachedPoster(outputFile, dimensions)) {
-    outputFile.setLastModified(System.currentTimeMillis())
-    pruneSvgPosterCache(cacheDir, outputFile.name)
+  if (findCachedSvgPoster(outputFile) { validCachedPoster(it, dimensions) }) {
     return PreparedPoster(dimensions, documentDimensions, outputFile, "", true)
   }
   if (outputFile.exists()) {

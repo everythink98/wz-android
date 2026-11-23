@@ -287,6 +287,7 @@ export function ContentSourcesPanel({
       target,
       fromOrder: session.preferences.map((preference) => preference.source)
     });
+    cancelDrag();
   };
   const visibleHostSources = usePreferenceNativeOrder ? preferences.map(({ source }) => source) : hostSources;
 
@@ -353,11 +354,18 @@ export function ContentSourcesPanel({
             onFinalize: (event) => {
               'worklet';
               if (dragActiveIndex.value !== index) return;
-              const success = !event.canceled;
               const targetIndex = dragTargetIndex.value;
+              const centers = rowCenters.value;
+              const success =
+                !event.canceled &&
+                hasValidRowCenters(centers, preferenceCount) &&
+                targetIndex >= 0 &&
+                targetIndex < centers.length;
+              dragActiveIndex.value = -1;
               if (success) {
-                const centers = rowCenters.value;
                 dragTranslationY.value = centers[targetIndex]! - centers[index]!;
+              } else {
+                dragTranslationY.value = 0;
               }
               scheduleOnRN(finishDrag, preference.source, success, targetIndex, dragGeneration);
             }

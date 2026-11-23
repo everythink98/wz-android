@@ -18,9 +18,9 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     stats: { flexDirection: 'row', flexWrap: 'wrap' },
     stat: { alignItems: 'center', justifyContent: 'center', minHeight: 60, paddingVertical: 4, width: '25%' },
     statWide: { width: '50%' },
-    value: { fontSize: Math.round(18 * settings.fontScale), fontWeight: '600', fontVariant: ['tabular-nums'] },
+    value: { fontSize: Math.round(18 * settings.uiFontScale), fontWeight: '600', fontVariant: ['tabular-nums'] },
     placeholder: { color: theme.muted, fontWeight: '400' },
-    label: { fontSize: Math.round(12 * settings.fontScale), lineHeight: Math.round(17 * settings.fontScale) },
+    label: { fontSize: Math.round(12 * settings.uiFontScale), lineHeight: Math.round(17 * settings.uiFontScale) },
     linkedLabel: { color: theme.primary },
     details: { gap: 4, paddingBottom: 4 },
     detailsActions: {
@@ -73,7 +73,7 @@ export function AccountOverviewPanel({
   const detailsVisited = detailsState.owner === detailsOwner && detailsState.phase !== 'unopened';
   const { width, fontScale } = useWindowDimensions();
   const { styles: localStyles, theme, settings } = useReaderThemeStyles(createStyles);
-  const largeText = settings.fontScale * fontScale >= 1.35 || width < 360;
+  const largeText = settings.uiFontScale * fontScale >= 1.35 || width < 360;
   const profile = data.profile;
   const overview = data.overview;
   const ns = overview?.source === 'nodeseek' ? overview : undefined;

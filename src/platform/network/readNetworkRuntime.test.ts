@@ -3,6 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 beforeEach(() => vi.resetModules());
 
 describe('read network rotation snapshot', () => {
+  it('retains a source rotation while another source rotates before its preview resumes', async () => {
+    const runtime = await import('./readNetworkRuntime');
+    runtime.publishReadNetworkRuntimeRotation(1, 'nodeseek');
+    runtime.publishReadNetworkRuntimeRotation(2, 'linuxdo');
+    expect(runtime.currentReadNetworkRuntimeGeneration('nodeseek')).toBe(1);
+    expect(runtime.currentReadNetworkRuntimeGeneration('linuxdo')).toBe(2);
+  });
+
   it('publishes only newer safe generations without changing earlier snapshots', async () => {
     const runtime = await import('./readNetworkRuntime');
     const initial = runtime.getReadNetworkRuntimeSnapshot();

@@ -1,4 +1,30 @@
 import type { DownloadTask } from 'expo-file-system';
+import type { AppUpdateDownloadProgress } from './appUpdate';
+
+export function createAppUpdateProgress(initial: AppUpdateDownloadProgress | null = null) {
+  let current = initial;
+  const listeners = new Set<() => void>();
+  return {
+    getSnapshot: () => current,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    set(next: AppUpdateDownloadProgress | null) {
+      if (
+        current?.title === next?.title &&
+        current?.downloadedBytes === next?.downloadedBytes &&
+        current?.totalBytes === next?.totalBytes
+      )
+        return;
+      current = next;
+      listeners.forEach((listener) => listener());
+    }
+  };
+}
+export type AppUpdateProgressSource = Pick<ReturnType<typeof createAppUpdateProgress>, 'getSnapshot' | 'subscribe'>;
 
 export type AppUpdatePhase = 'restoring' | 'idle' | 'checking' | 'downloading' | 'pausing' | 'verifying' | 'installing';
 type RunningPhase = Exclude<AppUpdatePhase, 'restoring' | 'idle'>;

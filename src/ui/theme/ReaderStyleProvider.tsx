@@ -1,21 +1,47 @@
 import { createContext, type ReactNode, useContext, useMemo } from 'react';
 import { DarkTheme, LightTheme, PaperProvider } from 'react-native-paper';
-import type { ReaderStyleSettings, ReaderTheme } from './tokens';
+import {
+  createUiFontSizer,
+  fontFamilyValue,
+  textSizeStyle,
+  type ReaderStyleSettings,
+  type ReaderTheme
+} from './tokens';
 
 export type ReaderStyleContextValue = {
   settings: ReaderStyleSettings;
   theme: ReaderTheme;
 };
 
-const ReaderStyleContext = createContext<ReaderStyleContextValue | null>(null);
+type StyleFactory<T> = (theme: ReaderTheme, settings: ReaderStyleSettings) => T;
+const ReaderStyleContext = createContext<
+  (ReaderStyleContextValue & { styles: WeakMap<StyleFactory<unknown>, unknown> }) | null
+>(null);
 const paperSettings = { rippleEffectEnabled: false };
 
 export function ReaderStyleProvider({ children, value }: { children: ReactNode; value: ReaderStyleContextValue }) {
+  const { uiFontFamily, uiFontScale } = value.settings;
+  const context = useMemo(() => ({ ...value, styles: new WeakMap<StyleFactory<unknown>, unknown>() }), [value]);
   const paperTheme = useMemo(() => {
     const theme = value.theme;
     const base = theme.dark ? DarkTheme : LightTheme;
+    const fontSize = createUiFontSizer({ uiFontScale });
+    const fontFamily = fontFamilyValue(uiFontFamily);
+    const fonts = { ...base.fonts };
+    for (const name of Object.keys(fonts) as (keyof typeof fonts)[]) {
+      if (name === 'default') fonts.default = { ...fonts.default, fontFamily };
+      else {
+        const variant = fonts[name];
+        fonts[name] = {
+          ...variant,
+          fontFamily,
+          ...textSizeStyle(fontSize(variant.fontSize), fontSize(variant.lineHeight))
+        };
+      }
+    }
     return {
       ...base,
+      fonts,
       colors: {
         ...base.colors,
         primary: theme.dark ? theme.primary : theme.primaryStrong,
@@ -32,9 +58,9 @@ export function ReaderStyleProvider({ children, value }: { children: ReactNode; 
         error: theme.danger
       }
     };
-  }, [value.theme]);
+  }, [uiFontFamily, uiFontScale, value.theme]);
   return (
-    <ReaderStyleContext.Provider value={value}>
+    <ReaderStyleContext.Provider value={context}>
       <PaperProvider theme={paperTheme} settings={paperSettings}>
         {children}
       </PaperProvider>
@@ -42,14 +68,12 @@ export function ReaderStyleProvider({ children, value }: { children: ReactNode; 
   );
 }
 
-export function useReaderThemeStyles<T>(createStyles: (theme: ReaderTheme, settings: ReaderStyleSettings) => T) {
+export function useReaderThemeStyles<T>(createStyles: StyleFactory<T>) {
   const context = useContext(ReaderStyleContext);
-  const styles = useMemo(
-    () => (context ? createStyles(context.theme, context.settings) : undefined),
-    [context, createStyles]
-  );
   if (!context) {
     throw new Error('ReaderStyleProvider is required');
   }
-  return { settings: context.settings, styles: styles as T, theme: context.theme };
+  if (!context.styles.has(createStyles))
+    context.styles.set(createStyles, createStyles(context.theme, context.settings));
+  return { settings: context.settings, styles: context.styles.get(createStyles) as T, theme: context.theme };
 }

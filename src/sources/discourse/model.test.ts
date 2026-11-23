@@ -14,6 +14,14 @@ import {
 } from './model';
 
 describe('portable Discourse fields', () => {
+  it('keeps the first reply available after an anchor response includes only the opening post', () => {
+    const post_stream = { stream: [10, 20], posts: [{ id: 10, post_number: 1 }] };
+    expect(discourseReplyWindow({ post_stream }, 30)).toMatchObject({ totalCount: 1, hasMore: true, nextOffset: 0 });
+    expect(() =>
+      discourseReplyWindow({ post_stream: { ...post_stream, posts: [{ id: 10, post_number: 2 }] } }, 30)
+    ).toThrow('锚点回复流已变化');
+  });
+
   it('selects real stream tail IDs and advances toward older windows', () => {
     const stream = Array.from({ length: 46 }, (_, index) => 1000 + index);
     const tail = discourseStreamReplyWindow(stream, {

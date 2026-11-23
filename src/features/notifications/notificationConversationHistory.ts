@@ -54,7 +54,7 @@ export function createNotificationConversationHistory() {
       error = '';
     },
     latest(sessionEpoch: number, messages: NotificationMessage[], olderCursor: string | null) {
-      const current = committed?.sessionEpoch === sessionEpoch ? committed : undefined;
+      const current = history?.sessionEpoch === sessionEpoch ? history : undefined;
       const ids = new Set(messages.map((message) => message.id));
       const overlap = current?.messages.some((message) => ids.has(message.id));
       const start = current?.messages.findIndex((message) => message.id === messages[0]?.id) ?? -1;

@@ -134,4 +134,32 @@ describe('route media playback', () => {
     expect(completed).toHaveBeenCalledTimes(1);
     session.dispose();
   });
+
+  it.each(['currentTime', 'pause'])('finishes all detachments when the released player throws on %s', (operation) => {
+    vi.useFakeTimers();
+    const session = new MediaPlaybackSession();
+    const first = nativePlayer();
+    const handle = session.attach(first.player, 'first', 'video', { onTimeout: vi.fn() });
+    if (operation === 'currentTime')
+      Object.defineProperty(first.player, 'currentTime', {
+        get() {
+          throw new Error('released');
+        }
+      });
+    else
+      vi.mocked(first.player.pause).mockImplementation(() => {
+        throw new Error('released');
+      });
+    const firstDone = vi.fn();
+    handle.afterDispose(firstDone);
+    const second = nativePlayer('idle');
+    const secondDone = vi.fn();
+    session.attach(second.player, 'second', 'audio', { onTimeout: vi.fn() }).afterDispose(secondDone);
+    session.dispose();
+    session.dispose();
+    expect(firstDone).toHaveBeenCalledTimes(1);
+    expect(secondDone).toHaveBeenCalledTimes(1);
+    expect([...first.listeners.values()].every((listeners) => !listeners.size)).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
 });

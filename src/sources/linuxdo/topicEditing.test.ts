@@ -4,6 +4,53 @@ import { draftFromTopicEdit } from '@/domain/forum/topicComposer';
 import { editLinuxDoTopic, loadLinuxDoTopicEditContext } from './topicEditing';
 
 describe('linux.do own opening edits', () => {
+  it('matches the author username from the account identity, even when a different account has that numeric ID', async () => {
+    const transport = createTopicEditTransport('linuxdo');
+    const fetcher: typeof transport.fetcher = async (url, init) => {
+      const response = await transport.fetcher(url, init);
+      return url.endsWith('/posts/789.json')
+        ? Response.json({ ...(await response.json()), user_id: 42, username: 'Author' })
+        : response;
+    };
+    const options = { fetcher, userAgent: 'test', topicId: '123' };
+    await expect(loadLinuxDoTopicEditContext({ ...options, identityKey: 'linuxdo:author' })).resolves.toHaveProperty(
+      'postId',
+      789
+    );
+    await expect(loadLinuxDoTopicEditContext({ ...options, identityKey: 'linuxdo:42' })).rejects.toThrow('本人');
+  });
+
+  it('keeps existing string tags during a category edit while still refusing unknown tags', async () => {
+    const transport = createTopicEditTransport('linuxdo');
+    const options = { ...transport, userAgent: 'test', topicId: '123', identityKey: 'linuxdo:42' };
+    const base = await loadLinuxDoTopicEditContext(options);
+    const context = { ...base, original: { ...base.original, tags: [{ name: '已有' }] } };
+    const draft = { ...draftFromTopicEdit(context), categoryId: '5' };
+    const edit = (value: typeof draft) =>
+      editLinuxDoTopic({ ...options, context, draft: value, checkpoint: async () => {} });
+    expect(await edit({ ...draft, tags: [{ name: 'unknown' }] } as typeof draft)).toHaveProperty('status', 'rejected');
+    expect(await edit(draft)).toHaveProperty('status', 'saved');
+  });
+
+  it('retains the checkpoint and marks a challenge on the body as needing verification', async () => {
+    const transport = createTopicEditTransport('linuxdo');
+    const options = { ...transport, userAgent: 'test', topicId: '123', identityKey: 'linuxdo:42' };
+    const context = await loadLinuxDoTopicEditContext(options);
+    transport.respond((path) =>
+      path === '/posts/789.json'
+        ? new Response('', { status: 403, headers: { 'cf-mitigated': 'challenge' } })
+        : undefined
+    );
+    const result = await editLinuxDoTopic({
+      ...options,
+      draft: { ...draftFromTopicEdit(context), title: '新标题', body: '新正文' },
+      context,
+      checkpoint: async () => {}
+    });
+    expect(result).toMatchObject({ status: 'partial', confirmed: { title: '新标题' }, verificationRequired: true });
+    expect(transport.writes()).toHaveLength(2);
+  });
+
   it('holds the body PUT until the confirmed metadata checkpoint finishes', async () => {
     const transport = createTopicEditTransport('linuxdo');
     const context = await loadLinuxDoTopicEditContext({

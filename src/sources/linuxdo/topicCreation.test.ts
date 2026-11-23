@@ -229,6 +229,26 @@ describe('linux.do topic creation', () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
+  it.each([
+    ['csrf', 200, 'rejected', 1],
+    ['post', 403, 'rejected', 2],
+    ['post', 200, 'unknown', 2]
+  ] as const)(
+    'preserves the verification signal for %s HTTP %i without replaying the write',
+    async (phase, status, expected, requests) => {
+      const fetcher = vi.fn(async (url: string) =>
+        phase === 'post' && url.endsWith('/session/csrf')
+          ? Response.json({ csrf: 'fixture' })
+          : new Response('', { status, headers: { 'cf-mitigated': 'challenge' } })
+      );
+      expect(await createLinuxDoTopic({ input: input(), fetcher, userAgent: 'test' })).toMatchObject({
+        status: expected,
+        verificationRequired: true
+      });
+      expect(fetcher).toHaveBeenCalledTimes(requests);
+    }
+  );
+
   it('propagates transport cancellation without retrying', async () => {
     const failure = new Error('timeout');
     const fetcher = vi.fn(async (url: string) => {

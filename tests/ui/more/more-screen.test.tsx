@@ -1,5 +1,5 @@
 import { projectTestAccountSessions } from '../../helpers/accountSessions';
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, waitFor, within } from '../render';
 import { renderHook as renderNativeHook } from '@testing-library/react-native';
 import { useDiagnosticLogController } from '@/features/more/useDiagnosticLogController';
@@ -20,7 +20,7 @@ import { MoreScreen as MoreScreenView } from '@/features/more/MoreScreen';
 import { AccountOverviewPanel } from '@/features/more/components/AccountOverviewPanel';
 import { createMoreScreenStyles } from '@/features/more/styles';
 import { createSiteSessionStates } from '@/domain/session/siteSessionState';
-import { createTheme, readerRadii } from '@/ui/theme/tokens';
+import { resolveReaderStyleSettings, createTheme, readerRadii } from '@/ui/theme/tokens';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { createAppQueryClient } from '@/platform/query/serverState';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
@@ -40,7 +40,15 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import type { MainTabParamList, RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { navigationRef } from '@/app/appNavigation';
 import { useAppDeepLinkNavigation } from '@/app/useAppDeepLinkNavigation';
-import { MoreRoute, MoreRouteRuntimeProvider, type MoreRouteRuntimeValue } from '@/features/more/MoreRoute';
+import {
+  MoreRoute,
+  MoreRouteRuntimeProvider,
+  ReadingSettingsRoute,
+  type MoreRouteRuntimeValue
+} from '@/features/more/MoreRoute';
+import type { LocalReaderFont } from '@/domain/reader/readerFonts';
+import { downloadableReaderFonts } from '@/platform/storage/readerFonts';
+import { localReaderFontRegistration } from '@/ui/theme/useReaderFonts';
 import { NetworkSettingsRoute } from '@/features/more/NetworkSettingsRoute';
 import { useNodeSeekCheckInController } from '@/features/account/useNodeSeekCheckInController';
 import { prepareRequestToSend, type Fetcher } from '@/platform/network/request';
@@ -49,6 +57,7 @@ import {
   CURRENT_ANDROID_VERSION_CODE,
   formatAppUpdateDownloadProgress
 } from '@/platform/update/appUpdate';
+import { createAppUpdateProgress } from '@/platform/update/appUpdateOperation';
 
 const mockLoadSourceSettings = jest.fn<() => Promise<ReturnType<typeof createEmptyReaderState>>>();
 const mockCommitSourceSettings = jest.fn<(command: ReaderCommand) => Promise<ReaderChange>>();
@@ -62,6 +71,25 @@ const mockSaveBackupDocument =
   jest.fn<(name: string, json: string) => Promise<{ status: 'saved'; byteCount: number }>>();
 const mockReadBackupDocument = jest.fn<(uri: string, maxBytes: number) => Promise<string>>();
 const mockChooseBackupDocument = jest.fn<() => Promise<{ canceled: false; assets: { uri: string; size: number }[] }>>();
+const mockInstallFont = jest.fn<() => Promise<LocalReaderFont>>();
+const moreQueryClients = new Set<ReturnType<typeof createAppQueryClient>>();
+
+function createMoreTestQueryClient() {
+  const client = createAppQueryClient();
+  moreQueryClients.add(client);
+  return client;
+}
+
+afterEach(() => {
+  for (const client of moreQueryClients) client.clear();
+  moreQueryClients.clear();
+});
+
+jest.mock('@/platform/storage/readerFonts', () => ({
+  ...jest.requireActual<typeof import('@/platform/storage/readerFonts')>('@/platform/storage/readerFonts'),
+  listLocalReaderFonts: async () => [],
+  downloadReaderFont: () => mockInstallFont()
+}));
 jest.mock('expo', () => {
   const actual = jest.requireActual<typeof import('expo')>('expo');
   return {
@@ -302,6 +330,7 @@ jest.mock('lucide-react-native', () => {
     ChevronUp: Icon,
     DatabaseBackup: Icon,
     Download: Icon,
+    FilePlus2: Icon,
     Image: Icon,
     Info: Icon,
     GripVertical: Icon,
@@ -345,7 +374,7 @@ const authorizedLinuxDoSessions = projectTestAccountSessions(
 
 function MoreScreen(props: ComponentProps<typeof MoreScreenView>) {
   const [contentSourcesExpanded, setContentSourcesExpanded] = useState(props.contentSourcesExpanded);
-  const [queryClient] = useState(createAppQueryClient);
+  const [queryClient] = useState(createMoreTestQueryClient);
   return (
     <QueryClientProvider client={queryClient}>
       <MoreScreenView
@@ -387,7 +416,7 @@ async function renderPersistedContentSources(failFirst = false) {
       />
     ) : null;
   }
-  const client = createAppQueryClient();
+  const client = createMoreTestQueryClient();
   const view = await render(
     <QueryClientProvider client={client}>
       <ContentSourceReader />
@@ -558,7 +587,7 @@ function moreProps(overrides: MoreScreenOverrides = {}): MoreScreenProps {
       phase: 'idle',
       artifact: null,
       restoreFailed: false,
-      progress: null,
+      progress: createAppUpdateProgress(),
       info: null,
       message: '',
       check: jest.fn(),
@@ -638,7 +667,7 @@ function createMoreRouteRuntime(props = moreProps()): MoreRouteRuntimeValue {
       artifact: null,
       restoreFailed: false,
       appUpdateBusy: true,
-      appUpdateDownloadProgress: formatAppUpdateDownloadProgress('2.0.0', 0, 100),
+      downloadProgress: createAppUpdateProgress(formatAppUpdateDownloadProgress('2.0.0', 0, 100)),
       appUpdateInfo: null,
       appUpdateMessage: '',
       checkAppUpdate: jest.fn(async () => undefined),
@@ -665,6 +694,32 @@ function renderNetworkSettings(runtime: MoreRouteRuntimeValue) {
 }
 
 describe('network settings transitions', () => {
+  it('selects the saved profile before enabling the application proxy', async () => {
+    const runtime = createMoreRouteRuntime();
+    const actions: string[] = [];
+    runtime.proxy.upsertProxyProfile = async (profile) => {
+      actions.push(`save:${profile.id}`);
+    };
+    runtime.proxy.selectProxyProfile = async (id) => {
+      actions.push(`select:${id}`);
+    };
+    runtime.proxy.setNetworkMode = async (mode) => {
+      actions.push(mode);
+    };
+    const view = await render(renderNetworkSettings(runtime));
+    try {
+      await fireEvent.press(view.getByRole('radio', { name: /应用代理/ }));
+      await fireEvent.press(await view.findByText('添加代理'));
+      await fireEvent.changeText(view.getByLabelText('名称'), '测试代理');
+      await fireEvent.changeText(view.getByLabelText('服务器'), 'proxy.example.test');
+      await fireEvent.changeText(view.getByLabelText('端口'), '8080');
+      await fireEvent.press(view.getByLabelText('确定'));
+      expect(actions).toEqual([expect.stringMatching(/^save:.+/), actions[0]!.replace('save:', 'select:'), 'proxy']);
+    } finally {
+      await view.unmount();
+    }
+  });
+
   it('opens a network-only log, filters failures, and retries an unavailable journal', async () => {
     const time = '2026-11-22T09:00:00Z';
     const nativeRequest = {
@@ -828,7 +883,7 @@ describe('network settings transitions', () => {
 });
 
 async function renderWarmMore(Provider: React.ComponentType<{ children: React.ReactNode }>) {
-  const queryClient = createAppQueryClient();
+  const queryClient = createMoreTestQueryClient();
   const defaults = queryClient.getDefaultOptions();
   queryClient.setDefaultOptions({ ...defaults, mutations: { ...defaults.mutations, gcTime: Infinity } });
   const subscription = Linking.addEventListener('url', () => {});
@@ -969,7 +1024,7 @@ describe('More screen state and actions', () => {
       ...runtime.update,
       phase: 'idle',
       appUpdateBusy: false,
-      appUpdateDownloadProgress: null,
+      downloadProgress: createAppUpdateProgress(),
       appUpdateMessage: '',
       installAppUpdate,
       artifact: {
@@ -1035,13 +1090,85 @@ describe('More screen state and actions', () => {
     expect(view.queryByLabelText('收起账号中心')).toBeNull();
     expect(view.getByTestId('more-content-sources')).toBeTruthy();
     expect(view.getByTestId('more-appearance')).toBeTruthy();
+    expect(
+      view.getByText('浅色 ·\u00A0界\u2060面\u00A0100% ·\u00A0阅\u2060读\u00A0100%', { normalizer: (text) => text })
+    ).toBeTruthy();
     expect(view.getByRole('button', { name: '收藏' })).toBeTruthy();
     expect(view.getByRole('button', { name: '关注' })).toBeTruthy();
     expect(view.getByRole('button', { name: '历史' })).toBeTruthy();
   });
 
+  it.each(['success', 'failure'] as const)(
+    'settles a More font download after returning from another route (%s)',
+    async (outcome) => {
+      const client = createMoreTestQueryClient();
+      const runtime = createMoreRouteRuntime();
+      const font = downloadableReaderFonts.find(({ name }) => name === 'Inter')!;
+      const downloaded = Promise.withResolvers<LocalReaderFont>();
+      mockInstallFont.mockImplementationOnce(() => downloaded.promise);
+      const measurement = jest.spyOn(View.prototype, 'measureInWindow').mockImplementation((callback) => {
+        callback(160, 240, 180, 44);
+      });
+      const Stack = createNativeStackNavigator<RootStackParamList>();
+      const Tab = createBottomTabNavigator<MainTabParamList>();
+      function MainTabs() {
+        return (
+          <Tab.Navigator screenOptions={{ headerShown: false }}>
+            <Tab.Screen name="more" component={MoreRoute} />
+          </Tab.Navigator>
+        );
+      }
+      const view = await render(
+        <QueryClientProvider client={client}>
+          <MoreRouteRuntimeProvider value={runtime}>
+            <NavigationContainer ref={navigationRef}>
+              <Stack.Navigator screenOptions={{ headerShown: false }}>
+                <Stack.Screen name="MainTabs" component={MainTabs} />
+                <Stack.Screen name="ReadingSettings" component={ReadingSettingsRoute} />
+              </Stack.Navigator>
+            </NavigationContainer>
+          </MoreRouteRuntimeProvider>
+        </QueryClientProvider>
+      );
+      try {
+        await fireEvent.press(view.getByLabelText('展开外观'));
+        await fireEvent.press(view.getByLabelText('阅读字体，思源黑体'));
+        await fireEvent.press(await view.findByRole('menuitem', { name: 'Inter，安装' }));
+        await waitFor(() => expect(mockInstallFont).toHaveBeenCalledTimes(1));
+        await fireEvent.press(view.getByRole('button', { name: '关闭阅读字体选择' }));
+        await act(() => navigationRef.navigate('ReadingSettings'));
+        await fireEvent.press(await view.findByLabelText('阅读字体，思源黑体'));
+        await fireEvent.press(await view.findByRole('menuitem', { name: '跟随系统' }));
+        await act(() => navigationRef.goBack());
+        expect(await view.findByLabelText('收起外观')).toBeTruthy();
+        if (outcome === 'failure') {
+          await act(async () => downloaded.reject(new Error('字体下载失败，请重试。')));
+          expect(await view.findByRole('alert')).toHaveTextContent('字体下载失败，请重试。');
+          await fireEvent.press(view.getByLabelText('阅读字体，思源黑体'));
+          expect(await view.findByRole('menuitem', { name: 'Inter，重试' })).toBeEnabled();
+        } else {
+          await act(async () => downloaded.resolve(font));
+          await waitFor(() =>
+            expect(client.getQueryData(localReaderFontRegistration(font.family).queryKey)).toBe(true)
+          );
+          await waitFor(() => {
+            expect(client.getQueryState(['reader-font-progress', font.family])).toBeUndefined();
+            expect(client.getQueryState(['reader-font-download', font.family])).toBeUndefined();
+          });
+        }
+        expect(jest.mocked(runtime.reader.commit).mock.calls).toEqual([
+          [{ type: 'settings', patch: { fontFamily: 'system' } }]
+        ]);
+      } finally {
+        mockInstallFont.mockReset();
+        measurement.mockRestore();
+        await view.unmount();
+      }
+    }
+  );
+
   it('updates download progress without rerunning unrelated account and proxy layout consumers', async () => {
-    const queryClient = createAppQueryClient();
+    const queryClient = createMoreTestQueryClient();
     const runtime = createMoreRouteRuntime();
     const reader = runtime.reader.data;
     const Tab = createBottomTabNavigator<MainTabParamList>();
@@ -1059,20 +1186,14 @@ describe('More screen state and actions', () => {
     );
     const view = await render(screen(runtime));
     await fireEvent.press(view.getByLabelText('展开外观'));
-    expect(view.getByText('100%')).toBeTruthy();
+    expect(view.getAllByText('100%')).toHaveLength(2);
     expect(mockWindowDimensionsCalls).toBe(0);
     const beforeProgress = mockWindowDimensionsCalls;
 
     for (let percent = 10; percent <= 100; percent += 10) {
-      await view.rerender(
-        screen({
-          ...runtime,
-          update: {
-            ...runtime.update,
-            appUpdateDownloadProgress: formatAppUpdateDownloadProgress('2.0.0', percent, 100)
-          }
-        })
-      );
+      await act(async () => {
+        runtime.update.downloadProgress.set(formatAppUpdateDownloadProgress('2.0.0', percent, 100));
+      });
       expect(view.getByRole('button', { name: '暂停下载' }).props.accessibilityValue.now).toBe(percent);
     }
     expect(mockWindowDimensionsCalls - beforeProgress).toBe(0);
@@ -1269,7 +1390,7 @@ describe('More screen state and actions', () => {
       runtime.proxy.proxyState = { activeId: profile.id, enabled: true, profiles: [profile] };
       runtime.proxy.deleteProxyProfile = deleteProfile;
       runtime.proxy.upsertProxyProfile = upsertProfile;
-      const queryClient = createAppQueryClient();
+      const queryClient = createMoreTestQueryClient();
       const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
       let openLink: ((event: { url: string }) => void) | undefined;
       const linking: NonNullable<Parameters<typeof useAppDeepLinkNavigation>[0]> = {
@@ -1380,10 +1501,10 @@ describe('More screen state and actions', () => {
       );
     }
     const view = await render(<AppearanceHarness />);
-    const slider = view.getByTestId('appearance-font-scale-slider', { includeHiddenElements: true });
+    const slider = view.getByTestId('appearance-reading-font-scale-slider', { includeHiddenElements: true });
     await fireEvent.press(view.getByLabelText('展开外观'));
-    expect(view.getByTestId('appearance-font-scale-slider')).toBe(slider);
-    let step = view.getByLabelText('增大字号');
+    expect(view.getByTestId('appearance-reading-font-scale-slider')).toBe(slider);
+    let step = view.getByLabelText('增大阅读字号');
     while (StyleSheet.flatten(step.props.style)?.width === undefined) step = step.parent!;
     expect(StyleSheet.flatten(step.props.style)).toMatchObject({ width: 48, height: 48 });
     await fireEvent(slider, 'valueChange', 1.15);
@@ -1391,27 +1512,27 @@ describe('More screen state and actions', () => {
     expect(updateSettings).not.toHaveBeenCalled();
 
     await fireEvent.press(view.getByLabelText('收起外观'));
-    expect(view.getByTestId('appearance-font-scale-slider', { includeHiddenElements: true })).toBe(slider);
-    expect(view.queryByLabelText('增大字号')).toBeNull();
-    expect(view.getByText('100%', { includeHiddenElements: true })).toBeTruthy();
-    await fireEvent.press(view.getByLabelText('增大字号', { includeHiddenElements: true }));
+    expect(view.getByTestId('appearance-reading-font-scale-slider', { includeHiddenElements: true })).toBe(slider);
+    expect(view.queryByLabelText('增大阅读字号')).toBeNull();
+    expect(view.getAllByText('100%', { includeHiddenElements: true })).toBeTruthy();
+    await fireEvent.press(view.getByLabelText('增大阅读字号', { includeHiddenElements: true }));
     await act(async () => {
       slider.props.onRNCSliderValueChange({ nativeEvent: { value: 1.3 } });
       slider.props.onRNCSliderSlidingComplete({ nativeEvent: { value: 1.3 } });
     });
-    expect(view.getByText('100%', { includeHiddenElements: true })).toBeTruthy();
+    expect(view.getAllByText('100%', { includeHiddenElements: true })).toBeTruthy();
     expect(updateSettings).not.toHaveBeenCalled();
 
     await fireEvent.press(view.getByLabelText('展开外观'));
-    expect(view.getByTestId('appearance-font-scale-slider')).toBe(slider);
-    expect(view.getByText('100%')).toBeTruthy();
-    await fireEvent(view.getByTestId('appearance-font-scale-slider'), 'slidingComplete', 1.1);
+    expect(view.getByTestId('appearance-reading-font-scale-slider')).toBe(slider);
+    expect(view.getAllByText('100%')).toHaveLength(2);
+    await fireEvent(view.getByTestId('appearance-reading-font-scale-slider'), 'slidingComplete', 1.1);
     expect(updateSettings.mock.calls).toEqual([[{ fontScale: 1.1 }]]);
     await fireEvent.press(view.getByLabelText('收起外观'));
     expect(view.getByText('110%', { includeHiddenElements: true })).toBeTruthy();
     await fireEvent.press(view.getByLabelText('展开外观'));
     expect(view.getByText('110%')).toBeTruthy();
-    await fireEvent.press(view.getByLabelText('增大字号'));
+    await fireEvent.press(view.getByLabelText('增大阅读字号'));
     expect(updateSettings.mock.calls).toEqual([[{ fontScale: 1.1 }], [{ fontScale: 1.15 }]]);
   });
 
@@ -1767,7 +1888,10 @@ describe('More screen state and actions', () => {
 
   it('resets open profile details in the same commit as a source or user change', async () => {
     const commits = jest.fn();
-    const styles = createMoreScreenStyles(createTheme(readerData.settings), readerData.settings);
+    const styles = createMoreScreenStyles(
+      createTheme(readerData.settings),
+      resolveReaderStyleSettings(readerData.settings)
+    );
     const panel = (site: 'nodeseek' | 'linuxdo', id: string) => {
       const profile = {
         source: site,
@@ -1835,7 +1959,7 @@ describe('More screen state and actions', () => {
   ])('keeps account metric slots visible while $site data arrives or fails', async ({ site, labels, values }) => {
     const user = { source: site, id: '42', username: 'fixture', url: 'https://account.invalid/42' };
     const theme = createTheme(readerData.settings);
-    const styles = createMoreScreenStyles(theme, readerData.settings);
+    const styles = createMoreScreenStyles(theme, resolveReaderStyleSettings(readerData.settings));
     const command = jest.fn<ComponentProps<typeof AccountOverviewPanel>['onCommand']>();
     const openCredits = jest.fn<ComponentProps<typeof AccountOverviewPanel>['onOpenCredits']>();
     const data = {
@@ -2254,7 +2378,9 @@ describe('More screen state and actions', () => {
       const settings = { ...readerData.settings, fontScale: 1.6 };
       const view = await render(<MoreScreen {...props} />, {
         wrapper: ({ children }) => (
-          <ReaderStyleProvider value={{ settings, theme: createTheme(settings) }}>{children}</ReaderStyleProvider>
+          <ReaderStyleProvider value={{ settings: resolveReaderStyleSettings(settings), theme: createTheme(settings) }}>
+            {children}
+          </ReaderStyleProvider>
         )
       });
 
@@ -2712,6 +2838,7 @@ describe('More screen state and actions', () => {
     });
     expect(updateSettings).toHaveBeenCalledTimes(1);
     expect(dragTranslation?.value).toBe(56);
+    expect(StyleSheet.flatten(v2exHost.props.style).elevation).not.toBe(2);
 
     const reorderedContentSources = [
       { source: 'linuxdo', enabled: true },
@@ -3112,14 +3239,14 @@ describe('More screen state and actions', () => {
         {...moreProps({
           update: {
             phase: 'downloading',
-            progress: {
+            progress: createAppUpdateProgress({
               title: '正在下载 1.4.0',
               downloadedBytes: 1024,
               totalBytes: 2048,
               percent: 50,
               percentLabel: '50%',
               sizeLabel: '1 KB / 2 KB'
-            },
+            }),
             info: appUpdateInfo,
             check: onCheckAppUpdate,
             start: onDownloadAppUpdate

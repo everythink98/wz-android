@@ -22,7 +22,7 @@ internal class PendingDiagnosticBatch(
   private var pending = Batch()
   private var queueDroppedCount = 0L
 
-  val droppedCount: Long get() = queueDroppedCount
+  val droppedCount: Long get() = synchronized(lock) { queueDroppedCount }
 
   fun recordDrop() { synchronized(lock) { queueDroppedCount++ } }
 

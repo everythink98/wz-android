@@ -15,8 +15,9 @@ import { TopicBodyQuoteCard } from '@/features/topic/components/TopicBodyQuoteCa
 import { TopicContentBlock } from '@/features/topic/components/TopicContentBlock';
 import { TopicPolls } from '@/features/topic/components/TopicPolls';
 import { NodeSeekStardustCard } from '@/features/topic/components/NodeSeekStardustCard';
+import { createStardustPayments } from '@/features/topic/actions/stardustPayments';
 import type { TopicActionsController } from '@/features/topic/actions/useTopicActionsController';
-import { createTheme } from '@/ui/theme/tokens';
+import { resolveReaderStyleSettings, createTheme } from '@/ui/theme/tokens';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 import { createTestStyles as createStyles } from '../styleFixture';
 import {
@@ -423,7 +424,9 @@ function stardustActions(
     actionBusy: false,
     decisionFor: () => ({ allowed: true, reason: 'allowed' }),
     loadNodeSeekStardustStatus,
-    payNodeSeekStardust
+    payNodeSeekStardust,
+    stardustPayments: createStardustPayments(),
+    stardustPayer: 'nodeseek:7'
   } as unknown as TopicActionsController;
 }
 
@@ -726,6 +729,67 @@ describe('Topic real child components', () => {
     }
   );
 
+  it.each(['before completion', 'after completion'] as const)(
+    'blocks repeating an unknown payment after recycling the card %s',
+    async (recycle) => {
+      const receive = { receiverMemberId: '42', amount: 3, refId: 100, description: 'original', oneTime: false };
+      const other = { ...receive, refId: 101, description: 'other' };
+      const payment = Promise.withResolvers<'unknown'>();
+      const pay = jest.fn(() => payment.promise);
+      const actions = stardustActions(
+        async () => ({ participantCount: 0, totalAmount: 0, paid: false, closed: false }),
+        pay
+      );
+      const tree = (card: typeof receive) => <NodeSeekStardustCard actions={actions} receive={card} />;
+      const view = await render(tree(receive));
+      try {
+        await fireEvent.press(view.getByLabelText('支付 3 Stardust'));
+        if (recycle === 'before completion') await view.rerender(tree(other));
+        await act(async () => payment.resolve('unknown'));
+        if (recycle === 'after completion') await view.rerender(tree(other));
+        await view.rerender(tree(receive));
+        expect(view.queryByLabelText('结果待确认')?.props.accessibilityState.disabled).toBe(true);
+        expect(pay).toHaveBeenCalledTimes(1);
+      } finally {
+        await view.unmount();
+      }
+    }
+  );
+
+  it('shares the unknown payment guard for equivalent receiver IDs', async () => {
+    const receive = { receiverMemberId: '42', amount: 3, refId: 100, description: 'test', oneTime: false };
+    const actions = stardustActions(
+      async () => ({ participantCount: 0, totalAmount: 0, paid: false, closed: false }),
+      async () => 'unknown'
+    );
+    const view = await render(
+      <>
+        <NodeSeekStardustCard actions={actions} receive={{ ...receive, receiverMemberId: '042' }} />
+        <NodeSeekStardustCard actions={actions} receive={receive} />
+      </>
+    );
+    await fireEvent.press(view.getAllByLabelText('支付 3 Stardust')[0]!);
+    expect(view.queryAllByLabelText('结果待确认')).toHaveLength(2);
+  });
+
+  it('isolates unknown payment guards between payer accounts', async () => {
+    const receive = { receiverMemberId: '42', amount: 3, refId: 100, description: 'test', oneTime: false };
+    const actions = stardustActions(
+      async () => ({ participantCount: 0, totalAmount: 0, paid: false, closed: false }),
+      async () => 'unknown'
+    );
+    const tree = (stardustPayer: string) => (
+      <NodeSeekStardustCard actions={{ ...actions, stardustPayer }} receive={receive} />
+    );
+    const view = await render(tree('nodeseek:7'));
+    await fireEvent.press(view.getByLabelText('支付 3 Stardust'));
+    expect(view.getByLabelText('结果待确认')).toBeDisabled();
+    await view.rerender(tree('nodeseek:8'));
+    expect(view.getByLabelText('支付 3 Stardust')).not.toBeDisabled();
+    await view.rerender(tree('nodeseek:7'));
+    expect(view.getByLabelText('结果待确认')).toBeDisabled();
+  });
+
   it.each(['pending', 'unknown', 'submitted'] as const)(
     'shows only the new receive on its first committed frame after a %s payment',
     async (outcome) => {
@@ -815,7 +879,7 @@ describe('Topic real child components', () => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = false;
     const commits: { oldClosed: boolean; available: boolean }[] = [];
     const card = (receive: typeof firstReceive) => (
-      <ReaderStyleProvider value={{ settings: readerData.settings, theme }}>
+      <ReaderStyleProvider value={{ settings: resolveReaderStyleSettings(readerData.settings), theme }}>
         <React.Profiler
           id="stardust-status"
           onRender={() => {
@@ -2268,6 +2332,60 @@ describe('Topic real child components', () => {
     );
     expect(event.stopPropagation).toHaveBeenCalledTimes(1);
     expect(onOpenExternalUrl).toHaveBeenCalledWith('https://example.com/path');
+  });
+
+  it('captures the last reply snapshot before a route-level close', async () => {
+    const closeRequestRef = React.createRef<() => void>();
+    const onReplyComposerOpenChange = jest.fn();
+    const onReplySnapshot = jest.fn();
+    const view = await render(
+      <ReplyComposerSheet
+        actionBusy={false}
+        closeRequestRef={closeRequestRef}
+        intent={{ kind: 'new' }}
+        onReplyComposerOpenChange={onReplyComposerOpenChange}
+        onReplyContentChange={jest.fn()}
+        onReplyFaceChange={jest.fn()}
+        onReplySnapshot={onReplySnapshot}
+        onSubmitReply={jest.fn()}
+        replyContent="旧草稿"
+        replyFace=""
+        source="nodeseek"
+        styles={styles}
+        theme={theme}
+        visible
+      />
+    );
+    const webView = view.getByTestId('structured-composer-webview');
+    await fireEvent(webView, 'loadEnd');
+    await fireEvent(webView, 'message', {
+      nativeEvent: { data: JSON.stringify({ type: 'READY', payload: { revision: 0 } }) }
+    });
+    await act(() => {
+      closeRequestRef.current?.();
+      closeRequestRef.current?.();
+    });
+    expect(onReplyComposerOpenChange).not.toHaveBeenCalled();
+    const requests = webView.props.postMessageMock.mock.calls
+      .map(([raw]: [string]) => JSON.parse(raw))
+      .filter((entry: { type: string }) => entry.type === 'REQUEST_SNAPSHOT');
+    expect(requests).toHaveLength(1);
+    const snapshot = {
+      revision: 1,
+      markdown: '返回前最新正文',
+      mode: 'rich',
+      isEmpty: false,
+      validationIssues: [],
+      pendingNodeSeekPolls: []
+    };
+    await fireEvent(webView, 'message', {
+      nativeEvent: {
+        data: JSON.stringify({ type: 'SNAPSHOT', payload: { requestId: requests[0].payload.requestId, snapshot } })
+      }
+    });
+    expect(onReplySnapshot).toHaveBeenCalledWith(snapshot);
+    expect(onReplyComposerOpenChange).toHaveBeenCalledTimes(1);
+    expect(onReplyComposerOpenChange).toHaveBeenCalledWith(false);
   });
 
   it('keeps composer visibility and the close button connected to the parent state', async () => {

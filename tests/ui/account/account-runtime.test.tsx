@@ -7,7 +7,7 @@ import { WebView } from 'react-native-webview';
 import { PortalProvider } from '@gorhom/portal';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
-import { createTheme } from '@/ui/theme/tokens';
+import { resolveReaderStyleSettings, createTheme } from '@/ui/theme/tokens';
 import { NativeModules } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -441,6 +441,16 @@ describe('LDC website authorization', () => {
       await current;
     });
     expect(runtime().center.linuxDoCredit.busy).toBe(false);
+  });
+
+  it('preserves the main Credit page HTTP failure after its load-end event', async () => {
+    const { view, runtime } = await renderCreditHosts();
+    await act(async () => runtime().center.linuxDoCredit.open());
+    const browser = view.getByTestId('login-webview', { includeHiddenElements: true });
+    const failed = { nativeEvent: { url: 'https://credit.linux.do/home', statusCode: 500 } };
+    await fireEvent(browser, 'httpError', failed);
+    await fireEvent(browser, 'loadEnd', { nativeEvent: { url: failed.nativeEvent.url } });
+    expect(view.getByText(/HTTP 500/)).toBeTruthy();
   });
 
   it('keeps a silent Credit 403 page mounted for passive verification and stops other HTTP failures', async () => {
@@ -938,9 +948,18 @@ describe('local login identity restoration', () => {
     const notify = jest.fn();
     const fetcher = jest.fn<ReturnType<Fetcher>, Parameters<Fetcher>>(async () => new Response('{}'));
     const hook = await renderHook(
-      ({ settingsReady, sources = enabledSources }: { settingsReady: boolean; sources?: readonly Source[] }) =>
+      ({
+        settingsReady,
+        sources = enabledSources,
+        contentSourcesReady = settingsReady
+      }: {
+        settingsReady: boolean;
+        sources?: readonly Source[];
+        contentSourcesReady?: boolean;
+      }) =>
         useAccountRuntime({
           appActive: true,
+          contentSourcesReady,
           enabledSources: sources,
           fetcher,
           loginNavigation: { linuxdo: () => true, nodeseek: () => true, yaohuo: () => true, nodeimage: () => true },
@@ -985,6 +1004,17 @@ describe('local login identity restoration', () => {
     const view = await render(<Harness />, { wrapper: QueryTestWrapper });
     return { view, runtime: () => runtime, trust: () => view.rerender(<Harness trusted />) };
   }
+
+  it('keeps cookie reads on the startup path when restored preferences first enable linux.do', async () => {
+    const hook = await startIdentityRuntime(false, []);
+    const barrier = jest.mocked(setLinuxDoCookieResponseBarrier);
+    expect(barrier).toHaveBeenCalledWith(true, 'startup');
+    await hook.rerender({ settingsReady: true, sources: [], contentSourcesReady: false });
+    await hook.rerender({ settingsReady: true, sources: ['linuxdo'] });
+    expect(barrier).toHaveBeenLastCalledWith(false, 'startup');
+    await hook.rerender({ settingsReady: true, sources: [] });
+    expect(barrier).toHaveBeenLastCalledWith(true, 'source-change');
+  });
 
   it('starts both local identity reads before trusted settings and skips legacy Native reads', async () => {
     const node = Promise.withResolvers<string | null>();
@@ -1746,7 +1776,7 @@ async function renderStrictSiteRuntime(source: 'nodeseek' | 'linuxdo') {
     return runtime.hosts.element;
   }
   const settings = createEmptyReaderData().settings;
-  const styleValue = { settings, theme: createTheme(settings) };
+  const styleValue = { settings: resolveReaderStyleSettings(settings), theme: createTheme(settings) };
   const element = (notifyCallback: (message: string) => void) => (
     <ReaderStyleProvider value={styleValue}>
       <PortalProvider>
@@ -2164,30 +2194,23 @@ describe('native cookie barrier notification ownership', () => {
     }
   });
 
-  it('uses the latest notifier once for its current barrier and retires the previous callback effect', async () => {
-    const oldBarrier = holdNextNativeBarrier();
+  it('uses the latest notifier without issuing another cookie barrier for a callback change', async () => {
+    const barrier = holdNextNativeBarrier();
     const current = await renderSiteRuntime('linuxdo', async () => Response.json({}));
-    const newBarrier = holdNextNativeBarrier();
+    const calls = jest.mocked(setLinuxDoCookieResponseBarrier).mock.calls.length;
     const nextNotify = jest.fn();
     try {
       await current.changeNotify(nextNotify);
-      expect(newBarrier.dispatch).toHaveBeenCalledTimes(1);
-      expect(newBarrier.reason()).toBe('source-change');
+      expect(jest.mocked(setLinuxDoCookieResponseBarrier)).toHaveBeenCalledTimes(calls);
       current.notify.mockClear();
       await act(async () => {
-        oldBarrier.native.reject(new Error('replaced callback barrier failure'));
-      });
-      expect(current.notify).not.toHaveBeenCalled();
-      expect(nextNotify).not.toHaveBeenCalled();
-      await act(async () => {
-        newBarrier.native.reject(new Error('current callback barrier failure'));
+        barrier.native.reject(new Error('current callback barrier failure'));
       });
       expect(nextNotify).toHaveBeenCalledTimes(1);
       expect(nextNotify).toHaveBeenCalledWith('登录会话交接未完成，请刷新账号页面重试。');
       expect(current.notify).not.toHaveBeenCalled();
     } finally {
-      oldBarrier.native.resolve();
-      newBarrier.native.resolve();
+      barrier.native.resolve();
       await current.view.unmount();
     }
   });
@@ -2208,7 +2231,7 @@ function nodeImageControls(key: ReturnType<typeof useAccountRuntime>['center']['
   const settings = createEmptyReaderData().settings;
   const theme = createTheme(settings);
   return (
-    <ReaderStyleProvider value={{ settings, theme }}>
+    <ReaderStyleProvider value={{ settings: resolveReaderStyleSettings(settings), theme }}>
       <NodeSeekServicesPanel
         theme={theme}
         apiKeyAuthorized={key.authorized}
@@ -2610,6 +2633,36 @@ it('recovers a new login after clearing the account in the still-open login page
   }
 });
 
+it('does not reuse a closed login marker failure for the next dedicated reading surface', async () => {
+  jest.useFakeTimers();
+  seedLinuxDoAccount();
+  const { view, runtime } = await renderSiteRuntime('linuxdo', async () => Response.json({ current_user: null }));
+  const marker = jest
+    .spyOn(accountSessionStore, 'markAccountSessionHandoffPending')
+    .mockRejectedValueOnce(new Error('disk unavailable'));
+  try {
+    await act(async () => {
+      await runtime().center.handleAccountCenterCommand({ type: 'open-login', site: 'linuxdo' });
+    });
+    expect(view.getByText('登录会话保存失败，请关闭后重试')).toBeTruthy();
+    await fireEvent.press(view.getByLabelText('关闭'));
+    await act(async () => jest.advanceTimersByTimeAsync(450));
+    await act(async () => {
+      await runtime().hosts.showLinuxDoVerification('读取需要验证', {
+        queryKey: ['next-reading'],
+        isCurrent: () => true,
+        resume: async () => 'completed'
+      });
+    });
+    await act(async () => jest.advanceTimersByTimeAsync(100));
+    expect(view.getByTestId('login-webview')).toBeTruthy();
+  } finally {
+    marker.mockRestore();
+    await view.unmount();
+    jest.useRealTimers();
+  }
+});
+
 it('does not mount a login document until its durable marker is saved and preserves the account if saving fails', async () => {
   const { response } = accountClearFixture('nodeseek');
   const { view, runtime, notify } = await renderSiteRuntime('nodeseek', async () => response());
@@ -2839,6 +2892,22 @@ it.each(['nodeseek', 'linuxdo', 'yaohuo'] as const)(
     ]);
   }
 );
+
+it('keeps the linux.do WebView retired during an explicit clear and offers a reopen after failure', async () => {
+  const pending = Promise.withResolvers<boolean>();
+  const clear = jest.fn(() => pending.promise);
+  NativeModules.NetworkProxyModule = { ...NativeModules.NetworkProxyModule, clearManagedLoginCookies: clear };
+  const { view, runtime } = await renderSiteRuntime('linuxdo', async () => accountClearFixture('linuxdo').response());
+  await act(async () => runtime().center.handleAccountCenterCommand({ type: 'open-login', site: 'linuxdo' }));
+  await fireEvent.press(view.getByLabelText('清除登录'));
+  await waitFor(() => expect(clear).toHaveBeenCalledTimes(1));
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  });
+  expect(view.queryByTestId('login-webview', { includeHiddenElements: true })).toBeNull();
+  await act(async () => pending.reject(new Error('本机清除失败')));
+  expect(await view.findByLabelText('重新打开登录页')).toBeTruthy();
+});
 
 it.each(['nodeseek', 'linuxdo', 'yaohuo'] as const)(
   'ignores a late %s clear failure after a newer check confirms the same account',

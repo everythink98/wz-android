@@ -87,6 +87,104 @@ function deletedReplyFetcher() {
 
 describe('linux.do reader', () => {
   it.each([
+    [{ id: 7, name: 'Sub', slug: 'child', parent_category_id: 4 }, 'in:pinned =category:parent:child'],
+    [{ id: 7, name: 'Missing' }, undefined]
+  ] as const)('scopes pinned lookups to the known category path', async (category, expected) => {
+    const queries: (string | null)[] = [];
+    await getLinuxDoFeed({
+      category: '7',
+      limit: 1,
+      linuxDoAccess: { authenticated: true, userAgent: 'fixture' },
+      fetcher: async (input) => {
+        const url = new URL(input);
+        if (url.pathname.endsWith('/filter.json')) queries.push(url.searchParams.get('q'));
+        return jsonResponse({
+          categories: [{ id: 4, name: 'Parent', slug: 'parent' }, category],
+          topic_list: { topics: [{ ...topic(1), category_id: 7 }] }
+        });
+      }
+    });
+    expect(queries).toEqual(expected ? [expected] : []);
+  });
+
+  it('reuses embedded reply bodies and reads only missing IDs with their editable raw content', async () => {
+    const topic = deletedReplyTopic();
+    const editable = topic.post_stream.posts.map((post) => ({
+      ...post,
+      user_deleted: false,
+      can_edit: true,
+      raw: `raw-${post.id}`
+    }));
+    const calls: string[] = [];
+    const ids: string[][] = [];
+    const fetcher: Fetcher = async (input) => {
+      const url = new URL(input);
+      calls.push(url.pathname);
+      const rows = url.pathname.endsWith('/posts.json')
+        ? editable.filter((post) => url.searchParams.getAll('post_ids[]').includes(String(post.id)))
+        : editable.slice(0, 2);
+      if (url.pathname.endsWith('/posts.json')) ids.push(url.searchParams.getAll('post_ids[]'));
+      const posts = rows.map(({ raw, ...rest }) => ({
+        ...rest,
+        ...(url.searchParams.get('include_raw') === 'true' ? { raw } : {})
+      }));
+      return jsonResponse({ ...topic, post_stream: { stream: topic.post_stream.stream, posts } });
+    };
+    const options = { fetcher, linuxDoAccess: { authenticated: true, userAgent: 'fixture' } };
+    const value = await getLinuxDoReplies('2835903', {
+      ...options,
+      order: 'oldest',
+      position: { kind: 'start' },
+      limit: 2
+    });
+    expect(value.items.map((item) => item.contentMarkdown)).toEqual(['raw-2', 'raw-3']);
+    expect(ids).toEqual([['3']]);
+    expect(calls).toEqual(['/t/2835903.json', '/t/2835903/posts.json']);
+    calls.length = 0;
+    const detail = await getLinuxDoTopic('2835903', options);
+    expect(detail.replies.map((item) => item.contentMarkdown)).toEqual(['raw-2']);
+    expect(calls).toEqual(['/t/2835903.json']);
+  });
+
+  it('refetches an embedded reply whose floor is missing from the topic response', async () => {
+    const topic = deletedReplyTopic();
+    const fetcher: Fetcher = async (input) => {
+      if (new URL(input).pathname.endsWith('/posts.json'))
+        return jsonResponse({ post_stream: { posts: [deletedReply] } });
+      return jsonResponse({
+        ...topic,
+        post_stream: { stream: [1, 2], posts: [topic.post_stream.posts[0], { ...deletedReply, post_number: null }] }
+      });
+    };
+    const page = await getLinuxDoReplies('2835903', {
+      fetcher,
+      order: 'oldest',
+      position: { kind: 'start' },
+      limit: 1
+    });
+    expect(page.items.map((reply) => reply.floor)).toEqual([2]);
+  });
+
+  it('finishes repeated unusable activity pages and keeps other valid rows', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.pathname.endsWith('/filter.json')) return jsonResponse({ topic_list: { topics: [] } });
+      const page = Number(url.searchParams.get('page') || 0);
+      if (page > 2) throw new Error('stuck on invalid pages');
+      return jsonResponse({
+        topic_list: { topics: page ? [{ id: 27 }] : [topic(1)], more_topics_url: '/latest?page=again' }
+      });
+    });
+    const page = await getLinuxDoFeed({
+      fetcher,
+      limit: 3,
+      linuxDoAccess: { authenticated: true, userAgent: 'fixture' }
+    });
+    expect(page.items.map((item) => item.id)).toEqual(['1']);
+    expect(page.hasMore).toBe(false);
+  });
+
+  it.each([
     ['opening', false],
     ['reply', false],
     ['opening', true]

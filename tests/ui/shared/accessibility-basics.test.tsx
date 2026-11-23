@@ -7,7 +7,7 @@ import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { LoadingState, RecoverableEmptyState } from '@/ui/controls/FeedbackStates';
 import { PillRail } from '@/ui/controls/SelectionControls';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
-import { createTheme } from '@/ui/theme/tokens';
+import { resolveReaderStyleSettings, createTheme } from '@/ui/theme/tokens';
 
 describe('shared accessibility basics', () => {
   it('announces an icon button as busy without moving or dimming its touch target', async () => {
@@ -88,10 +88,10 @@ describe('shared accessibility basics', () => {
   });
 
   it('wraps large filter labels without a horizontal scroll surface', async () => {
-    const settings = { ...createEmptyReaderData().settings, fontScale: 1.3 };
+    const settings = { ...createEmptyReaderData().settings, uiFontScale: 1.3 };
     const onChange = jest.fn();
     const view = await render(
-      <ReaderStyleProvider value={{ settings, theme: createTheme(settings) }}>
+      <ReaderStyleProvider value={{ settings: resolveReaderStyleSettings(settings), theme: createTheme(settings) }}>
         <PillRail
           layout="wrap"
           variant="subtabs"
@@ -132,10 +132,10 @@ describe('shared accessibility basics', () => {
     expect(StyleSheet.flatten(view.getByText('全部').props.style).textAlign).toBe('center');
   });
 
-  it('scales shared notification tabs and action buttons with Reader settings', async () => {
-    const settings = { ...createEmptyReaderData().settings, fontScale: 1.3 };
+  it('scales shared notification tabs and action buttons with the interface size', async () => {
+    const settings = { ...createEmptyReaderData().settings, uiFontScale: 1.3 };
     const view = await render(
-      <ReaderStyleProvider value={{ settings, theme: createTheme(settings) }}>
+      <ReaderStyleProvider value={{ settings: resolveReaderStyleSettings(settings), theme: createTheme(settings) }}>
         <>
           <PillRail
             variant="tabs"

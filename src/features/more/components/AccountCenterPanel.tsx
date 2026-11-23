@@ -12,7 +12,13 @@ import type { AccountCenterCommand } from '@/domain/session/accountCenter';
 import type { UserDetails } from '@/domain/forum/models';
 import { Avatar } from '@/ui/avatar/Avatar';
 import type { SessionSite, SiteSessionViewModels } from '@/domain/session/siteSessionState';
-import { createReaderFontSizer, type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import {
+  createUiFontSizer,
+  type ReaderStyleSettings,
+  fontFamilyValue,
+  type ReaderTheme,
+  textSizeStyle
+} from '@/ui/theme/tokens';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { DisclosureChevron, ExpandableContent } from '@/ui/controls/ExpandableControls';
@@ -31,14 +37,14 @@ type AccountCenterStyles = ReturnType<typeof createAccountCenterStyles>;
 
 function createAccountCenterStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const actionColor = theme.primary;
-  const fontSize = createReaderFontSizer(settings);
+  const fontSize = createUiFontSizer(settings);
   return StyleSheet.create({
     header: { alignItems: 'center', flexDirection: 'row', gap: 8, minHeight: 52 },
     title: {
       flex: 1,
       color: theme.ink,
-      fontFamily: fontFamilyValue(settings.fontFamily),
-      fontSize: fontSize(22),
+      fontFamily: fontFamilyValue(settings.uiFontFamily),
+      ...textSizeStyle(fontSize(22)),
       fontWeight: '600'
     },
     selectorRow: {
@@ -90,8 +96,8 @@ function createAccountCenterStyles(theme: ReaderTheme, settings: ReaderStyleSett
     },
     siteTabText: {
       color: theme.muted,
-      fontFamily: fontFamilyValue(settings.fontFamily),
-      fontSize: fontSize(13),
+      fontFamily: fontFamilyValue(settings.uiFontFamily),
+      ...textSizeStyle(fontSize(13)),
       fontWeight: '500'
     },
     siteTabTextSelected: {

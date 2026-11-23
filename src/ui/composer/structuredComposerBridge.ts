@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod';
 import {
   MAX_COMPOSER_MARKDOWN_LENGTH,
   MAX_COMPOSER_POLL_COUNT,
@@ -106,7 +106,8 @@ const editorThemeSchema = strictObject({
   primary: z.string().max(40),
   primarySoft: z.string().max(40),
   danger: z.string().max(40),
-  fontScale: z.number().min(0.8).max(2)
+  fontScale: z.number().min(0.8).max(2),
+  uiFontScale: z.number().min(0.8).max(2)
 });
 const discourseEmojiSchema = strictObject({ name: z.string().min(1).max(100), url: z.url().max(2048) });
 export const linuxDoPollCapabilitiesSchema = strictObject({
@@ -180,6 +181,13 @@ export const composerHostMessageSchema = z.discriminatedUnion('type', [
   }),
   strictObject({ type: z.literal('SET_MODE'), payload: strictObject({ mode: composerModeSchema }) }),
   strictObject({ type: z.literal('SET_READ_ONLY'), payload: strictObject({ readOnly: z.boolean() }) }),
+  strictObject({
+    type: z.literal('SET_NODESEEK_MEMBER'),
+    payload: strictObject({
+      documentEpoch: z.number().int().nonnegative(),
+      memberId: z.string().regex(/^\d+$/).nullable()
+    })
+  }),
   strictObject({
     type: z.literal('REQUEST_SNAPSHOT'),
     payload: strictObject({

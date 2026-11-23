@@ -34,6 +34,7 @@ import { parseForumTopicLink } from '@/domain/forum/links';
 import type { MainTabParamList, RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 import { errorMessage } from '@/platform/network/errors';
+import { RequestCanceledError } from '@/platform/network/request';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import { openHttpUrl } from '@/ui/navigation/openHttpUrl';
@@ -102,6 +103,7 @@ export function NotificationsRoute({
   const publishRefresh = useCallback(() => setRefreshing(listReads.refreshing), [listReads]);
   const [listRecoveries] = useState(createNotificationRecoveryOwner);
   const latestRuntimeRef = useCommittedRef(runtime);
+  const confirmedSourceRetries = useRef(new Map<NotificationSource, { key: readonly unknown[]; epoch: number }>());
   const cancelMarkAll = useCallback(() => {
     const current = markAllRef.current;
     if (current.phase !== 'idle') current.controller.abort();
@@ -134,7 +136,10 @@ export function NotificationsRoute({
   const identityKey = source === 'all' ? runtime.identitySignature : runtime.identityKeys[source] || `${source}:none`;
   const selectedSourceEpoch = source === 'all' ? 0 : runtime.sessionEpochs[source];
   const sourceAvailable = source === 'all' ? runtime.activeSources.length > 0 : runtime.activeSources.includes(source);
-  const categoriesQueryKey = forumQueryKeys.notificationCategories({ source, identityKey });
+  const categoriesQueryKey = useMemo(
+    () => forumQueryKeys.notificationCategories({ source, identityKey }),
+    [source, identityKey]
+  );
   const categoriesQuery = useQuery({
     queryKey: categoriesQueryKey,
     enabled: runtime.ready && source !== 'all' && sourceAvailable && isFocused,
@@ -146,7 +151,8 @@ export function NotificationsRoute({
       try {
         return await runtime.gateway.getCategories(source, identityKey, signal);
       } catch (error) {
-        runtime.reportReadError(source, sourceErrorFromUnknown(source, error), runtime.sessionEpochs[source]);
+        if (!signal.aborted)
+          runtime.reportReadError(source, sourceErrorFromUnknown(source, error), runtime.sessionEpochs[source]);
         throw error;
       }
     }
@@ -193,7 +199,10 @@ export function NotificationsRoute({
   useEffect(
     () =>
       focusManager.subscribe((focused) => {
-        if (!focused && listRecoveries.pending) listRecoveries.cancel();
+        if (!focused) {
+          confirmedSourceRetries.current.clear();
+          if (listRecoveries.pending) listRecoveries.cancel();
+        }
       }),
     [listRecoveries]
   );
@@ -246,6 +255,7 @@ export function NotificationsRoute({
           sources: runtime.activeSources.filter((candidate) => !blockedSources.includes(candidate)),
           unreadOnly
         });
+        if (signal.aborted) throw new RequestCanceledError();
         for (const candidate of runtime.activeSources) {
           const error = page.errors[candidate];
           if (error) runtime.reportReadError(candidate, error, runtime.sessionEpochs[candidate]);
@@ -283,6 +293,7 @@ export function NotificationsRoute({
           signal,
           unreadOnly
         });
+        if (signal.aborted) throw new RequestCanceledError();
         const qualityError = notificationPageError(page.quality);
         if (page.quality === 'invalid') throw qualityError;
         const errors: Partial<Record<NotificationSource, SourceErrorInfo>> = {};
@@ -298,6 +309,7 @@ export function NotificationsRoute({
           historyNotices: page.historyNotice ? { [source]: page.historyNotice } : {}
         };
       } catch (error) {
+        if (signal.aborted) throw error;
         const info = sourceErrorFromUnknown(source, error);
         runtime.reportReadError(source, info, runtime.sessionEpochs[source]);
         const previous =
@@ -316,6 +328,12 @@ export function NotificationsRoute({
     getNextPageParam: (lastPage, _pages, _pageParam, allPageParams) =>
       resolveNotificationNextPage({ source, ...lastPage, consumedPages: allPageParams }).nextPage
   });
+  useEffect(() => {
+    if (isFocused) return;
+    void queryClient.cancelQueries({ queryKey: listQueryKey, exact: true, type: 'inactive' });
+    if (source !== 'all')
+      void queryClient.cancelQueries({ queryKey: categoriesQueryKey, exact: true, type: 'inactive' });
+  }, [categoriesQueryKey, isFocused, listQueryKey, queryClient, source]);
   const items = useMemo(() => {
     const unique = new Map<string, ForumNotification>();
     listQuery.data?.pages.forEach((page) => {
@@ -412,12 +430,13 @@ export function NotificationsRoute({
   }, [currentList, listReads, publishRefresh, refetch, refreshSnapshots]);
   const retryReadSource = useCallback(
     async (candidate: NotificationSource): Promise<LinuxDoReadResumeOutcome> => {
+      const runtime = latestRuntimeRef.current;
       const expectedIdentityKey = runtime.identityKeys[candidate];
       const epoch = runtime.sessionEpochs[candidate];
       if (!expectedIdentityKey || !runtime.activeSources.includes(candidate)) return 'stale';
-      const controller = listReads.beginRetry();
+      const controller = listReads.beginRetry(candidate);
       const current = () =>
-        listReads.ownsRetry(controller) &&
+        listReads.ownsRetry(candidate, controller) &&
         latestRuntimeRef.current.identityKeys[candidate] === expectedIdentityKey &&
         latestRuntimeRef.current.sessionEpochs[candidate] === epoch &&
         latestRuntimeRef.current.enabledNotificationSources.includes(candidate);
@@ -513,7 +532,7 @@ export function NotificationsRoute({
           );
         return info.kind === 'verification-required' ? 'verification-required' : 'failed';
       } finally {
-        listReads.finishRetry(controller);
+        listReads.finishRetry(candidate, controller);
       }
     },
     [
@@ -523,12 +542,27 @@ export function NotificationsRoute({
       latestRuntimeRef,
       listQueryKey,
       queryClient,
-      runtime,
       source,
       unreadOnly,
       listReads
     ]
   );
+  useEffect(() => {
+    for (const [candidate, admission] of confirmedSourceRetries.current) {
+      if (
+        !isFocused ||
+        !focusManager.isFocused() ||
+        admission.key !== listQueryKey ||
+        runtime.sessionEpochs[candidate] !== admission.epoch ||
+        !runtime.enabledNotificationSources.includes(candidate)
+      ) {
+        confirmedSourceRetries.current.delete(candidate);
+      } else if (runtime.activeSources.includes(candidate) && !listQuery.isFetching) {
+        confirmedSourceRetries.current.delete(candidate);
+        void retryReadSource(candidate);
+      }
+    }
+  }, [isFocused, listQuery.isFetching, listQueryKey, retryReadSource, runtime]);
   const retrySource = useCallback(
     (candidate: NotificationSource) => {
       if (
@@ -567,6 +601,21 @@ export function NotificationsRoute({
             info = result.errorInfo;
             runtime.reportReadError(candidate, info, epoch);
           } else if (result.status !== 'same') return;
+          else if (source === 'all' && !runtime.activeSources.includes(candidate)) {
+            // When the first source becomes readable the aggregate Query starts itself.
+            if (
+              !runtime.activeSources.length ||
+              latestRuntimeRef.current.identitySignature !== runtime.identitySignature
+            )
+              return;
+            if (
+              !latestRuntimeRef.current.activeSources.includes(candidate) ||
+              queryClient.isFetching({ queryKey: listQueryKey, exact: true })
+            ) {
+              confirmedSourceRetries.current.set(candidate, { key: listQueryKey, epoch });
+              return;
+            }
+          }
         }
         if (!current()) return;
         if (info && notificationErrorAction(info) !== '重试') {
@@ -591,6 +640,7 @@ export function NotificationsRoute({
       errors,
       latestRuntimeRef,
       listQueryKey,
+      queryClient,
       retryReadSource,
       runtime,
       source,
@@ -1814,6 +1864,7 @@ export function NotificationSettingsRoute() {
   const navigation = useNavigation();
   const runtime = useNotificationRouteRuntime();
   const [busy, setBusy] = useState(false);
+  const running = useRef(false);
   const pendingOptIn = useRef<object | null>(null);
   useFocusEffect(
     useCallback(
@@ -1825,11 +1876,15 @@ export function NotificationSettingsRoute() {
   );
   const run = useCallback(
     (operation: () => Promise<unknown>) => {
-      if (!navigation.isFocused()) return;
+      if (running.current || !navigation.isFocused()) return;
+      running.current = true;
       setBusy(true);
       void operation()
         .catch((error) => runtime.notify(errorMessage(error)))
-        .finally(() => setBusy(false));
+        .finally(() => {
+          running.current = false;
+          setBusy(false);
+        });
     },
     [navigation, runtime]
   );

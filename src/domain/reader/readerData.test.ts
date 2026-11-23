@@ -40,6 +40,90 @@ const profile: UserProfile = {
 };
 
 describe('Android reader data helpers', () => {
+  it('preserves an explicit unread-dot setting and ignores older backups without that setting', () => {
+    const empty = createEmptyReaderData();
+    expect(empty.settings).toMatchObject({ showUnreadDot: true });
+    const local = { ...empty, settings: { ...empty.settings, showUnreadDot: false } };
+    expect(sanitizeReaderSettings(local.settings)).toMatchObject({ showUnreadDot: false });
+    expect(sanitizeReaderSettings({ showUnreadDot: 'false' })).toMatchObject({ showUnreadDot: true });
+    const older = readReaderBackupContent({ version: 2, settings: { theme: 'dark' } });
+    expect(mergeReaderData(local, older).settings).toMatchObject({ theme: 'dark', showUnreadDot: false });
+    expect(mergeReaderData(empty, readReaderBackupContent(local)).settings).toMatchObject({ showUnreadDot: false });
+  });
+
+  it('keeps independent, valid local font references through settings and backup restoration', () => {
+    const uiFontFamily = `WzLocalFont_${'a'.repeat(64)}`;
+    const fontFamily = `WzLocalFont_${'b'.repeat(64)}`;
+    const empty = createEmptyReaderData();
+    const settings = { ...empty.settings, uiFontFamily, fontFamily };
+    expect(sanitizeReaderSettings(settings)).toMatchObject({ uiFontFamily, fontFamily });
+    const backup = readReaderBackupContent({ ...empty, settings });
+    expect(mergeReaderData(empty, backup).settings).toMatchObject({ uiFontFamily, fontFamily });
+    expect(sanitizeReaderSettings({ uiFontFamily: 'WzLocalFont_../font' }).uiFontFamily).toBe('app');
+  });
+
+  it('inherits the previous shared size when migrating local settings, including a reader-data-only snapshot', () => {
+    const oldSettings = { fontScale: 1.3, fontFamily: 'serif' };
+    const local = validateStoredReaderData({ ...createEmptyReaderData(), settings: oldSettings });
+    expect(local.settings).toEqual(sanitizeReaderSettings(oldSettings));
+    expect(local.settings).toMatchObject({
+      fontScale: 1.3,
+      fontFamily: 'system',
+      uiFontScale: 1.3,
+      uiFontFamily: 'app'
+    });
+    expect(sanitizeReaderSettings({ ...oldSettings, uiFontScale: null }).uiFontScale).toBeNull();
+  });
+
+  it.each(['sans', 'serif'])(
+    'maps the old %s reading choice to follow system in settings and backups',
+    (fontFamily) => {
+      const empty = createEmptyReaderData();
+      const value = { ...empty, settings: { ...empty.settings, fontFamily } };
+      expect(validateStoredReaderData(value).settings.fontFamily).toBe('system');
+      expect(mergeReaderData(empty, readReaderBackupContent(value)).settings.fontFamily).toBe('system');
+    }
+  );
+
+  it('only derives the interface size from a complete old backup and preserves a local explicit choice', () => {
+    const empty = createEmptyReaderData();
+    const oldSettings = {
+      theme: 'dark',
+      listDensity: 'loose',
+      fontFamily: 'sans',
+      fontScale: 1.3,
+      lineHeight: 'standard',
+      contentWidth: 'standard'
+    };
+    const complete = readReaderBackupContent({ ...empty, settings: oldSettings });
+    const partial = readReaderBackupContent({ version: 2, history: {}, settings: { fontScale: 1.3 } });
+    const completeRecordsWithPartialSettings = readReaderBackupContent({ ...empty, settings: { fontScale: 1.3 } });
+    const partialRecordsWithCompleteSettings = readReaderBackupContent({
+      version: 2,
+      history: {},
+      settings: oldSettings
+    });
+    const local = { ...empty, settings: { ...empty.settings, uiFontScale: 1 } };
+    const modern = readReaderBackupContent({ ...empty, settings: { ...oldSettings, uiFontScale: null } });
+    const modernMissingScale = readReaderBackupContent({
+      ...empty,
+      settings: { ...oldSettings, uiFontFamily: 'system' }
+    });
+
+    expect(empty.settings).toMatchObject({ uiFontScale: null, uiFontFamily: 'app', fontFamily: 'app' });
+    expect(mergeReaderData(empty, complete).settings).toMatchObject({ fontScale: 1.3, uiFontScale: 1.3 });
+    expect(mergeReaderData(local, complete).settings).toMatchObject({ fontScale: 1.3, uiFontScale: 1 });
+    for (const backup of [partial, completeRecordsWithPartialSettings, partialRecordsWithCompleteSettings]) {
+      expect(mergeReaderData(empty, backup).settings).toMatchObject({ fontScale: 1.3, uiFontScale: null });
+    }
+    expect(mergeReaderData(empty, modernMissingScale).settings).toMatchObject({
+      fontScale: 1.3,
+      uiFontFamily: 'system',
+      uiFontScale: null
+    });
+    expect(mergeReaderData(local, modern).settings).toMatchObject({ fontScale: 1.3, uiFontScale: null });
+  });
+
   it.each(['nodeseek', 'linuxdo', 'v2ex', 'yaohuo'] as const)(
     'preserves unknown %s publication dates in every saved topic collection',
     (source) => {
@@ -351,7 +435,7 @@ describe('Android reader data helpers', () => {
       fontScale: 1.2,
       lineHeight: 'loose',
       contentWidth: 'wide',
-      fontFamily: 'serif'
+      fontFamily: 'system'
     });
     expect(data.settings).not.toHaveProperty('palette');
     expect(data.settings).not.toHaveProperty('background');

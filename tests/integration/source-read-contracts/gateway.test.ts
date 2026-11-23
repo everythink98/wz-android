@@ -1,6 +1,16 @@
 import { jsonResponse } from '../../helpers/jsonResponse';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getFeed } from '@/sources/feedRead';
+import type { Fetcher } from '@/platform/network/request';
+import { createTopicEditTransport } from '../../helpers/topicEditingTransport';
+import { registerForumReadResponseEvidence, runForumSourceReadAttempt } from '@/sources/forumSourceReadAttempt';
+import { loadLinuxDoInteractionConfig } from '@/sources/linuxdo/interactionConfig';
+import { loadLinuxDoTopicCreationContext } from '@/sources/linuxdo/topicCreation';
+import { loadLinuxDoTopicEditContext } from '@/sources/linuxdo/topicEditing';
+import { loadNodeSeekTopicEditContext } from '@/sources/nodeseek/topicEditing';
+import { getLinuxDoCreditTransactions } from '@/sources/linuxdo/credit';
+import { getLinuxDoLevelProfile } from '@/sources/linuxdo/level';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { searchTopics } from '@/sources/searchRead';
 import { getTopic } from '@/sources/sourceRead';
 import { readAccountStatus } from '@/sources/accountRead';
@@ -64,6 +74,72 @@ function readNodeSeekAccountWith(fetcher: Parameters<typeof readAccountStatus>[1
 }
 
 describe('Android local sources', () => {
+  it.each(['interaction', 'creation', 'edit', 'node-edit', 'credit', 'level'] as const)(
+    'commits typed read responses for %s',
+    async (operation) => {
+      if (operation === 'level') {
+        vi.spyOn(AsyncStorage, 'getItem').mockResolvedValueOnce(null);
+        vi.spyOn(AsyncStorage, 'setItem').mockResolvedValueOnce();
+      }
+      const source = operation === 'node-edit' ? 'nodeseek' : 'linuxdo';
+      const fixture = createTopicEditTransport(source);
+      const commits: string[] = [];
+      const paths: string[] = [];
+      const transport: Fetcher = async (url, init) => {
+        const path = new URL(url).pathname;
+        let response: Response;
+        if (operation === 'level')
+          response = jsonResponse({ user_summary: { user: { username: 'proof', trust_level: 1 }, days_visited: 4 } });
+        else if (operation === 'credit')
+          response = jsonResponse(
+            path.includes('current')
+              ? { current_user: { id: 42, username: 'proof' } }
+              : {
+                  error_msg: '',
+                  data: path.includes('user-info')
+                    ? { id: '42', username: 'proof', available_balance: '5', pending_balance: '1' }
+                    : { page: 1, page_size: 20, total: 0, orders: [] }
+                }
+          );
+        else response = await fixture.fetcher(url, init);
+        paths.push(path);
+        registerForumReadResponseEvidence(init, response, {
+          source,
+          kind: 'fallback',
+          ordinal: paths.length,
+          commit: async () => {
+            commits.push(path);
+          }
+        });
+        return response;
+      };
+      await runForumSourceReadAttempt<unknown>(
+        source,
+        transport,
+        (fetcher) => {
+          const options = { fetcher, userAgent: 'fixture', identityKey: `${source}:42`, topicId: '123' };
+          switch (operation) {
+            case 'interaction':
+              return loadLinuxDoInteractionConfig(options);
+            case 'creation':
+              return loadLinuxDoTopicCreationContext(options);
+            case 'node-edit':
+              return loadNodeSeekTopicEditContext(options);
+            case 'edit':
+              return loadLinuxDoTopicEditContext(options);
+            case 'level':
+              return getLinuxDoLevelProfile(options);
+            case 'credit':
+              return getLinuxDoCreditTransactions({ ...options, userId: '42', username: 'proof', page: 1 });
+          }
+        },
+        () => true
+      );
+      expect(commits.sort()).toEqual(paths.sort());
+      expect(commits.length).toBeGreaterThan(0);
+    }
+  );
+
   afterEach(() => {
     setDiagnosticWriter(null);
   });
@@ -288,6 +364,25 @@ describe('Android local sources', () => {
     expect(webViewFetcher).not.toHaveBeenCalled();
   });
 
+  it('passes JSON through without buffering a duplicate body while preserving challenge headers', async () => {
+    const direct = new Response(JSON.stringify({ count: 42 }), { headers: { 'content-type': 'application/json' } });
+    const clone = vi.spyOn(direct, 'clone');
+    const challenge = new Response('{}', {
+      status: 403,
+      headers: { 'content-type': 'application/json', 'cf-mitigated': 'challenge' }
+    });
+    const normalFetcher = vi.fn().mockResolvedValueOnce(direct).mockResolvedValueOnce(challenge);
+    const webViewFetcher = vi.fn(async () => new Response('verified'));
+    const fetcher = createNodeSeekWebViewFallbackFetcher({ defaultFetcher: normalFetcher, webViewFetcher });
+    const url = 'https://www.nodeseek.com/api/example';
+    const received = await fetcher(url);
+    expect(received).toBe(direct);
+    await expect(received.json()).resolves.toEqual({ count: 42 });
+    expect(clone.mock.calls.length).toBe(0);
+    await fetcher(url);
+    expect(webViewFetcher).toHaveBeenCalledTimes(1);
+  });
+
   it('preserves a NodeSeek permission 403 without entering verification fallback', async () => {
     const normalFetcher = vi.fn(
       async () =>
@@ -363,9 +458,15 @@ describe('Android local sources', () => {
       webViewFetcher
     });
 
-    const topic = await getTopic({ source: 'nodeseek', id: '743016', fetcher });
-
-    expect(topic.title).toBe('NodeSeek direct embedded detail');
+    const decode = vi.spyOn(JSON, 'parse');
+    try {
+      const topic = await getTopic({ source: 'nodeseek', id: '743016', fetcher });
+      expect(topic.title).toBe('NodeSeek direct embedded detail');
+      const data = Buffer.from(directPayload, 'base64').toString();
+      expect(decode.mock.calls.filter(([input]) => input === data).length).toBe(1);
+    } finally {
+      decode.mockRestore();
+    }
     expect(webViewFetcher).not.toHaveBeenCalled();
   });
 
@@ -1091,48 +1192,51 @@ describe('Android local sources', () => {
     expect(recoverReadChannel).not.toHaveBeenCalled();
   });
 
-  it('does not confirm a swallowed auxiliary NodeSeek poll parse failure', async () => {
-    const payload = Buffer.from(
-      JSON.stringify({
-        postData: {
-          postId: 743026,
-          title: 'topic with optional poll',
-          op: { name: 'alice' },
-          comments: [
-            {
-              commentId: 1,
-              poster: { name: 'alice' },
-              markdown: '提交投票 nsapp://vote?id=2443',
-              time: { createdDate: '2026-08-09T00:00:00.000Z' }
-            }
-          ]
-        }
-      })
-    ).toString('base64');
-    const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 2 }));
-    const fallbackFetcher = createNodeSeekWebViewFallbackFetcher({
-      defaultFetcher: vi.fn(async (input: string | URL | Request) => {
-        if (String(input).includes('/api/vote/info/2443')) {
-          throw new TypeError('Network request failed');
-        }
-        return html(`<script>${payload}</script>`);
-      }),
-      webViewFetcher: vi.fn(async () => html('<html><body>temporary shell</body></html>')),
-      recoveryThreshold: 1,
-      recoverReadChannel
-    });
-    const gateway = createReadGateway({
-      anonymousFetcher: fallbackFetcher,
-      fetcher: fallbackFetcher,
-      nodeSeekUserAgent: () => 'NodeSeek UA'
-    });
+  it.each(['<html><body>temporary shell</body></html>', '{}'])(
+    'does not confirm a swallowed auxiliary NodeSeek poll parse failure for %s',
+    async (body) => {
+      const payload = Buffer.from(
+        JSON.stringify({
+          postData: {
+            postId: 743026,
+            title: 'topic with optional poll',
+            op: { name: 'alice' },
+            comments: [
+              {
+                commentId: 1,
+                poster: { name: 'alice' },
+                markdown: '提交投票 nsapp://vote?id=2443',
+                time: { createdDate: '2026-08-09T00:00:00.000Z' }
+              }
+            ]
+          }
+        })
+      ).toString('base64');
+      const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 2 }));
+      const fallbackFetcher = createNodeSeekWebViewFallbackFetcher({
+        defaultFetcher: vi.fn(async (input: string | URL | Request) => {
+          if (String(input).includes('/api/vote/info/2443')) {
+            throw new TypeError('Network request failed');
+          }
+          return html(`<script>${payload}</script>`);
+        }),
+        webViewFetcher: vi.fn(async () => html(body)),
+        recoveryThreshold: 1,
+        recoverReadChannel
+      });
+      const gateway = createReadGateway({
+        anonymousFetcher: fallbackFetcher,
+        fetcher: fallbackFetcher,
+        nodeSeekUserAgent: () => 'NodeSeek UA'
+      });
 
-    const topic = await gateway.getTopic({ source: 'nodeseek', id: '743026' });
+      const topic = await gateway.getTopic({ source: 'nodeseek', id: '743026' });
 
-    expect(topic.title).toBe('topic with optional poll');
-    expect(sourceDiagnosticSummary(topic)?.partialErrorCount).toBe(1);
-    expect(recoverReadChannel).not.toHaveBeenCalled();
-  });
+      expect(topic.title).toBe('topic with optional poll');
+      expect(sourceDiagnosticSummary(topic)?.partialErrorCount).toBe(1);
+      expect(recoverReadChannel).not.toHaveBeenCalled();
+    }
+  );
 
   it('keeps a proven primary NodeSeek fallback when its auxiliary poll succeeds direct', async () => {
     const payload = Buffer.from(

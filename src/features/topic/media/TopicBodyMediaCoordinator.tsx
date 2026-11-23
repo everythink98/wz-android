@@ -7,7 +7,8 @@ import {
   useId,
   useLayoutEffect,
   useMemo,
-  useState
+  useState,
+  useSyncExternalStore
 } from 'react';
 import { type Source } from '@/domain/forum/sourceCatalog';
 import { useReadNetworkRuntimeGeneration } from '@/platform/network/readNetworkRuntime';
@@ -16,6 +17,7 @@ import { recordMediaBudgetTimeout } from '@/platform/media/mediaPlaybackDiagnost
 import { TopicAudioSessionProvider } from './TopicAudioSession';
 import { MediaPlaybackSession, MediaPlaybackSessionContext } from '@/platform/media/mediaPlaybackSession';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
+import { OriginalImageUpgradeBoundary } from '@/platform/media/originalImageLoading';
 
 const MAX_WARM_BLOCK_MEDIA = 8;
 const MAX_IN_FLIGHT_BODY_MEDIA = 4;
@@ -125,6 +127,7 @@ class TopicBodyMediaCoordinator {
   private timerHighWater = 0;
   private visibleRowKeys: readonly string[];
   private viewportRowKeys: readonly string[];
+  private viewportListeners = new Map<string, Set<() => void>>();
   private warmHighWater = 0;
   private warmKeys = new Set<string>();
 
@@ -200,8 +203,28 @@ class TopicBodyMediaCoordinator {
     this.active = active;
     this.paused = paused;
     this.visibleRowKeys = visibleRowKeys;
+    const previous = this.viewportRowKeys;
     this.viewportRowKeys = viewportRowKeys;
+    if (previous !== viewportRowKeys) {
+      for (const [key, listeners] of this.viewportListeners) {
+        if (previous.includes(key) !== viewportRowKeys.includes(key)) listeners.forEach((listener) => listener());
+      }
+    }
     this.recompute();
+  }
+
+  inViewport(key: string) {
+    return this.viewportRowKeys.includes(key);
+  }
+
+  subscribeViewport(key: string, listener: () => void) {
+    const listeners = this.viewportListeners.get(key) ?? new Set<() => void>();
+    listeners.add(listener);
+    this.viewportListeners.set(key, listeners);
+    return () => {
+      listeners.delete(listener);
+      if (!listeners.size) this.viewportListeners.delete(key);
+    };
   }
 
   updateDiagnosticReporter(
@@ -728,6 +751,18 @@ function TopicBodyMediaCoordinatorSessionProvider({
 
 export function TopicBodyMediaRowBoundary({ children, rowKey }: { children: ReactNode; rowKey: string }) {
   return <TopicBodyMediaRowContext.Provider value={rowKey}>{children}</TopicBodyMediaRowContext.Provider>;
+}
+
+export function TopicViewportOriginalImageBoundary({ children }: { children: ReactNode }) {
+  const coordinator = useContext(TopicBodyMediaCoordinatorContext);
+  const rowKey = useContext(TopicBodyMediaRowContext);
+  const subscribe = useCallback(
+    (listener: () => void) => coordinator?.subscribeViewport(rowKey, listener) ?? (() => {}),
+    [coordinator, rowKey]
+  );
+  const getSnapshot = useCallback(() => coordinator?.inViewport(rowKey) ?? false, [coordinator, rowKey]);
+  const enabled = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  return <OriginalImageUpgradeBoundary enabled={enabled}>{children}</OriginalImageUpgradeBoundary>;
 }
 
 export function useTopicBodyMediaFirstRowMarker() {

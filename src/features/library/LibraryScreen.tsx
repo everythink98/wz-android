@@ -465,7 +465,8 @@ export const LibraryScreen = memo(function LibraryScreen({
         <View style={styles.libraryItem}>
           <MemoizedTopicCard
             testID={item.first ? (tab === 'favorites' ? 'library-favorite-first' : 'library-history-first') : undefined}
-            readerState={tab === 'favorites' ? { ...readerState, favorite: false, read: false } : readerState}
+            readerState={readerState}
+            scene={tab}
             renderTrailingAction={tab === 'favorites' ? renderFavoriteTrailingAction : renderHistoryTrailingAction}
             showSource={effectiveSourceFilter === 'all'}
             topic={record.topic}

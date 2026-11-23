@@ -13,7 +13,7 @@ import { HiddenBrowserHost } from '@/features/account/HiddenBrowserHost';
 import { useHiddenBrowserFetchController } from '@/features/account/useHiddenBrowserFetchController';
 import { createAccountHostStyles } from '@/features/account/accountHostStyles';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { createTheme } from '@/ui/theme/tokens';
+import { resolveReaderStyleSettings, createTheme } from '@/ui/theme/tokens';
 import type { ScopedSiteSessionEvent } from '@/domain/session/siteSessionState';
 import {
   getReadNetworkRuntimeSnapshot,
@@ -528,7 +528,10 @@ describe('session controller browser flow', () => {
             linuxDo: { request: null, userAgent: '' },
             nodeSeek: { request: hook.result.current.hiddenBrowserFetchRequests.nodeSeek, userAgent: '' }
           }}
-          styles={createAccountHostStyles(createTheme({ theme: 'light' }), createEmptyReaderData().settings)}
+          styles={createAccountHostStyles(
+            createTheme({ theme: 'light' }),
+            resolveReaderStyleSettings(createEmptyReaderData().settings)
+          )}
         />
       );
       const urls = ['https://www.nodeseek.com/post-11-1', 'https://www.nodeseek.com/post-12-1'];

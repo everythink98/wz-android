@@ -1,3 +1,4 @@
+import { fontFamilyValue, resolveReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
 import type { ReaderSettings } from '@/domain/reader/readerData';
 import { createAppStyles } from '@/app/styles';
 import { createMoreAccountStyles } from '@/features/more/accountStyles';
@@ -9,12 +10,12 @@ import { createSearchStyles } from '@/features/search/styles';
 import { createTopicStyles } from '@/features/topic/styles';
 import { createHtmlRendererStyles } from '@/features/topic/rendering/htmlStyles';
 import { createUserStyles } from '@/features/user/styles';
-import type { ReaderTheme } from '@/ui/theme/tokens';
 
-export function createTestStyles(theme: ReaderTheme, settings: ReaderSettings, _windowHeight: number) {
+export function createTestStyles(theme: ReaderTheme, savedSettings: ReaderSettings, _windowHeight: number) {
+  const settings = resolveReaderStyleSettings(savedSettings);
   return Object.assign(
     {},
-    createAppStyles(theme),
+    createAppStyles(theme, fontFamilyValue(settings.uiFontFamily), settings.uiFontScale),
     createMoreAccountStyles(theme, settings),
     createLoginWebViewStyles(theme, settings),
     createFeedStyles(theme, settings),

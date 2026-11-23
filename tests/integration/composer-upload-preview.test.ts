@@ -51,7 +51,8 @@ it('carries an upload response through Markdown to the real Composer image view'
           primary: '#1677ff',
           primarySoft: '#eef',
           danger: '#f00',
-          fontScale: 1
+          fontScale: 1,
+          uiFontScale: 1
         }
       }
     });

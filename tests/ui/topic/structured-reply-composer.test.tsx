@@ -15,7 +15,7 @@ import { composerHostMessageSchema } from '@/ui/composer/structuredComposerBridg
 import { AppState, DeviceEventEmitter, Keyboard, StyleSheet, Text } from 'react-native';
 import { recordUserInteraction, userPresent } from '@/platform/network/userPresence';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
-import { createTheme } from '@/ui/theme/tokens';
+import { resolveReaderStyleSettings, createTheme } from '@/ui/theme/tokens';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { act, fireEvent, render, waitFor } from '../render';
 
@@ -26,6 +26,56 @@ function message(type: string, payload: unknown) {
 afterEach(() => setDiagnosticWriter(null));
 
 describe('StructuredReplyComposer', () => {
+  it('passes initial Markdown with literal dollar signs through the document JSON', async () => {
+    const markdown = "$$\nE = mc^2\n$$\n$& $' $` <text>";
+    const view = await render(
+      <StructuredReplyComposer
+        actionBusy={false}
+        content={markdown}
+        initialMode="source"
+        intent={{ kind: 'reply', site: 'linuxdo', topicId: 'initial-dollars' }}
+        pendingNodeSeekPolls={[]}
+        presentation="sheet"
+        visible
+        onSnapshot={jest.fn()}
+      />
+    );
+    const html: string = view.getByTestId('structured-composer-webview').props.source.html;
+    const data = html.match(/id="composer-initial-document">([\s\S]*?)<\/script>/)?.[1];
+    expect(JSON.parse(data ?? '')).toMatchObject({ payload: { markdown } });
+  });
+
+  it('updates and clears the NodeSeek member in the same ready editor document', async () => {
+    const tree = (member?: string) => (
+      <StructuredReplyComposer
+        actionBusy={false}
+        content="正文不变"
+        initialMode="source"
+        intent={{ kind: 'reply', site: 'nodeseek', topicId: 'member-switch' }}
+        nodeSeekMemberId={member}
+        pendingNodeSeekPolls={[]}
+        presentation="sheet"
+        visible
+        onSnapshot={jest.fn()}
+      />
+    );
+    const view = await render(tree('42'));
+    const webView = view.getByTestId('structured-composer-webview');
+    await fireEvent(webView, 'loadEnd');
+    await fireEvent(webView, 'message', message('READY', { documentEpoch: 0, revision: 0 }));
+    await view.rerender(tree('84'));
+    await view.rerender(tree());
+
+    expect(view.getByTestId('structured-composer-webview')).toBe(webView);
+    expect(postedMessages(webView)).not.toContainEqual(expect.objectContaining({ type: 'INIT' }));
+    expect(postedMessages(webView)).toEqual(
+      expect.arrayContaining([
+        { type: 'SET_NODESEEK_MEMBER', payload: { documentEpoch: 0, memberId: '84' } },
+        { type: 'SET_NODESEEK_MEMBER', payload: { documentEpoch: 0, memberId: null } }
+      ])
+    );
+  });
+
   it('keeps ready feedback while a replacement document waits for its own READY', async () => {
     jest.useFakeTimers();
     const ref = createRef<StructuredReplyComposerHandle>();
@@ -1190,6 +1240,156 @@ describe('StructuredReplyComposer', () => {
     );
     expect(lines.join('')).not.toContain('private draft');
   });
+  it('can explicitly restart an editor after its foreground startup timeout', async () => {
+    jest.useFakeTimers();
+    try {
+      const view = await render(
+        <StructuredReplyComposer
+          actionBusy={false}
+          content="重开仍保留的草稿"
+          initialMode="source"
+          intent={{ kind: 'reply', site: 'linuxdo', topicId: 'reload-timeout' }}
+          pendingNodeSeekPolls={[]}
+          presentation="sheet"
+          visible
+          onSnapshot={jest.fn()}
+        />
+      );
+      const first = view.getByTestId('structured-composer-webview');
+      const lateLoad = first.props.onLoadEnd;
+      await fireEvent(first, 'loadEnd');
+      await act(() => jest.advanceTimersByTime(1501));
+      await fireEvent.press(view.getByRole('button', { name: '重载编辑器' }));
+      const next = view.getByTestId('structured-composer-webview');
+      expect(next).not.toBe(first);
+      await act(() => lateLoad({ nativeEvent: {} }));
+      expect(postedMessages(next)).not.toContainEqual(expect.objectContaining({ type: 'INIT' }));
+      await fireEvent(next, 'loadEnd');
+      const init = postedMessages(next).findLast((entry: { type: string }) => entry.type === 'INIT');
+      expect(init.payload).toMatchObject({ markdown: '重开仍保留的草稿', mode: 'source' });
+      expect(init.payload.documentEpoch).toBeGreaterThan(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('settles pending snapshots and restores the header when the renderer exits in a tool panel', async () => {
+    const ref = createRef<StructuredReplyComposerHandle>();
+    const view = await render(
+      <StructuredReplyComposer
+        ref={ref}
+        actionBusy={false}
+        content="最后确认稿"
+        initialMode="rich"
+        intent={{ kind: 'reply', site: 'linuxdo', topicId: 'renderer-exit' }}
+        pendingNodeSeekPolls={[]}
+        presentation="sheet"
+        visible
+        onSnapshot={jest.fn()}
+      />
+    );
+    const webView = view.getByTestId('structured-composer-webview');
+    await fireEvent(webView, 'loadEnd');
+    await fireEvent(webView, 'message', message('READY', { documentEpoch: 0, revision: 0 }));
+    await fireEvent(webView, 'message', message('PANEL_CHANGED', { documentEpoch: 0, open: true, layout: 'form' }));
+    expect(view.queryByTestId('structured-composer-header')).toBeNull();
+
+    const pending = ref.current!.requestSnapshot().catch((error: Error) => error.message);
+    await fireEvent(webView, 'renderProcessGone', { nativeEvent: { didCrash: true } });
+    expect(view.getByTestId('structured-composer-header')).toBeTruthy();
+    expect(view.getByRole('button', { name: '重载编辑器' })).toBeTruthy();
+    await expect(pending).resolves.toContain('进程已退出');
+  });
+
+  it('never restores confirmed Markdown from a different topic after renderer loss', async () => {
+    const tree = (topicId: string) => (
+      <StructuredReplyComposer
+        actionBusy={false}
+        content="相同初始正文"
+        initialMode="source"
+        intent={{ kind: 'reply', site: 'linuxdo', topicId }}
+        pendingNodeSeekPolls={[]}
+        presentation="sheet"
+        visible
+        onSnapshot={jest.fn()}
+      />
+    );
+    const view = await render(tree('old-topic'));
+    const first = view.getByTestId('structured-composer-webview');
+    await fireEvent(first, 'loadEnd');
+    await fireEvent(first, 'message', message('READY', { documentEpoch: 0, revision: 0 }));
+    await fireEvent(
+      first,
+      'message',
+      message('SNAPSHOT', {
+        documentEpoch: 0,
+        snapshot: {
+          revision: 1,
+          markdown: '只属于旧帖的编辑内容',
+          mode: 'source',
+          isEmpty: false,
+          validationIssues: [],
+          pendingNodeSeekPolls: []
+        }
+      })
+    );
+    await fireEvent(first, 'renderProcessGone', { nativeEvent: { didCrash: true } });
+    await view.rerender(tree('new-topic'));
+    await fireEvent.press(view.getByRole('button', { name: '重载编辑器' }));
+    const next = view.getByTestId('structured-composer-webview');
+    await fireEvent(next, 'loadEnd');
+    const init = postedMessages(next).findLast((entry: { type: string }) => entry.type === 'INIT');
+    expect(init.payload.markdown).toBe('相同初始正文');
+  });
+
+  it('restores a just-confirmed NodeSeek poll with its Markdown after renderer loss', async () => {
+    const view = await render(
+      <StructuredReplyComposer
+        actionBusy={false}
+        content=""
+        initialMode="source"
+        intent={{ kind: 'reply', site: 'nodeseek', topicId: 'reload-poll' }}
+        pendingNodeSeekPolls={[]}
+        presentation="sheet"
+        visible
+        onSnapshot={jest.fn()}
+      />
+    );
+    const first = view.getByTestId('structured-composer-webview');
+    await fireEvent(first, 'loadEnd');
+    await fireEvent(first, 'message', message('READY', { documentEpoch: 0, revision: 0 }));
+    const poll = {
+      localId: 'polltest01',
+      fingerprint: 'ab0123456789cdef',
+      title: '投票标题',
+      options: ['选项甲', '选项乙'],
+      multiple: false,
+      isPublic: true
+    };
+    const markdown = '<!-- wz:nodeseek-poll:polltest01 -->';
+    await fireEvent(
+      first,
+      'message',
+      message('SNAPSHOT', {
+        documentEpoch: 0,
+        snapshot: {
+          markdown,
+          revision: 1,
+          mode: 'source',
+          isEmpty: false,
+          validationIssues: [],
+          pendingNodeSeekPolls: [poll]
+        }
+      })
+    );
+    await fireEvent(first, 'renderProcessGone', { nativeEvent: { didCrash: true } });
+    await fireEvent.press(view.getByRole('button', { name: '重载编辑器' }));
+    const next = view.getByTestId('structured-composer-webview');
+    await fireEvent(next, 'loadEnd');
+    const init = postedMessages(next).findLast((entry: { type: string }) => entry.type === 'INIT');
+    expect(init.payload).toMatchObject({ markdown, pendingNodeSeekPolls: [poll] });
+  });
+
   it('records renderer loss and runtime parse failures without the draft', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => {
@@ -1818,7 +2018,7 @@ describe('StructuredReplyComposer', () => {
       const settings = { ...createEmptyReaderData().settings, theme: appearance };
       const theme = createTheme(settings);
       return (
-        <ReaderStyleProvider value={{ settings, theme }}>
+        <ReaderStyleProvider value={{ settings: resolveReaderStyleSettings(settings), theme }}>
           <StructuredReplyComposer
             actionBusy={false}
             closeLabel="收起回复"

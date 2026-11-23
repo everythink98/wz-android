@@ -6,6 +6,7 @@ import {
 import { resolveLinuxDoUpload as fetchLinuxDoUploadUrl } from '@/sources/linuxdo/uploadUrls';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert } from 'react-native';
+import { createStardustPayments } from './stardustPayments';
 import {
   queryOptions,
   useMutation,
@@ -1439,6 +1440,8 @@ export function useTopicActionsController({
     [activeRef, writableTicketCurrentRef, onSessionExpired, requestAccountRecheck]
   );
   const nodeSeekUserId = nodeSeekUserIdForSession(siteSessionViewModels.nodeseek);
+  const [stardustPayments] = useState(createStardustPayments);
+  const stardustPayer = siteSessionIdentityKey(siteSessionViewModels.nodeseek);
   const detachReplyEdit = topicComposer.detachEdit;
 
   const detail = currentTopicActionTopic(topicDetail, selectedTopic);
@@ -3475,6 +3478,8 @@ export function useTopicActionsController({
     setPolicyAcceptance,
     lockNodeSeekPoll,
     payNodeSeekStardust,
+    stardustPayments,
+    stardustPayer,
     submitReply,
     uploadReplyImage,
     uploadReplyImageMarkup,

@@ -101,6 +101,7 @@ const resultSchema = z.object({
   confirmed: editableFieldsSchema.partial().optional(),
   latest: editableFieldsSchema.optional(),
   message: z.string(),
+  verificationRequired: z.literal(true).optional(),
   topic: z.object({ id: identifier, source: sourceSchema, title: z.string() }).passthrough().optional()
 });
 const attemptSchema = z

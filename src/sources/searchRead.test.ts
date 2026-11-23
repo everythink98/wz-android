@@ -9,6 +9,24 @@ vi.mock('expo-secure-store', () => ({
 import { searchTopics } from './searchRead';
 
 describe('search read', () => {
+  it('uses the positive query for Yaohuo and filters excluded or blank titles', async () => {
+    const read = (rows: string[]) =>
+      searchTopics({
+        source: 'yaohuo',
+        query: 'keep -excluded',
+        fetcher: async (input) => {
+          expect(new URL(input).searchParams.get('key')).toBe('keep');
+          return new Response(
+            '<ul class="post-items">' +
+              rows.map((row, i) => `<li class="post-item"><a href="/bbs-${i + 1}.html">${row}</a></li>`).join('') +
+              '</ul>'
+          );
+        }
+      });
+    expect((await read(['keep first', 'keep excluded'])).items.map((item) => item.title)).toEqual(['keep first']);
+    await expect(read(['<span class="post-flag">置顶</span>'])).rejects.toThrow('搜索结果缺少标题');
+  });
+
   it.each(['v2ex', 'linuxdo'] as const)(
     'keeps all matching %s results across pages with an excluded search term',
     async (source) => {

@@ -242,7 +242,7 @@ export function NetworkProxyScreen({
   };
 
   const openCreate = () => {
-    setDraftState({ mode: 'create', draft: emptyDraft, submitted: false });
+    setDraftState({ mode: 'create', draft: { ...emptyDraft, id: createNetworkProxyProfile({}).id }, submitted: false });
   };
 
   const openEdit = (profile: NetworkProxyProfile) => {
@@ -397,7 +397,7 @@ export function NetworkProxyScreen({
                           }
                         ]}
                       >
-                        <Text style={[proxyStyles.currentBadgeText, { color: accentColor }]}>当前</Text>
+                        <Text style={[styles.proxyCurrentLabel, { color: accentColor }]}>当前</Text>
                       </View>
                     ) : null}
                   </View>
@@ -446,7 +446,7 @@ export function NetworkProxyScreen({
             onPress={openCreate}
           >
             <Plus size={18} color={accentColor} strokeWidth={2} />
-            <Text style={[proxyStyles.addRowText, { color: accentColor }]}>添加代理</Text>
+            <Text style={[styles.proxyAddLabel, { color: accentColor }]}>添加代理</Text>
           </Pressable>
         </View>
       </ScrollView>
@@ -672,11 +672,6 @@ const proxyStyles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2
   },
-  currentBadgeText: {
-    fontSize: 11,
-    fontWeight: '600',
-    lineHeight: 14
-  },
   rowActions: {
     alignItems: 'center',
     flexDirection: 'row'
@@ -689,10 +684,6 @@ const proxyStyles = StyleSheet.create({
     minHeight: 48,
     paddingHorizontal: 0,
     paddingVertical: 11
-  },
-  addRowText: {
-    fontSize: 15,
-    fontWeight: '600'
   },
   sheetBody: {
     gap: 12

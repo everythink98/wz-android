@@ -747,8 +747,10 @@ export function normalizeReplies(
       const floorIndex = optionalInteger(comment.floorIndex ?? comment.floor);
       const floor = floorIndex ?? floorOffset + start + index + 1;
       const commentId = optionalInteger(comment.commentId);
+      const onSameFloor = overridesByFloor.get(floor);
       const contentOverride =
-        (commentId ? overridesByCommentId.get(commentId) : undefined) || overridesByFloor.get(floor);
+        (commentId ? overridesByCommentId.get(commentId) : undefined) ||
+        (!commentId || !onSameFloor?.commentId ? onSameFloor : undefined);
       const preparedContent =
         contentOverride?.preparedContent ||
         (skipUnmatchedContent ? undefined : nodeSeekDisplayContent(comment.content, rawMarkdown));

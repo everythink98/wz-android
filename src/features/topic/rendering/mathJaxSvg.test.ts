@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { HTMLHandler } from '@mathjax/src/js/handlers/html/HTMLHandler.js';
+import { describe, expect, it, vi } from 'vitest';
 
 import { renderMathJaxSvg } from './mathJaxSvg';
 
@@ -30,5 +31,33 @@ describe('MathJax SVG rendering', () => {
 
     expect(inline.verticalAlignEx).toBeLessThanOrEqual(0);
     await expect(renderMathJaxSvg('\\frac{', true)).rejects.toThrow();
+  });
+
+  it('keeps macro definitions local to each formula, including a formula that fails', async () => {
+    const before = await renderMathJaxSvg('\\readerterm', false);
+    const [defined, following] = await Promise.all([
+      renderMathJaxSvg('\\newcommand{\\readerterm}{x}\\readerterm', false),
+      renderMathJaxSvg('\\readerterm', false)
+    ]);
+    expect(defined.viewBox).toBe((await renderMathJaxSvg('x', false)).viewBox);
+    expect(defined.viewBox).not.toBe(before.viewBox);
+    expect(following.xml).toBe(before.xml);
+
+    await expect(renderMathJaxSvg('\\def\\readerterm{y}\\frac{', false)).rejects.toThrow();
+    expect((await renderMathJaxSvg('\\readerterm', false)).xml).toBe(before.xml);
+  });
+
+  it('retries a failed initialization on the next conversion', async () => {
+    vi.resetModules();
+    const { renderMathJaxSvg: render } = await import('./mathJaxSvg');
+    const create = vi.spyOn(HTMLHandler.prototype, 'create').mockImplementationOnce(() => {
+      throw new Error('Initialization failed');
+    });
+    try {
+      await expect(render('x', false)).rejects.toThrow('Initialization failed');
+      expect((await render('x', false)).xml).toContain('<path');
+    } finally {
+      create.mockRestore();
+    }
   });
 });

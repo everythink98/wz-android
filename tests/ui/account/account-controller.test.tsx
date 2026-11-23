@@ -170,6 +170,24 @@ describe('account workflows with canonical identity reconciliation', () => {
     expect(hook.result.current.linuxDoLevelBusy).toBe(false);
   });
 
+  it('settles an old level refresh when the account epoch changes during the request', async () => {
+    const pending = Promise.withResolvers<LinuxDoLevelProfile>();
+    mockManagedLinuxDoLevelProfile.mockReturnValue(pending.promise);
+    const overrides = { sessionEpochs: { ...initialForumSessionEpochs }, linuxDoIdentityPending: false };
+    const { hook } = await renderAccountController(overrides);
+    const settled = jest.fn();
+    await act(async () => {
+      void hook.result.current.refreshLinuxDoLevel().then(settled);
+    });
+    await waitFor(() => expect(mockManagedLinuxDoLevelProfile).toHaveBeenCalledTimes(1));
+    overrides.sessionEpochs = { ...overrides.sessionEpochs, linuxdo: overrides.sessionEpochs.linuxdo + 1 };
+    overrides.linuxDoIdentityPending = true;
+    await act(async () => {
+      await hook.rerender(undefined);
+    });
+    expect(settled).toHaveBeenCalledWith(false);
+  });
+
   it('resumes the exact active Level Query once after verification', async () => {
     const profile = { username: 'alice' } as LinuxDoLevelProfile;
     const getLevelProfile = jest

@@ -5,39 +5,44 @@ import { CheckCircle2, CheckSquare2, Circle, Plus, Search, Square, X } from 'luc
 import type { TopicTag } from '@/domain/forum/topicComposer';
 import { AppButton } from '@/ui/controls/ButtonControls';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { readerRadii, type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import {
+  readerRadii,
+  type ReaderStyleSettings,
+  fontFamilyValue,
+  type ReaderTheme,
+  textSizeStyle
+} from '@/ui/theme/tokens';
 import type { useTopicComposerController } from './useTopicComposerController';
 import type { useTopicTagSearch } from './useTopicTagSearch';
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
-  const fontFamily = fontFamilyValue(settings.fontFamily);
+  const fontFamily = fontFamilyValue(settings.uiFontFamily);
   return StyleSheet.create({
     root: { flexShrink: 1, gap: 8 },
     search: { backgroundColor: theme.surface2, borderRadius: readerRadii.control },
     input: {
       minHeight: 48,
-      fontSize: 14 * settings.fontScale,
+      ...textSizeStyle(14 * settings.uiFontScale),
       fontFamily,
-      includeFontPadding: false,
       textAlignVertical: 'center'
     },
     text: {
       color: theme.ink,
-      fontSize: 14 * settings.fontScale,
-      lineHeight: 20 * settings.fontScale,
+      fontSize: 14 * settings.uiFontScale,
+      lineHeight: 20 * settings.uiFontScale,
       fontFamily,
       letterSpacing: 0,
       includeFontPadding: false
     },
     muted: {
       color: theme.muted,
-      fontSize: 12 * settings.fontScale,
-      lineHeight: 18 * settings.fontScale,
+      fontSize: 12 * settings.uiFontScale,
+      lineHeight: 18 * settings.uiFontScale,
       fontFamily,
       letterSpacing: 0,
       includeFontPadding: false
     },
-    error: { color: theme.danger, fontSize: 13 * settings.fontScale, fontFamily },
+    error: { color: theme.danger, ...textSizeStyle(13 * settings.uiFontScale), fontFamily },
     list: { flex: 1 },
     row: { paddingVertical: 0, paddingRight: 16, marginBottom: 4, borderRadius: readerRadii.control },
     rowContainer: { minHeight: 48, marginVertical: 0, paddingVertical: 8, alignItems: 'center' },

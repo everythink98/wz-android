@@ -1,5 +1,5 @@
 import { StyleSheet } from 'react-native';
-import { type ReaderStyleSettings, fontFamilyValue, LINK_COLOR, type ReaderTheme } from '@/ui/theme/tokens';
+import { type ReadingTypography, fontFamilyValue, LINK_COLOR, type ReaderTheme } from '@/ui/theme/tokens';
 
 export type ContentContinuation = 'only' | 'first' | 'middle' | 'last';
 
@@ -10,7 +10,7 @@ export function contentBoundaryForContinuation(continuation: ContentContinuation
   };
 }
 
-export function createHtmlRendererStyles(settings: ReaderStyleSettings, theme: ReaderTheme) {
+export function createHtmlRendererStyles(settings: ReadingTypography, theme: ReaderTheme) {
   const linkColor = theme.dark ? theme.primary : LINK_COLOR;
   const appFontFamily = fontFamilyValue(settings.fontFamily);
   return StyleSheet.create({

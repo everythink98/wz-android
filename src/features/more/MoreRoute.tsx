@@ -150,7 +150,7 @@ export function MoreRoute() {
         phase: update.phase,
         artifact: update.artifact,
         restoreFailed: update.restoreFailed,
-        progress: update.appUpdateDownloadProgress,
+        progress: update.downloadProgress,
         info: update.appUpdateInfo,
         message: update.appUpdateMessage,
         check: update.checkAppUpdate,

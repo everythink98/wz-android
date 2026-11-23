@@ -38,7 +38,13 @@ import {
 import type { ComposerIntent, ComposerSite } from '@/domain/forum/structuredComposer';
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { readerRadii, type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import {
+  readerRadii,
+  type ReaderStyleSettings,
+  fontFamilyValue,
+  type ReaderTheme,
+  textSizeStyle
+} from '@/ui/theme/tokens';
 import type { ComposerToolbarAction, ComposerToolbarState } from './structuredComposerBridge';
 
 export type ComposerToolbarProps = {
@@ -97,8 +103,8 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     disabled: { opacity: 0.45 },
     text: {
       color: theme.ink,
-      fontFamily: fontFamilyValue(settings.fontFamily),
-      fontSize: Math.round(13 * Math.min(settings.fontScale, 1.15))
+      fontFamily: fontFamilyValue(settings.uiFontFamily),
+      ...textSizeStyle(Math.round(13 * Math.min(settings.uiFontScale, 1.15)))
     },
     selectedText: { color: theme.dark ? theme.primary : theme.primaryStrong },
     overlay: { ...StyleSheet.absoluteFill, zIndex: 20 },

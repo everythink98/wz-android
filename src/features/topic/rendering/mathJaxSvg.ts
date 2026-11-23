@@ -1,10 +1,11 @@
 import { MathJaxNewcmFont } from '@mathjax/mathjax-newcm-font/js/svg.js';
 import './mathJaxNewcmSvgRanges';
 import { liteAdaptor } from '@mathjax/src/js/adaptors/liteAdaptor.js';
-import { RegisterHTMLHandler } from '@mathjax/src/js/handlers/html.js';
+import { HTMLHandler } from '@mathjax/src/js/handlers/html/HTMLHandler.js';
 import { TeX } from '@mathjax/src/js/input/tex.js';
 import '@mathjax/src/js/input/tex/ams/AmsConfiguration.js';
 import '@mathjax/src/js/input/tex/base/BaseConfiguration.js';
+import { BegingroupStack } from '@mathjax/src/js/input/tex/begingroup/BegingroupStack.js';
 import '@mathjax/src/js/input/tex/newcommand/NewcommandConfiguration.js';
 import '@mathjax/src/js/input/tex/noundefined/NoUndefinedConfiguration.js';
 import { mathjax } from '@mathjax/src/js/mathjax.js';
@@ -21,21 +22,28 @@ mathjax.asyncIsSynchronous = true;
 
 function createRenderer() {
   const adaptor = liteAdaptor({ fontSize: EM });
-  RegisterHTMLHandler(adaptor);
   const input = new TeX({
     packages: ['base', 'ams', 'newcommand', 'noundefined'],
     formatError(_jax: unknown, error: unknown) {
       throw error instanceof Error ? error : new Error(String(error));
     }
   });
+  // Each standalone formula gets its own command, delimiter and environment definitions.
+  const definitions = new BegingroupStack(input.parseOptions);
+  input.preFilters.add(() => definitions.sandbox());
   const output = new SVG({ exFactor: EX / EM, fontCache: 'none', fontData: MathJaxNewcmFont });
-  return { adaptor, document: mathjax.document('', { InputJax: input, OutputJax: output }) };
+  return { adaptor, document: new HTMLHandler(adaptor).create('', { InputJax: input, OutputJax: output }) };
 }
 
 let rendererPromise: Promise<ReturnType<typeof createRenderer>> | undefined;
 
 function getRenderer() {
-  rendererPromise ||= Promise.resolve().then(createRenderer);
+  rendererPromise ||= Promise.resolve()
+    .then(createRenderer)
+    .catch((error: unknown) => {
+      rendererPromise = undefined;
+      throw error;
+    });
   return rendererPromise;
 }
 

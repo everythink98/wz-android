@@ -4,7 +4,7 @@ import { DeviceEventEmitter, Keyboard, StyleSheet, TextInput, View } from 'react
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { YaohuoReplyComposer } from '@/ui/composer/YaohuoReplyComposer';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
-import { createTheme } from '@/ui/theme/tokens';
+import { resolveReaderStyleSettings, createTheme } from '@/ui/theme/tokens';
 import { act, fireEvent, render, waitFor } from '../render';
 
 const mockInputHandle = { blur: jest.fn(), focus: jest.fn(), setSelection: jest.fn() };
@@ -312,6 +312,39 @@ describe('Yaohuo reply composer', () => {
       animationFrame.mockRestore();
     }
   });
+  it('keeps an image insertion valid when the parent echoes local typing during upload', async () => {
+    const upload = Promise.withResolvers<string>();
+    const onContentChange = jest.fn();
+    const tree = (content: string) => (
+      <YaohuoReplyComposer
+        awaitKeyboardSettled={async () => undefined}
+        actionBusy={false}
+        content={content}
+        presentation="embedded"
+        inputAccessibilityLabel="新帖正文"
+        onContentChange={onContentChange}
+        onUploadImage={() => upload.promise}
+      />
+    );
+    const view = await render(tree('原文'));
+    const input = view.getByLabelText('新帖正文');
+    await fireEvent.changeText(input, '前后');
+    await fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start: 1, end: 1 } } });
+    await fireEvent.press(view.getByLabelText('图片'));
+    await view.rerender(tree('前后'));
+    await act(async () => upload.resolve('[img]https://example.com/a.png[/img]'));
+    expect(onContentChange).toHaveBeenLastCalledWith('前[img]https://example.com/a.png[/img]后');
+  });
+
+  it('formats the entire native selection when its endpoints are reversed', async () => {
+    const view = await render(<Harness />);
+    const input = view.getByPlaceholderText('输入回复内容');
+    await fireEvent.changeText(input, 'ABCD');
+    await fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start: 3, end: 1 } } });
+    await fireEvent.press(view.getByLabelText('粗体'));
+    expect(input.props.value).toBe('A[b]BC[/b]D');
+  });
+
   it.each(['cancel', 'failure'] as const)('preserves embedded content after an image %s', async (outcome) => {
     let complete!: (markup: undefined) => void;
     let fail!: (error: Error) => void;
@@ -559,7 +592,11 @@ describe('Yaohuo reply composer', () => {
   it('keeps the Yaohuo toolbar reachable at 130%', async () => {
     const settings = { ...createEmptyReaderData().settings, fontScale: 1.3 };
     function Wrapper({ children }: { children: ReactNode }) {
-      return <ReaderStyleProvider value={{ settings, theme: createTheme(settings) }}>{children}</ReaderStyleProvider>;
+      return (
+        <ReaderStyleProvider value={{ settings: resolveReaderStyleSettings(settings), theme: createTheme(settings) }}>
+          {children}
+        </ReaderStyleProvider>
+      );
     }
     const view = await render(<Harness onUploadImage={jest.fn()} />, { wrapper: Wrapper });
     const toolbar = view.getByTestId('yaohuo-reply-composer-toolbar');

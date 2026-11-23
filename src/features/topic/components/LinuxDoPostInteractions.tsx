@@ -47,7 +47,8 @@ import {
   alphaColor,
   fontFamilyValue,
   type ReaderStyleSettings,
-  type ReaderTheme
+  type ReaderTheme,
+  textSizeStyle
 } from '@/ui/theme/tokens';
 import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
 import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
@@ -78,7 +79,7 @@ export function useLinuxDoInteractionOverlayOpen() {
 }
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
-  const fontSize = Math.round(14 * settings.fontScale);
+  const fontSize = Math.round(14 * settings.uiFontScale);
   return StyleSheet.create({
     bubbles: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-start', gap: 6, flexShrink: 0 },
     boostViewport: { overflow: 'hidden' },
@@ -100,10 +101,10 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     },
     content: {
       color: theme.ink,
-      fontSize: Math.round(12 * settings.fontScale),
-      lineHeight: Math.round(18 * settings.fontScale),
+      fontSize: Math.round(12 * settings.uiFontScale),
+      lineHeight: Math.round(18 * settings.uiFontScale),
       includeFontPadding: false,
-      fontFamily: fontFamilyValue(settings.fontFamily),
+      fontFamily: fontFamilyValue(settings.uiFontFamily),
       flexShrink: 1
     },
     bubbleAvatar: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
@@ -119,17 +120,15 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     },
     picker: { padding: 10, gap: 8 },
     title: {
-      fontSize: Math.round(16 * settings.fontScale),
-      lineHeight: Math.round(22 * settings.fontScale),
+      ...textSizeStyle(Math.round(16 * settings.uiFontScale), Math.round(22 * settings.uiFontScale)),
       color: theme.ink,
-      fontFamily: fontFamilyValue(settings.fontFamily),
+      fontFamily: fontFamilyValue(settings.uiFontFamily),
       fontWeight: '600'
     },
     muted: {
-      fontSize: Math.round(12 * settings.fontScale),
-      lineHeight: Math.round(18 * settings.fontScale),
+      ...textSizeStyle(Math.round(12 * settings.uiFontScale), Math.round(18 * settings.uiFontScale)),
       color: theme.muted,
-      fontFamily: fontFamilyValue(settings.fontFamily)
+      fontFamily: fontFamilyValue(settings.uiFontFamily)
     },
     choices: { flexDirection: 'row', flexWrap: 'wrap' },
     choice: {
@@ -141,9 +140,9 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     },
     selected: { backgroundColor: alphaColor(theme.primary, theme.dark ? 0.25 : 0.12) },
     choiceLabel: {
-      fontSize: Math.round(11 * settings.fontScale),
+      ...textSizeStyle(Math.round(11 * settings.uiFontScale)),
       color: theme.ink,
-      fontFamily: fontFamilyValue(settings.fontFamily),
+      fontFamily: fontFamilyValue(settings.uiFontFamily),
       textAlign: 'center'
     },
     row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
@@ -168,9 +167,8 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     catalogChoice: { width: '16.666666%', minHeight: 48, borderRadius: readerRadii.control, padding: 4 },
     error: {
       color: theme.danger,
-      fontSize,
-      lineHeight: Math.round(20 * settings.fontScale),
-      fontFamily: fontFamilyValue(settings.fontFamily)
+      ...textSizeStyle(fontSize, Math.round(20 * settings.uiFontScale)),
+      fontFamily: fontFamilyValue(settings.uiFontFamily)
     },
     footer: {
       flexDirection: 'row',
@@ -281,7 +279,7 @@ function BoostBubble({
                       key={tokenIndex}
                       url={imageUrl}
                       label={text}
-                      size={Math.round(16 * settings.fontScale)}
+                      size={Math.round(16 * settings.uiFontScale)}
                     />
                   ) : (
                     text
@@ -293,7 +291,7 @@ function BoostBubble({
                 key={index}
                 url={part.imageUrl}
                 label={part.emoji}
-                size={Math.round(16 * settings.fontScale)}
+                size={Math.round(16 * settings.uiFontScale)}
               />
             )
           )}
@@ -365,7 +363,7 @@ export function LinuxDoBoosts({ post }: { post: Post }) {
   const previewHeight = collapsed
     ? Math.max(...previewBoxes.map((box) => box.y + box.height), inlineActions ? inlineActions.top + 40 : 0)
     : !expanded && !measured
-      ? Math.min(4, boosts.length) * (Math.max(32, Math.round(18 * settings.fontScale) + 6) + 6) - 6
+      ? Math.min(4, boosts.length) * (Math.max(32, Math.round(18 * settings.uiFontScale) + 6) + 6) - 6
       : undefined;
   const rocket = (hidden = false) =>
     boost !== 'hidden' ? (
@@ -695,6 +693,7 @@ export function LinuxDoPostInteractionsProvider({
       {children}
       <PopupMenu
         visible={active && !!picker}
+        scrollable
         accessibilityLabel="关闭表情反应"
         onRequestClose={() => closeReactionPicker()}
         placementStyle={{

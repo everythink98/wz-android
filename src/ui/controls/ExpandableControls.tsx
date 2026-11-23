@@ -12,7 +12,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import {
-  createReaderFontSizer,
+  createUiFontSizer,
   readerRadii,
   type ReaderStyleSettings,
   fontFamilyValue,
@@ -20,8 +20,8 @@ import {
 } from '@/ui/theme/tokens';
 
 function createExpandableStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
-  const fontFamily = fontFamilyValue(settings.fontFamily);
-  const fontSize = createReaderFontSizer(settings);
+  const fontFamily = fontFamilyValue(settings.uiFontFamily);
+  const fontSize = createUiFontSizer(settings);
   return StyleSheet.create({
     group: {
       backgroundColor: theme.surface,
@@ -168,7 +168,7 @@ export function MenuButton({
   onPress: () => void;
 }) {
   const { styles, theme, settings } = useReaderThemeStyles(createExpandableStyles);
-  const inlineValue = Boolean(value) && !nested && PixelRatio.getFontScale() * settings.fontScale <= 1.25;
+  const inlineValue = Boolean(value) && !nested && PixelRatio.getFontScale() * settings.uiFontScale <= 1.25;
   const Icon = icon;
   const nestedActionColor = theme.primary;
   const isDisabled = disabled || busy;

@@ -67,7 +67,7 @@ import type { HtmlRenderers } from '../rendering/types';
 import type { ReplyFilter } from '../model/types';
 import { formatDateTime, forumAccessRequirementText } from '@/domain/forum/presentation';
 import { contentBoundaryForContinuation } from '../rendering/htmlStyles';
-import { HTML_ALLOWED_INLINE_STYLES } from '@/ui/content/forumHtmlStyles';
+import { HTML_ALLOWED_INLINE_STYLES, useForumHtmlFonts } from '@/ui/content/forumHtmlStyles';
 import {
   NODESEEK_STARDUST_PLACEHOLDER_TAG,
   nodeSeekStardustReceiveFromAttributes
@@ -75,8 +75,7 @@ import {
 import {
   topicStatusBadgeColorStyle,
   topicStatusBadgeTextColorStyle,
-  topicTagColorStyle,
-  topicTagTextColorStyle,
+  topicTagColorStyles,
   type ReaderTheme
 } from '@/ui/theme/tokens';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
@@ -153,13 +152,13 @@ import {
   TopicBodyMediaCoordinatorProvider,
   useTopicBodyMediaFirstRowMarker,
   TopicBodyMediaRowBoundary,
+  TopicViewportOriginalImageBoundary,
   type TopicBodyMediaAggregate
 } from '../media/TopicBodyMediaCoordinator';
 import { ManagedTopicContentVideo } from '../media/ManagedTopicContentVideo';
 import { useTopicBodyMediaViewport } from '../media/useTopicBodyMediaViewport';
 import { diagnosticRef, type DiagnosticFields } from '@/platform/diagnostics/diagnosticPolicy';
 import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
-import { OriginalImageUpgradeBoundary } from '@/platform/media/originalImageLoading';
 import {
   TopicSplitDisclosureProvider,
   TopicSplitDisclosureScope,
@@ -220,6 +219,39 @@ const NodeSeekStardustRenderer: CustomBlockRenderer = (props) => {
   return actions && receive ? <NodeSeekStardustCard actions={actions} receive={receive} /> : null;
 };
 
+const TopicMediaViewability = createContext<
+  ReturnType<typeof useTopicBodyMediaViewport>['observeViewableItems'] | null
+>(null);
+
+function TopicListMediaProvider({
+  items,
+  sessionIdentity,
+  ...props
+}: Omit<ComponentProps<typeof TopicBodyMediaCoordinatorProvider>, 'visibleRowKeys' | 'viewportRowKeys'> &
+  Parameters<typeof useTopicBodyMediaViewport>[0]) {
+  const { observeViewableItems, visibleRowKeys, viewportRowKeys } = useTopicBodyMediaViewport({
+    items,
+    sessionIdentity
+  });
+  return (
+    <TopicMediaViewability.Provider value={observeViewableItems}>
+      <TopicBodyMediaCoordinatorProvider {...props} visibleRowKeys={visibleRowKeys} viewportRowKeys={viewportRowKeys} />
+    </TopicMediaViewability.Provider>
+  );
+}
+
+function TopicMediaFlashList({ onViewableItemsChanged, ...props }: ComponentProps<typeof FlashList<TopicListItem>>) {
+  const observe = useContext(TopicMediaViewability);
+  const onViewable = useCallback<NonNullable<typeof onViewableItemsChanged>>(
+    (info) => {
+      observe?.(info);
+      onViewableItemsChanged?.(info);
+    },
+    [observe, onViewableItemsChanged]
+  );
+  return <FlashList {...props} onViewableItemsChanged={onViewable} />;
+}
+
 function TopicSelectionRenderHtmlConfig({
   actions,
   children,
@@ -234,6 +266,7 @@ function TopicSelectionRenderHtmlConfig({
   const rowActive = useTopicSelectionRowActive();
   const textSelectable = selectable ?? !rowActive;
   const defaultTextProps = useMemo(() => ({ selectable: textSelectable }), [textSelectable]);
+  if (!actions && selectable === false) return children;
   const content = (
     <RenderHTMLConfigProvider
       renderers={renderers}
@@ -636,6 +669,7 @@ export const TopicContentList = memo(function TopicContentList({
     onReplyFilterChange('all');
   }, [onCommentQueryChange, onReplyFilterChange]);
   const { settings, styles, theme } = useReaderThemeStyles(createTopicStyles);
+  const forumHtmlFonts = useForumHtmlFonts(settings.fontFamily);
   const htmlCustomElementModels = useMemo(
     () => createHtmlCustomElementModels(settings.lineHeight),
     [settings.lineHeight]
@@ -1173,15 +1207,6 @@ export const TopicContentList = memo(function TopicContentList({
       warmHighWater: aggregate.warmHighWater
     });
   }, []);
-  const {
-    observeViewableItems,
-    visibleRowKeys: bodyMediaVisibleRowKeys,
-    viewportRowKeys: bodyMediaViewportRowKeys
-  } = useTopicBodyMediaViewport({
-    items: topicListItems,
-    sessionIdentity: `${detailTopicStateKey}:${mediaSessionIdentity}`
-  });
-  const bodyMediaViewportRowKeySet = useMemo(() => new Set(bodyMediaViewportRowKeys), [bodyMediaViewportRowKeys]);
   const [loadedDetailKey, setLoadedDetailKey] = useState('');
   useLayoutEffect(() => {
     if (!topic) setLoadedDetailKey('');
@@ -1348,6 +1373,7 @@ export const TopicContentList = memo(function TopicContentList({
     loadedDetailKey,
     commandKey: targetReplyCommandKey,
     targetIsOpeningPost,
+    targetInLoadedReplies: resolvedTargetReplyKey !== null,
     targetReply: activeTargetReply,
     canShowReplies,
     filtersActive: Boolean(commentQuery || replyFilter !== 'all'),
@@ -1399,10 +1425,9 @@ export const TopicContentList = memo(function TopicContentList({
       const layout = list?.getLayout?.(index);
       if (!layout?.isHeightMeasured || viewport.height <= 0) return true;
       const top = viewport.offset - (list?.getFirstItemOffset?.() || 0);
-      if (layout.y >= top + viewport.height || layout.y + layout.height <= top || layout.height <= 0) return false;
-      if (layout.y > top) return true;
       const bottom = layout.y + layout.height - topicSeparatorHeight(item, currentRows.current[index + 1]);
-      return PixelRatio.roundToNearestPixel(bottom - top) > 0;
+      const visibleHeight = Math.min(bottom, top + viewport.height) - Math.max(layout.y, top);
+      return PixelRatio.roundToNearestPixel(visibleHeight) > 0;
     },
     [currentRows, topicScrollRef]
   );
@@ -1458,7 +1483,10 @@ export const TopicContentList = memo(function TopicContentList({
   const reportedFloor = useRef<{ key: string; floor: TopicViewportFloor } | null>(null);
   const reportViewportFloor = useCallback(() => {
     if (!active || !listVisible || !canShowReplies || topicShowsAccessNotice || !onViewportFloorChange) return;
-    for (const { item, index } of readingVisibleRef.current) {
+    const visible = readingVisibleRef.current;
+    // Viewability is sorted by list position. The jump button follows the bottom of the viewport.
+    for (let position = visible.length - 1; position >= 0; position -= 1) {
+      const { item, index } = visible[position];
       const floor = topicListViewportFloor(item);
       if (floor === undefined || !rowContentInViewport(item, index)) continue;
       if (reportedFloor.current?.key !== detailTopicStateKey || reportedFloor.current.floor !== floor) {
@@ -1561,7 +1589,6 @@ export const TopicContentList = memo(function TopicContentList({
   useEffect(readVisibleAuthors, [readVisibleAuthors]);
   const handleViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: { index?: number | null; isViewable?: boolean; item: TopicListItem }[] }) => {
-      observeViewableItems({ viewableItems });
       readingVisibleRef.current = viewableItems
         .filter((item) => item.isViewable !== false)
         .sort((a, b) => (a.index || 0) - (b.index || 0));
@@ -1572,14 +1599,7 @@ export const TopicContentList = memo(function TopicContentList({
       reportReadingVisible();
       confirmTargetPosition();
     },
-    [
-      authorReadScope,
-      confirmTargetPosition,
-      observeViewableItems,
-      readVisibleAuthors,
-      reportReadingVisible,
-      reportViewportFloor
-    ]
+    [authorReadScope, confirmTargetPosition, readVisibleAuthors, reportReadingVisible, reportViewportFloor]
   );
   const {
     stop: stopReplyScroll,
@@ -1674,15 +1694,13 @@ export const TopicContentList = memo(function TopicContentList({
       );
       return key ? (
         <TopicBodyMediaRowBoundary rowKey={key}>
-          <OriginalImageUpgradeBoundary enabled={bodyMediaViewportRowKeySet.has(key)}>
-            {frame}
-          </OriginalImageUpgradeBoundary>
+          <TopicViewportOriginalImageBoundary>{frame}</TopicViewportOriginalImageBoundary>
         </TopicBodyMediaRowBoundary>
       ) : (
         frame
       );
     },
-    [bodyMediaViewportRowKeySet, firstOpeningRowKey, firstOpeningRowStartedAt, styles, topicSelectionRowKeys]
+    [firstOpeningRowKey, firstOpeningRowStartedAt, styles, topicSelectionRowKeys]
   );
   const renderTopicContentItem = useCallback(
     (
@@ -2054,6 +2072,7 @@ export const TopicContentList = memo(function TopicContentList({
     if (!item) return null;
     const topicHeaderStatusBadges = topicStatusBadges(item);
     const itemAccessRequirementText = forumAccessRequirementText(item.accessRequirement);
+    const tagColors = titleOnlyV2ex || !item.tags?.length ? undefined : topicTagColorStyles(item.tags, theme);
     return (
       <View style={[styles.topicHeaderStack, titleOnlyV2ex && styles.titleOnlyHeaderStack]}>
         <View style={[styles.article, topicColumnStyle]}>
@@ -2120,12 +2139,9 @@ export const TopicContentList = memo(function TopicContentList({
               {item.tags?.length ? (
                 <View style={styles.topicTagRow}>
                   {item.tags.map((tag, index) => (
-                    <View
-                      key={`${tag}-${index}`}
-                      style={[styles.topicTagPill, !titleOnlyV2ex && topicTagColorStyle(tag, theme, item.tags)]}
-                    >
+                    <View key={`${tag}-${index}`} style={[styles.topicTagPill, tagColors?.(tag)]}>
                       <Text
-                        style={[styles.topicTagText, !titleOnlyV2ex && topicTagTextColorStyle(tag, theme, item.tags)]}
+                        style={[styles.topicTagText, tagColors && { color: tagColors(tag)?.color }]}
                         numberOfLines={1}
                       >
                         {tag}
@@ -2332,6 +2348,7 @@ export const TopicContentList = memo(function TopicContentList({
                     <ChevronDown size={14} color={theme.primary} strokeWidth={1.8} />
                   </Pressable>
                   <PopupMenu
+                    scrollable
                     accessibilityLabel="关闭回复排序菜单"
                     placementStyle={replyOrderMenuPlacement}
                     visible={active && replyOrderMenuOpen}
@@ -2610,6 +2627,7 @@ export const TopicContentList = memo(function TopicContentList({
 
   return (
     <TRenderEngineProvider
+      {...forumHtmlFonts}
       baseStyle={htmlBaseStyle}
       allowedStyles={HTML_ALLOWED_INLINE_STYLES}
       classesStyles={htmlClassesStyles}
@@ -2622,15 +2640,15 @@ export const TopicContentList = memo(function TopicContentList({
     >
       <TopicSplitDisclosureProvider key={detailTopicStateKey} value={disclosureStore}>
         <TopicTableScrollProvider key={detailTopicStateKey}>
-          <TopicBodyMediaCoordinatorProvider
+          <TopicListMediaProvider
             key={detailTopicStateKey}
+            items={topicListItems}
+            sessionIdentity={`${detailTopicStateKey}:${mediaSessionIdentity}`}
             active={active}
             diagnosticSession={bodyMediaDiagnosticSession}
             onDiagnosticFinish={finishBodyMediaDiagnostic}
             onDisplayedRowsChange={read.readingRuntime ? reportDisplayedRows : undefined}
             paused={bodyMediaPaused}
-            visibleRowKeys={bodyMediaVisibleRowKeys}
-            viewportRowKeys={bodyMediaViewportRowKeys}
           >
             <TopicSelectionSurface
               active={Boolean(active)}
@@ -2642,9 +2660,10 @@ export const TopicContentList = memo(function TopicContentList({
                 actions={actions}
                 renderers={genericHtmlRenderers}
                 renderersProps={htmlRenderersProps}
+                selectable={false}
               >
                 {topic ? (
-                  <FlashList
+                  <TopicMediaFlashList
                     ref={topicScrollRef}
                     onLoad={onListLoad}
                     initialScrollIndex={directStart && directStart.index >= 0 ? directStart.index : undefined}
@@ -2776,7 +2795,7 @@ export const TopicContentList = memo(function TopicContentList({
                 </LoadingCover>
               </TopicSelectionRenderHtmlConfig>
             </TopicSelectionSurface>
-          </TopicBodyMediaCoordinatorProvider>
+          </TopicListMediaProvider>
         </TopicTableScrollProvider>
       </TopicSplitDisclosureProvider>
     </TRenderEngineProvider>

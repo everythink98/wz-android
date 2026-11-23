@@ -64,7 +64,13 @@ import { StructuredReplyComposer } from '@/ui/composer/StructuredReplyComposer';
 import { YaohuoReplyComposer } from '@/ui/composer/YaohuoReplyComposer';
 import { ComposerKeyboardHost, type ComposerKeyboardHostHandle } from '@/ui/composer/ComposerKeyboardHost';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { readerRadii, type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import {
+  readerRadii,
+  type ReaderStyleSettings,
+  fontFamilyValue,
+  type ReaderTheme,
+  textSizeStyle
+} from '@/ui/theme/tokens';
 import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { useKeyboardHandoff } from '@/ui/hooks/useKeyboardHandoff';
@@ -74,6 +80,7 @@ import { useTopicTagSearch } from './useTopicTagSearch';
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const font = fontFamilyValue(settings.fontFamily);
+  const uiFontFamily = fontFamilyValue(settings.uiFontFamily);
   return StyleSheet.create({
     root: { flex: 1, backgroundColor: theme.surface },
     header: {
@@ -106,30 +113,30 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     siteName: { flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 0 },
     heading: {
       color: theme.ink,
-      fontFamily: font,
-      fontSize: Math.round(16 * settings.fontScale),
-      lineHeight: Math.round(22 * settings.fontScale),
+      fontFamily: uiFontFamily,
+      fontSize: Math.round(16 * settings.uiFontScale),
+      lineHeight: Math.round(22 * settings.uiFontScale),
       includeFontPadding: false,
       fontWeight: '600',
       flexShrink: 1
     },
     text: {
       color: theme.ink,
-      fontFamily: font,
-      fontSize: Math.round(14 * settings.fontScale),
-      lineHeight: Math.round(20 * settings.fontScale),
+      fontFamily: uiFontFamily,
+      fontSize: Math.round(14 * settings.uiFontScale),
+      lineHeight: Math.round(20 * settings.uiFontScale),
       includeFontPadding: false,
       flexShrink: 1
     },
     muted: {
       color: theme.muted,
-      fontFamily: font,
-      fontSize: Math.round(12 * settings.fontScale),
-      lineHeight: Math.round(18 * settings.fontScale),
+      fontFamily: uiFontFamily,
+      fontSize: Math.round(12 * settings.uiFontScale),
+      lineHeight: Math.round(18 * settings.uiFontScale),
       includeFontPadding: false,
       flexShrink: 1
     },
-    error: { color: theme.danger, fontFamily: font, fontSize: Math.round(13 * settings.fontScale) },
+    error: { color: theme.danger, fontFamily: uiFontFamily, ...textSizeStyle(Math.round(13 * settings.uiFontScale)) },
     meta: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4, gap: 4 },
     yaohuoMeta: { paddingTop: 12, paddingBottom: 8, gap: 8 },
     metaViewport: { maxHeight: '42%', flexGrow: 0, flexShrink: 1 },
@@ -161,12 +168,12 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       flex: 0,
       flexShrink: 1
     },
-    settingsLabel: { flexShrink: 1, fontWeight: '500', fontSize: Math.round(13 * settings.fontScale) },
+    settingsLabel: { flexShrink: 1, fontWeight: '500', fontSize: Math.round(13 * settings.uiFontScale) },
     attachmentLabelRow: { flexDirection: 'row', flexShrink: 1, alignItems: 'center', gap: 6 },
     attachmentCount: {
       color: theme.primary,
-      fontFamily: font,
-      fontSize: Math.round(12 * settings.fontScale),
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(Math.round(12 * settings.uiFontScale)),
       fontWeight: '600'
     },
     row: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
@@ -174,7 +181,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     title: {
       color: theme.ink,
       fontFamily: font,
-      fontSize: Math.round(22 * settings.fontScale),
+      ...textSizeStyle(Math.round(22 * settings.fontScale)),
       fontWeight: '600',
       paddingVertical: 6,
       paddingHorizontal: 0,
@@ -192,7 +199,12 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     input: {
       minHeight: 48
     },
-    label: { color: theme.ink, fontFamily: font, fontSize: Math.round(13 * settings.fontScale), fontWeight: '500' },
+    label: {
+      color: theme.ink,
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(Math.round(13 * settings.uiFontScale)),
+      fontWeight: '500'
+    },
     field: { gap: 6, marginBottom: 12 },
     editor: { flex: 1, minHeight: 120 },
     metadataSummary: {
@@ -440,14 +452,17 @@ export function TopicComposerScreen({
   const onLayout = useStartupPageLayout();
   const insets = useSafeAreaInsets();
   const [titleEditing, setTitleEditing] = useState(false);
+  const [titleMetadataExpanded, setTitleMetadataExpanded] = useState(false);
   const [topBarHeight, setTopBarHeight] = useState(0);
   const [keyboardShown, setKeyboardShown] = useState(false);
   const [editorPanelOpen, setEditorPanelOpen] = useState(false);
   const [editorFocusPending, setEditorFocusPending] = useState(false);
   const returnToEditor = useCallback(() => {
+    setTitleMetadataExpanded(false);
     if (editorPanelOpen || !keyboardShown) setEditorFocusPending(true);
   }, [editorPanelOpen, keyboardShown]);
   const keyboardOpened = useCallback(() => {
+    setTitleMetadataExpanded(false);
     setKeyboardShown(true);
     setEditorFocusPending(false);
   }, []);
@@ -471,7 +486,8 @@ export function TopicComposerScreen({
   const keyboardStyle = useAnimatedStyle(() => ({
     paddingBottom: Math.max(0, (keyboard?.height.value ?? 0) - insets.bottom)
   }));
-  const metadataCollapsed = !titleEditing && (keyboardShown || editorPanelOpen || editorFocusPending);
+  const metadataCollapsed =
+    !titleEditing && !titleMetadataExpanded && (keyboardShown || editorPanelOpen || editorFocusPending);
   const [panelFlow] = useState(createTopicComposerPanels);
   const [presentation, setPanelView] = useState(panelFlow.presentation);
   const { panel } = presentation;
@@ -526,6 +542,7 @@ export function TopicComposerScreen({
   const freshTagResult = tagSearch.rulesCurrent ? tagSearch.result : undefined;
   const allowed = (field: keyof NonNullable<typeof c.editContext>['permissions']) =>
     !c.editing || c.editContext?.permissions[field] === true;
+  const titleEditable = !c.busy && allowed('title');
   const bodyReadOnly = c.busy || preview || !allowed('body');
   useEffect(() => {
     if (titleEditing || !active || panel !== null || bodyReadOnly || editorObscured) setEditorFocusPending(false);
@@ -659,6 +676,7 @@ export function TopicComposerScreen({
     setTagQuery('');
     setInsertionError('');
     setDescriptionFileId(null);
+    setTitleMetadataExpanded(false);
     setEditorPanelOpen(false);
     setEditorFocusPending(false);
   }, [draft?.id, presentPanel]);
@@ -699,8 +717,8 @@ export function TopicComposerScreen({
     const request = panelFlow.working('rebase');
     if (!request) return;
     try {
-      await c.rebaseEdit();
-      if (currentPanelRequest(request) && panelFlow.closed(request)) publishPanels();
+      const saved = await c.rebaseEdit();
+      if (saved && currentPanelRequest(request) && panelFlow.closed(request)) publishPanels();
     } finally {
       panelFlow.finished(request);
     }
@@ -991,7 +1009,7 @@ export function TopicComposerScreen({
                         onChangeText={(title) => c.change((value) => ({ ...value, title }))}
                         onFocus={() => setTitleEditing(true)}
                         onBlur={() => setTitleEditing(false)}
-                        editable={!c.busy && allowed('title')}
+                        editable={titleEditable}
                         multiline
                         style={[styles.title, draft.source === 'yaohuo' && styles.yaohuoTitle]}
                       />
@@ -1024,6 +1042,10 @@ export function TopicComposerScreen({
                           hitSlop={TOUCH_HIT_SLOP}
                           style={styles.metadataSummary}
                           onPress={() => {
+                            if (!titleEditable) {
+                              setTitleMetadataExpanded(true);
+                              return;
+                            }
                             setTitleEditing(true);
                             requestAnimationFrame(() => titleRef.current?.focus());
                           }}

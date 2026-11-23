@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { HTMLElement } from 'node-html-parser';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   discourseAvatarUrl,
@@ -21,6 +22,19 @@ function discourseQuoteMetadata(html: string, source: 'linuxdo', topicId?: strin
 }
 
 describe('portable Discourse content parts', () => {
+  it('preserves ordinary paragraphs without walking each one for policy controls', () => {
+    const plain = '<p>ordinary text</p>'.repeat(100);
+    const matches = vi.spyOn(HTMLElement.prototype, 'matches');
+    try {
+      expect(sanitizeLinuxDoContentHtml(plain, [])).toBe(plain);
+      expect(matches.mock.calls.filter(([selector]) => selector === '.policy').length).toBe(0);
+    } finally {
+      matches.mockRestore();
+    }
+    const policy = '<div class="poli&#99;y">visible<span class="poli&#99;y-footer">hidden</span></div>';
+    expect(forumNodeText(parseForumContentHtml(sanitizeLinuxDoContentHtml(policy, [])))).toBe('visible');
+  });
+
   it('normalizes sibling Callouts under a shared deep ancestor chain with bounded DOM work', () => {
     const depth = 512;
     const root = parseForumContentHtml(

@@ -668,10 +668,49 @@ describe('reader data storage authority', () => {
     await (await reopen()).loadReaderState();
     changeStoredValue('UPDATE reader_meta SET settings=? WHERE id=1', '{"fontScale":1.3}');
 
-    const expected = { ...createEmptyReaderData().settings, fontScale: 1.3 };
+    const expected = { ...createEmptyReaderData().settings, fontFamily: 'system', fontScale: 1.3, uiFontScale: 1.3 };
     const restarted = await reopen();
     await expect(restarted.loadReaderSettings()).resolves.toEqual(expected);
     await expect(restarted.loadReaderState()).resolves.toMatchObject({ settings: expected });
+  });
+
+  it('commits migrated typography from an old reader-data snapshot without reader-settings', async () => {
+    harness.legacy.set(
+      'reader-data',
+      JSON.stringify({ ...createEmptyReaderData(), settings: { fontScale: 1.3, fontFamily: 'serif' } })
+    );
+    const store = await reopen();
+    await expect(store.loadReaderState()).resolves.toMatchObject({
+      settings: { fontScale: 1.3, fontFamily: 'system', uiFontFamily: 'app', uiFontScale: 1.3 }
+    });
+    expect(harness.legacy.has('reader-data')).toBe(false);
+    await expect((await reopen()).loadReaderSettings()).resolves.toMatchObject({
+      fontScale: 1.3,
+      fontFamily: 'system',
+      uiFontScale: 1.3
+    });
+  });
+
+  it('inherits a complete old backup on a fresh SQLite database and preserves an explicit UI size on reimport', async () => {
+    const oldBackup = JSON.stringify({
+      ...createEmptyReaderData(),
+      settings: {
+        listDensity: 'standard',
+        theme: 'light',
+        fontScale: 1.3,
+        lineHeight: 'standard',
+        contentWidth: 'standard',
+        fontFamily: 'sans'
+      }
+    });
+    const store = await reopen();
+    await expect(store.importReaderDataBackup(oldBackup)).resolves.toMatchObject({
+      settings: { fontScale: 1.3, uiFontScale: 1.3, fontFamily: 'system' }
+    });
+    await store.commitReaderCommand({ type: 'settings', patch: { uiFontScale: 1 } });
+    await expect(store.importReaderDataBackup(oldBackup)).resolves.toMatchObject({
+      settings: { fontScale: 1.3, uiFontScale: 1, fontFamily: 'system' }
+    });
   });
 
   it.each(['invalid JSON', '{"topic":{},"savedAt":"2026-09-10T00:00:00.000Z"}'])(

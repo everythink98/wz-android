@@ -1,11 +1,19 @@
 import type { TextStyle } from 'react-native';
 import { type ReaderSettings } from '@/domain/reader/readerData';
+import { isLocalReaderFontFamily } from '@/domain/reader/readerFonts';
 import type { Source } from '@/domain/forum/models';
 
-export type ReaderStyleSettings = Pick<
-  ReaderSettings,
-  'theme' | 'fontScale' | 'listDensity' | 'lineHeight' | 'contentWidth' | 'fontFamily'
->;
+export type ReadingTypography = Pick<ReaderSettings, 'fontFamily' | 'fontScale' | 'lineHeight'>;
+export type ReaderStyleSettings = ReadingTypography &
+  Pick<ReaderSettings, 'theme' | 'listDensity' | 'showUnreadDot' | 'contentWidth' | 'uiFontFamily'> & {
+    uiFontScale: number;
+  };
+
+export function resolveReaderStyleSettings<Settings extends Pick<ReaderSettings, keyof ReaderStyleSettings>>(
+  settings: Settings
+): Omit<Settings, 'uiFontScale'> & { uiFontScale: number } {
+  return { ...settings, uiFontScale: settings.uiFontScale ?? 1 };
+}
 
 export interface ReaderTheme {
   dark: boolean;
@@ -43,6 +51,20 @@ export function createReaderFontSizer(settings: Pick<ReaderStyleSettings, 'fontS
   return (size: number) => Math.round(size * settings.fontScale);
 }
 
+export function createUiFontSizer(settings: Pick<ReaderStyleSettings, 'uiFontScale'>) {
+  return (size: number) => Math.round(size * settings.uiFontScale);
+}
+
+export function textSizeStyle(fontSize: number, lineHeight = Math.round(fontSize * 1.4)) {
+  return { fontSize, lineHeight, includeFontPadding: false } as const;
+}
+
+export const topicListSpacing = {
+  compact: { padding: 11, gap: 6 },
+  standard: { padding: 14, gap: 8 },
+  loose: { padding: 16, gap: 10 }
+} as const;
+
 export function lineHeightMultiplier(value: ReaderSettings['lineHeight']) {
   if (value === 'compact') {
     return 1.4;
@@ -63,8 +85,12 @@ export function contentWidthValue(value: ReaderSettings['contentWidth']) {
   return 720;
 }
 
-export function fontFamilyValue(value: ReaderSettings['fontFamily']) {
-  return value === 'serif' ? 'serif' : undefined;
+export const READER_APP_FONT_FAMILY = 'WzNotoSansSC';
+
+export function fontFamilyValue(value: ReaderSettings['fontFamily' | 'uiFontFamily']) {
+  if (value === 'app') return READER_APP_FONT_FAMILY;
+  if (isLocalReaderFontFamily(value)) return value;
+  return 'sans-serif';
 }
 
 export function alphaColor(hex: string, alpha: number) {
@@ -129,35 +155,21 @@ function stableToneIndex(label: string, toneCount: number) {
   return Math.abs(hash) % toneCount;
 }
 
-function topicTagTone(label: string, theme: ReaderTheme, tags: readonly string[]) {
-  const normalized = label.trim().toLowerCase();
-  const labels = [...new Set([label, ...tags].map((tag) => tag.trim().toLowerCase()))].sort();
+export function topicTagColorStyles(tags: readonly string[], theme: ReaderTheme) {
+  const labels = [...new Set(tags.map((tag) => tag.trim().toLowerCase()))].sort();
   const used = new Set<number>();
-  let toneIndex = 0;
+  const colors = new Map<string, TextStyle>();
   for (const tag of labels) {
-    toneIndex = stableToneIndex(tag, TOPIC_TAG_TONES.length);
+    let toneIndex = stableToneIndex(tag, TOPIC_TAG_TONES.length);
     // shortcut: Groups above eight distinct tags reuse hues; expand the palette if they become common.
     while (used.has(toneIndex) && used.size < TOPIC_TAG_TONES.length) {
       toneIndex = (toneIndex + 1) % TOPIC_TAG_TONES.length;
     }
-    if (tag === normalized) break;
     used.add(toneIndex);
+    const tone = theme.dark ? TOPIC_TAG_TONES[toneIndex].dark : TOPIC_TAG_TONES[toneIndex].light;
+    colors.set(tag, { backgroundColor: tone.background, borderColor: 'transparent', color: tone.ink });
   }
-  const tone = TOPIC_TAG_TONES[toneIndex];
-  return theme.dark ? tone.dark : tone.light;
-}
-
-export function topicTagColorStyle(label: string, theme: ReaderTheme, tags: readonly string[] = []): TextStyle {
-  const tone = topicTagTone(label, theme, tags);
-  return {
-    backgroundColor: tone.background,
-    borderColor: 'transparent',
-    color: tone.ink
-  };
-}
-
-export function topicTagTextColorStyle(label: string, theme: ReaderTheme, tags: readonly string[] = []): TextStyle {
-  return { color: topicTagTone(label, theme, tags).ink };
+  return (label: string) => colors.get(label.trim().toLowerCase());
 }
 
 export function topicStatusBadgeColorStyle(tone: StatusBadgeTone, theme: ReaderTheme): TextStyle {

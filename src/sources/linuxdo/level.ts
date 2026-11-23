@@ -1,9 +1,11 @@
 import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { parse } from 'node-html-parser';
-import { isCloudflareChallengeResponse } from '@/platform/network/cloudflareChallenge';
+import { isCloudflareChallengeResponse, LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
+import { acceptForumReadResponse, proveForumReadResponse } from '@/sources/forumSourceReadAttempt';
 import {
   buildDiscourseLevelProfileFromSummary,
+  discourseAccountCount,
   displayDiscourseLevelChange,
   numberValue,
   trustLevelFromRecord,
@@ -198,10 +200,16 @@ async function loadSnapshot(username: string): Promise<LevelBaseline> {
   }
 }
 
-async function saveSnapshot(profile: LinuxDoLevelProfile) {
+async function saveSnapshot(profile: LinuxDoLevelProfile, baseline: LevelBaseline) {
+  const previousOtherSource =
+    baseline.kind === 'observed'
+      ? Object.entries(baseline.values).filter(
+          ([key, value]) => typeof value === 'number' && key.startsWith('connect:') !== (profile.source === 'connect')
+        )
+      : [];
   const snapshot: LinuxDoSnapshot = {
     username: profile.username,
-    values: snapshotValues(profile)
+    values: { ...Object.fromEntries(previousOtherSource), ...snapshotValues(profile) }
   };
   await AsyncStorage.setItem(`${SNAPSHOT_KEY_PREFIX}${profile.username}`, JSON.stringify(snapshot));
 }
@@ -229,20 +237,28 @@ function normalizeSummaryPayload(data: unknown) {
   }
   const summary = isRecord(data.user_summary) ? data.user_summary : data;
   const user = isRecord(summary.user) ? summary.user : isRecord(data.user) ? data.user : {};
-  return {
+  const result = {
     ...summary,
     user,
     username: summary.username || user.username
-  } as LinuxDoSummaryInput;
-}
-
-function linuxDoCloudflareError() {
-  const error = new Error('linux.do 需要完成 Cloudflare 验证');
-  Object.assign(error, {
-    source: 'linuxdo',
-    reason: 'cloudflare'
-  });
-  return error;
+  };
+  const counts = [
+    'days_visited',
+    'topics_entered',
+    'posts_read_count',
+    'time_read',
+    'likes_given',
+    'likes_received',
+    'post_count',
+    'topic_count'
+  ];
+  if (
+    !(hasUsername(result) && hasTrustLevel(result)) &&
+    !counts.some((key) => discourseAccountCount(summary[key]) !== undefined)
+  ) {
+    throw new Error('linux.do 等级数据格式不正确');
+  }
+  return result;
 }
 
 async function fetchLinuxDoJson(path: string, options: LinuxDoRequestOptions) {
@@ -265,7 +281,7 @@ async function fetchLinuxDoJson(path: string, options: LinuxDoRequestOptions) {
   );
   const text = await response.text();
   if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
-    throw linuxDoCloudflareError();
+    throw new LinuxDoCloudflareError(response);
   }
   let data: unknown = null;
   if (text) {
@@ -281,7 +297,7 @@ async function fetchLinuxDoJson(path: string, options: LinuxDoRequestOptions) {
   if (!response.ok) {
     throw new Error(`linux.do 等级数据读取失败：HTTP ${response.status}`);
   }
-  return data;
+  return { data, response };
 }
 
 async function fetchLinuxDoConnectHtml(options: LinuxDoRequestOptions, recoverSession = false) {
@@ -306,7 +322,7 @@ async function fetchLinuxDoConnectHtml(options: LinuxDoRequestOptions, recoverSe
   if (!response.ok) {
     throw new Error(`Connect 进度读取失败：HTTP ${response.status}`);
   }
-  return text;
+  return { text, response };
 }
 
 function usernameFromCurrentUser(data: unknown) {
@@ -335,11 +351,12 @@ function usernameFromCurrentUser(data: unknown) {
 }
 
 async function fetchCurrentUser(options: LinuxDoRequestOptions) {
-  const data = await fetchLinuxDoJson('/session/current.json', options);
+  const { data, response } = await fetchLinuxDoJson('/session/current.json', options);
   const currentUser = usernameFromCurrentUser(data);
   if (!currentUser) {
     throw new Error('无法读取当前 linux.do 用户名，请重新检测 linux.do 登录状态。');
   }
+  acceptForumReadResponse(response);
   return currentUser;
 }
 
@@ -401,41 +418,44 @@ export async function getLinuxDoLevelProfile({
     signal,
     timeoutMs
   };
-  let data: unknown;
+  let summaryRead: Awaited<ReturnType<typeof fetchLinuxDoJson>>;
   let currentUser: LinuxDoCurrentUser | null = null;
   try {
-    data = await fetchLinuxDoJson('/my/summary.json', requestOptions);
+    summaryRead = await fetchLinuxDoJson('/my/summary.json', requestOptions);
     assertNotAborted();
   } catch (error) {
     throwIfCanceled(error);
+    if (isRecord(error) && error.reason === 'cloudflare') throw error;
     currentUser = await fetchCurrentUser(requestOptions);
     assertNotAborted();
-    data = await fetchLinuxDoJson(`/u/${encodeURIComponent(currentUser.username)}/summary.json`, requestOptions);
+    summaryRead = await fetchLinuxDoJson(`/u/${encodeURIComponent(currentUser.username)}/summary.json`, requestOptions);
     assertNotAborted();
   }
-  const summary = normalizeSummaryPayload(data);
+  const summary = normalizeSummaryPayload(summaryRead.data);
   if (!currentUser && (!hasTrustLevel(summary) || !hasUsername(summary))) {
     try {
       currentUser = await fetchCurrentUser(requestOptions);
       assertNotAborted();
     } catch (error) {
       throwIfCanceled(error);
+      if (isRecord(error) && error.reason === 'cloudflare') throw error;
       currentUser = null;
     }
   }
   const profile = buildLinuxDoLevelProfileFromSummary(currentUser ? mergeCurrentUser(summary, currentUser) : summary);
+  acceptForumReadResponse(summaryRead.response);
   let nextProfile = profile;
   if (profile.currentLevel >= 2) {
     try {
-      const html = await fetchLinuxDoConnectHtml(requestOptions);
+      const { text, response } = await fetchLinuxDoConnectHtml(requestOptions);
       assertNotAborted();
-      nextProfile = parseLinuxDoConnectProgress(html, profile);
+      nextProfile = await proveForumReadResponse(response, () => parseLinuxDoConnectProgress(text, profile));
     } catch (error) {
       throwIfCanceled(error);
       try {
-        const html = await fetchLinuxDoConnectHtml(requestOptions, true);
+        const { text, response } = await fetchLinuxDoConnectHtml(requestOptions, true);
         assertNotAborted();
-        nextProfile = parseLinuxDoConnectProgress(html, profile);
+        nextProfile = await proveForumReadResponse(response, () => parseLinuxDoConnectProgress(text, profile));
       } catch (recoveryError) {
         throwIfCanceled(recoveryError);
         nextProfile = profile;
@@ -446,7 +466,7 @@ export async function getLinuxDoLevelProfile({
   const snapshot = await loadSnapshot(nextProfile.username);
   assertNotAborted();
   const profileWithChange = withSnapshotChange(nextProfile, snapshot);
-  await saveSnapshot(nextProfile);
+  await saveSnapshot(nextProfile, snapshot);
   assertNotAborted();
   return profileWithChange;
 }

@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Ref
+} from 'react';
 import type { TopicStyles } from '../styles';
 import type { ReplyComposerIntent } from '../useTopicSessionController';
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
@@ -19,6 +28,7 @@ import type { LinuxDoPollCapabilities } from '@/domain/forum/linuxDoPoll';
 
 export function ReplyComposerSheet({
   actionBusy,
+  closeRequestRef,
   uploadingImage = false,
   discourseEmojiUrls = {},
   intent,
@@ -44,6 +54,7 @@ export function ReplyComposerSheet({
   onUploadReplyImage
 }: {
   actionBusy: boolean;
+  closeRequestRef?: Ref<() => void>;
   uploadingImage?: boolean;
   discourseEmojiUrls?: DiscourseEmojiUrlMap;
   intent: ReplyComposerIntent;
@@ -70,6 +81,13 @@ export function ReplyComposerSheet({
 }) {
   const structured = source === 'linuxdo' || source === 'nodeseek';
   const structuredRef = useRef<StructuredReplyComposerHandle>(null);
+  const pendingClose = useRef<object | null>(null);
+  useLayoutEffect(
+    () => () => {
+      pendingClose.current = null;
+    },
+    [intent, visible]
+  );
   const lastVisibleWasEditRef = useRef(intent.kind === 'edit');
   const [presentation, setPresentation] = useState<ComposerPresentation>('sheet');
   useEffect(() => {
@@ -125,13 +143,21 @@ export function ReplyComposerSheet({
         onReplyComposerOpenChange(open);
         return;
       }
+      if (pendingClose.current) return;
+      const request = {};
+      pendingClose.current = request;
       void structuredRef.current
         .requestSnapshot()
         .catch(() => undefined)
-        .finally(() => onReplyComposerOpenChange(false));
+        .finally(() => {
+          if (pendingClose.current !== request) return;
+          pendingClose.current = null;
+          onReplyComposerOpenChange(false);
+        });
     },
     [onReplyComposerOpenChange, structured]
   );
+  useImperativeHandle(closeRequestRef, () => () => handleOpenChange(false), [handleOpenChange]);
   return (
     <ComposerBottomSheet
       active={routeActive}

@@ -10,6 +10,13 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.NetworkInfo
 import android.system.OsConstants
+import android.os.Looper
+import com.bumptech.glide.Priority
+import com.bumptech.glide.load.data.DataFetcher
+import com.bumptech.glide.load.model.GlideUrl
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.OkHttpClient
 import java.io.IOException
 import java.io.DataInputStream
 import java.io.InputStream
@@ -85,6 +92,64 @@ class NetworkProxyProfileTest {
 
   @After fun tearDown() {
     module.invalidate()
+  }
+
+  @Test fun invalidatedBridgeRejectsNewWorkerOperationsThroughTheirPromises() {
+    module.invalidate()
+    val rejected = mutableListOf<String>()
+    val promise = java.lang.reflect.Proxy.newProxyInstance(Promise::class.java.classLoader, arrayOf(Promise::class.java)) {
+      _, method, args -> if (method.name == "reject") rejected.add(args!![0] as String)
+      null
+    } as Promise
+    module.applyProxy(null, promise)
+    module.recoverForumReadChannel("linuxdo", 0.0, "fixture", promise)
+    module.setLinuxDoCookieResponseBarrier(true, "startup", JavaOnlyMap(), promise)
+    module.clearManagedLoginCookies("linuxdo", JavaOnlyMap(), promise)
+    module.getDefaultWebViewUserAgent(promise)
+    assertEquals(listOf("proxy_apply_failed", "forum_read_channel_recovery_failed", "cookie_barrier_failed",
+      "cookie_clear_failed", "E_DEFAULT_USER_AGENT"), rejected)
+  }
+
+  @Test fun invalidatingTheBridgeSettlesAnAlreadyQueuedOperation() {
+    val started = java.util.concurrent.CountDownLatch(1)
+    val release = java.util.concurrent.CountDownLatch(1)
+    fun rejection(action: (String) -> Unit): Promise = java.lang.reflect.Proxy.newProxyInstance(
+      Promise::class.java.classLoader, arrayOf(Promise::class.java)
+    ) { _, method, args -> if (method.name == "reject") action(args!![0] as String); null } as Promise
+    module.recoverForumReadChannel("linuxdo", -1.0, "fixture", rejection {
+      started.countDown()
+      try { release.await(5, TimeUnit.SECONDS) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
+    })
+    try {
+      assertTrue(started.await(5, TimeUnit.SECONDS))
+      val queued = CompletableFuture<String>()
+      module.applyProxy(null, rejection { queued.complete(it) })
+      module.invalidate()
+      assertEquals("proxy_apply_failed", queued.get(2, TimeUnit.SECONDS))
+    } finally {
+      release.countDown()
+    }
+  }
+
+  @Test fun glideDropsOwnershipOnTheMainThreadAndCancelsTheSocketOnAWorker() {
+    val canceledOn = CompletableFuture<Thread>()
+    val client = OkHttpClient()
+    val factory = Call.Factory { request ->
+      object : Call by client.newCall(request) {
+        override fun enqueue(responseCallback: Callback) = Unit
+        override fun cancel() { canceledOn.complete(Thread.currentThread()) }
+      }
+    }
+    val url = GlideUrl("https://example.invalid/image", com.bumptech.glide.load.model.Headers { emptyMap() })
+    val fetcher = CloseSafeGlideStreamFetcher(factory, url)
+    val main = Looper.getMainLooper().thread
+    assertEquals(main, Thread.currentThread())
+    fetcher.loadData(Priority.NORMAL, object : DataFetcher.DataCallback<InputStream> {
+      override fun onDataReady(data: InputStream?) = Unit
+      override fun onLoadFailed(error: Exception) = throw error
+    })
+    fetcher.cancel()
+    assertFalse(main === canceledOn.get(2, TimeUnit.SECONDS))
   }
 
   @Test fun networkSettingsShowTheAppsDefaultTransportBeforeAndAfterVpn() {

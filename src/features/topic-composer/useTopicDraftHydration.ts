@@ -3,6 +3,7 @@ import {
   applyTopicEditReceipt,
   draftFromTopicEdit,
   emptyTopicDraft,
+  hasTopicEditChanges,
   type TopicCreationSource,
   type TopicDraft,
   type TopicEditContext,
@@ -93,16 +94,19 @@ export function useTopicDraftHydration(input: {
         readTopicSubmissionAttempt(source, identityKey, target)
       ]);
       if (!owns()) return;
+      const untouchedEdit =
+        stored?.edit && stored.revision === 0 && !attempt && !stored.attachments.length && !hasTopicEditChanges(stored);
       const editing =
-        editTopicId && !stored
+        editTopicId && (!stored || untouchedEdit)
           ? await inputRef.current.readEditContext(source, identityKey, editTopicId, run.controller.signal)
           : null;
       if (!owns()) return;
-      let restored = stored
-        ? await verifyTopicDraftAttachments(stored)
-        : editing
-          ? draftFromTopicEdit(editing)
+      let restored = editing
+        ? draftFromTopicEdit(editing)
+        : stored
+          ? await verifyTopicDraftAttachments(stored)
           : emptyTopicDraft(source, identityKey);
+      if (editing && stored) restored = { ...restored, id: stored.id, updatedAt: stored.updatedAt };
       if (!owns()) return;
       if (attempt) restored = applyTopicEditReceipt(restored, attempt);
       if (stored && JSON.stringify(restored.attachments) !== JSON.stringify(stored.attachments))

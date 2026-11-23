@@ -129,6 +129,17 @@ export function acceptForumReadResponse(response: Response) {
   updateResponseEvidence(response, 'accepted');
 }
 
+// Some parsers validate required responses together, after matching their identities.
+export function collectForumReadResponses(fetcher: Fetcher) {
+  const required: Response[] = [];
+  const collect: Fetcher = async (url, init) => {
+    const response = await fetcher(url, init);
+    required.push(response);
+    return response;
+  };
+  return { fetcher: collect, accept: () => required.forEach(acceptForumReadResponse) };
+}
+
 export function rejectForumReadResponse(response: Response) {
   updateResponseEvidence(response, 'rejected');
 }

@@ -1110,7 +1110,7 @@ describe('Android release evidence guards', () => {
       expect(moreReplay).toContain(`wait "label=\\"${label} 内容源开关\\"" 10000`);
     }
     expect(moreReplay).toMatch(
-      /scroll bottom\s+wait stable 500 10000\s+find "label=\\"展开外观\\"" click\s+wait label="收起外观" 10000\s+scroll down 0\.3\s+wait label="主题" 10000\s+wait label="字号" 10000/
+      /scroll bottom\s+wait stable 500 10000\s+find "label=\\"展开外观\\"" click\s+wait label="收起外观" 10000\s+scroll down 0\.3\s+wait label="主题" 10000\s+wait id="appearance-interface-font-scale-slider" 10000\s+scroll down 0\.3\s+wait id="appearance-reading-font-scale-slider" 10000/
     );
     expect(notificationsReplay).toContain('press id="main-tab-notifications"');
     expect(libraryReplay).toContain('press "role=button label=\\"收藏\\""');

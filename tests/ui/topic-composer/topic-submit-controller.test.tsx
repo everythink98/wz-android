@@ -748,7 +748,7 @@ describe('创建主题发布控制器', () => {
       await act(() => test.result.current.change((value) => ({ ...value, title: '必须保留的本机标题' })));
       mockSqlFailure = 'INSERT INTO topic_drafts';
       await act(async () => {
-        await expect(test.result.current[action]()).resolves.toBeUndefined();
+        await expect(test.result.current[action]()).resolves.toBe(action === 'rebaseEdit' ? false : undefined);
       });
       expect(test.result.current.error).toContain('disk');
       expect(test.result.current.draft?.title).toBe('必须保留的本机标题');
@@ -976,6 +976,78 @@ describe('创建主题发布控制器', () => {
     }
   );
 
+  it('blocks submitting a restored draft with an invalid initial editor snapshot', async () => {
+    const test = await setup();
+    await ready(test);
+    await act(async () => {
+      await test.result.current.flush();
+    });
+    const draft = test.result.current.draft!;
+    test.result.current.editorRef.current = {
+      requestSnapshot: async () => ({
+        ...snapshot(draft.body, [{ code: 'poll-invalid', message: '请补充投票选项' }]),
+        revision: 0
+      }),
+      insertMarkup: async () => undefined,
+      beginImageUpload: async () => 'unused',
+      finishImageUpload: async () => undefined
+    };
+
+    await act(async () => test.result.current.submit());
+    expect(test.result.current.errors.body).toBe('请补充投票选项');
+    expect(test.posts()).toHaveLength(0);
+  });
+
+  it('opens verification after the explicit write rejection and requires a new submit', async () => {
+    const test = await setup('linuxdo');
+    await ready(test);
+    test.response(
+      async () =>
+        new Response('<html>验证</html>', {
+          status: 403,
+          headers: { 'content-type': 'text/html', 'cf-mitigated': 'challenge' }
+        })
+    );
+
+    await act(async () => test.result.current.submit());
+    expect(test.result.current.attempt?.status).toBe('rejected');
+    expect(test.runtime.openAccount).toHaveBeenCalledWith('linuxdo', expect.stringContaining('验证'));
+    expect(test.posts()).toHaveLength(1);
+    expect(test.result.current.draft?.title).toBe('这是一个完整主题标题');
+  });
+
+  it.each(['fresh', 'previously persisted'] as const)(
+    'uses the latest remote body when reopening an untouched %s edit',
+    async (initialState) => {
+      const test = await setup('nodeseek', true);
+      await waitFor(() => expect(test.result.current.editContext).not.toBeNull());
+      const draft = test.result.current.draft!;
+      if (initialState === 'previously persisted') await topicDraftStore.saveTopicDraft(draft);
+      else
+        await act(async () => {
+          await test.result.current.flush();
+        });
+      await test.unmount();
+
+      test.editTransport.state.body = '原站更新后的正文';
+      const reopened = await renderHook(() =>
+        useTopicComposerController({
+          runtime: test.runtime,
+          intent: { kind: 'edit', source: 'nodeseek', topicId: '123' },
+          active: true,
+          onPosted: test.onPosted,
+          onAccepted: test.onAccepted
+        })
+      );
+      try {
+        await waitFor(() => expect(reopened.result.current.editContext?.original.body).toBe('原站更新后的正文'));
+        expect(reopened.result.current.draft?.body).toBe('原站更新后的正文');
+      } finally {
+        await reopened.unmount();
+      }
+    }
+  );
+
   it.each(['reopened', 'still mounted'])(
     'does not repeat an acknowledged Yaohuo reward from a %s editor with newer body text',
     async (state) => {
@@ -1054,11 +1126,12 @@ describe('创建主题发布控制器', () => {
     });
     const entered = Promise.withResolvers<void>();
     const saveGate = Promise.withResolvers<void>();
-    let rebasing!: Promise<void>;
+    let rebasing!: Promise<boolean>;
     await act(() => {
       rebasing = test.result.current.rebaseEdit();
     });
     const accept = await confirm.promise;
+    await expect(test.result.current.rebaseEdit()).resolves.toBe(false);
     await act(() => test.result.current.change((value) => ({ ...value, title: '确认期间修改的标题' })));
     mockDraftSaveGate = () => {
       entered.resolve();

@@ -18,6 +18,7 @@ import {
 } from '@/platform/storage/readerDataStore';
 import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
+import { prepareSavedReaderFonts } from '@/ui/theme/useReaderFonts';
 import { createReaderCommandQueue } from './readerCommandQueue';
 
 export async function loadInitialReaderData({
@@ -124,6 +125,11 @@ export function useReaderRuntime({ notify }: { notify: (message: string) => void
     const owner = commands.signal;
     void loadInitialReaderData({
       isActive: () => commands.current(owner),
+      load: async () => {
+        const state = await loadReaderState();
+        if (commands.current(owner)) await prepareSavedReaderFonts(queryClient, state.settings);
+        return state;
+      },
       notify: (message) => notifyRef.current(message),
       onLoaded: (state, status) => {
         commands.restored(state, status);
@@ -131,7 +137,7 @@ export function useReaderRuntime({ notify }: { notify: (message: string) => void
         recordStartupPhase('reader-ready');
       }
     });
-  }, [commands, notifyRef, publish]);
+  }, [commands, notifyRef, publish, queryClient]);
 
   return {
     commitReaderData,

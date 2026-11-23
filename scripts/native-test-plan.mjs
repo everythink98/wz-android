@@ -42,6 +42,8 @@ export const nativeTestTasks = {
       file === 'src/platform/notifications/notificationSystem.ts' ||
       file === 'src/ui/media/PreviewRegionImage.tsx' ||
       file.startsWith('src/platform/storage/backup') ||
+      file === 'src/platform/storage/readerFonts.ts' ||
+      file === 'src/domain/reader/readerFonts.ts' ||
       file === 'src/features/more/useBackupStatusController.ts',
     args: [],
     reports: 'modules/forum-platform/android/build/test-results/testDebugUnitTest',
@@ -53,6 +55,8 @@ export const nativeTestTasks = {
       'NetworkUserAgentTest',
       'SvgRendererPolicyTest',
       'BackupExportTest',
+      'ReaderFontsModuleTest',
+      'ReaderFontRenderingTest',
       'ImageDownloadTest',
       'FullscreenPlayerActivityEarlyExitTest',
       'TopicShareCaptureTest',

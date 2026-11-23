@@ -200,14 +200,6 @@ export function useNetworkProxyRuntime({
     const owner = previousOwner && !previousOwner.signal.aborted ? previousOwner : new AbortController();
     ownerRef.current = owner;
     setApplyState({ kind: 'loading' });
-    return () => {
-      owner.abort();
-    };
-  }, [setApplyState]);
-
-  useEffect(() => {
-    const owner = ownerRef.current;
-    if (!owner || owner.signal.aborted) return;
     if (!bootstrapReadRef.current) {
       const read = readPersistedProxyState().finally(() => {
         if (bootstrapReadRef.current === read) bootstrapReadRef.current = null;
@@ -257,6 +249,7 @@ export function useNetworkProxyRuntime({
       if (!owner.signal.aborted) throw error;
     });
     loadPromiseRef.current = task;
+    return () => owner.abort();
   }, [applyPersistedProxyState, setApplyState]);
 
   const replaceProxyState = useCallback(

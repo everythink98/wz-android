@@ -15,7 +15,7 @@ import {
 } from '@/platform/media/imagePreviewCatalog';
 import { parseForumTopicDestination, parseForumUserLink } from '@/domain/forum/links';
 import { topicLocationForReply } from '@/domain/forum/topicLocation';
-import { fontFamilyValue, lineHeightMultiplier, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
+import { fontFamilyValue, lineHeightMultiplier, type ReadingTypography, type ReaderTheme } from '@/ui/theme/tokens';
 import type {
   ReplyLocationTarget,
   TopicLocationTarget,
@@ -47,7 +47,6 @@ export function useHtmlRenderingController({
   nodeSeekMediaUserAgent,
   selectedTopic,
   settings,
-  styleSettings,
   theme,
   topicDetail,
   webViewBlockMessage
@@ -59,8 +58,7 @@ export function useHtmlRenderingController({
   onOpenUser: (user: UserReference) => void | Promise<void>;
   nodeSeekMediaUserAgent?: string;
   selectedTopic: Topic | null;
-  settings: ReaderStyleSettings;
-  styleSettings?: ReaderStyleSettings;
+  settings: ReadingTypography;
   theme: ReaderTheme;
   topicDetail: TopicDetail | null;
   webViewBlockMessage: string;
@@ -82,10 +80,9 @@ export function useHtmlRenderingController({
       }),
     [mediaContext.contentSource, settings.fontFamily, settings.fontScale, settings.lineHeight, theme]
   );
-  const resolvedStyleSettings = styleSettings || settings;
   const htmlRendererStyles = useMemo(
-    () => createHtmlRendererStyles(resolvedStyleSettings, theme),
-    [resolvedStyleSettings.fontFamily, resolvedStyleSettings.fontScale, theme]
+    () => createHtmlRendererStyles(settings, theme),
+    [settings.fontFamily, settings.fontScale, theme]
   );
   const openImagePreview = useLatestCallback(onOpenImagePreview);
   const openHtmlLink = useLatestCallback(

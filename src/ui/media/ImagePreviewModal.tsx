@@ -40,7 +40,13 @@ import { imageRequestHeadersForUrl, imageSourceFromUrl } from '@/platform/media/
 import { type ImagePreviewItem, type ImagePreviewList } from '@/platform/media/imagePreviewCatalog';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { NavigationBackdropProvider, NavigationBackdropTarget, NavigationGlass } from '@/ui/navigation/NavigationGlass';
-import { readerRadii, type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import {
+  readerRadii,
+  type ReaderStyleSettings,
+  fontFamilyValue,
+  type ReaderTheme,
+  textSizeStyle
+} from '@/ui/theme/tokens';
 import {
   cachedCompatibleSvgArtifact,
   compatibleImageRequestIdentity,
@@ -102,7 +108,7 @@ class PreviewLoadOwner {
   private listeners = new Set<() => void>();
   private poster: PreviewPosterRefresh = { phase: 'idle' };
   private generation = 0;
-  private identity: string;
+  private readonly identity: string;
   private nativeFailure = false;
   readonly loadMetricsRef: { current: PreviewImageLoadMetrics };
   readonly previewDiagnosticRef: { current: { fallback: boolean; trace: DiagnosticTrace } | null } = { current: null };
@@ -190,21 +196,15 @@ class PreviewLoadOwner {
     return true;
   }
 
-  retry(sourceIdentity: string) {
-    this.invalidateRecovery();
-    this.commit({ phase: 'pending' });
-    this.nativeFailure = false;
-    this.identity = sourceIdentity;
-  }
-
   dispose() {
+    if (this.state.phase === 'retired') return;
     this.invalidateRecovery();
     this.svgArtifactConsumer.abort();
     this.commit({ phase: 'retired' });
   }
 }
 
-function createPreviewLoadOwner(requestIdentity: string, sourceIdentity: string, startedAt: number) {
+function createPreviewLoadOwner(requestIdentity: string, sourceIdentity: string, startedAt = 0) {
   return new PreviewLoadOwner(requestIdentity, sourceIdentity, startedAt);
 }
 
@@ -1092,7 +1092,7 @@ function PreviewRingSlotView({
 }
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
-  const fontFamily = fontFamilyValue(settings.fontFamily);
+  const fontFamily = fontFamilyValue(settings.uiFontFamily);
   return StyleSheet.create({
     imagePreviewOverlay: {
       flex: 1,
@@ -1110,7 +1110,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       flexDirection: 'row',
       justifyContent: 'space-between'
     },
-    imagePreviewCount: { color: theme.onOverlay, fontFamily, fontSize: 13, fontWeight: '600' },
+    imagePreviewCount: { color: theme.onOverlay, fontFamily, ...textSizeStyle(13), fontWeight: '600' },
     imagePreviewCounter: {
       minHeight: 36,
       alignItems: 'center',
@@ -1125,13 +1125,15 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       alignItems: 'center',
       justifyContent: 'center',
       minWidth: 58,
-      height: 44,
+      minHeight: 44,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
       borderRadius: readerRadii.control,
       overflow: 'hidden',
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: 'rgba(255, 255, 255, 0.18)'
     },
-    imagePreviewButtonText: { color: theme.onOverlay, fontFamily, fontSize: 13, fontWeight: '700' },
+    imagePreviewButtonText: { color: theme.onOverlay, fontFamily, ...textSizeStyle(13), fontWeight: '700' },
     imagePreviewClose: {
       alignItems: 'center',
       justifyContent: 'center',
@@ -1155,7 +1157,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       paddingHorizontal: 14,
       paddingVertical: 11
     },
-    imagePreviewStateText: { color: theme.onOverlay, fontFamily, fontSize: 13, fontWeight: '600' }
+    imagePreviewStateText: { color: theme.onOverlay, fontFamily, ...textSizeStyle(13), fontWeight: '600' }
   });
 }
 
@@ -1205,7 +1207,7 @@ function PreviewPage({
   const resolutionIdentity = previewResolutionIdentity(mediaContext, item);
   const [retryState, setRetryState] = useState({ requestIdentity, version: 0 });
   const retryVersion = retryState.requestIdentity === requestIdentity ? retryState.version : 0;
-  const [progressDeadlineVersion, setProgressDeadlineVersion] = useState(0);
+  const progressDeadline = useRef(0);
   const [resolutionState, setResolutionState] = useState<{
     requestIdentity: string;
     value: PreviewResolution | null;
@@ -1230,14 +1232,16 @@ function PreviewPage({
   const mountedRef = useRef(true);
   const activeRef = useRef(active);
   const sourceIdentity = `${requestIdentity}\u0000${retryVersion}`;
-  const [initialLoadStartedAt] = useState(Date.now);
   const [logicalLoadOwner, setLogicalLoadOwner] = useState(() =>
-    createPreviewLoadOwner(requestIdentity, sourceIdentity, initialLoadStartedAt)
+    createPreviewLoadOwner(requestIdentity, sourceIdentity)
   );
   if (logicalLoadOwner.requestIdentity !== requestIdentity) {
-    setLogicalLoadOwner(createPreviewLoadOwner(requestIdentity, sourceIdentity, initialLoadStartedAt));
+    setLogicalLoadOwner(createPreviewLoadOwner(requestIdentity, sourceIdentity));
   }
   const { loadMetricsRef, previewDiagnosticRef, svgArtifactConsumer } = logicalLoadOwner;
+  useLayoutEffect(() => {
+    if (!loadMetricsRef.current.startedAt) loadMetricsRef.current.startedAt = Date.now();
+  }, [loadMetricsRef]);
   const loadStatus = useSyncExternalStore(
     logicalLoadOwner.subscribe,
     logicalLoadOwner.getStatus,
@@ -1580,9 +1584,15 @@ function PreviewPage({
     if (!active || logicalLoadOwner.settled || status !== 'loading') {
       return undefined;
     }
-    const timeout = setTimeout(() => settleFailure(false, 'timeout'), IMAGE_LOAD_TIMEOUT_MS);
+    progressDeadline.current = Date.now() + IMAGE_LOAD_TIMEOUT_MS;
+    const checkProgress = () => {
+      const remaining = progressDeadline.current - Date.now();
+      if (remaining > 0) timeout = setTimeout(checkProgress, remaining);
+      else settleFailure(false, 'timeout');
+    };
+    let timeout = setTimeout(checkProgress, IMAGE_LOAD_TIMEOUT_MS);
     return () => clearTimeout(timeout);
-  }, [active, progressDeadlineVersion, retryVersion, settleFailure, logicalLoadOwner, status]);
+  }, [active, retryVersion, settleFailure, logicalLoadOwner, status]);
 
   useEffect(() => {
     if (!active) {
@@ -1650,11 +1660,8 @@ function PreviewPage({
     finishActiveDiagnostic('stale', false, 'stale', previewImageMetricFields(loadMetricsRef.current));
     const nextRetryVersion = retryVersion + 1;
     const nextSourceIdentity = `${requestIdentity}\u0000${nextRetryVersion}`;
-    logicalLoadOwner.retry(nextSourceIdentity);
-    loadMetricsRef.current = {
-      sourceIdentity: nextSourceIdentity,
-      startedAt: Date.now()
-    };
+    logicalLoadOwner.dispose();
+    setLogicalLoadOwner(createPreviewLoadOwner(requestIdentity, nextSourceIdentity, Date.now()));
     setRetryState({ requestIdentity, version: nextRetryVersion });
   }, [finishActiveDiagnostic, loadMetricsRef, logicalLoadOwner, requestIdentity, retryVersion]);
   const handledRuntimeGenerationRef = useRef({ generation: runtimeGeneration, requestIdentity });
@@ -1816,7 +1823,7 @@ function PreviewPage({
                   ...(Number.isFinite(totalBytes) && totalBytes >= 0 ? { totalBytes } : {})
                 };
                 if (advanced) {
-                  setProgressDeadlineVersion((version) => version + 1);
+                  progressDeadline.current = Date.now() + IMAGE_LOAD_TIMEOUT_MS;
                 }
               }}
             />

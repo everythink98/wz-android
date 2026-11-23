@@ -1794,8 +1794,44 @@ describe('linux.do visible verification coordinator', () => {
 });
 
 describe('reading recovery ownership', () => {
+  it.each(['refresh', 'background'] as const)(
+    'keeps the manual account ticket unconfirmed when attached recovery stops on %s',
+    async (exit) => {
+      let current = true;
+      const unmounted = Promise.withResolvers<void>();
+      const { controller, onLinuxDoSurfaceClosed, setMountLinuxDoWebView } = createController({
+        awaitLinuxDoWebViewUnmount: () => unmounted.promise
+      });
+      await controller.showLinuxDoVerification();
+      const reading: LinuxDoReadingRecovery = {
+        kind: 'reading',
+        batchId: 8004,
+        isCurrent: () => current,
+        resume: vi.fn(async () => 'completed' as const),
+        cancel: vi.fn()
+      };
+      await controller.showLinuxDoVerification('reading', reading);
+      let check: Promise<void> | undefined;
+      if (exit === 'refresh') {
+        current = false;
+        controller.resetLinuxDoWebView();
+      } else {
+        check = controller.checkLinuxDoCookie();
+        await vi.waitFor(() => expect(setMountLinuxDoWebView).toHaveBeenLastCalledWith(false));
+        controller.cancelLinuxDoCheckForInactiveApp();
+      }
+      unmounted.resolve();
+      await check;
+      expect(onLinuxDoSurfaceClosed).toHaveBeenCalledWith({
+        authoritativeResult: false,
+        reason: 'initialization-incomplete'
+      });
+      expect(reading.resume).not.toHaveBeenCalled();
+    }
+  );
+
   it('resumes reading attached to a manually opened verification panel', async () => {
-    const { controller, showLinuxDoPanelRef } = createController();
+    const { controller, showLinuxDoPanelRef, reconcileAccountStatus } = createController();
     await controller.showLinuxDoVerification();
     const reading: LinuxDoReadingRecovery = {
       kind: 'reading',
@@ -1807,7 +1843,25 @@ describe('reading recovery ownership', () => {
     await controller.showLinuxDoVerification('reading', reading);
     await controller.checkLinuxDoCookie();
     expect(showLinuxDoPanelRef.current).toBe(false);
+    expect(reconcileAccountStatus).toHaveBeenCalledWith('linuxdo', { publishAnonymous: true });
     expect(reading.resume).toHaveBeenCalledTimes(1);
+  });
+  it('retires the old reading target when login reconciliation confirms an account switch', async () => {
+    const { controller } = createController({
+      reconcileAccountStatus: async () => ({ status: 'changed', session: loggedInSession })
+    });
+    await controller.showLinuxDoVerification();
+    const reading: LinuxDoReadingRecovery = {
+      kind: 'reading',
+      batchId: 8003,
+      isCurrent: () => true,
+      resume: vi.fn(async () => 'completed' as const),
+      cancel: vi.fn()
+    };
+    await controller.showLinuxDoVerification('reading', reading);
+    await controller.checkLinuxDoCookie();
+    expect(reading.resume).not.toHaveBeenCalled();
+    expect(reading.cancel).toHaveBeenCalledOnce();
   });
   it.each(['before-check', 'during-resume'] as const)(
     'resumes valid reading when its attached page query becomes inactive %s',

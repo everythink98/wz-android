@@ -1,11 +1,12 @@
 import { useCallback, useRef, useState } from 'react';
 
-type Operation = { kind: 'travel' | 'submitting' };
+type Operation = { kind: 'travel' | 'submitting' | 'rebasing' };
 
 export function useTopicComposerOperation(isMounted: React.RefObject<boolean>) {
   const current = useRef<Operation | null>(null);
   const [busy, setBusy] = useState(false);
   const isIdle = useCallback(() => current.current === null, []);
+  const canChangeDraft = useCallback(() => current.current === null || current.current.kind === 'rebasing', []);
   const isSubmitting = useCallback(() => current.current?.kind === 'submitting', []);
   const begin = useCallback(
     (kind: Operation['kind']) => {
@@ -25,5 +26,5 @@ export function useTopicComposerOperation(isMounted: React.RefObject<boolean>) {
     },
     [isMounted]
   );
-  return { busy, isIdle, isSubmitting, begin, release };
+  return { busy, isIdle, isSubmitting, canChangeDraft, begin, release };
 }

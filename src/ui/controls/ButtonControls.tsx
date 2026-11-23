@@ -5,7 +5,7 @@ import { ActivityIndicator, IconButton as PaperIconButton, TouchableRipple } fro
 import type { LucideIcon } from 'lucide-react-native';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import {
-  createReaderFontSizer,
+  createUiFontSizer,
   type ReaderStyleSettings,
   alphaColor,
   fontFamilyValue,
@@ -15,7 +15,7 @@ import {
 import { COMPACT_BUTTON_HIT_SLOP, TOUCH_HIT_SLOP } from './touchTarget';
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
-  const fontSize = createReaderFontSizer(settings);
+  const fontSize = createUiFontSizer(settings);
   return StyleSheet.create({
     floating: {
       width: 52,
@@ -70,7 +70,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     disabled: { opacity: 0.5 },
     disabledNeutral: { backgroundColor: theme.surface2 },
     text: {
-      fontFamily: fontFamilyValue(settings.fontFamily),
+      fontFamily: fontFamilyValue(settings.uiFontFamily),
       fontSize: fontSize(13),
       fontWeight: '500',
       lineHeight: fontSize(18),

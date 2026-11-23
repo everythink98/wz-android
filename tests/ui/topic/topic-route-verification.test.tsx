@@ -26,7 +26,7 @@ import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import type { Fetcher } from '@/platform/network/request';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import type { UserReference } from '@/domain/forum/models';
-import { createTheme } from '@/ui/theme/tokens';
+import { resolveReaderStyleSettings, createTheme } from '@/ui/theme/tokens';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { act, fireEvent, render, waitFor } from '../render';
 
@@ -202,7 +202,7 @@ async function mount(readTopic?: Fetcher) {
       nodeSeekMediaUserAgent: '',
       notify,
       reader: { commit: readerCommit, data, dataRef: { current: data } },
-      readerStyle: { settings: data.settings, theme: createTheme(data.settings) }
+      readerStyle: { settings: resolveReaderStyleSettings(data.settings), theme: createTheme(data.settings) }
     };
     if (!accountReady) return account.hosts.element;
     const { read, write } = account;

@@ -5,6 +5,7 @@ import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { createDiscourseReadingRuntime } from '@/platform/query/discourseReadingRuntime';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { createStardustPayments } from '@/features/topic/actions/stardustPayments';
 import type { ReplyOrder, TopicDetail, TopicLocationTarget } from '@/domain/forum/models';
 import { prepareRepliesContent, prepareTopicContent } from '@/domain/forum/topicContentSplit';
 import type { ReadGateway } from '@/sources/readGateway';
@@ -109,6 +110,8 @@ const actions: TopicActionsController = {
   loadNodeSeekStardustStatus: unexpected,
   lockNodeSeekPoll: unexpected,
   payNodeSeekStardust: unexpected,
+  stardustPayments: createStardustPayments(),
+  stardustPayer: 'nodeseek:fixture',
   submitReply: unexpected,
   uploadReplyImage: unexpected,
   uploadReplyImageMarkup: unexpected,

@@ -1,7 +1,8 @@
-import type { ReactNode } from 'react';
+import { useContext, type ReactNode } from 'react';
 import { StatusBar as NativeStatusBar, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import { SafeAreaInsetsContext } from 'react-native-safe-area-context';
+import { type ReaderStyleSettings, fontFamilyValue, type ReaderTheme, textSizeStyle } from '@/ui/theme/tokens';
 
 export function createScreenTopBarStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   return StyleSheet.create({
@@ -21,8 +22,8 @@ export function createScreenTopBarStyles(theme: ReaderTheme, settings: ReaderSty
     title: {
       flex: 1,
       color: theme.ink,
-      fontFamily: fontFamilyValue(settings.fontFamily),
-      fontSize: Math.round(14 * settings.fontScale),
+      fontFamily: fontFamilyValue(settings.uiFontFamily),
+      ...textSizeStyle(Math.round(14 * settings.uiFontScale)),
       fontWeight: '500',
       letterSpacing: 0,
       textAlign: 'left'
@@ -38,8 +39,9 @@ export function ScreenTopBar({
   onLayout?: (event: LayoutChangeEvent) => void;
 }) {
   const { styles } = useReaderThemeStyles(createScreenTopBarStyles);
+  const insets = useContext(SafeAreaInsetsContext);
   return (
-    <View style={styles.bar} onLayout={onLayout}>
+    <View style={[styles.bar, insets && { paddingTop: insets.top + 8 }]} onLayout={onLayout}>
       {children}
     </View>
   );

@@ -163,15 +163,17 @@ export function useLoginWebViewLifecycle({
       setPage((current) => ({ ...current, error: '', stage: 'unsettled' }));
       onSetLoading(loading);
     },
-    loadEnd: (failed: boolean) => {
+    loadEnd: (failed: boolean, preserveDocumentFailure = false) => {
       if (!isCurrent()) return;
+      const phase = documentStateRef.current.phase;
+      const loadFailed = failed || (preserveDocumentFailure && (phase === 'failed' || phase === 'failed-consumed'));
       onSetLoading(false);
       setPage((current) => ({
         ...current,
         stage: current.stage === 'remount-required' ? 'remount-required' : 'settled',
-        error: failed ? current.error : ''
+        error: loadFailed ? current.error : ''
       }));
-      if (failed) return;
+      if (loadFailed) return;
       onWebViewState('ready', credentialAttempt);
     },
     fail: (description: string) => {

@@ -39,17 +39,19 @@ import { captureLongTopicImage } from '@/platform/media/topicShareCapture';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import { errorMessage } from '@/platform/network/errors';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
-import { buildHtmlRenderingStyles, HTML_ALLOWED_INLINE_STYLES } from '@/ui/content/forumHtmlStyles';
+import { buildHtmlRenderingStyles, HTML_ALLOWED_INLINE_STYLES, useForumHtmlFonts } from '@/ui/content/forumHtmlStyles';
 import { createForumStickerRenderers } from '@/ui/content/ForumStickerContent';
 import { ForumContentWidthBoundary, useForumContentWidth } from '@/ui/content/ForumContentWidth';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import {
   createReaderFontSizer,
+  createUiFontSizer,
   createTheme,
   fontFamilyValue,
   readerRadii,
   type ReaderStyleSettings,
-  type ReaderTheme
+  type ReaderTheme,
+  textSizeStyle
 } from '@/ui/theme/tokens';
 import { createHtmlCustomElementModels } from '../rendering/htmlElementModels';
 import { prepareTopicShareContent } from '../topicShareContent';
@@ -332,17 +334,19 @@ export function TopicShareSheet({
   onBack?: () => void;
 }) {
   const { styles, theme, settings } = useReaderThemeStyles(createStyles);
-  const { width: windowWidth } = useWindowDimensions();
+  const { width: windowWidth, fontScale: systemFontScale } = useWindowDimensions();
+  const { fontFamily, fontScale, lineHeight } = settings;
+  const forumHtmlFonts = useForumHtmlFonts(fontFamily);
   const width = Math.min(windowWidth - 32, 480);
   const contentWidth = width - 48;
   const { htmlBaseStyle, htmlClassesStyles, htmlIgnoredStyles, htmlTagsStyles } = useMemo(
     () =>
       buildHtmlRenderingStyles({
-        settings,
+        settings: { fontFamily, fontScale, lineHeight },
         theme: createTheme({ theme: 'light' }),
         enableDiscourseCallouts: isDiscourseSource(topic.source)
       }),
-    [settings, topic.source]
+    [fontFamily, fontScale, lineHeight, topic.source]
   );
   const tagsStyles = useMemo(
     () => ({
@@ -374,7 +378,7 @@ export function TopicShareSheet({
     }),
     [mediaContext, nodeSeekUserAgent, settings.fontScale]
   );
-  const stackActions = windowWidth < 360 || settings.fontScale * PixelRatio.getFontScale() > 1.3;
+  const stackActions = windowWidth < 360 || settings.uiFontScale * systemFontScale > 1.3;
   const scrollRef = useRef<ScrollView>(null);
   const [operation, setOperation] = useState<'share' | 'save' | null>(null);
   const [capture] = useState(() => new TopicShareCaptureSession(setOperation));
@@ -582,6 +586,7 @@ export function TopicShareSheet({
                   </Text>
                   <ImageProgressContext.Provider value={progress}>
                     <RenderHTML
+                      {...forumHtmlFonts}
                       contentWidth={contentWidth}
                       source={source}
                       baseStyle={htmlBaseStyle}
@@ -654,6 +659,8 @@ export function TopicShareSheet({
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const font = createReaderFontSizer(settings);
   const fontFamily = fontFamilyValue(settings.fontFamily);
+  const uiFont = createUiFontSizer(settings);
+  const uiFontFamily = fontFamilyValue(settings.uiFontFamily);
   return StyleSheet.create({
     root: { flex: 1, backgroundColor: theme.surface },
     toolbar: {
@@ -665,27 +672,26 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       gap: 8
     },
     headingGroup: { flex: 1, gap: 2, alignItems: 'center' },
-    heading: { fontFamily, color: theme.ink, fontSize: font(17), fontWeight: '600' },
-    subtitle: { fontFamily, color: theme.muted, fontSize: font(12) },
+    heading: { fontFamily: uiFontFamily, color: theme.ink, ...textSizeStyle(uiFont(17)), fontWeight: '600' },
+    subtitle: { fontFamily: uiFontFamily, color: theme.muted, ...textSizeStyle(uiFont(12)) },
     headerSpacer: { width: 48 },
     preview: { flex: 1, backgroundColor: theme.background, paddingVertical: 16 },
     paper: { flex: 1, alignSelf: 'center', borderRadius: readerRadii.surface, backgroundColor: '#ffffff' },
     card: { padding: 24, backgroundColor: '#ffffff' },
     brandRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
-    brand: { fontFamily, fontSize: font(12), fontWeight: '700', color: '#65717b', letterSpacing: 2 },
-    source: { fontFamily, color: '#52606c', fontSize: font(13), lineHeight: font(20) },
+    brand: { fontFamily, ...textSizeStyle(font(12)), fontWeight: '700', color: '#65717b', letterSpacing: 2 },
+    source: { fontFamily, color: '#52606c', ...textSizeStyle(font(13), font(20)) },
     title: {
       fontFamily,
       color: '#20252b',
-      fontSize: font(22),
+      ...textSizeStyle(font(22), font(31)),
       fontWeight: '700',
-      lineHeight: font(31),
       marginTop: 16,
       marginBottom: 10
     },
-    date: { fontFamily, color: '#65717b', fontSize: font(12), lineHeight: font(19), marginBottom: 24 },
+    date: { fontFamily, color: '#65717b', ...textSizeStyle(font(12), font(19)), marginBottom: 24 },
     footer: { marginTop: 20, borderTopWidth: 1, borderTopColor: '#e3e7eb', paddingTop: 16, gap: 6 },
-    link: { fontFamily, color: '#285f86', fontSize: font(12), lineHeight: font(18) },
+    link: { fontFamily, color: '#285f86', ...textSizeStyle(font(12), font(18)) },
     actions: {
       paddingHorizontal: 16,
       paddingTop: 12,
@@ -715,12 +721,11 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     },
     status: {
       flexShrink: 1,
-      fontFamily,
+      fontFamily: uiFontFamily,
       color: theme.muted,
-      fontSize: font(12),
-      lineHeight: font(18),
+      ...textSizeStyle(uiFont(12), uiFont(18)),
       fontVariant: ['tabular-nums']
     },
-    error: { flex: 1, fontFamily, color: theme.danger, fontSize: font(13), lineHeight: font(19) }
+    error: { flex: 1, fontFamily: uiFontFamily, color: theme.danger, ...textSizeStyle(uiFont(13), uiFont(19)) }
   });
 }

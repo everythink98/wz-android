@@ -129,11 +129,13 @@ export function useAccountRuntime({
   nodeSeekRecoveryThreshold,
   openUser,
   ready,
+  contentSourcesReady = ready,
   screen,
   webViewBlockMessage
 }: {
   appActive: boolean;
   beforeRequest?: () => Promise<void>;
+  contentSourcesReady?: boolean;
   enabledSources: readonly Source[];
   fetcher: Fetcher;
   loginNavigation: AccountHostsProps['loginNavigation'];
@@ -842,16 +844,27 @@ export function useAccountRuntime({
     },
     [beginAuthSurfaceTicket]
   );
+  const getWebViewPreparation = useCallback((source: SessionSite) => {
+    const preparation = authSurfacePreparationsRef.current[source];
+    if (
+      preparation?.error &&
+      !Object.values(authSurfaceRegistryRef.current.active).some(
+        (ticket) => ticket?.source === source && ticket.phase === 'open'
+      )
+    )
+      return undefined;
+    return preparation;
+  }, []);
   const prepareLinuxDoCookieResponseBarrier = useCallback(() => {
     cancelLinuxDoBrowserHandoff();
     return linuxDoCookies.prepare({
       owner: authSurfaceLifetimeRef.current.signal,
       generation: authSurfaceRegistryRef.current.generation,
-      marker: authSurfacePreparationsRef.current.linuxdo?.promise,
+      marker: getWebViewPreparation('linuxdo')?.promise,
       ownerIsCurrent: (owner) => authSurfaceLifetimeRef.current.signal === owner,
       apply: (generation) => setLinuxDoCookieResponseBarrier(true, 'surface-open', generation)
     });
-  }, [cancelLinuxDoBrowserHandoff, linuxDoCookies]);
+  }, [cancelLinuxDoBrowserHandoff, getWebViewPreparation, linuxDoCookies]);
   const beginLinuxDoCreditSurface = useCallback(
     (mode: 'manual' | 'silent') => beginAuthSurfaceTicket('linuxdo-credit', 'linuxdo', false, mode === 'manual'),
     [beginAuthSurfaceTicket]
@@ -1003,14 +1016,15 @@ export function useAccountRuntime({
   const showNodeSeekVerification = verification.showNodeSeekVerification;
   const cancelLinuxDoCheckForInactiveApp = verification.cancelLinuxDoCheckForInactiveApp;
   const linuxDoSourceEnabled = enabledSessionSourceSet.has('linuxdo');
-  const linuxDoCookieBarrierInitializedRef = useRef(false);
+  const previousLinuxDoSource = useRef<boolean | undefined>(undefined);
   useEffect(() => {
     const owner = authSurfaceLifetimeRef.current.signal;
     const observation = new AbortController();
     if (!linuxDoSourceEnabled) cancelLinuxDoBrowserHandoff();
     linuxDoCookies.cancelHandoff();
-    const reason = linuxDoCookieBarrierInitializedRef.current ? 'source-change' : 'startup';
-    linuxDoCookieBarrierInitializedRef.current = true;
+    const previous = previousLinuxDoSource.current;
+    const reason = previous !== undefined && previous !== linuxDoSourceEnabled ? 'source-change' : 'startup';
+    if (contentSourcesReady || previous !== undefined) previousLinuxDoSource.current = linuxDoSourceEnabled;
     void setLinuxDoCookieResponseBarrier(
       !linuxDoSourceEnabled ||
         isAuthSurfaceVisible(authSurfaceRegistryRef.current, 'linuxdo-login') ||
@@ -1021,7 +1035,7 @@ export function useAccountRuntime({
       notifyRef.current('登录会话交接未完成，请刷新账号页面重试。');
     });
     return () => observation.abort();
-  }, [linuxDoSourceEnabled, notify, cancelLinuxDoBrowserHandoff, linuxDoCookies]);
+  }, [linuxDoSourceEnabled, contentSourcesReady, cancelLinuxDoBrowserHandoff, linuxDoCookies]);
   useEffect(() => {
     if (appActive) return;
     const check = loginPanelCheckRef.current;
@@ -1093,10 +1107,16 @@ export function useAccountRuntime({
     if (!isCurrent()) return false;
     if (source === 'linuxdo') {
       cancelLinuxDoBrowserHandoff();
-      linuxDoWebViewRef.current?.stopLoading();
-      setMountLinuxDoWebView(false);
-      await setLinuxDoCookieResponseBarrier(true, 'explicit-clear');
-      return session.clearLinuxDoLoginState(isCurrent);
+      const documentKey = verification.retireLinuxDoWebViewForClear();
+      try {
+        await Promise.all([linuxDoCookies.awaitUnmount(), setLinuxDoCookieResponseBarrier(true, 'explicit-clear')]);
+        return await session.clearLinuxDoLoginState(isCurrent);
+      } catch (error) {
+        if (authSurfaceVisible(surface)) {
+          verification.setLinuxDoWebViewErrorForSession('登录清理未完成，请重新打开登录页后重试。', documentKey);
+        }
+        throw error;
+      }
     }
     return source === 'nodeseek'
       ? session.clearNodeSeekLoginState(isCurrent)
@@ -1436,7 +1456,7 @@ export function useAccountRuntime({
     blockedMessage: webViewBlockMessage,
     authSurfaceBlockMessages: Object.fromEntries(
       sessionSources.map((source) => {
-        const preparation = authSurfacePreparationsRef.current[source];
+        const preparation = getWebViewPreparation(source);
         return [source, preparation && !preparation.ready ? preparation.error || '正在保存登录交接状态…' : ''];
       })
     ),

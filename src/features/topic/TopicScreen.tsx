@@ -51,6 +51,7 @@ const AnimatedSafeAreaView = Animated.createAnimatedComponent(SafeAreaView);
 export const TopicScreen = memo(function TopicScreen({
   active = true,
   composerRouteFocused = active,
+  closeReplyComposerRequest,
   actions,
   article,
   bodyMediaPaused = false,
@@ -67,6 +68,7 @@ export const TopicScreen = memo(function TopicScreen({
 }: {
   active?: boolean;
   composerRouteFocused?: boolean;
+  closeReplyComposerRequest?: RefObject<(() => void) | null>;
   actions: TopicActionsController;
   article: {
     busy: boolean;
@@ -430,6 +432,7 @@ export const TopicScreen = memo(function TopicScreen({
         replyContent={state.replyContent}
         replyFace={state.replyFace}
         routeActive={composerRouteFocused}
+        closeRequestRef={closeReplyComposerRequest}
         source={topic?.source}
         styles={styles}
         theme={theme}

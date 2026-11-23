@@ -52,6 +52,7 @@ export type LinuxDoVerificationPageProps = {
 
 export function useLinuxDoVerificationPage({
   dedicated,
+  mounted,
   web,
   credentialAttempt,
   loginFormMode,
@@ -69,7 +70,7 @@ export function useLinuxDoVerificationPage({
   onVerificationPageEvent,
   onForumDocument,
   onDocumentNavigation
-}: LinuxDoVerificationPageProps & { dedicated: boolean; web: boolean }) {
+}: LinuxDoVerificationPageProps & { dedicated: boolean; web: boolean; mounted: boolean }) {
   const [document] = useState(() => createLinuxDoVerificationDocument(dedicated && !loginFormMode));
   const [pageSnapshot, setPageSnapshot] = useState(document.snapshot);
   const { stage, needsRemount } = pageSnapshot;
@@ -101,7 +102,7 @@ export function useLinuxDoVerificationPage({
   }, [document, key, publishPage, visible]);
 
   useEffect(() => {
-    if (!visible || !web || !loadingLinuxDoPage) return;
+    if (!visible || !web || !mounted || needsRemount || !loadingLinuxDoPage) return;
     const timer = setTimeout(() => {
       record('load-timeout', document.documentUrl, { reason: 'timeout', hasLoadError: true });
       document.requireRemount();
@@ -115,6 +116,8 @@ export function useLinuxDoVerificationPage({
     document,
     key,
     loadingLinuxDoPage,
+    mounted,
+    needsRemount,
     onSetLinuxDoWebViewError,
     onSetLoadingLinuxDoPage,
     publishPage,

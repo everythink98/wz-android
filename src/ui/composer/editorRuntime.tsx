@@ -1624,6 +1624,7 @@ function applyTheme(theme: RuntimeTheme) {
   root.style.setProperty('--primary-soft', theme.primarySoft);
   root.style.setProperty('--danger', theme.danger);
   root.style.setProperty('--font-scale', String(theme.fontScale));
+  root.style.setProperty('--ui-font-scale', String(theme.uiFontScale));
 }
 
 type TableAlignment = 'left' | 'center' | 'right';
@@ -2365,7 +2366,7 @@ export function ComposerEditorRuntime() {
 
   const postSnapshot = useCallback(
     (requestId?: string, forcedMode?: ComposerMode) => {
-      if (!runtimeDocument.initialized || !sourceViewRef.current) return;
+      if (!runtimeDocument.initialized) return;
       const snapshot = makeSnapshot(forcedMode);
       const context = {
         documentEpoch: runtimeDocument.config?.documentEpoch ?? 0,
@@ -2392,7 +2393,7 @@ export function ComposerEditorRuntime() {
   );
 
   const postState = useCallback(() => {
-    if (!runtimeDocument.initialized || !sourceViewRef.current) return;
+    if (!runtimeDocument.initialized) return;
     const currentEditor = editorRef.current;
     const currentMode = modeRef.current;
     postMessage('STATE_CHANGED', {
@@ -2407,7 +2408,7 @@ export function ComposerEditorRuntime() {
   }, [editorRef, runtimeDocument]);
 
   const scheduleSignals = useCallback(() => {
-    if (!runtimeDocument.initialized || !sourceViewRef.current) return;
+    if (!runtimeDocument.initialized) return;
     const generation = runtimeDocument.generation;
     if (stateTimerRef.current !== null) window.clearTimeout(stateTimerRef.current);
     stateTimerRef.current = window.setTimeout(() => {
@@ -2420,16 +2421,73 @@ export function ComposerEditorRuntime() {
   }, [postSnapshot, postState, runtimeDocument]);
   useCommitRefValue(scheduleSignalsRef, scheduleSignals);
 
-  const setSource = useCallback((value: string) => {
-    const view = sourceViewRef.current;
-    if (!view || view.state.doc.toString() === value) return;
-    sourceProgrammaticRef.current = true;
-    try {
-      replaceCodeMirrorDocument(view, value);
-    } finally {
-      sourceProgrammaticRef.current = false;
-    }
-  }, []);
+  const ensureSourceView = useCallback(() => {
+    if (sourceViewRef.current) return sourceViewRef.current;
+    const host = sourceHostRef.current;
+    if (!host) return null;
+    const view = new EditorView({
+      parent: host,
+      state:
+        sourceStateHandoffRef.current ??
+        EditorState.create({
+          doc: '',
+          extensions: [
+            markdownLanguage(),
+            history(),
+            sourcePollProtectionField,
+            sourceUploadField,
+            sourceKeyboardPolicyField,
+            keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
+            EditorView.lineWrapping,
+            EditorView.cspNonce.of('wz-composer-runtime'),
+            EditorView.contentAttributes.of(() => ({
+              'aria-label':
+                runtimeDocument.config?.intentKind === 'create-topic' ||
+                runtimeDocument.config?.intentKind === 'edit-topic'
+                  ? '主题正文源码编辑器'
+                  : '回复正文源码编辑器'
+            })),
+            EditorState.changeFilter.of((transaction) => {
+              if (sourceProgrammaticRef.current || !transaction.docChanged) return true;
+              if (!runtimeDocument.initialized || runtimeDocument.config?.readOnly || submissionLockedRef.current)
+                return false;
+              const { ranges } = transaction.startState.field(sourcePollProtectionField);
+              let allowed = true;
+              transaction.changes.iterChangedRanges((fromA, toA) => {
+                ranges.forEach((range) => {
+                  const intersects = fromA < range.to && toA > range.from;
+                  const removesWholeToken = fromA <= range.from && toA >= range.to;
+                  if (intersects && !removesWholeToken) allowed = false;
+                });
+              });
+              return allowed;
+            }),
+            EditorView.updateListener.of((update) => {
+              if (!update.docChanged || sourceProgrammaticRef.current) return;
+              revisionRef.current += 1;
+              scheduleSignalsRef.current();
+            })
+          ]
+        })
+    });
+    sourceStateHandoffRef.current = null;
+    sourceViewRef.current = view;
+    return view;
+  }, [runtimeDocument]);
+
+  const setSource = useCallback(
+    (value: string) => {
+      const view = ensureSourceView();
+      if (!view || view.state.doc.toString() === value) return;
+      sourceProgrammaticRef.current = true;
+      try {
+        replaceCodeMirrorDocument(view, value);
+      } finally {
+        sourceProgrammaticRef.current = false;
+      }
+    },
+    [ensureSourceView]
+  );
 
   const restoreImageKeyboardPolicy = useCallback((id?: string) => {
     const owner = imageKeyboardPolicyRef.current;
@@ -2659,9 +2717,9 @@ export function ComposerEditorRuntime() {
         setExpressionConfig(editorRef.current, next);
         // Identical content can reuse NodeViews with requests from the previous document.
         if (previous) replaceRichMarkdownDocument(editorRef.current, '');
-        replaceRichMarkdownDocument(editorRef.current, next.markdown);
+        if (next.mode === 'rich' || next.readOnly) replaceRichMarkdownDocument(editorRef.current, next.markdown);
         editorRef.current?.setEditable(!next.readOnly);
-        setSource(next.markdown);
+        if (next.mode === 'source' || sourceViewRef.current) setSource(next.markdown);
         // Identical Markdown still needs the new document intent's accessible name.
         sourceViewRef.current?.dispatch({});
       } finally {
@@ -2699,10 +2757,16 @@ export function ComposerEditorRuntime() {
       if (!runtimeDocument.initialized) return;
       if (message.type === 'SET_THEME') {
         applyTheme(message.payload);
+        sourceViewRef.current?.requestMeasure();
         return;
       }
       if (message.type === 'SET_MODE') {
         changeMode(message.payload.mode);
+        return;
+      }
+      if (message.type === 'SET_NODESEEK_MEMBER') {
+        if (runtimeDocument.nodeSeekMemberChanged(message.payload.documentEpoch, message.payload.memberId))
+          publishDocument();
         return;
       }
       if (message.type === 'SET_READ_ONLY') {
@@ -2857,69 +2921,20 @@ export function ComposerEditorRuntime() {
   }, [handleHostMessage]);
 
   useEffect(() => {
-    const host = sourceHostRef.current;
-    if (!host || sourceViewRef.current) return;
-    const view = new EditorView({
-      parent: host,
-      state:
-        sourceStateHandoffRef.current ??
-        EditorState.create({
-          doc: '',
-          extensions: [
-            markdownLanguage(),
-            history(),
-            sourcePollProtectionField,
-            sourceUploadField,
-            sourceKeyboardPolicyField,
-            keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
-            EditorView.lineWrapping,
-            EditorView.cspNonce.of('wz-composer-runtime'),
-            EditorView.contentAttributes.of(() => ({
-              'aria-label':
-                runtimeDocument.config?.intentKind === 'create-topic' ||
-                runtimeDocument.config?.intentKind === 'edit-topic'
-                  ? '主题正文源码编辑器'
-                  : '回复正文源码编辑器'
-            })),
-            EditorState.changeFilter.of((transaction) => {
-              if (sourceProgrammaticRef.current || !transaction.docChanged) return true;
-              if (!runtimeDocument.initialized || runtimeDocument.config?.readOnly || submissionLockedRef.current)
-                return false;
-              const { ranges } = transaction.startState.field(sourcePollProtectionField);
-              let allowed = true;
-              transaction.changes.iterChangedRanges((fromA, toA) => {
-                ranges.forEach((range) => {
-                  const intersects = fromA < range.to && toA > range.from;
-                  const removesWholeToken = fromA <= range.from && toA >= range.to;
-                  if (intersects && !removesWholeToken) allowed = false;
-                });
-              });
-              return allowed;
-            }),
-            EditorView.updateListener.of((update) => {
-              if (!update.docChanged || sourceProgrammaticRef.current) return;
-              revisionRef.current += 1;
-              scheduleSignalsRef.current();
-            })
-          ]
-        })
-    });
-    sourceStateHandoffRef.current = null;
-    sourceViewRef.current = view;
+    if (sourceStateHandoffRef.current) ensureSourceView();
     return () => {
       cancelHostActions();
-      if (sourceViewRef.current === view) {
-        const state = view.state;
-        sourceViewRef.current = null;
-        view.destroy();
-        if (runtimeDocument.initialized) sourceStateHandoffRef.current = state;
-      } else view.destroy();
+      const view = sourceViewRef.current;
+      if (!view) return;
+      sourceViewRef.current = null;
+      if (runtimeDocument.initialized) sourceStateHandoffRef.current = view.state;
+      view.destroy();
     };
-  }, [cancelHostActions, runtimeDocument]);
+  }, [cancelHostActions, ensureSourceView, runtimeDocument]);
 
   useEffect(() => {
     const initialDocument = document.getElementById('composer-initial-document');
-    if (!editor || !sourceViewRef.current || !initialDocument) return;
+    if (!editor || !initialDocument) return;
     const serialized = initialDocument.textContent;
     initialDocument.remove();
     try {
@@ -3216,9 +3231,10 @@ export function ComposerEditorRuntime() {
 
   const saveStardust = () => {
     try {
-      if (!config?.nodeSeekMemberId) throw new Error('当前 NodeSeek 账号尚未确认');
+      const receiverMemberId = runtimeDocument.config?.nodeSeekMemberId;
+      if (!receiverMemberId) throw new Error('当前 NodeSeek 账号尚未确认');
       const receive = {
-        receiverMemberId: config.nodeSeekMemberId,
+        receiverMemberId,
         amount: Number(stardustAmount),
         refId: Number(stardustRefId),
         description: stardustDescription,

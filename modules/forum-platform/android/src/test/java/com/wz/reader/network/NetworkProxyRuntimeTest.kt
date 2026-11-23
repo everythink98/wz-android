@@ -357,6 +357,27 @@ class NetworkProxyRuntimeTest {
   }
 
   @Test
+  fun managedReadAndMediaAcceptArrayStylePathSegments() {
+    val request = Request.Builder().url("https://linux.do/charts/data[1].png").build()
+    for (media in listOf(false, true)) {
+      val client = OkHttpClient.Builder()
+      val builder = request.newBuilder()
+      if (media) {
+        client.addInterceptor(ForumMediaRequestInterceptor(defaultUserAgent = { "fixture" }))
+        builder.header(FORUM_MEDIA_SOURCE_HEADER, "linuxdo")
+      } else {
+        client.addInterceptor(ForumReadRequestInterceptor())
+        client.addInterceptor(ForumReadClearanceInterceptor(cookieReader = { null }))
+        builder.header(FORUM_READ_SOURCE_HEADER, "linuxdo").header(FORUM_READ_COOKIE_POLICY_HEADER, "clearance-only")
+      }
+      client.addInterceptor { chain ->
+        assertEquals(request.url, chain.request().url)
+        responseFor(chain.request())
+      }.build().newCall(builder.build()).execute().use { assertEquals(200, it.code) }
+    }
+  }
+
+  @Test
   fun clearancePolicyRejectsUnsupportedSourcesOriginsAndMethodsWithoutReadingCookies() {
     val cases = listOf(
       Triple("linuxdo", "https://nodeseek.com/t/1", "GET"),
@@ -755,6 +776,26 @@ class NetworkProxyRuntimeTest {
     cancelFirstFetcher.cancel()
     cancelFirstFetcher.cleanup()
     assertEquals(1, cancelFirstBody.closeCount.get())
+  }
+
+  @Test
+  fun glideReadyCallbackAllowsAnotherThreadToCancel() {
+    val factory = ControllableGlideCallFactory()
+    val fetcher = closeSafeGlideFetcher(factory)
+    val executor = Executors.newSingleThreadExecutor()
+    try {
+      fetcher.loadData(Priority.NORMAL, object : DataFetcher.DataCallback<InputStream> {
+        override fun onDataReady(data: InputStream?) {
+          executor.submit { fetcher.cancel() }.get(2, TimeUnit.SECONDS)
+        }
+        override fun onLoadFailed(error: Exception) = throw error
+      })
+      val body = CloseCountingResponseBody("fixture")
+      factory.latest.respond(200, body)
+      assertEquals(1, body.closeCount.get())
+    } finally {
+      executor.shutdownNow()
+    }
   }
 
   @Test
@@ -3227,6 +3268,16 @@ class NetworkProxyRuntimeTest {
   }
 
   @Test
+  fun upstreamConnectChecksTheResponseCodeField() {
+    for (line in listOf("HTTP/1.1 200", "HTTP/1.1 200 ", "HTTP/1.0 204 No Content")) {
+      assertTrue(line, isSuccessfulProxyConnectResponse(line))
+    }
+    for (line in listOf("HTTP/1.1 407", "HTTP/1.1 503 upstream 200 unavailable", "HTTP/1.1 2000", "invalid 200 OK")) {
+      assertFalse(line, isSuccessfulProxyConnectResponse(line))
+    }
+  }
+
+  @Test
   fun regProxy007FormatsIpv6AuthorityForHttpUpstreamConnect() {
     val received = AtomicReference("")
     val upstreamListener = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
@@ -3611,6 +3662,29 @@ class NetworkProxyRuntimeTest {
       held.forEach(Socket::close)
       overflow?.close()
       server.stop()
+    }
+  }
+
+  @Test
+  fun cronetWatchesCancellationOnlyWhileAResponseIsActive() {
+    val executor = object : java.util.concurrent.ScheduledThreadPoolExecutor(1) {
+      override fun scheduleWithFixedDelay(command: Runnable, initialDelay: Long, delay: Long, unit: TimeUnit) =
+        super.scheduleWithFixedDelay(command, 1, 1, TimeUnit.DAYS)
+    }.apply { removeOnCancelPolicy = true }
+    val client = OkHttpClient.Builder().addInterceptor { chain -> responseFor(chain.request()) }.build()
+    val transport = CronetMediaTransport(1, client, executor) {}
+    val request = Request.Builder().url("https://example.invalid/image").build()
+    try {
+      assertTrue("unused transport has no polling task", executor.queue.isEmpty())
+      repeat(2) {
+        requireNotNull(transport.execute(request, client.newCall(request))).use {
+          assertEquals(1, executor.queue.size)
+        }
+        assertTrue("closing the last response stops polling", executor.queue.isEmpty())
+      }
+    } finally {
+      transport.retire()
+      executor.shutdownNow()
     }
   }
 

@@ -9,7 +9,7 @@ import {
   type BottomTabScreenProps
 } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack';
-import { TabBarIcon, tabNavItems } from '@/ui/navigation/NavBar';
+import { TabBarIcon, TabBarLabel, tabNavItems } from '@/ui/navigation/NavBar';
 import { IconButton } from '@/ui/controls/ButtonControls';
 import { goBackFromFocusedRoute } from '@/ui/navigation/appRouteActions';
 import { NavigationBackdropProvider, NavigationBackdropTarget, NavigationGlass } from '@/ui/navigation/NavigationGlass';
@@ -26,8 +26,6 @@ type NotificationsTabProps = CompositeScreenProps<
   BottomTabScreenProps<MainTabParamList, 'notifications'>,
   NativeStackScreenProps<RootStackParamList>
 >;
-const tabBarIconStyle = { width: '100%' } as const;
-
 function RouteBackdrop({ children }: { children: ReactNode }) {
   const headerHeight = useContext(HeaderHeightContext) ?? 0;
   return (
@@ -84,11 +82,13 @@ function MainTabsHost({
           return {
             freezeOnBlur: route.name !== 'feed' && route.name !== 'search',
             headerShown: false,
-            tabBarShowLabel: false,
+            headerTitleStyle: styles.headerTitle,
+            headerTitleAllowFontScaling: true,
+            tabBarLabelPosition: 'below-icon',
+            tabBarLabel: ({ focused }: { focused: boolean }) => <TabBarLabel focused={focused} label={item.label} />,
             tabBarStyle: [styles.nav, styles.navOverlay],
             tabBarBackground: () => <NavigationGlass />,
             tabBarItemStyle: styles.navItem,
-            tabBarIconStyle,
             tabBarButton: QuietTabBarButton,
             tabBarButtonTestID: `main-tab-${item.value}`,
             tabBarAccessibilityLabel:
@@ -101,7 +101,6 @@ function MainTabsHost({
               <TabBarIcon
                 focused={focused}
                 icon={item.icon}
-                label={item.label}
                 showBadge={
                   item.value === 'more'
                     ? moreBadgeState === 'update' || moreBadgeState === 'both'
@@ -211,6 +210,7 @@ export const AppNavigator = memo(function AppNavigator({
           screenOptions={({ navigation }) => ({
             headerShown: false,
             headerShadowVisible: false,
+            headerTitleStyle: styles.headerTitle,
             headerLeft: ({ canGoBack }) =>
               canGoBack ? (
                 <IconButton

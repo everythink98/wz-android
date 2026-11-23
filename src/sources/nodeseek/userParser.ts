@@ -21,7 +21,7 @@ import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDi
 import { nodeSeekGuestControls } from '@/platform/network/nodeSeekGuestControls';
 import {
   NODESEEK_BASE_URL,
-  extractNodeSeekEmbeddedData,
+  type NodeSeekPageDocument,
   nodeSeekCreatedAt,
   nodeSeekSpaceUrl,
   optionalNonNegativeInteger,
@@ -199,15 +199,15 @@ export function isNodeSeekLoggedOutRoot(root: ReturnType<typeof parseHtml>, url 
   return false;
 }
 
-export function hasNodeSeekAccountEvidenceHtml(html: string, url = BASE_URL) {
-  if (nodeSeekCurrentUserFromConfig(extractNodeSeekEmbeddedData(html))) return true;
+export function hasNodeSeekAccountEvidence(document: NodeSeekPageDocument, url = BASE_URL) {
+  if (nodeSeekCurrentUserFromConfig(document.embedded)) return true;
   let allowUidText = false;
   try {
     allowUidText = new URL(url, BASE_URL).pathname === '/setting';
   } catch {
     // Keep ambiguous URLs on the stricter path.
   }
-  const root = parseHtml(html);
+  const root = document.root;
   return Boolean(parseNodeSeekCurrentUserRoot(root, { allowUidText }) || isNodeSeekLoggedOutRoot(root, url));
 }
 

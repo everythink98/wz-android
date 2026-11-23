@@ -61,7 +61,9 @@ export function useImagePreviewController({
   const previewMediaContextRef = useCommittedRef(previewMediaContext);
   useEffect(
     () => () => {
-      saveRef.current?.abort();
+      const save = saveRef.current;
+      saveRef.current = null;
+      save?.abort();
     },
     [previewMediaContext.sessionIdentity, scope]
   );
@@ -183,6 +185,7 @@ export function useImagePreviewController({
       const uri = item.originalUri;
       markDiagnosticStage(trace, 'guard', { state: 'network-ready' });
       await beforeSave?.();
+      assertCurrent();
       await saveImageUriToLibrary(
         uri,
         {
@@ -203,7 +206,7 @@ export function useImagePreviewController({
       finishDiagnosticTrace(trace, reason === 'permission_denied' ? 'blocked' : 'failure', { reason });
       if (!abortController.signal.aborted) notify(errorMessage(error));
     } finally {
-      saveRef.current = null;
+      if (saveRef.current === abortController) saveRef.current = null;
     }
   }, [beforeSave, currentScope, imagePreview, nodeSeekMediaUserAgent, notify, previewMediaContext, scope]);
 

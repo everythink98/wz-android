@@ -1,5 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { act, fireEvent, render } from '../render';
+import { act, fireEvent, render, within } from '../render';
 import React from 'react';
 import { Pressable, StyleSheet, Text } from 'react-native';
 import { createEmptyReaderData, type ReaderSettings } from '@/domain/reader/readerData';
@@ -66,6 +66,62 @@ const topic: Topic = {
 };
 
 describe('Topic card visible behavior', () => {
+  it('restores the read title color and shows a dot only while a recycled list card is unread', async () => {
+    const open = jest.fn();
+    const unread = { favorite: false, listDensity: 'standard' as const, read: false };
+    const view = await render(<MemoizedTopicCard topic={topic} readerState={unread} onOpenTopic={open} />);
+    const unreadTitle = StyleSheet.flatten(view.getByText(topic.title).props.style);
+    expect(unreadTitle.color).toBe(theme.ink);
+    expect(view.queryByText('未读')).toBeNull();
+    expect(view.getByTestId('topic-unread-dot')).toBeVisible();
+    await fireEvent(view.getByText(topic.title), 'textLayout', { nativeEvent: { lines: [{ y: 2, height: 28 }] } });
+    expect(view.getByTestId('topic-unread-dot')).toHaveStyle({ top: 13 });
+
+    const next = { ...topic, id: 'next', title: '新卡片 😃' };
+    await view.rerender(<MemoizedTopicCard topic={next} readerState={unread} onOpenTopic={open} />);
+    await view.rerender(<MemoizedTopicCard topic={next} readerState={{ ...unread, read: true }} onOpenTopic={open} />);
+    const readTitle = StyleSheet.flatten(view.getByText(next.title).props.style);
+    expect(readTitle.color).toBe(theme.muted);
+    expect(readTitle.fontWeight).toBe(unreadTitle.fontWeight);
+    expect(view.queryByText('未读')).toBeNull();
+    expect(view.queryByTestId('topic-unread-dot')).toBeNull();
+    expect(view.getByText(next.title).props.onTextLayout).toBeUndefined();
+    expect(view.getByRole('button', { name: /新卡片.*已读.*回复 23.*浏览 456/ })).toBeTruthy();
+  });
+
+  it.each(['favorites', 'history'] as const)('uses the real read state with the %s presentation', async (scene) => {
+    const view = await render(
+      <TopicCard
+        topic={topic}
+        readerState={{ favorite: true, read: true, listDensity: 'standard' }}
+        scene={scene}
+        onOpenTopic={jest.fn()}
+        renderTrailingAction={() => <Pressable accessibilityRole="button" accessibilityLabel="移除记录" />}
+      />
+    );
+    const title = view.getByText(topic.title);
+    expect(title.props.onTextLayout).toBeUndefined();
+    expect(StyleSheet.flatten(title.props.style).color).toBe(scene === 'favorites' ? theme.ink : theme.muted);
+    expect(Boolean(view.queryByText('alice · LV 2 · 已收藏', { includeHiddenElements: true }))).toBe(
+      scene === 'history'
+    );
+    expect(view.getByRole('button', { name: /真实自动化覆盖卡片.*已读.*回复 23.*浏览 456/ })).toBeTruthy();
+    expect(view.getByRole('button', { name: '移除记录' })).toBeTruthy();
+    await view.rerender(
+      <TopicCard
+        topic={topic}
+        readerState={{ favorite: true, read: false, listDensity: 'standard' }}
+        scene={scene}
+        onOpenTopic={jest.fn()}
+      />
+    );
+    expect(view.queryByTestId('topic-unread-dot')).toBeNull();
+    const cachedTitle = view.getByText(topic.title);
+    expect(cachedTitle.props.onTextLayout).toBeUndefined();
+    expect(StyleSheet.flatten(cachedTitle.props.style).color).toBe(scene === 'favorites' ? theme.ink : theme.muted);
+    expect(view.getByRole('button', { name: /真实自动化覆盖卡片.*未读.*回复 23.*浏览 456/ })).toBeTruthy();
+  });
+
   it.each([
     {
       identity: 'topic id',
@@ -142,7 +198,7 @@ describe('Topic card visible behavior', () => {
       <MemoizedTopicCard topic={topic} readerState={{ ...state, hasNewReplies: true }} onOpenTopic={onOpenTopic} />
     );
     expect(view.getByText('有新回复')).toBeTruthy();
-    expect(StyleSheet.flatten(view.getByText(topic.title).parent?.props.style)).toMatchObject({ color: theme.muted });
+    expect(StyleSheet.flatten(view.getByText(topic.title).props.style)).toMatchObject({ color: theme.muted });
   });
 
   it('shows source metadata, local state, tag limits, access rules and the loose excerpt', async () => {
@@ -239,6 +295,7 @@ describe('Topic card visible behavior', () => {
 
   it('gives colliding tag labels distinct foregrounds and backgrounds in the topic list', async () => {
     const tags = ['A', 'I', 'Q'];
+    const tagSorts = jest.spyOn(Array.prototype, 'sort');
     const view = await render(
       <TopicCard
         topic={{ ...topic, tags }}
@@ -246,14 +303,19 @@ describe('Topic card visible behavior', () => {
         onOpenTopic={jest.fn()}
       />
     );
+    const groupSortCount = tagSorts.mock.contexts.filter(
+      (values) => Array.isArray(values) && values.join('|') === 'a|i|q'
+    ).length;
+    tagSorts.mockRestore();
     const foregrounds = tags.map((tag) => StyleSheet.flatten(view.getByText(tag).props.style).color);
     const backgrounds = tags.map((tag) => StyleSheet.flatten(view.getByText(tag).parent?.props.style).backgroundColor);
 
     expect(new Set(foregrounds).size).toBe(tags.length);
     expect(new Set(backgrounds).size).toBe(tags.length);
+    expect(groupSortCount).toBe(1);
   });
 
-  it('hides density-dependent content and keeps a trailing local action separate', async () => {
+  it('keeps the byline and a separate local action in the same footer row', async () => {
     const onOpenTopic = jest.fn();
     const onTrailingAction = jest.fn();
     const view = await render(
@@ -273,10 +335,15 @@ describe('Topic card visible behavior', () => {
 
     expect(view.queryByText('宽松密度下显示的主题摘要')).toBeNull();
     expect(view.queryByText('23')).toBeNull();
-    expect(view.getByText('456')).toBeTruthy();
-    await fireEvent.press(view.getByLabelText('本机取消收藏'));
+    const action = view.getByLabelText('本机取消收藏');
+    const actionRow = action.parent!;
+    expect(actionRow).toHaveStyle({ flexDirection: 'row', alignItems: 'center' });
+    const viewsCount = within(actionRow).getByText('456', { includeHiddenElements: true });
+    await fireEvent.press(action);
     expect(onTrailingAction).toHaveBeenCalledTimes(1);
     expect(onOpenTopic).not.toHaveBeenCalled();
+    await fireEvent.press(viewsCount);
+    expect(onOpenTopic).toHaveBeenCalledWith(topic);
   });
 
   it('keeps read metadata legible while lowering only the title emphasis', async () => {
@@ -292,16 +359,16 @@ describe('Topic card visible behavior', () => {
     const fadedAncestors =
       view.root?.queryAll((instance) => typeof StyleSheet.flatten(instance.props.style)?.opacity === 'number') || [];
     expect(fadedAncestors).toHaveLength(0);
-    expect(StyleSheet.flatten(view.getByText(topic.title).parent?.props.style)).toMatchObject({ color: theme.muted });
+    expect(StyleSheet.flatten(view.getByText(topic.title).props.style)).toMatchObject({ color: theme.muted });
     expect(view.getByText(/^alice/)).toHaveStyle({ color: theme.muted });
     expect(view.getByText('23')).toHaveStyle({ color: theme.muted });
   });
 
-  it('emphasizes search matches without imitating a text selection', async () => {
+  it.each([false, true])('emphasizes search matches without imitating a text selection (read: %s)', async (read) => {
     const view = await render(
       <TopicCard
         highlightQuery="自动化"
-        readerState={{ favorite: false, listDensity: 'standard', read: false }}
+        readerState={{ favorite: false, listDensity: 'standard', read }}
         topic={topic}
         onOpenTopic={jest.fn()}
       />
@@ -417,12 +484,19 @@ describe('App theme propagation to real topic cards', () => {
 
     expect(onCommit.mock.calls.map(([scale]) => scale)).toEqual([1.1]);
     expect(mockIconCommits.mock.calls.map(([name]) => name).sort()).toEqual(['Eye', 'MessageCircle']);
-    expect(StyleSheet.flatten(view.getByText(topic.title).parent?.props.style)).toMatchObject({ fontSize: 18 });
+    expect(StyleSheet.flatten(view.getByText(topic.title).props.style)).toMatchObject({ fontSize: 18 });
 
     await view.rerender(<AppThemeHarness settings={{ ...settings, fontScale: 1.4 }}>{children}</AppThemeHarness>);
-    expect(StyleSheet.flatten(view.getByText(topic.title).parent?.props.style)).toMatchObject({ fontSize: 22 });
-    expect(view.getByText('alice · LV 2')).toHaveStyle({ fontSize: 18 });
-    expect(view.getByText('今天 08:00')).toHaveStyle({ fontSize: 17 });
+    expect(StyleSheet.flatten(view.getByText(topic.title).props.style)).toMatchObject({ fontSize: 22 });
+    expect(view.getByText('alice · LV 2')).toHaveStyle({ fontSize: 13 });
+    expect(view.getByText('今天 08:00')).toHaveStyle({ fontSize: 12 });
+    await view.rerender(
+      <AppThemeHarness settings={{ ...settings, fontScale: 1.4, uiFontScale: 0.85, uiFontFamily: 'system' }}>
+        {children}
+      </AppThemeHarness>
+    );
+    expect(view.getByText(topic.title)).toHaveStyle({ fontSize: 22, fontFamily: 'WzNotoSansSC' });
+    expect(view.getByText('alice · LV 2')).toHaveStyle({ fontSize: 11, fontFamily: 'sans-serif' });
   });
 
   it.each(['network', 'content-sources', 'equivalent-object'] as const)(
@@ -446,7 +520,7 @@ describe('App theme propagation to real topic cards', () => {
 
       expect(onCommit).not.toHaveBeenCalled();
       expect(mockIconCommits).not.toHaveBeenCalled();
-      expect(StyleSheet.flatten(view.getByText(topic.title).parent?.props.style)).toMatchObject({ fontSize: 16 });
+      expect(StyleSheet.flatten(view.getByText(topic.title).props.style)).toMatchObject({ fontSize: 16 });
     }
   );
 
@@ -461,12 +535,25 @@ describe('App theme propagation to real topic cards', () => {
 
     await update({ theme: 'dark' });
     const darkInk = createTheme({ theme: 'dark' }).ink;
-    expect(StyleSheet.flatten(view.getByText(topic.title).parent?.props.style)).toMatchObject({ color: darkInk });
+    expect(StyleSheet.flatten(view.getByText(topic.title).props.style)).toMatchObject({ color: darkInk });
     expect(view.getByTestId('navigation-theme')).toHaveStyle({ color: darkInk });
-    await update({ fontFamily: 'serif' });
-    expect(StyleSheet.flatten(view.getByText(topic.title).parent?.props.style)).toMatchObject({ fontFamily: 'serif' });
+    const titleStyle = StyleSheet.flatten(view.getByText(topic.title).props.style);
+    const cardSpacing = StyleSheet.flatten(view.getByTestId('themed-topic-card').props.style);
+    await update({ fontFamily: 'system' });
+    expect(StyleSheet.flatten(view.getByText(topic.title).props.style)).toEqual({
+      ...titleStyle,
+      fontFamily: 'sans-serif'
+    });
+    expect(StyleSheet.flatten(view.getByTestId('themed-topic-card').props.style)).toEqual(cardSpacing);
     await update({ listDensity: 'loose' });
     expect(view.getByTestId('themed-topic-card')).toHaveStyle({ paddingTop: 18 });
+    expect(view.getByTestId('topic-unread-dot')).toBeVisible();
+    await update({ showUnreadDot: false });
+    expect(view.queryByTestId('topic-unread-dot')).toBeNull();
+    expect(view.getByText(topic.title).props.onTextLayout).toBeUndefined();
+    expect(view.getByRole('button', { name: /真实自动化覆盖卡片.*未读/ })).toBeTruthy();
+    await update({ showUnreadDot: true });
+    expect(view.getByTestId('topic-unread-dot')).toBeVisible();
     await update({ lineHeight: 'loose' });
     expect(view.getByTestId('reading-body')).toHaveStyle({ lineHeight: 26 });
     await update({ contentWidth: 'wide' });

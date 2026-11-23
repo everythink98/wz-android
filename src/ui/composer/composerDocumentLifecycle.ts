@@ -6,6 +6,7 @@ type DocumentSnapshot = Readonly<{
   webLoaded: boolean;
   ready: boolean;
   rendererGone: boolean;
+  initializationTimedOut: boolean;
 }>;
 
 export type ComposerDocumentEvent =
@@ -33,7 +34,8 @@ export function createComposerDocumentLifecycle(initialModeKnown: boolean) {
     modeLoaded: preference === 'loaded',
     webLoaded: webDocument === 'loaded',
     ready: admitted(),
-    rendererGone: renderer === 'gone'
+    rendererGone: renderer === 'gone',
+    initializationTimedOut: initialization.kind === 'timed-out'
   });
   let snapshot = project();
 
@@ -43,6 +45,9 @@ export function createComposerDocumentLifecycle(initialModeKnown: boolean) {
     },
     get initializing() {
       return initialization.kind === 'pending' || initialization.kind === 'timed-out';
+    },
+    get waitingForReady() {
+      return initialization.kind === 'pending';
     },
     apply(event: ComposerDocumentEvent) {
       switch (event) {
@@ -84,7 +89,8 @@ export function createComposerDocumentLifecycle(initialModeKnown: boolean) {
         next.modeLoaded !== snapshot.modeLoaded ||
         next.webLoaded !== snapshot.webLoaded ||
         next.ready !== snapshot.ready ||
-        next.rendererGone !== snapshot.rendererGone
+        next.rendererGone !== snapshot.rendererGone ||
+        next.initializationTimedOut !== snapshot.initializationTimedOut
       )
         snapshot = next;
       return snapshot;

@@ -1,23 +1,24 @@
 import { StyleSheet, StatusBar as NativeStatusBar } from 'react-native';
 import {
-  createReaderFontSizer,
+  createUiFontSizer,
   readerRadii,
   type ReaderStyleSettings,
   type ReaderTheme,
   alphaColor,
-  fontFamilyValue
+  fontFamilyValue,
+  textSizeStyle
 } from '@/ui/theme/tokens';
 import { createMoreAccountStyles } from './accountStyles';
 import { createLoginWebViewStyles } from '@/ui/navigation/loginWebViewStyles';
 
 export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
-  const appFontFamily = fontFamilyValue(settings.fontFamily);
-  const fontSize = createReaderFontSizer(settings);
+  const appFontFamily = fontFamilyValue(settings.uiFontFamily);
+  const fontSize = createUiFontSizer(settings);
   return StyleSheet.create({
     buttonText: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: fontSize(13),
+      ...textSizeStyle(fontSize(13)),
       fontWeight: '600'
     },
     content: {
@@ -35,8 +36,7 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     errorText: {
       color: theme.danger,
       fontFamily: appFontFamily,
-      fontSize: fontSize(13),
-      lineHeight: fontSize(19)
+      ...textSizeStyle(fontSize(13), fontSize(19))
     },
     flex: {
       flex: 1
@@ -65,7 +65,7 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     libraryShortcutLabel: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: Math.round(13 * settings.fontScale),
+      ...textSizeStyle(Math.round(13 * settings.uiFontScale)),
       fontWeight: '500'
     },
     input: {
@@ -88,8 +88,18 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     loginWebViewTitle: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: 16,
+      ...textSizeStyle(fontSize(16)),
       fontWeight: '700'
+    },
+    proxyCurrentLabel: {
+      fontFamily: appFontFamily,
+      ...textSizeStyle(fontSize(11), fontSize(14)),
+      fontWeight: '600'
+    },
+    proxyAddLabel: {
+      fontFamily: appFontFamily,
+      ...textSizeStyle(fontSize(15)),
+      fontWeight: '600'
     },
     menuButton: {
       alignItems: 'center',
@@ -106,19 +116,18 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     menuLabel: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: fontSize(15),
+      ...textSizeStyle(fontSize(15)),
       fontWeight: '500'
     },
     meta: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: fontSize(12),
-      lineHeight: fontSize(17)
+      ...textSizeStyle(fontSize(12), fontSize(17))
     },
     panelTitle: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: fontSize(15),
+      ...textSizeStyle(fontSize(15)),
       fontWeight: '600' as const
     },
     searchFilterActions: {
@@ -140,7 +149,7 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     sectionTitle: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: Math.round(20 * settings.fontScale),
+      ...textSizeStyle(Math.round(20 * settings.uiFontScale)),
       fontWeight: '600',
       paddingVertical: 8
     },
@@ -199,15 +208,13 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     updateVersionMeta: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: fontSize(12),
-      fontVariant: ['tabular-nums'],
-      lineHeight: fontSize(17)
+      ...textSizeStyle(fontSize(12), fontSize(17)),
+      fontVariant: ['tabular-nums']
     },
     updateNotes: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: fontSize(13),
-      lineHeight: fontSize(20)
+      ...textSizeStyle(fontSize(13), fontSize(20))
     },
     updateIntegratedBar: {
       backgroundColor: theme.primarySoft,
@@ -279,84 +286,201 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       gap: 10
     },
     appearanceSettings: {
-      gap: 6,
-      paddingTop: 4
+      gap: 8
     },
-    appearanceSettingRow: {
+    appearanceGroup: {
+      borderTopColor: theme.line,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      paddingTop: 12
+    },
+    appearanceGroupLabel: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      ...textSizeStyle(fontSize(12), fontSize(18)),
+      fontWeight: '600',
+      marginBottom: 2
+    },
+    appearanceChoiceRow: {
       alignItems: 'center',
       flexDirection: 'row',
-      gap: 12,
+      justifyContent: 'space-between',
+      gap: 10,
       minHeight: 48,
-      paddingTop: 6
+      paddingVertical: 5
+    },
+    appearanceInlineRow: {
+      flexWrap: 'wrap',
+      rowGap: 4
+    },
+    appearanceThemeChoices: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      maxWidth: '100%',
+      gap: 4
+    },
+    appearanceThemeOption: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 7,
+      minHeight: 48,
+      minWidth: 48,
+      paddingHorizontal: 6,
+      paddingVertical: 5
+    },
+    appearanceThemeSwatch: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: theme.lineStrong
+    },
+    appearanceThemeSwatchSelected: {
+      borderColor: theme.dark ? theme.primary : theme.primaryStrong,
+      borderWidth: 2
+    },
+    appearanceSegments: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      maxWidth: '100%',
+      padding: 2,
+      borderRadius: readerRadii.control,
+      backgroundColor: theme.surface2
+    },
+    appearanceSegment: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      minWidth: 48,
+      minHeight: 48,
+      paddingHorizontal: 9,
+      paddingVertical: 5,
+      borderRadius: readerRadii.control - 2
+    },
+    appearanceSegmentSelected: {
+      backgroundColor: theme.primarySoft
+    },
+    appearanceOptionLabel: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: fontSize(12),
+      lineHeight: fontSize(17),
+      fontWeight: '500',
+      includeFontPadding: false
+    },
+    appearanceOptionLabelSelected: {
+      color: theme.dark ? theme.primary : theme.primaryStrong,
+      fontWeight: '600'
     },
     appearanceSettingRowDivided: {
       borderTopColor: theme.line,
       borderTopWidth: StyleSheet.hairlineWidth
     },
+    appearanceSwitch: { minWidth: 48, minHeight: 48 },
     appearanceSettingLabel: {
-      flexBasis: 76,
-      flexShrink: 0,
+      flexShrink: 1,
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: fontSize(14),
-      fontWeight: '500',
-      lineHeight: fontSize(20)
+      ...textSizeStyle(fontSize(14), fontSize(20)),
+      fontWeight: '500'
     },
-    appearanceSegmentedControl: {
+    appearanceFontSetting: { paddingVertical: 0 },
+    appearanceFontField: {
       flex: 1,
-      flexDirection: 'row',
+      maxWidth: '67%',
       minWidth: 0,
-      padding: 2,
-      backgroundColor: theme.surface2,
-      borderColor: theme.line,
-      borderRadius: readerRadii.control,
-      borderWidth: StyleSheet.hairlineWidth
-    },
-    appearanceSegment: {
-      alignItems: 'center',
-      flex: 1,
-      justifyContent: 'center',
       minHeight: 48,
-      minWidth: 0,
-      borderRadius: readerRadii.control,
-      paddingHorizontal: 4
+      justifyContent: 'center'
     },
-    appearanceSegmentActive: {
-      backgroundColor: theme.primarySoft
+    appearanceFontFieldDisabled: { opacity: 0.5 },
+    appearanceFontFieldControl: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      minHeight: 36,
+      gap: 8,
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      backgroundColor: theme.surface,
+      borderColor: theme.line,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderRadius: readerRadii.control
     },
-    appearanceSegmentText: {
+    appearanceFontFieldOpen: { borderColor: theme.primary },
+    appearanceFontFieldValue: {
+      flexShrink: 1,
+      color: theme.ink,
+      fontFamily: appFontFamily,
+      ...textSizeStyle(fontSize(14), fontSize(20)),
+      fontWeight: '500'
+    },
+    appearanceDropdown: { backgroundColor: theme.surface },
+    appearanceDropdownScroll: { flexGrow: 0, flexShrink: 1 },
+    appearanceDropdownContent: { padding: 4 },
+    appearanceDropdownItem: {
+      minHeight: 48,
+      justifyContent: 'center',
+      paddingHorizontal: 10,
+      gap: 4,
+      paddingVertical: 8
+    },
+    appearanceFontOptionLine: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    appearanceFontOptionSelected: { backgroundColor: theme.primarySoft, borderRadius: readerRadii.control },
+    appearanceFontTitles: { flex: 1, minWidth: 0, gap: 2 },
+    appearanceFontMeta: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: fontSize(12),
-      fontWeight: '500',
-      includeFontPadding: false
+      ...textSizeStyle(fontSize(12), fontSize(17)),
+      flexShrink: 1
     },
-    appearanceSegmentTextActive: {
+    appearanceFontAction: {
+      width: '38%',
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      gap: 5
+    },
+    appearanceFontActionText: {
       color: theme.dark ? theme.primary : theme.primaryStrong,
-      fontWeight: '600'
+      fontWeight: '600',
+      fontVariant: ['tabular-nums']
+    },
+    appearanceFontProgress: {
+      position: 'absolute',
+      start: 10,
+      end: 10,
+      bottom: 1,
+      height: 3,
+      borderRadius: 2,
+      backgroundColor: theme.line
+    },
+    appearanceError: {
+      color: theme.danger,
+      fontFamily: appFontFamily,
+      ...textSizeStyle(fontSize(13), fontSize(20))
     },
     appearanceFontScaleBlock: {
-      gap: 2,
       paddingTop: 4,
-      paddingBottom: 4
+      paddingBottom: 3
     },
     appearanceFontScaleHeader: {
       alignItems: 'center',
       flexDirection: 'row',
       justifyContent: 'space-between',
-      minHeight: 40
+      gap: 8,
+      minHeight: 26
     },
     appearanceFontScaleValue: {
-      color: theme.primary,
+      color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: fontSize(13),
+      ...textSizeStyle(fontSize(13), fontSize(18)),
       fontWeight: '600',
-      lineHeight: fontSize(18)
+      fontVariant: ['tabular-nums']
     },
     appearanceSliderRow: {
       alignItems: 'center',
       flexDirection: 'row',
-      gap: 12
+      gap: 6
     },
     contentSourceRow: {
       alignItems: 'center',

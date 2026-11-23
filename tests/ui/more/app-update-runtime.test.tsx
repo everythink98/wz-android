@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { renderHook } from '@testing-library/react-native';
+import { useLayoutEffect } from 'react';
 import { AppState, NativeModules, StyleSheet } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, render, waitFor } from '../render';
@@ -178,7 +179,7 @@ function RuntimePanel({ visible = true }: { visible?: boolean }) {
         restoreFailed: runtime.restoreFailed,
         info: runtime.appUpdateInfo,
         message: runtime.appUpdateMessage,
-        progress: runtime.appUpdateDownloadProgress,
+        progress: runtime.downloadProgress,
         check: runtime.checkAppUpdate,
         start: runtime.startAppUpdateDownload,
         pause: runtime.pauseAppUpdateDownload,
@@ -190,6 +191,41 @@ function RuntimePanel({ visible = true }: { visible?: boolean }) {
 }
 
 describe('recoverable app updates', () => {
+  it('updates download progress without committing the root runtime for every sample', async () => {
+    const completed = Promise.withResolvers<object | null>();
+    mockPlans.push(() => completed.promise);
+    const rootCommit = jest.fn();
+    const hook = await renderHook(() => {
+      const runtime = useAppUpdateRuntime(options);
+      useLayoutEffect(() => {
+        rootCommit();
+      });
+      return runtime;
+    });
+    await waitFor(() => expect(hook.result.current.phase).toBe('idle'));
+    await act(async () => {
+      await hook.result.current.checkAppUpdate();
+    });
+    let download: Promise<void> | undefined;
+    await act(async () => {
+      download = hook.result.current.startAppUpdateDownload();
+    });
+    await waitFor(() => expect(mockLastProgress).toBeDefined());
+    try {
+      rootCommit.mockClear();
+      for (let bytes = 10; bytes <= 90; bytes += 10) {
+        await act(async () => {
+          mockLastProgress?.({ bytesWritten: bytes, totalBytes: 100 });
+        });
+      }
+      expect(rootCommit).toHaveBeenCalledTimes(0);
+    } finally {
+      await act(async () => {
+        completed.resolve(null);
+        await download;
+      });
+    }
+  });
   it('keeps one writer and bounded metadata saves through repeated progress bursts, pause and remount', async () => {
     const oldCallbacks: ((data: DownloadProgress) => void)[] = [];
     let active = 0;
@@ -220,7 +256,7 @@ describe('recoverable app updates', () => {
         });
         await waitFor(() => expect(mockReceivedOffsets).toHaveLength(round + 1));
         expect(active).toBe(1);
-        expect(hook.result.current.appUpdateDownloadProgress?.downloadedBytes).toBe(round + 1);
+        expect(hook.result.current.downloadProgress.getSnapshot()?.downloadedBytes).toBe(round + 1);
         await act(async () => {
           await Promise.all(Array.from({ length: 100 }, () => hook.result.current.pauseAppUpdateDownload()));
           await Promise.all(downloads);
@@ -231,7 +267,7 @@ describe('recoverable app updates', () => {
           totalBytes: 100,
           kind: 'partial'
         });
-        expect(hook.result.current.appUpdateDownloadProgress).toBeNull();
+        expect(hook.result.current.downloadProgress.getSnapshot()).toBeNull();
         expect(active).toBe(0);
         await hook.unmount();
         hook = await readyHook();
@@ -439,7 +475,7 @@ describe('recoverable app updates', () => {
       oldProgress({ bytesWritten: 99, totalBytes: 100 });
     });
     expect(hook.result.current.artifact).toMatchObject({ kind: 'partial', downloadedBytes: 30 });
-    expect(hook.result.current.appUpdateDownloadProgress).toBeNull();
+    expect(hook.result.current.downloadProgress.getSnapshot()).toBeNull();
     await act(() => hook.result.current.resumeAppUpdateDownload());
     expect(mockReceivedOffsets).toEqual([0, 30]);
     expect(lines.map((line) => JSON.parse(line))).toEqual(
@@ -468,7 +504,7 @@ describe('recoverable app updates', () => {
       expect(hook.result.current.phase).toBe('downloading');
       expect(hook.result.current.appUpdateMessage).toBe('暂停请求失败');
       await act(async () => mockLastProgress!({ bytesWritten: 45, totalBytes: 100 }));
-      expect(hook.result.current.appUpdateDownloadProgress?.downloadedBytes).toBe(45);
+      expect(hook.result.current.downloadProgress.getSnapshot()?.downloadedBytes).toBe(45);
       mockPause.mockImplementationOnce(async () => pending.resolve(null));
       await act(() => hook.result.current.pauseAppUpdateDownload());
       expect(mockPause).toHaveBeenCalledTimes(2);

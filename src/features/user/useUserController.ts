@@ -1,13 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import {
-  hashKey,
-  useInfiniteQuery,
-  useQuery,
-  useQueryClient,
-  type InfiniteData,
-  type Query,
-  type QueryKey
-} from '@tanstack/react-query';
+import { hashKey, useQuery, useQueryClient, type InfiniteData, type Query, type QueryKey } from '@tanstack/react-query';
 import { mergeTopics } from '@/domain/forum/feed';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { diagnosticRef, normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
@@ -29,6 +21,7 @@ import type { ReadGateway } from '@/sources/readGateway';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { forumQueryKeys } from '@/platform/query/serverState';
+import { useFirstPageInfiniteQuery } from '@/platform/query/useFirstPageInfiniteQuery';
 import { isSessionSource, type SessionSource } from '@/domain/forum/sourceCatalog';
 
 type UserLane = 'topics' | 'replies';
@@ -103,18 +96,11 @@ export function useUserController({
   const claimUserError = useCallback(
     (lane: UserErrorLane, queryKey: QueryKey, error: unknown) => {
       const query = queryClient.getQueryCache().find({ queryKey, exact: true });
-      if (!query || !error || query.state.error !== error) return false;
+      if (!query || query.state.fetchStatus !== 'idle' || !error || query.state.error !== error) return false;
       const handled = handledUserErrors[lane];
       if (handled.get(query) === query.state.errorUpdateCount) return false;
       handled.set(query, query.state.errorUpdateCount);
       return true;
-    },
-    [handledUserErrors, queryClient]
-  );
-  const rearmUserError = useCallback(
-    (lane: UserErrorLane, queryKey: QueryKey) => {
-      const query = queryClient.getQueryCache().find({ queryKey, exact: true });
-      if (query) handledUserErrors[lane].delete(query);
     },
     [handledUserErrors, queryClient]
   );
@@ -273,10 +259,14 @@ export function useUserController({
       cursors: (string | null)[]
     ) => nextUserActivityCursor(lastPage, lane, cursors)
   });
-  const topicsQuery = useInfiniteQuery(createLaneQuery('topics', topicKey));
-  const repliesQuery = useInfiniteQuery(createLaneQuery('replies', replyKey));
-  const retryTopicsRead = topicsQuery.isFetchNextPageError ? topicsQuery.fetchNextPage : topicsQuery.refetch;
-  const retryRepliesRead = repliesQuery.isFetchNextPageError ? repliesQuery.fetchNextPage : repliesQuery.refetch;
+  const [topicsQuery, refreshTopicsFirstPage] = useFirstPageInfiniteQuery<UserActivityPage, string | null>(
+    createLaneQuery('topics', topicKey)
+  );
+  const [repliesQuery, refreshRepliesFirstPage] = useFirstPageInfiniteQuery<UserActivityPage, string | null>(
+    createLaneQuery('replies', replyKey)
+  );
+  const retryTopicsRead = topicsQuery.isFetchNextPageError ? topicsQuery.fetchNextPage : refreshTopicsFirstPage;
+  const retryRepliesRead = repliesQuery.isFetchNextPageError ? repliesQuery.fetchNextPage : refreshRepliesFirstPage;
   const resolutionErrorCount = queryClient.getQueryState(resolutionKey)?.errorUpdateCount ?? 0;
   const profileErrorCount = queryClient.getQueryState(profileKey)?.errorUpdateCount ?? 0;
   const topicsErrorCount = queryClient.getQueryState(topicKey)?.errorUpdateCount ?? 0;
@@ -408,12 +398,7 @@ export function useUserController({
   const refreshUser = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
     const owner = currentRead();
     if (!owner || !selectedUser) return 'stale';
-    if (selectedUser.source === 'yaohuo') {
-      handledYaohuoLoginReadKeyRef.current = null;
-      rearmUserError('profile', profileKey);
-      rearmUserError('topics', topicKey);
-      rearmUserError('replies', replyKey);
-    }
+    if (selectedUser.source === 'yaohuo') handledYaohuoLoginReadKeyRef.current = null;
     const blockedPlan = selectedNeedsResolution ? resolutionReadPlan : profileReadPlan;
     if (blockedPlan.state === 'blocked') {
       if (
@@ -466,7 +451,6 @@ export function useUserController({
     profileKey,
     profileReadPlan,
     queryClient,
-    rearmUserError,
     replyKey,
     resolutionQuery.data,
     resolutionQuery.refetch,
@@ -522,16 +506,9 @@ export function useUserController({
     replyKey
   ]);
 
-  function retryUserRead<Result>(
-    lane: Exclude<UserErrorLane, 'resolution'>,
-    queryKey: QueryKey,
-    read: () => Promise<Result>
-  ) {
+  function retryUserRead(read: () => Promise<{ error: unknown; isError: boolean }>) {
     if (!currentRead()) return;
-    if (selectedSource === 'yaohuo') {
-      handledYaohuoLoginReadKeyRef.current = null;
-      rearmUserError(lane, queryKey);
-    }
+    if (selectedSource === 'yaohuo') handledYaohuoLoginReadKeyRef.current = null;
     return read();
   }
 
@@ -547,12 +524,12 @@ export function useUserController({
     userRepliesError: repliesQuery.error ? sourceErrorFromUnknown(selectedSource, repliesQuery.error) : null,
     userTopicsBusy: topicsQuery.isFetching,
     userRepliesBusy: repliesQuery.isFetching,
-    retryUserTopics: () => retryUserRead('topics', topicKey, () => retryTopicsRead({ cancelRefetch: false })),
-    retryUserReplies: () => retryUserRead('replies', replyKey, () => retryRepliesRead({ cancelRefetch: false })),
+    retryUserTopics: () => retryUserRead(() => retryTopicsRead({ cancelRefetch: false })),
+    retryUserReplies: () => retryUserRead(() => retryRepliesRead({ cancelRefetch: false })),
     retryUserProfile: () =>
       selectedNeedsResolution && !identity
         ? refreshUser()
-        : retryUserRead('profile', profileKey, () => profileQuery.refetch({ cancelRefetch: false })),
+        : retryUserRead(() => profileQuery.refetch({ cancelRefetch: false })),
     userLoadingMoreReplies: repliesQuery.isFetchingNextPage,
     userLoadingMoreTopics: topicsQuery.isFetchingNextPage,
     userProfile

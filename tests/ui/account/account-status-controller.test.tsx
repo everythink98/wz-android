@@ -2131,6 +2131,58 @@ describe('account status queries', () => {
     );
   });
 
+  it('retains a newer account check when a superseded surface asks for a handoff', async () => {
+    const read = Promise.withResolvers<{ status: 'ok'; header: string }>();
+    const readManagedCookieHeader = jest.fn<ReadManagedCookieHeader>(() => read.promise);
+    const { hook } = await renderStatusController({ readManagedCookieHeader });
+    const beforeProbe = jest.fn(async () => undefined);
+    await act(async () => {
+      const current = hook.result.current.reconcileAccountStatus('nodeseek', { surfaceGeneration: 4 });
+      const old = hook.result.current.reconcileAccountStatus('nodeseek', { surfaceGeneration: 3, beforeProbe });
+      read.resolve({ status: 'ok', header: '' });
+      await expect(current).resolves.toMatchObject({ status: 'anonymous' });
+      await expect(old).resolves.toMatchObject({ status: 'stale' });
+    });
+    expect(beforeProbe).not.toHaveBeenCalled();
+  });
+
+  it('publishes an anonymous observation when a closing surface joins its pending check', async () => {
+    mockGetCurrentUser.mockRejectedValue(
+      Object.assign(new Error('未登录'), { loginRequired: true, reason: 'expired', source: 'nodeseek' })
+    );
+    const identity = Promise.withResolvers<{ status: 'ok'; header: string }>();
+    const { hook } = await renderStatusController({
+      readManagedCookieHeader: jest.fn(() => identity.promise),
+      sessionViewModels: projectTestAccountSessions(
+        createSiteSessionStates({
+          nodeseek: {
+            site: 'nodeseek',
+            status: 'logged-in',
+            currentUser: nodeSeekUser,
+            cookieSummary: [],
+            isVerifying: false
+          }
+        })
+      )
+    });
+    await act(async () => {
+      const check = hook.result.current.reconcileAccountStatus('nodeseek', {
+        surfaceGeneration: 3,
+        publishAnonymous: false
+      });
+      const close = hook.result.current.reconcileAccountStatus('nodeseek', { surfaceGeneration: 3 });
+      identity.resolve({ status: 'ok', header: '' });
+      await expect(Promise.all([check, close])).resolves.toMatchObject([
+        { status: 'anonymous' },
+        { status: 'anonymous' }
+      ]);
+    });
+    await waitFor(() => expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('none'));
+    expect(JSON.parse((await AsyncStorage.getItem('account-session.v1.nodeseek'))!)).toMatchObject({
+      state: 'anonymous'
+    });
+  });
+
   it('deduplicates concurrent reconciliation for the same source', async () => {
     const storedCookie = Promise.withResolvers<string | undefined>();
     const readNodeSeekCookieHeader = jest.fn(async () => storedCookie.promise);

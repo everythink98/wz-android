@@ -1,9 +1,10 @@
+import type { NotificationSource } from '@/domain/forum/sourceCatalog';
+
 type Refresh = { kind: 'idle' } | { kind: 'pending'; request: object };
-type Retry = { kind: 'idle' } | { kind: 'pending'; controller: AbortController };
 
 export function createNotificationListReads() {
   let refresh: Refresh = { kind: 'idle' };
-  let retry: Retry = { kind: 'idle' };
+  const retries = new Map<NotificationSource, AbortController>();
   return {
     get refreshing() {
       return refresh.kind === 'pending';
@@ -20,21 +21,21 @@ export function createNotificationListReads() {
     invalidateRefresh() {
       refresh = { kind: 'idle' };
     },
-    beginRetry() {
-      if (retry.kind === 'pending') retry.controller.abort();
+    beginRetry(source: NotificationSource) {
+      retries.get(source)?.abort();
       const controller = new AbortController();
-      retry = { kind: 'pending', controller };
+      retries.set(source, controller);
       return controller;
     },
-    ownsRetry(controller: AbortController) {
-      return retry.kind === 'pending' && retry.controller === controller && !controller.signal.aborted;
+    ownsRetry(source: NotificationSource, controller: AbortController) {
+      return retries.get(source) === controller && !controller.signal.aborted;
     },
-    finishRetry(controller: AbortController) {
-      if (retry.kind === 'pending' && retry.controller === controller) retry = { kind: 'idle' };
+    finishRetry(source: NotificationSource, controller: AbortController) {
+      if (retries.get(source) === controller) retries.delete(source);
     },
     cancelRetry() {
-      if (retry.kind === 'pending') retry.controller.abort();
-      retry = { kind: 'idle' };
+      for (const controller of retries.values()) controller.abort();
+      retries.clear();
     }
   };
 }

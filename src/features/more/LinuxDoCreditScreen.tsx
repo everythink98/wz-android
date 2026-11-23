@@ -11,7 +11,13 @@ import { errorMessage } from '@/platform/network/errors';
 import { AppButton } from '@/ui/controls/ButtonControls';
 import { EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { createReaderFontSizer, fontFamilyValue, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
+import {
+  createUiFontSizer,
+  fontFamilyValue,
+  type ReaderStyleSettings,
+  type ReaderTheme,
+  textSizeStyle
+} from '@/ui/theme/tokens';
 
 const typeLabels = new Map([
   ['receive', '商户收入'],
@@ -27,19 +33,24 @@ const typeLabels = new Map([
 ]);
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
-  const fontFamily = fontFamilyValue(settings.fontFamily);
-  const size = createReaderFontSizer(settings);
+  const fontFamily = fontFamilyValue(settings.uiFontFamily);
+  const size = createUiFontSizer(settings);
   return StyleSheet.create({
     list: { flex: 1, backgroundColor: theme.surface },
     content: { paddingHorizontal: 20, paddingBottom: 16 },
     header: { gap: 6, paddingTop: 16, paddingBottom: 12 },
-    title: { fontFamily, color: theme.ink, fontSize: size(14), fontWeight: '600', lineHeight: size(21) },
-    balance: { fontFamily, color: theme.ink, fontSize: size(28), fontWeight: '600', fontVariant: ['tabular-nums'] },
+    title: { fontFamily, color: theme.ink, ...textSizeStyle(size(14), size(21)), fontWeight: '600' },
+    balance: {
+      fontFamily,
+      color: theme.ink,
+      ...textSizeStyle(size(28)),
+      fontWeight: '600',
+      fontVariant: ['tabular-nums']
+    },
     text: {
       fontFamily,
       color: theme.ink,
-      fontSize: size(14),
-      lineHeight: size(21),
+      ...textSizeStyle(size(14), size(21)),
       flexGrow: 1,
       flexShrink: 1,
       flexBasis: '50%'
@@ -47,14 +58,14 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     amount: {
       fontFamily,
       color: theme.ink,
-      fontSize: size(16),
+      ...textSizeStyle(size(16)),
       fontWeight: '600',
       fontVariant: ['tabular-nums'],
       maxWidth: '100%',
       marginLeft: 'auto'
     },
-    meta: { fontFamily, color: theme.muted, fontSize: size(12), lineHeight: size(18) },
-    error: { fontFamily, color: theme.danger, fontSize: size(13), lineHeight: size(20) },
+    meta: { fontFamily, color: theme.muted, ...textSizeStyle(size(12), size(18)) },
+    error: { fontFamily, color: theme.danger, ...textSizeStyle(size(13), size(20)) },
     entry: { gap: 4, paddingVertical: 12, borderTopColor: theme.line, borderTopWidth: StyleSheet.hairlineWidth },
     row: {
       flexDirection: 'row',

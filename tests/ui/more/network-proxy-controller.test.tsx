@@ -1132,6 +1132,50 @@ describe('network proxy lifetime ownership', () => {
     mockApplyNetworkProxy.mockResolvedValue({ ok: true });
   });
 
+  it('lets a layout request wait for the persisted proxy before passive effects run', async () => {
+    const react = jest.requireActual<typeof import('react')>('react');
+    const usePassiveEffect = react.useEffect;
+    const pending: (() => void)[] = [];
+    let inRuntime = false;
+    const effect = jest.spyOn(react, 'useEffect').mockImplementation((setup, deps) => {
+      if (!inRuntime) return usePassiveEffect(setup, deps);
+      return usePassiveEffect(() => {
+        let cleanup: ReturnType<typeof setup>;
+        pending.push(() => {
+          cleanup = setup();
+        });
+        return () => {
+          cleanup?.();
+        };
+      }, deps);
+    });
+    const loaded = deferred<NetworkProxyState>();
+    const baseFetcher = jest.fn<import('@/platform/network/request').Fetcher>(async () => new Response('ready'));
+    mockLoadNetworkProxyState.mockReturnValue(loaded.promise);
+    const hook = await renderHook(() => {
+      inRuntime = true;
+      const runtime = useNetworkProxyRuntime({ notify: jest.fn(), baseFetcher });
+      inRuntime = false;
+      return runtime;
+    });
+    const request = hook.result.current.networkProxyFetcher('https://example.invalid/first');
+    try {
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(mockLoadNetworkProxyState).toHaveBeenCalledTimes(1);
+      expect(baseFetcher).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => {
+        pending.forEach((run) => run());
+        loaded.resolve({ enabled: false, activeId: null, profiles: [] });
+        await request;
+      });
+      effect.mockRestore();
+      await hook.unmount();
+    }
+    expect(baseFetcher).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps one bootstrap read deadline when the current StrictMode observer adopts it', async () => {
     jest.useFakeTimers();
     const loading = deferred<NetworkProxyState>();

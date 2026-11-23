@@ -28,7 +28,8 @@ export type LoginWebViewDiagnosticState = LoginTransportState;
 type AccountSource = 'nodeseek' | 'yaohuo';
 
 type LinuxDoLevelRequest =
-  { kind: 'command'; resolve: (completed: boolean) => void } | { kind: 'verification'; recovery: LinuxDoReadRecovery };
+  | { kind: 'command'; epoch: number; resolve: (completed: boolean) => void }
+  | { kind: 'verification'; epoch: number; recovery: LinuxDoReadRecovery };
 
 export function useAccountController({
   checkingRequestIdRef,
@@ -101,7 +102,7 @@ export function useAccountController({
     source: 'linuxdo'
   });
   const linuxDoLevelQuery = useQuery({
-    enabled: screen === 'more' && Boolean(linuxDoLevelRequest) && !linuxDoIdentityPending,
+    enabled: screen === 'more' && linuxDoLevelRequest?.epoch === sessionEpochs.linuxdo && !linuxDoIdentityPending,
     queryKey: linuxDoLevelQueryKey,
     queryFn: ({ signal }) =>
       readGateway.getLinuxDoLevelProfile({
@@ -128,10 +129,11 @@ export function useAccountController({
   useEffect(() => () => cancelLinuxDoLevelRequest(), [cancelLinuxDoLevelRequest]);
 
   useEffect(() => {
-    if (screen !== 'more') {
+    const request = linuxDoLevelRequestRef.current;
+    if (request && (screen !== 'more' || request.epoch !== sessionEpochs.linuxdo || linuxDoIdentityPending)) {
       cancelLinuxDoLevelRequest();
     }
-  }, [cancelLinuxDoLevelRequest, screen]);
+  }, [cancelLinuxDoLevelRequest, linuxDoIdentityPending, screen, sessionEpochs.linuxdo]);
 
   useEffect(() => {
     const wasActive = linuxDoVerificationWasActiveRef.current;
@@ -200,7 +202,7 @@ export function useAccountController({
         return 'failed';
       }
     };
-    const request: LinuxDoLevelRequest = { kind: 'verification', recovery };
+    const request: LinuxDoLevelRequest = { kind: 'verification', recovery, epoch: command.epoch };
     linuxDoLevelRequestRef.current = request;
     setLinuxDoLevelRequest(request);
     let showing: ReturnType<typeof showLinuxDoVerification>;
@@ -420,11 +422,11 @@ export function useAccountController({
       refetchType: 'none'
     });
     return new Promise<boolean>((resolve) => {
-      const request: LinuxDoLevelRequest = { kind: 'command', resolve };
+      const request: LinuxDoLevelRequest = { kind: 'command', epoch: sessionEpochs.linuxdo, resolve };
       linuxDoLevelRequestRef.current = request;
       setLinuxDoLevelRequest(request);
     });
-  }, [linuxDoIdentityPending, linuxDoLevelQueryKey, queryClient]);
+  }, [linuxDoIdentityPending, linuxDoLevelQueryKey, queryClient, sessionEpochs.linuxdo]);
 
   return {
     checkNodeSeekAccount,

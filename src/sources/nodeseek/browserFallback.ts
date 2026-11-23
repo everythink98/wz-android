@@ -1,5 +1,5 @@
 import { cancelRequestTimeoutForFallback, withAbortableTimeout, type Fetcher } from '@/platform/network/request';
-import { extractNodeSeekEmbeddedData, isNodeSeekChallengeResponse } from './protocol';
+import { isNodeSeekChallengeResponse, parseNodeSeekPageDocument } from './protocol';
 import {
   beginDiagnosticTrace,
   diagnosticTraceForRequest,
@@ -16,7 +16,7 @@ import {
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
 import { canContainCloudflareChallengePage } from '@/platform/network/cloudflareChallenge';
 import { currentReadNetworkRuntimeGeneration } from '@/platform/network/readNetworkRuntime';
-import { hasNodeSeekAccountEvidenceHtml, nodeSeekCurrentUserFromConfig } from './userParser';
+import { hasNodeSeekAccountEvidence, nodeSeekCurrentUserFromConfig } from './userParser';
 import {
   forumRecoveryDiagnosticFields,
   recordForumRecoveryDecision,
@@ -240,8 +240,10 @@ export function createNodeSeekWebViewFallbackFetcher({
       throw error;
     }
     if (!isIdempotentRead) return response;
-    const text = await response.clone().text();
-    if (isNodeSeekChallengeResponse(response, text, url)) {
+    const canContainChallengePage = canContainCloudflareChallengePage(response.headers);
+    const text = canContainChallengePage ? await response.clone().text() : '';
+    const document = canContainChallengePage ? parseNodeSeekPageDocument(text, response) : undefined;
+    if (isNodeSeekChallengeResponse(response, text, url, document)) {
       return allowWebViewFallback(url)
         ? fetchNodeSeekThroughWebView(webViewFetcher, url, init, 'verification_required', response.status)
         : response;
@@ -249,10 +251,10 @@ export function createNodeSeekWebViewFallbackFetcher({
     if (
       accountProbe &&
       response.ok &&
-      canContainCloudflareChallengePage(response.headers) &&
+      document &&
       !(owner === 'account-overview'
-        ? nodeSeekCurrentUserFromConfig(extractNodeSeekEmbeddedData(text))
-        : hasNodeSeekAccountEvidenceHtml(text, response.url || url)) &&
+        ? nodeSeekCurrentUserFromConfig(document.embedded)
+        : hasNodeSeekAccountEvidence(document, response.url || url)) &&
       allowWebViewFallback(url)
     ) {
       return fetchNodeSeekThroughWebView(webViewFetcher, url, init, 'invalid_response', response.status);

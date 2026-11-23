@@ -28,7 +28,7 @@ export function useTopicLocationCommand({
   locate: (target: ReplyLocationTarget) => unknown;
 }) {
   const nextRequest = useRef(0);
-  const [request, setRequest] = useState<{ id: number; target: ReplyLocationTarget } | null>(null);
+  const [request, setRequest] = useState<{ id: number; target: ReplyLocationTarget | null } | null>(null);
   const routeReply = location?.kind === 'reply' ? location.target : undefined;
   useEffect(
     () => setRequest(null),
@@ -42,7 +42,10 @@ export function useTopicLocationCommand({
       routeReply?.expectedAuthorUsername
     ]
   );
-  const activeLocation = resolveTopicLocation(topic, request ? { kind: 'reply', target: request.target } : location);
+  const activeLocation = resolveTopicLocation(
+    topic,
+    request ? (request.target ? { kind: 'reply', target: request.target } : undefined) : location
+  );
   const activeTargetReply = activeLocation?.kind === 'reply' ? activeLocation.target : undefined;
   const targetIdentity =
     activeLocation?.kind === 'opening'
@@ -52,7 +55,7 @@ export function useTopicLocationCommand({
         : typeof activeTargetReply?.floor === 'number'
           ? `floor:${activeTargetReply.floor}:${activeTargetReply.expectedAuthorUsername ?? ''}`
           : '';
-  const commandKey = request
+  const commandKey = request?.target
     ? `request:${request.id}`
     : targetIdentity
       ? typeof locationRequestId === 'number'
@@ -61,9 +64,14 @@ export function useTopicLocationCommand({
       : '';
   const requestReplyLocation = useCallback(
     (target: ReplyLocationTarget) => {
-      setRequest({ id: ++nextRequest.current, target });
+      const id = ++nextRequest.current;
+      setRequest({ id, target });
       clearFilters();
-      void locate(target);
+      void Promise.resolve(locate(target)).then((outcome) => {
+        if (outcome === 'failed' || outcome === 'stale') {
+          setRequest((current) => (current?.id === id ? { id, target: null } : current));
+        }
+      });
     },
     [clearFilters, locate]
   );
@@ -89,6 +97,7 @@ export function useTopicFloorPositioning({
   loadedDetailKey,
   commandKey,
   targetIsOpeningPost,
+  targetInLoadedReplies,
   targetReply,
   canShowReplies,
   filtersActive,
@@ -106,6 +115,7 @@ export function useTopicFloorPositioning({
   loadedDetailKey: string;
   commandKey: string;
   targetIsOpeningPost: boolean;
+  targetInLoadedReplies: boolean;
   targetReply?: ReplyLocationTarget;
   canShowReplies: boolean;
   filtersActive: boolean;
@@ -202,7 +212,7 @@ export function useTopicFloorPositioning({
       if (position.current.phase !== 'interrupted') return;
     }
     if (filtersActive) {
-      clearFilters();
+      if (targetIsOpeningPost || targetInLoadedReplies) clearFilters();
       return;
     }
     if (targetIndex < 0 && !targetIsOpeningPost) return;
@@ -241,6 +251,7 @@ export function useTopicFloorPositioning({
     targetIndex,
     targetOffset,
     targetIsOpeningPost,
+    targetInLoadedReplies,
     targetReply?.readingResume,
     topicKey
   ]);

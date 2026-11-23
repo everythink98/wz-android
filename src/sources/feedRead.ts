@@ -5,7 +5,7 @@ import { getV2exCategories, getV2exFeed } from '@/sources/v2ex/reader';
 import { getYaohuoFeedDirect } from '@/sources/yaohuo/reader';
 import { getLinuxDoCategories, getLinuxDoFeed, type LinuxDoReadAuth } from '@/sources/linuxdo/reader';
 import { isDiscourseSource, sourceValues } from '@/domain/forum/sourceCatalog';
-import { balanceTopicsBySource, mergeTopics, sortFeedTopicsByTime } from '@/domain/forum/feed';
+import { balanceTopicsBySource, mergeTopics } from '@/domain/forum/feed';
 import { nextPagePosition, pagePosition, type PagePosition } from '@/domain/forum/pagination';
 import type {
   CategoriesResponse,
@@ -22,7 +22,7 @@ import { DEFAULT_REQUEST_TIMEOUT_MS, REQUEST_CANCELED_MESSAGE, type Fetcher } fr
 import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
 import { markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
-import { isRecord } from '@/domain/forum/html';
+import { isRecord, sortTopicsByTime } from '@/domain/forum/html';
 import { mergeSourceDiagnosticSummaries } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { runForumSourceReadAggregateAttempt, runForumSourceReadAttempt } from './forumSourceReadAttempt';
 import {
@@ -39,6 +39,7 @@ type AllFeedCursorWire = {
   buffers?: Partial<Record<Source, Topic[]>>;
   nextPages?: Partial<Record<Source, number | null>>;
   sourceCursors?: Partial<Record<Source, string | null>>;
+  pinnedTopicKeys?: string[];
 };
 
 type AllFeedSourceState = {
@@ -49,6 +50,13 @@ type AllFeedSourceState = {
 
 type AggregateFeedSourcePlan = Readonly<AllFeedSourceState> &
   ({ kind: 'buffer-only' } | { kind: 'fetch'; request: PagePosition });
+
+function excludePinnedTopics(items: Topic[], pinnedKeys = new Set<string>()) {
+  for (const topic of items) {
+    if (topic.pinned === true) pinnedKeys.add(topicKey(topic));
+  }
+  return pinnedKeys.size ? items.filter((topic) => !pinnedKeys.has(topicKey(topic))) : items;
+}
 
 function isCursorTopic(value: unknown, source: Source): value is Topic {
   return (
@@ -64,27 +72,38 @@ function isCursorTopic(value: unknown, source: Source): value is Topic {
   );
 }
 
-function decodeAllFeedCursor(cursor: string | undefined, sources: readonly Source[]): AllFeedSourceState[] {
-  const empty = (): AllFeedSourceState[] => sources.map((source) => ({ source, buffer: [] }));
+function decodeAllFeedCursor(cursor: string | undefined, sources: readonly Source[]) {
+  const empty = () => ({
+    sourceStates: sources.map<AllFeedSourceState>((source) => ({ source, buffer: [] })),
+    pinnedKeys: new Set<string>()
+  });
   if (!cursor) return empty();
   try {
     const parsed = JSON.parse(decodeURIComponent(cursor)) as AllFeedCursorWire;
-    return sources.map((source) => {
+    const pinnedKeys = new Set(
+      Array.isArray(parsed.pinnedTopicKeys)
+        ? parsed.pinnedTopicKeys.filter(
+            (key) => typeof key === 'string' && sources.some((source) => key.startsWith(`${source}:`))
+          )
+        : []
+    );
+    const sourceStates = sources.map((source) => {
       const buffer = parsed.buffers?.[source];
       const items = Array.isArray(buffer) ? buffer.filter((topic) => isCursorTopic(topic, source)) : [];
       const cursor = parsed.sourceCursors?.[source];
       return {
         source,
-        buffer: items,
+        buffer: excludePinnedTopics(items, pinnedKeys),
         continuation: pagePosition(parsed.nextPages?.[source], typeof cursor === 'string' ? cursor : undefined)
       };
     });
+    return { sourceStates, pinnedKeys };
   } catch {
     return empty();
   }
 }
 
-function encodeAllFeedCursor(states: readonly AllFeedSourceState[]) {
+function encodeAllFeedCursor(states: readonly AllFeedSourceState[], pinnedKeys: ReadonlySet<string>) {
   const buffers: Partial<Record<Source, Topic[]>> = {};
   const nextPages: Partial<Record<Source, number | null>> = {};
   const sourceCursors: Partial<Record<Source, string | null>> = {};
@@ -100,7 +119,14 @@ function encodeAllFeedCursor(states: readonly AllFeedSourceState[]) {
   if (!Object.keys(buffers).length && !Object.keys(nextPages).length && !Object.keys(sourceCursors).length) {
     return undefined;
   }
-  return encodeURIComponent(JSON.stringify({ buffers, nextPages, sourceCursors }));
+  return encodeURIComponent(
+    JSON.stringify({
+      buffers,
+      nextPages,
+      sourceCursors,
+      pinnedTopicKeys: pinnedKeys.size ? [...pinnedKeys] : undefined
+    })
+  );
 }
 
 function includedAggregateSources(includedSources: readonly Source[] | undefined, sources: readonly Source[]) {
@@ -165,7 +191,7 @@ export async function getFeed({
         const sources = includedAggregateSources(includedSources, sourceValues).filter(
           (item) => !unavailableSourceSet.has(item)
         );
-        const sourceStates = decodeAllFeedCursor(cursor, sources);
+        const { sourceStates, pinnedKeys } = decodeAllFeedCursor(cursor, sources);
         const bufferedItems = sourceStates.flatMap((state) => state.buffer);
         const hasRetryableCursor = Boolean(
           cursor && sourceStates.some((state) => state.buffer.length || state.continuation)
@@ -222,11 +248,14 @@ export async function getFeed({
               (value) => {
                 if (onProgress && page === 1 && !cursor && !signal?.aborted && value.items.length && previewLimit) {
                   // Reserve each source's share so already visible posts survive the final balanced page.
-                  visibleItems = mergeTopics(
-                    visibleItems,
-                    sortFeedTopicsByTime(mergeTopics([], value.items)).slice(0, previewLimit)
+                  const preview = sortTopicsByTime(mergeTopics([], excludePinnedTopics(value.items))).slice(
+                    0,
+                    previewLimit
                   );
-                  onProgress({ items: visibleItems, errors: {} });
+                  if (preview.length) {
+                    visibleItems = mergeTopics(visibleItems, preview);
+                    onProgress({ items: visibleItems, errors: {} });
+                  }
                 }
                 if (diagnosticTrace) {
                   markDiagnosticStage(diagnosticTrace, 'transport', {
@@ -257,13 +286,12 @@ export async function getFeed({
           })
         );
         if (signal?.aborted) throw new Error(REQUEST_CANCELED_MESSAGE);
-        const items = mergeTopics(
-          [],
-          sortFeedTopicsByTime([
-            ...bufferedItems,
-            ...results.flatMap((result) => (result.status === 'fulfilled' ? result.value.items : []))
-          ])
-        );
+        const candidates = [
+          ...bufferedItems,
+          ...results.flatMap((result) => (result.status === 'fulfilled' ? result.value.items : []))
+        ];
+        const unpinnedCandidates = excludePinnedTopics(candidates, pinnedKeys);
+        const items = mergeTopics([], sortTopicsByTime(unpinnedCandidates));
         const balanced = balanceTopicsBySource(items).slice(0, limit);
         const balancedKeys = new Set(balanced.map(topicKey));
         const selected = mergeTopics(
@@ -303,7 +331,7 @@ export async function getFeed({
                 : undefined
           };
         });
-        const nextCursor = encodeAllFeedCursor(nextStates);
+        const nextCursor = encodeAllFeedCursor(nextStates, pinnedKeys);
         const response = {
           items: selected,
           errors: mergeSettledSourceErrors(results, sources),
@@ -323,7 +351,10 @@ export async function getFeed({
             partialErrorCount: facts.partialErrorCount,
             missingFloorCount: facts.missingFloorCount,
             hasRepeatedCursor: facts.hasRepeatedCursor || response.nextPage === page || response.nextCursor === cursor,
-            isExpectedEmpty: selected.length === 0 && facts.droppedCount === 0 && (page > 1 || Boolean(category))
+            isExpectedEmpty:
+              selected.length === 0 &&
+              (candidates.length > unpinnedCandidates.length ||
+                (facts.droppedCount === 0 && (page > 1 || Boolean(category))))
           }
         );
       },

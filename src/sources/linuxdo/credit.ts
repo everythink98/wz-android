@@ -6,6 +6,7 @@ import {
   type LinuxDoCreditPage
 } from '@/domain/forum/linuxDoCredit';
 import { isCloudflareChallengeResponse, LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
+import { acceptForumReadResponse } from '@/sources/forumSourceReadAttempt';
 import { fetchWithTimeout, RequestCanceledError, type Fetcher } from '@/platform/network/request';
 import { LINUXDO_BASE_URL, linuxDoRequestError } from './protocol';
 
@@ -45,7 +46,7 @@ async function readCreditJson(
   path: '/oauth/user-info' | '/order/transactions',
   options: LinuxDoCreditOptions,
   body?: { page: number; page_size: number }
-): Promise<unknown> {
+): Promise<{ data: unknown; response: Response }> {
   if (options.signal?.aborted) throw new RequestCanceledError();
   let response: Response;
   let bodyText: string;
@@ -89,7 +90,7 @@ async function readCreditJson(
     return invalidResponse();
   }
   if (!isRecord(envelope) || envelope.error_msg !== '' || !('data' in envelope)) return invalidResponse();
-  return envelope.data;
+  return { data: envelope.data, response };
 }
 
 async function readForumIdentity(options: LinuxDoCreditOptions): Promise<{ userId: string; username: string }> {
@@ -133,12 +134,13 @@ async function readForumIdentity(options: LinuxDoCreditOptions): Promise<{ userI
   if (!/^[1-9]\d*$/.test(userId) || !matchesIdentity) {
     throw new LinuxDoCreditError('identity-mismatch', '当前 L 站登录账号已变化，请先核对账号');
   }
+  acceptForumReadResponse(response);
   return { userId, username };
 }
 
 export async function getLinuxDoCreditAccount(options: LinuxDoCreditOptions): Promise<LinuxDoCreditAccount> {
   const forumIdentity = await readForumIdentity(options);
-  const data = await readCreditJson('/oauth/user-info', options);
+  const { data, response } = await readCreditJson('/oauth/user-info', options);
   if (!isRecord(data)) return invalidResponse();
   const userId = readId(data.id);
   const username = readText(data.username);
@@ -146,12 +148,14 @@ export async function getLinuxDoCreditAccount(options: LinuxDoCreditOptions): Pr
   if (userId !== forumIdentity.userId || username !== forumIdentity.username) {
     throw new LinuxDoCreditError('identity-mismatch', 'LDC 登录的账号与当前 L 站账号不一致，请前往官网核对');
   }
-  return {
+  const account = {
     userId,
     username,
     availableBalance: readAmount(data.available_balance),
     pendingBalance: readAmount(data.pending_balance)
   };
+  acceptForumReadResponse(response);
+  return account;
 }
 
 function readEntry(value: unknown, userId: string): LinuxDoCreditEntry {
@@ -209,7 +213,10 @@ export async function getLinuxDoCreditTransactions(
 ): Promise<LinuxDoCreditPage> {
   if (!Number.isSafeInteger(options.page) || options.page < 1) return invalidResponse();
   const account = await getLinuxDoCreditAccount(options);
-  const data = await readCreditJson('/order/transactions', options, { page: options.page, page_size: PAGE_SIZE });
+  const { data, response } = await readCreditJson('/order/transactions', options, {
+    page: options.page,
+    page_size: PAGE_SIZE
+  });
   if (
     !isRecord(data) ||
     data.page !== options.page ||
@@ -225,6 +232,7 @@ export async function getLinuxDoCreditTransactions(
   }
   const entries = data.orders.map((entry) => readEntry(entry, account.userId));
   if (new Set(entries.map((entry) => entry.id)).size !== entries.length) return invalidResponse();
+  acceptForumReadResponse(response);
   return {
     userId: account.userId,
     entries,

@@ -248,8 +248,7 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     onOpenUser: stableOpenUser,
     nodeSeekMediaUserAgent: runtime.nodeSeekMediaUserAgent,
     selectedTopic,
-    settings: runtime.reader.data.settings,
-    styleSettings: runtime.readerStyle.settings,
+    settings: runtime.readerStyle.settings,
     theme: runtime.readerStyle.theme,
     topicDetail: topicLayoutDetail,
     webViewBlockMessage: runtime.networkProxyWebViewBlockMessage
@@ -321,7 +320,12 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     topicReplies,
     topicSession
   });
-  const closeReplyComposer = useCallback(() => topicComposer.toggle(false), [topicComposer]);
+  const closeReplyComposerRequest = useRef<(() => void) | null>(null);
+  const closeReplyComposer = useCallback(() => {
+    const request = closeReplyComposerRequest.current;
+    if (request) request();
+    else topicComposer.toggle(false);
+  }, [topicComposer]);
   const verifyLinuxDo = useCallback(() => {
     if (topic.source !== 'linuxdo') return;
     return runtime.account.showLinuxDoVerification(topicError?.message, {
@@ -384,6 +388,7 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
             <TopicScreen
               active={active}
               composerRouteFocused={focused}
+              closeReplyComposerRequest={closeReplyComposerRequest}
               actions={actions}
               article={{
                 busy: topicBusy,

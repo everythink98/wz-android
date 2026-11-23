@@ -71,6 +71,57 @@ describe('NodeSeek profile error recovery', () => {
   const lookup = '/api/account/find/alice';
   const profilePath = '/api/account/getInfo/7';
 
+  it.each(['topics', 'replies'] as const)(
+    'retries a failed first-page %s refresh without reading cached later pages',
+    async (lane) => {
+      let failing = false;
+      const fixture = setup('nodeseek', false, (url) => {
+        const requested = laneFor(url);
+        if (requested === 'details')
+          return Response.json({
+            success: true,
+            detail: { member_id: 7, member_name: 'alice', nPost: 16, nComment: 16 }
+          });
+        if (requested !== lane) return;
+        if (failing) return new Response('activity unavailable', { status: 503 });
+        const page = Number(new URL(url).searchParams.get('page'));
+        const row = { post_id: page, title: '主题样本', floor_id: 2, text: '回复样本' };
+        return Response.json({ success: true, [lane === 'topics' ? 'discussions' : 'comments']: [row] });
+      });
+      const hook = await fixture.mount();
+      try {
+        await waitFor(() => expect(hook.result.current.userProfile?.[lane]).toHaveLength(1));
+        await act(async () => {
+          await (lane === 'topics'
+            ? hook.result.current.loadMoreUserTopics()
+            : hook.result.current.loadMoreUserReplies());
+        });
+        await waitFor(() => expect(hook.result.current.userProfile?.[lane]).toHaveLength(2));
+        failing = true;
+        await act(async () => {
+          await expect(hook.result.current.refreshUser()).resolves.toBe('failed');
+        });
+        await waitFor(() =>
+          expect(
+            lane === 'topics' ? hook.result.current.userTopicsError : hook.result.current.userRepliesError
+          ).not.toBeNull()
+        );
+        expect(hook.result.current.userProfile?.[lane]).toHaveLength(2);
+        const before = fixture.urls.length;
+        failing = false;
+        await act(async () => {
+          await (lane === 'topics' ? hook.result.current.retryUserTopics() : hook.result.current.retryUserReplies());
+        });
+        expect(fixture.urls.slice(before).map((url) => [laneFor(url), new URL(url).searchParams.get('page')])).toEqual([
+          [lane, '1']
+        ]);
+        await waitFor(() => expect(hook.result.current.userProfile?.[lane]).toHaveLength(1));
+      } finally {
+        await hook.unmount();
+      }
+    }
+  );
+
   it.each([
     { label: 'retries username resolution', failedPath: lookup, leaves: false },
     { label: 'retries the resolved profile', failedPath: profilePath, leaves: false },

@@ -1,5 +1,13 @@
+import { TextNode } from 'node-html-parser';
 import { positiveInteger } from '@/domain/forum/numericValues';
-import { isRecord, recordText as text, textContentFromHtml, toIsoString } from '@/domain/forum/html';
+import {
+  escapeHtmlText,
+  isRecord,
+  parseHtml,
+  recordText as text,
+  textContentFromHtml,
+  toIsoString
+} from '@/domain/forum/html';
 import type { DiscoursePostPolicy } from '@/domain/forum/discoursePolicy';
 import { discoursePostPolicy } from '@/sources/discourse/policy';
 import { notificationPageQuality } from '@/domain/notifications/notificationQuality';
@@ -135,6 +143,19 @@ function withoutOwnConversationActor(item: ForumNotification, ownUsername?: stri
   return { ...item, actor };
 }
 
+function discourseNotificationTitle(value: Record<string, unknown>, data: Record<string, unknown> = {}) {
+  const plain =
+    text(value, 'title', 'topic_title', 'unicode_title') || text(data, 'topic_title', 'title', 'unicode_title');
+  if (plain) return plain;
+  const fancy = text(value, 'fancy_title') || text(data, 'fancy_title');
+  if (!/<img\b/i.test(fancy)) return textContentFromHtml(fancy);
+  const root = parseHtml(fancy);
+  for (const img of root.querySelectorAll('img[alt]')) {
+    img.replaceWith(new TextNode(escapeHtmlText(img.getAttribute('alt'))));
+  }
+  return textContentFromHtml(root.toString());
+}
+
 function parseNotification(value: unknown, ownUsername?: string): ForumNotification | null {
   if (!isRecord(value)) return null;
   const id = text(value, 'id');
@@ -152,8 +173,7 @@ function parseNotification(value: unknown, ownUsername?: string): ForumNotificat
   const slug = text(value, 'slug') || text(data, 'topic_slug');
   const baseUrl = LINUXDO_BASE_URL;
   const createdValue = text(value, 'created_at');
-  const title =
-    text(value, 'fancy_title') || text(data, 'topic_title', 'fancy_title', 'message', 'badge_name') || '站内消息';
+  const title = discourseNotificationTitle(value, data) || text(data, 'message', 'badge_name') || '站内消息';
   const preview = textContentFromHtml(text(data, 'excerpt', 'post_excerpt', 'description'));
   const avatarTemplate = text(value, 'acting_user_avatar_template') || text(data, 'avatar_template');
   const kind = notificationKind(value.notification_type);
@@ -295,7 +315,7 @@ function privateMessageItems(data: Record<string, unknown>, ownUsername: string,
           name: actorName,
           ...(avatarTemplate ? { avatarUrl: discourseAvatarUrl(avatarTemplate, LINUXDO_BASE_URL) } : {})
         },
-        title: text(value, 'fancy_title', 'title') || '个人信息',
+        title: discourseNotificationTitle(value) || '个人信息',
         createdAt: toIsoString(createdValue) || null,
         ...(!toIsoString(createdValue) && createdValue ? { displayTime: createdValue } : {}),
         unread,
@@ -446,10 +466,29 @@ export const linuxDoNotificationAdapter = {
     });
     const candidateCount = rawRows.length;
     const validCount = items.length + filteredCount;
-    const nextOffset = offset + rawRows.length;
-    const total = Number(data.total_rows_notifications ?? data.total_rows ?? 0);
+    let serverOffset: number | undefined;
+    if (typeof data.load_more_notifications === 'string') {
+      try {
+        const link = new URL(data.load_more_notifications, LINUXDO_BASE_URL);
+        const next = positiveInteger(link.searchParams.get('offset'));
+        if (
+          link.origin === LINUXDO_BASE_URL &&
+          /^\/notifications(?:\.json)?$/.test(link.pathname) &&
+          next &&
+          next > offset
+        )
+          serverOffset = next;
+      } catch {
+        /* A malformed optional link leaves the row-count cursor in place. */
+      }
+    }
+    const nextOffset = serverOffset ?? offset + rawRows.length;
+    const total = Number(data.total_rows_notifications ?? data.total_rows ?? NaN);
     const hasMore =
-      rawRows.length > 0 && (data.load_more_notifications === true || (Number.isFinite(total) && total > nextOffset));
+      nextOffset > offset &&
+      (Number.isSafeInteger(total) && total >= 0
+        ? total > nextOffset
+        : rawRows.length > 0 && (serverOffset !== undefined || data.load_more_notifications === true));
     return annotateSourceDiagnosticSummary(
       {
         items,

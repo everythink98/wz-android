@@ -5,7 +5,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
-import { createTheme } from '@/ui/theme/tokens';
+import { resolveReaderStyleSettings, createTheme } from '@/ui/theme/tokens';
 import { accountVisualScenarios } from './scenarios/account/manifest';
 import { dataVisualScenarios } from './scenarios/data/manifest';
 import { feedVisualScenarios } from './scenarios/feed/manifest';
@@ -64,7 +64,7 @@ export function VisualScenarioView({
   const theme = createTheme(settings);
   return (
     <QueryClientProvider client={queryClient}>
-      <ReaderStyleProvider value={{ settings, theme }}>
+      <ReaderStyleProvider value={{ settings: resolveReaderStyleSettings(settings), theme }}>
         <PortalProvider>
           <View key={id} style={[styles.root, { backgroundColor: theme.background }]}>
             {/* Fullscreen portals keep window coordinates; only the ordinary scene consumes vertical insets. */}

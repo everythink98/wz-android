@@ -12,6 +12,7 @@
   --reader-radius-content: 10px;
   --tt-shadow-elevated-md: 0 8px 24px rgb(0 0 0 / 16%);
   --font-scale: 1;
+  --ui-font-scale: 1;
   background: var(--surface);
   color: var(--ink);
   font-family:
@@ -20,7 +21,7 @@
     BlinkMacSystemFont,
     'Segoe UI',
     sans-serif;
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale));
 }
 
 * {
@@ -108,7 +109,7 @@ select:focus-visible {
   min-height: 64px;
   padding: 8px 4px;
   gap: 6px;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale));
   font-weight: 500;
   line-height: 1.35;
 }
@@ -204,7 +205,7 @@ select:focus-visible {
   border-radius: var(--tt-radius-md);
   background: transparent;
   color: var(--ink);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale));
   font-weight: 600;
   line-height: 1;
   touch-action: manipulation;
@@ -270,7 +271,7 @@ select:focus-visible {
   outline: none;
   background: var(--surface);
   color: var(--ink);
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale));
   font-weight: 400;
   line-height: 1.5;
 }
@@ -325,7 +326,7 @@ select:focus-visible {
   background: transparent;
   color: inherit;
   outline: none;
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale));
   font-weight: 550;
   text-align: left;
   user-select: none;
@@ -357,7 +358,7 @@ select:focus-visible {
   display: grid;
   gap: 6px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale));
   font-weight: 650;
 }
 .tiptap-link-actions {
@@ -652,7 +653,7 @@ select:focus-visible {
   position: static;
   z-index: 20;
   display: flex;
-  flex: 0 0 288px;
+  flex: 0 1 288px;
   min-height: 0;
   max-height: 60%;
   border-top: 1px solid var(--line);
@@ -703,7 +704,7 @@ select:focus-visible {
   background: var(--surface);
 }
 .builder-header strong {
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale));
   font-weight: 600;
   letter-spacing: -0.01em;
 }
@@ -718,7 +719,7 @@ select:focus-visible {
   flex-direction: column;
   gap: 7px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale));
   font-weight: 650;
   line-height: 1.35;
 }
@@ -737,7 +738,7 @@ select:focus-visible {
   margin: 0 0 7px;
   padding: 0;
   color: var(--muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale));
   font-weight: 650;
   line-height: 1.35;
 }
@@ -749,13 +750,13 @@ select:focus-visible {
 .poll-option-row {
   display: grid;
   min-width: 0;
-  grid-template-columns: 24px minmax(0, 1fr) 48px;
+  grid-template-columns: minmax(24px, max-content) minmax(0, 1fr) 48px;
   align-items: center;
   gap: 8px;
 }
 .poll-option-number {
   color: var(--muted);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale));
   font-variant-numeric: tabular-nums;
   text-align: center;
 }
@@ -839,7 +840,7 @@ select:focus-visible {
 }
 .group-chip.tiptap-button small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--ui-font-scale));
   font-weight: 500;
 }
 .group-chip.tiptap-button.unavailable {
@@ -851,7 +852,7 @@ select:focus-visible {
   justify-content: space-between;
   gap: 8px;
   color: var(--danger);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale));
   font-weight: 600;
 }
 .inline-retry .tiptap-button {
@@ -863,7 +864,7 @@ select:focus-visible {
   align-items: center;
   gap: 9px;
   color: var(--ink);
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale));
   font-weight: 550;
 }
 .tiptap-field.check input[type='checkbox'] {
@@ -896,7 +897,7 @@ select:focus-visible {
 .hint {
   margin: 0;
   color: var(--muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale));
   line-height: 1.5;
 }
 .error {
@@ -919,7 +920,7 @@ select:focus-visible {
   border: 1px solid var(--line);
   background: var(--surface);
   color: var(--ink);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale));
   font-weight: 600;
   line-height: 1.35;
   text-align: left;
@@ -1014,7 +1015,7 @@ select:focus-visible {
   border-radius: 0;
   background: transparent;
   color: var(--ink);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale));
 }
 .category-rail .tiptap-button[data-active-state='on'] {
   box-shadow: inset 0 -2px 0 var(--primary);
@@ -1066,7 +1067,7 @@ select:focus-visible {
   border-radius: 6px;
   background: var(--surface-2);
   color: var(--muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale));
 }
 .emoji-grid .tiptap-button {
   min-height: 48px;

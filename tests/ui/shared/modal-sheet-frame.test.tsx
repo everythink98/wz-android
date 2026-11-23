@@ -128,4 +128,28 @@ describe('ModalSheetFrame', () => {
       Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatform });
     }
   });
+
+  it('initializes legacy avoidance from a keyboard already open in the modal window', async () => {
+    const platform = jest.replaceProperty(Platform, 'OS', 'android');
+    const metrics = jest
+      .spyOn(Keyboard, 'metrics')
+      .mockReturnValue({ screenY: 480, screenX: 0, width: 400, height: 320 });
+    const visible = jest.spyOn(Keyboard, 'isVisible').mockReturnValue(true);
+    try {
+      const view = await render(
+        <ModalSheetFrame visible backdropLabel="关闭" onRequestClose={() => {}}>
+          <Text>内容</Text>
+        </ModalSheetFrame>
+      );
+      const root = view.getByTestId('keyboard-avoiding-view');
+      for (const height of [800, 480]) {
+        await fireEvent(root, 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 400, height } } });
+        expect(StyleSheet.flatten(root.props.style).paddingBottom ?? 0).toBe(Math.max(0, height - 480));
+      }
+    } finally {
+      visible.mockRestore();
+      metrics.mockRestore();
+      platform.restore();
+    }
+  });
 });

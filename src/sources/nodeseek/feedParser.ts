@@ -288,32 +288,22 @@ export function searchPath(query: string, page = 1, filter?: NodeSeekSearchFilte
 
 export function nextSearchPath(document: NodeSeekPageDocument, fallbackPage: number) {
   const { root } = document;
-  const links = [...root.querySelectorAll('a[rel="next"]'), ...root.querySelectorAll('a[href*="page="]')];
-  const href = links
-    .map((link) => ({
-      href: link.getAttribute('href') || '',
-      label: elementText(link),
-      rel: String(link.getAttribute('rel') || '')
-    }))
-    .find(
-      (link) =>
-        link.href &&
-        (/next/i.test(link.rel) || /下一|Next/i.test(link.label) || link.href.includes(`page=${fallbackPage}`))
-    )?.href;
-
-  if (!href) {
-    return null;
-  }
-
-  try {
-    const url = new URL(href, BASE_URL);
-    if (!isNodeSeekHost(url.hostname) || url.pathname !== '/search') {
-      return null;
+  for (const link of root.querySelectorAll('a[href*="page="]')) {
+    try {
+      const url = new URL(link.getAttribute('href') || '', `${BASE_URL}/search`);
+      const pages = url.searchParams.getAll('page');
+      if (
+        isNodeSeekHost(url.hostname) &&
+        url.pathname === '/search' &&
+        pages.length === 1 &&
+        pages[0] === String(fallbackPage)
+      )
+        return `${url.pathname}${url.search}`;
+    } catch {
+      continue;
     }
-    return `${url.pathname}${url.search}`;
-  } catch {
-    return null;
   }
+  return null;
 }
 
 export function listPath(page: number, category?: string, feedFilter: NodeSeekFeedFilter = 'postTime') {

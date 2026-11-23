@@ -140,8 +140,9 @@ export function AccountHosts({
         loadingLinuxDoPage={view.loadingLinuxDoPage}
         loadingNodeImageAuthPage={nodeImage.panel.loading}
         mountLinuxDoWebView={view.mountLinuxDoWebView}
-        nodeImageAuthDocument={authBlock('nodeseek') ? null : nodeImage.panel.document}
-        nodeImageAuthError={authBlock('nodeseek') || nodeImage.panel.error}
+        nodeImageAuthDocument={nodeImage.panel.document}
+        nodeImageAuthError={nodeImage.panel.error}
+        nodeImageWebViewBlockMessage={authBlock('nodeseek')}
         nodeImageAuthWebViewRef={nodeImage.panel.webViewRef}
         resetLinuxDoWebView={verification.resetLinuxDoWebView}
         setLinuxDoWebViewErrorForSession={verification.setLinuxDoWebViewErrorForSession}

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { createRoot as createObservedRoot } from 'test-renderer';
 import { createEmptyReaderData as createObservedReaderData } from '@/domain/reader/readerData';
 import { ReaderStyleProvider as ObservedReaderStyles } from '@/ui/theme/ReaderStyleProvider';
-import { createTheme as createObservedTheme } from '@/ui/theme/tokens';
+import { resolveReaderStyleSettings, createTheme as createObservedTheme } from '@/ui/theme/tokens';
 import { act, fireEvent, render, waitFor, within } from '../render';
 import React, { useLayoutEffect as useObservedLayoutEffect } from 'react';
 import { NativeModules, PixelRatio, Pressable, StyleSheet, Text } from 'react-native';
@@ -37,6 +37,7 @@ const mockDeferredAnimationCallbacks: (() => void)[] = [];
 let mockDeferRNCallbacks = false;
 const mockDeferredRNCallbacks: (() => void)[] = [];
 let mockZoomNextToken = 0;
+let mockZoomRenders = 0;
 const mockZoomResets = jest.fn<(index: string) => void>();
 const mockPreviewImageUnmounts = jest.fn<(testID: string) => void>();
 let mockPreviewImageNextToken = 0;
@@ -296,6 +297,7 @@ jest.mock('react-native-zoom-toolkit', () => {
         if (token.current === 0) {
           token.current = ++mockZoomNextToken;
         }
+        mockZoomRenders++;
         const index = children.props.testID?.replace('preview-zoom-content-', '') || 'unknown';
         ReactModule.useImperativeHandle(ref, () => ({
           getState: () => ({
@@ -1157,7 +1159,9 @@ describe('Image preview', () => {
       const lateError: (() => void) | undefined = failedImage.props.onError;
       await fireEvent(failedImage, 'error');
       await waitFor(() => expect(view.getByText('图片加载失败')).toBeTruthy());
+      const rendersBeforeRetry = mockZoomRenders;
       await fireEvent.press(view.getByLabelText('重试加载图片'));
+      expect(mockZoomRenders - rendersBeforeRetry).toBe(1);
 
       await act(async () => lateDisplay());
 
@@ -1499,6 +1503,9 @@ describe('Image preview', () => {
 
     await fireEvent.press(view.getByLabelText('保存图片'));
     expect(view.getByText('保存中…')).toBeTruthy();
+    const saveButton = StyleSheet.flatten(view.getByLabelText('保存图片').props.style);
+    expect(saveButton.height).toBeUndefined();
+    expect(saveButton.minHeight).toBeGreaterThanOrEqual(44);
     expect(view.getByLabelText('保存图片').props.accessibilityState).toEqual({ busy: true, disabled: true });
     await fireEvent.press(view.getByLabelText('保存图片'));
     expect(onSave).toHaveBeenCalledTimes(1);
@@ -1561,7 +1568,9 @@ describe('Image preview', () => {
       await fireEvent(image, 'loadStart');
 
       await act(async () => jest.advanceTimersByTime(20_000));
+      const rendersBeforeProgress = mockZoomRenders;
       await fireEvent(image, 'progress', { loaded: 1_024, total: 8_192 });
+      expect(mockZoomRenders).toBe(rendersBeforeProgress);
       await act(async () => jest.advanceTimersByTime(20_000));
       expect(view.queryByText('图片加载失败')).toBeNull();
 
@@ -2318,7 +2327,9 @@ describe('Image preview', () => {
       try {
         await act(async () =>
           root.render(
-            <ObservedReaderStyles value={{ settings, theme: createObservedTheme(settings) }}>
+            <ObservedReaderStyles
+              value={{ settings: resolveReaderStyleSettings(settings), theme: createObservedTheme(settings) }}
+            >
               <Harness />
             </ObservedReaderStyles>
           )
@@ -2371,7 +2382,9 @@ describe('Image preview', () => {
       try {
         await act(async () =>
           root.render(
-            <ObservedReaderStyles value={{ settings, theme: createObservedTheme(settings) }}>
+            <ObservedReaderStyles
+              value={{ settings: resolveReaderStyleSettings(settings), theme: createObservedTheme(settings) }}
+            >
               <Harness />
             </ObservedReaderStyles>
           )

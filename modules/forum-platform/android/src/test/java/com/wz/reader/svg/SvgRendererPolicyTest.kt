@@ -9,6 +9,19 @@ import org.junit.Test
 
 class SvgRendererPolicyTest {
   @Test
+  fun lookupPreservesTheRequestedPosterWhenTheDirectoryIsOverBudget() {
+    val directory = java.nio.file.Files.createTempDirectory("svg-cache-test").toFile()
+    try {
+      val requested = directory.resolve("old.png").apply { writeText("fixture"); setLastModified(1L) }
+      repeat(MAX_POSTER_CACHE_FILES) { directory.resolve("new-$it.png").writeText("fixture") }
+      assertTrue(findCachedSvgPoster(requested) { it.isFile })
+      assertEquals(MAX_POSTER_CACHE_FILES, directory.listFiles()!!.size)
+    } finally {
+      directory.deleteRecursively()
+    }
+  }
+
+  @Test
   fun enforcesDecodedInputAndCacheKeyLimits() {
     validateDecodedSvgSize(ByteArray(MAX_SVG_BYTES))
     assertThrows(Exception::class.java) {

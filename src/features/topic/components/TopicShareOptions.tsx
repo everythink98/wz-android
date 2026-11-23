@@ -8,11 +8,12 @@ import { errorMessage } from '@/platform/network/errors';
 import { ModalSheetFrame, ModalSheetHeader } from '@/ui/controls/ModalSheetFrame';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import {
-  createReaderFontSizer,
+  createUiFontSizer,
   fontFamilyValue,
   readerRadii,
   type ReaderStyleSettings,
-  type ReaderTheme
+  type ReaderTheme,
+  textSizeStyle
 } from '@/ui/theme/tokens';
 
 type ShareActivity =
@@ -154,8 +155,8 @@ export function TopicShareOptions({
 }
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
-  const font = createReaderFontSizer(settings);
-  const fontFamily = fontFamilyValue(settings.fontFamily);
+  const font = createUiFontSizer(settings);
+  const fontFamily = fontFamilyValue(settings.uiFontFamily);
   return StyleSheet.create({
     content: { flexShrink: 1 },
     topic: {
@@ -165,8 +166,8 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       borderColor: theme.line,
       gap: 6
     },
-    title: { fontFamily, fontSize: font(15), lineHeight: font(22), color: theme.ink, fontWeight: '500' },
-    source: { fontFamily, fontSize: font(12), color: theme.muted },
+    title: { fontFamily, ...textSizeStyle(font(15), font(22)), color: theme.ink, fontWeight: '500' },
+    source: { fontFamily, ...textSizeStyle(font(12)), color: theme.muted },
     action: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -186,9 +187,9 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       justifyContent: 'center'
     },
     labelGroup: { flex: 1, gap: 3 },
-    label: { fontFamily, fontSize: font(15), fontWeight: '600', color: theme.ink },
-    description: { fontFamily, fontSize: font(12), lineHeight: font(18), color: theme.muted },
-    feedback: { fontFamily, color: theme.success, fontSize: font(13), paddingVertical: 8 },
-    error: { fontFamily, color: theme.danger, fontSize: font(13), paddingVertical: 8 }
+    label: { fontFamily, ...textSizeStyle(font(15)), fontWeight: '600', color: theme.ink },
+    description: { fontFamily, ...textSizeStyle(font(12), font(18)), color: theme.muted },
+    feedback: { fontFamily, color: theme.success, ...textSizeStyle(font(13)), paddingVertical: 8 },
+    error: { fontFamily, color: theme.danger, ...textSizeStyle(font(13)), paddingVertical: 8 }
   });
 }

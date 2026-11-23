@@ -82,11 +82,9 @@ export function FixedComposerPanel({
   const hiddenLayoutHeight =
     !contentReady || height <= 0
       ? undefined
-      : dynamicContent
-        ? desiredHeight
-        : presentation === 'fullscreen'
-          ? height
-          : Math.min(height, desiredHeight);
+      : !dynamicContent && presentation === 'fullscreen'
+        ? height
+        : Math.min(Math.max(0, height - insets.top), desiredHeight);
   const measureContent = useCallback((event: LayoutChangeEvent) => {
     setContentHeight(event.nativeEvent.layout.height);
   }, []);
@@ -125,16 +123,22 @@ export function FixedComposerPanel({
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
       foreground.set(state === 'active');
-      if (!Keyboard.isVisible()) ignoreOldKeyboard.set(true);
+      ignoreOldKeyboard.set(!Keyboard.isVisible());
     });
-    return () => subscription.remove();
+    const show = Keyboard.addListener('keyboardDidShow', () => ignoreOldKeyboard.set(false));
+    return () => {
+      subscription.remove();
+      show.remove();
+    };
   }, [foreground, ignoreOldKeyboard]);
   useAnimatedReaction(
-    () => keyboard?.state.value,
-    (state, previous) => {
-      if (foreground.value && state === KeyboardState.OPENING && previous !== KeyboardState.OPENING) {
-        ignoreOldKeyboard.set(false);
-      }
+    () =>
+      foreground.value &&
+      keyboard !== null &&
+      (keyboard.state.value === KeyboardState.OPENING ||
+        (keyboard.state.value === KeyboardState.CLOSED && keyboard.height.value === 0)),
+    (freshFrame) => {
+      if (freshFrame) ignoreOldKeyboard.set(false);
     }
   );
   useAnimatedReaction(
@@ -163,7 +167,8 @@ export function FixedComposerPanel({
     const viewportHeight = Math.max(0, height - keyboardOverlap);
     // Measurements determine animation travel only. Native layout resizes a
     // dynamic panel with its children, without waiting for the onLayout commit.
-    const sheetPanelHeight = dynamicContent ? desiredHeight : Math.min(viewportHeight, desiredHeight);
+    const availableSheetHeight = Math.max(0, viewportHeight - insets.top);
+    const sheetPanelHeight = Math.min(availableSheetHeight, desiredHeight);
     const panelHeight = dynamicContent
       ? sheetPanelHeight
       : sheetPanelHeight + (viewportHeight - sheetPanelHeight) * fullscreenProgress.value;
@@ -173,7 +178,10 @@ export function FixedComposerPanel({
       display: !presented && openProgress.value === 0 ? 'none' : 'flex',
       bottom: 0,
       height: dynamicContent ? undefined : panelHeight,
-      maxHeight: maxDynamicContentHeight === undefined ? undefined : maxDynamicContentHeight + insets.bottom,
+      maxHeight:
+        maxDynamicContentHeight === undefined
+          ? undefined
+          : Math.min(maxDynamicContentHeight + insets.bottom, availableSheetHeight),
       // Keep the IME edge anchored even when Fabric applies the new height later.
       transform: [{ translateY: -keyboardOverlap + panelHeight * (1 - openProgress.value) }],
       paddingBottom: insets.bottom,

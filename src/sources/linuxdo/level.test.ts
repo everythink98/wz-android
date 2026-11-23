@@ -27,6 +27,26 @@ describe('linux.do level profile', () => {
     vi.clearAllMocks();
   });
 
+  it('rejects an unrelated summary response before creating a zero-progress snapshot', async () => {
+    const fetcher = vi.fn(async (url: string) =>
+      Response.json(
+        url.includes('/session/current') ? { current_user: { username: 'alice', trust_level: 1 } } : { success: true }
+      )
+    );
+    await expect(getLinuxDoLevelProfile({ fetcher })).rejects.toThrow('等级数据');
+    expect(AsyncStorage.setItem).not.toHaveBeenCalled();
+  });
+
+  it('surfaces verification when the current session is needed to resolve the summary', async () => {
+    const fetcher = vi.fn(async (url: string) =>
+      url.includes('/session/current')
+        ? new Response('', { status: 403, headers: { 'cf-mitigated': 'challenge' } })
+        : Response.json({ user_summary: { days_visited: 1 } })
+    );
+    await expect(getLinuxDoLevelProfile({ fetcher })).rejects.toMatchObject({ verificationRequired: true });
+    expect(AsyncStorage.setItem).not.toHaveBeenCalled();
+  });
+
   it('cancels a level read before fallback or snapshot persistence when credentials change', async () => {
     const controller = new AbortController();
     const fetcher = vi.fn(async () => {
@@ -351,6 +371,10 @@ describe('linux.do level profile', () => {
   });
 
   it('falls back to the summary estimate when official connect progress is unavailable', async () => {
+    asyncStorage.__store.set(
+      'linuxdo-level-snapshot:alice',
+      JSON.stringify({ username: 'alice', values: { 'connect:被举报帖子': 4 } })
+    );
     const requests: string[] = [];
     const directFetcher = vi.fn(async (input: string) => {
       requests.push(input);
@@ -402,6 +426,7 @@ describe('linux.do level profile', () => {
       note: expect.stringContaining('参考')
     });
     expect(profile.requirements.some((item) => item.key === 'days_visited' && item.required === 50)).toBe(true);
+    expect(JSON.parse(asyncStorage.__store.get('linuxdo-level-snapshot:alice')!).values['connect:被举报帖子']).toBe(4);
     expect(requests).toEqual(['https://linux.do/my/summary.json', 'https://connect.linux.do/']);
     expect(webViewFetcher).toHaveBeenCalledTimes(1);
   });
@@ -682,6 +707,7 @@ describe('linux.do level profile', () => {
       source: 'linuxdo',
       reason: 'cloudflare'
     });
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   it('uses the current session trust level when my summary omits it', async () => {

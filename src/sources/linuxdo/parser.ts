@@ -41,8 +41,10 @@ function redditSourceUrl(value: unknown) {
 function linuxDoContentTransform(html: unknown, polls: TopicPoll[] | undefined) {
   const pollNames = new Set((polls || []).map((poll) => poll.name).filter((name): name is string => Boolean(name)));
   const normalizeCallouts = discourseContentNeedsCalloutNormalization(html);
+  // HTML entities can spell class names, so only skip the walk for unambiguous input.
+  const canContainPolicy = typeof html !== 'string' || html.includes('policy') || html.includes('&');
   return (root: HTMLElement) => {
-    normalizeDiscoursePolicyMarkup(root);
+    if (canContainPolicy) normalizeDiscoursePolicyMarkup(root);
     for (const [selector, tagName] of [
       ['div.math', FORUM_MATH_BLOCK_TAG],
       ['span.math', FORUM_MATH_INLINE_TAG]

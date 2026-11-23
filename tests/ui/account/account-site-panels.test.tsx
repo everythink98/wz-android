@@ -14,7 +14,7 @@ import { SiteLoginHost } from '@/features/account/components/SiteLoginHost';
 import { NodeSeekAttendancePanel, NodeSeekServicesPanel } from '@/features/more/components/NodeSeekServicesPanel';
 import type { NodeSeekAttendanceBoard } from '@/domain/forum/accountData';
 import { createSiteSessionStates, type SessionSite, type SiteSessionStatus } from '@/domain/session/siteSessionState';
-import { createTheme } from '@/ui/theme/tokens';
+import { resolveReaderStyleSettings, createTheme } from '@/ui/theme/tokens';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 import { createTestStyles as createStyles } from '../styleFixture';
 
@@ -110,7 +110,7 @@ jest.mock('react-native-webview', () => {
 const readerData = createEmptyReaderData();
 const theme = createTheme(readerData.settings);
 const styles = createStyles(theme, readerData.settings, 800);
-const accountHostStyles = createAccountHostStyles(theme, readerData.settings);
+const accountHostStyles = createAccountHostStyles(theme, resolveReaderStyleSettings(readerData.settings));
 
 function session(site: SessionSite, status: SiteSessionStatus) {
   const states = createSiteSessionStates();
@@ -319,10 +319,10 @@ describe('Account site panels', () => {
   it.each(['light', 'dark'] as const)('uses the %s surface before login documents paint', async (mode) => {
     const settings = { ...readerData.settings, theme: mode };
     const theme = createTheme(settings);
-    const styles = createAccountHostStyles(theme, settings);
+    const styles = createAccountHostStyles(theme, resolveReaderStyleSettings(settings));
     for (const site of ['nodeseek', 'yaohuo', 'linuxdo'] as const) {
       const view = await render(
-        <ReaderStyleProvider value={{ settings, theme }}>
+        <ReaderStyleProvider value={{ settings: resolveReaderStyleSettings(settings), theme }}>
           {site === 'linuxdo' ? (
             <LinuxDoVerifyModal {...linuxDoVerifyProps({ styles })} />
           ) : (
@@ -1191,6 +1191,23 @@ describe('Account site panels', () => {
     }
   });
 
+  it('waits for the requested login document before probing a saved credential', async () => {
+    const props = nodeSeekProps({ visible: true, loading: false });
+    const view = await render(<SiteLoginHost {...props} />);
+    const inject = (jest.requireMock('react-native-webview') as { mockInjectJavaScript: jest.Mock })
+      .mockInjectJavaScript;
+    await act(async () => mockLoginWebViewProps.onLoadEnd({ nativeEvent: { url: 'https://www.nodeseek.com/' } }));
+    inject.mockClear();
+    await view.rerender(<SiteLoginHost {...props} loginFormMode credentialAttempt={1} />);
+    expect(inject).not.toHaveBeenCalled();
+    await act(async () => mockLoginWebViewProps.onLoadEnd({ nativeEvent: { url: 'https://www.nodeseek.com/' } }));
+    expect(inject).not.toHaveBeenCalled();
+    const url = mockLoginWebViewProps.source.uri;
+    await act(async () => mockLoginWebViewProps.onLoadStart({ nativeEvent: { url, loading: true } }));
+    await act(async () => mockLoginWebViewProps.onLoadEnd({ nativeEvent: { url } }));
+    expect(inject).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps login WebViews mounted while a new credential fill attempt is injected', async () => {
     mockLoginWebViewMountCount = 0;
     const nodeSeek = await render(
@@ -1204,6 +1221,7 @@ describe('Account site panels', () => {
     );
     expect(mockLoginWebViewMountCount).toBe(1);
     const nodeSeekWebViewMock = jest.requireMock('react-native-webview') as { mockInjectJavaScript: jest.Mock };
+    await act(async () => mockLoginWebViewProps.onLoadEnd({ nativeEvent: { url: mockLoginWebViewProps.source.uri } }));
     nodeSeekWebViewMock.mockInjectJavaScript.mockClear();
 
     await nodeSeek.rerender(
@@ -1232,6 +1250,7 @@ describe('Account site panels', () => {
     );
     expect(mockLoginWebViewMountCount).toBe(1);
     const yaohuoWebViewMock = jest.requireMock('react-native-webview') as { mockInjectJavaScript: jest.Mock };
+    await act(async () => mockLoginWebViewProps.onLoadEnd({ nativeEvent: { url: mockLoginWebViewProps.source.uri } }));
     yaohuoWebViewMock.mockInjectJavaScript.mockClear();
 
     await yaohuo.rerender(
@@ -1245,6 +1264,25 @@ describe('Account site panels', () => {
     expect(mockLoginWebViewMountCount).toBe(1);
     expect(yaohuoWebViewMock.mockInjectJavaScript).toHaveBeenCalledWith(expect.stringContaining('const attempt = 2;'));
     await yaohuo.unmount();
+  });
+
+  it('starts the verification page timeout only after its WebView can mount', async () => {
+    jest.useFakeTimers();
+    try {
+      const props = linuxDoVerifyProps({ mountLinuxDoWebView: false });
+      const view = await render(<LinuxDoVerifyModal {...props} />);
+      await act(async () => {
+        jest.advanceTimersByTime(12_000);
+      });
+      expect(props.onSetLinuxDoWebViewError).not.toHaveBeenCalled();
+      await view.rerender(<LinuxDoVerifyModal {...props} mountLinuxDoWebView />);
+      await act(async () => {
+        jest.advanceTimersByTime(12_000);
+      });
+      expect(props.onSetLinuxDoWebViewError).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('lets Android choose the linux.do verification WebView user agent', async () => {

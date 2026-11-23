@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { hashKey, useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
+import { hashKey, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
 import type { ReadGateway } from '@/sources/readGateway';
 import { useDiscourseVisited } from '@/platform/query/useDiscourseVisited';
@@ -46,6 +46,7 @@ import type {
 } from '@/domain/forum/models';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { forumQueryKeys } from '@/platform/query/serverState';
+import { useFirstPageInfiniteQuery } from '@/platform/query/useFirstPageInfiniteQuery';
 import { createFeedRefreshIntent } from './feedRefreshIntent';
 
 type FeedPageParam = PagePosition;
@@ -339,7 +340,7 @@ export function useFeedController({
     const current = activeFeedRead.current;
     return current?.hash === feedQueryHash && current.layout === feedLayoutKey ? current : null;
   }, [feedLayoutKey, feedQueryHash]);
-  const feedQuery = useInfiniteQuery({
+  const [feedQuery, refreshFeedFirstPage] = useFirstPageInfiniteQuery<FeedPage, FeedPageParam>({
     queryKey: feedQueryKey,
     enabled: feedActive && feedEnabled,
     initialPageParam: { page: 1 } satisfies FeedPageParam,
@@ -516,9 +517,7 @@ export function useFeedController({
     async (loadMore: boolean): Promise<LinuxDoReadResumeOutcome> => {
       const owner = currentFeedRead();
       if (!owner) return 'stale';
-      const result = loadMore
-        ? await feedQuery.fetchNextPage({ cancelRefetch: false })
-        : await feedQuery.refetch({ cancelRefetch: false });
+      const result = loadMore ? await feedQuery.fetchNextPage({ cancelRefetch: false }) : await refreshFeedFirstPage();
       if (activeFeedRead.current !== owner) return 'stale';
       handledFeedErrorRef.current = result.error;
       const errors = result.data?.pages.at(-1)?.errors || {};
@@ -529,7 +528,7 @@ export function useFeedController({
         result.error instanceof FeedQueryError ? result.error.sourceErrors.linuxdo || result.error : result.error;
       return sourceReadRecoveryOutcome('linuxdo', error);
     },
-    [currentFeedRead, feedQuery.fetchNextPage, feedQuery.refetch]
+    [currentFeedRead, feedQuery.fetchNextPage, refreshFeedFirstPage]
   );
 
   useEffect(() => {
@@ -622,7 +621,7 @@ export function useFeedController({
     if (!feedActive || !feedSourceRequestEnabled) {
       return;
     }
-    const errors = lastPage?.errors || {};
+    const errors = feedQuery.data?.pages.at(-1)?.errors || {};
     if (!Object.keys(errors).length) {
       return;
     }
@@ -648,7 +647,7 @@ export function useFeedController({
     feedSource,
     feedSourceRequestEnabled,
     feedQueryKey,
-    lastPage?.errors,
+    feedQuery.data,
     notify,
     resumeLinuxDoFeed,
     showLinuxDoVerification,
@@ -677,12 +676,12 @@ export function useFeedController({
     try {
       await queryClient.cancelQueries({ queryKey: feedQueryKey, exact: true });
       if (activeFeedRead.current !== owner || !refreshIntent.owns(refresh)) return;
-      await feedQuery.refetch({ cancelRefetch: true });
+      await refreshFeedFirstPage();
     } finally {
       refreshIntent.finished(refresh);
       publishRefresh();
     }
-  }, [currentFeedRead, feedQuery.refetch, feedQueryKey, feedSource, queryClient, refreshIntent, publishRefresh]);
+  }, [currentFeedRead, refreshFeedFirstPage, feedQueryKey, feedSource, queryClient, refreshIntent, publishRefresh]);
 
   const changeFeedSource = useCallback(
     (source: FeedSource) => {
@@ -742,7 +741,7 @@ export function useFeedController({
     feedBusy:
       feedActive &&
       feedSourceRequestEnabled &&
-      (waitingForReaderData || feedQuery.isPending) &&
+      (waitingForReaderData || feedQuery.isPending || (feedQuery.isError && feedQuery.isRefetching)) &&
       shownFeedItems.length === 0,
     feedCategories,
     enabledFeedSources,

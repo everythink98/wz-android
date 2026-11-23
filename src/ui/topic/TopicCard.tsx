@@ -1,5 +1,5 @@
-import { memo, useCallback, useMemo, useRef, type ReactNode } from 'react';
-import { Pressable, StyleSheet, Text, type StyleProp, type TextStyle, View } from 'react-native';
+import { memo, useCallback, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react';
+import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useMappingHelper } from '@shopify/flash-list';
 import { Eye, MessageCircle, Pin } from 'lucide-react-native';
 import type { Topic } from '@/domain/forum/models';
@@ -7,13 +7,16 @@ import { forumAccessRequirementText, sourceLabel, topicListDisplayTimeText } fro
 import { highlightTextParts } from '@/ui/text/highlight';
 import {
   createReaderFontSizer,
+  createUiFontSizer,
   readerRadii,
   type ReaderStyleSettings,
   sourceBadgeColorStyle,
-  topicTagColorStyle,
+  topicTagColorStyles,
   alphaColor,
   fontFamilyValue,
-  type ReaderTheme
+  topicListSpacing,
+  type ReaderTheme,
+  textSizeStyle
 } from '@/ui/theme/tokens';
 import type { TopicListItemState } from '@/domain/forum/topicListItemState';
 import { Avatar } from '@/ui/avatar/Avatar';
@@ -23,6 +26,8 @@ import { topicKey } from '@/domain/reader/readerData';
 
 const TOPIC_CARD_TAG_LIMIT = 3;
 const TOPIC_OPEN_GUARD_MS = 500;
+const TOPIC_CARD_INSET = 16;
+const UNREAD_DOT_SIZE = 6;
 
 type TopicCardProps = {
   highlightQuery?: string;
@@ -32,6 +37,7 @@ type TopicCardProps = {
   renderTrailingAction?: (topic: Topic) => ReactNode;
   topic: Topic;
   readerState: TopicListItemState;
+  scene?: 'list' | 'favorites' | 'history';
   testID?: string;
   onOpenTopic: (topic: Topic) => void;
 };
@@ -43,6 +49,7 @@ function topicCardPropsAreEqual(previous: TopicCardProps, next: TopicCardProps) 
     previous.showPinned === next.showPinned &&
     (previous.showSource ?? true) === (next.showSource ?? true) &&
     previous.renderTrailingAction === next.renderTrailingAction &&
+    previous.scene === next.scene &&
     previous.onOpenTopic === next.onOpenTopic &&
     previous.testID === next.testID &&
     previous.readerState.favorite === next.readerState.favorite &&
@@ -53,28 +60,71 @@ function topicCardPropsAreEqual(previous: TopicCardProps, next: TopicCardProps) 
   );
 }
 
-function HighlightedText({
-  highlightStyle,
-  numberOfLines,
-  query,
-  style,
-  text
-}: {
-  highlightStyle: StyleProp<TextStyle>;
-  numberOfLines?: number;
+type HighlightedTextProps = Pick<ComponentProps<typeof Text>, 'numberOfLines' | 'onTextLayout' | 'style'> & {
+  highlightStyle: ComponentProps<typeof Text>['style'];
   query: string;
-  style: StyleProp<TextStyle>;
   text: string;
-}) {
+};
+
+function HighlightedText({ highlightStyle, query, text, ...props }: HighlightedTextProps) {
   const parts = useMemo(() => highlightTextParts(text, query), [query, text]);
   return (
-    <Text style={style} numberOfLines={numberOfLines}>
-      {parts.map((part, index) => (
-        <Text key={`${part.text}-${index}`} style={part.highlighted ? highlightStyle : undefined}>
-          {part.text}
-        </Text>
-      ))}
+    <Text {...props}>
+      {parts.some((part) => part.highlighted)
+        ? parts.map((part, index) => (
+            <Text key={index} style={part.highlighted ? highlightStyle : undefined}>
+              {part.text}
+            </Text>
+          ))
+        : text}
     </Text>
+  );
+}
+
+type FirstLineCenter = { typographyKey: string; center: number };
+let lastFirstLineCenter: FirstLineCenter | undefined;
+
+function UnreadTopicTitle({
+  title,
+  typography,
+  dotStyle
+}: {
+  title: HighlightedTextProps;
+  typography: ReturnType<typeof createStyles>['cardTitle'];
+  dotStyle: ReturnType<typeof createStyles>['unreadDot'];
+}) {
+  const { fontScale } = useWindowDimensions();
+  const [firstLine, setFirstLine] = useState<FirstLineCenter>();
+  const { fontFamily, fontSize, lineHeight } = typography;
+  const typographyKey = `${fontFamily}:${fontSize}:${lineHeight}:${fontScale}`;
+  const center =
+    firstLine?.typographyKey === typographyKey
+      ? firstLine.center
+      : lastFirstLineCenter?.typographyKey === typographyKey
+        ? lastFirstLineCenter.center
+        : (lineHeight * fontScale) / 2;
+  const onTextLayout: HighlightedTextProps['onTextLayout'] = ({
+    nativeEvent: {
+      lines: [line]
+    }
+  }) => {
+    if (!line) return;
+    const measuredCenter = line.y + line.height / 2;
+    const measurement = { typographyKey, center: measuredCenter };
+    lastFirstLineCenter = measurement;
+    if (Math.abs(measuredCenter - center) >= 0.5) setFirstLine(measurement);
+  };
+
+  return (
+    <View>
+      <View
+        testID="topic-unread-dot"
+        accessible={false}
+        pointerEvents="none"
+        style={[dotStyle, { top: center - UNREAD_DOT_SIZE / 2 }]}
+      />
+      <HighlightedText {...title} onTextLayout={onTextLayout} />
+    </View>
   );
 }
 
@@ -86,10 +136,11 @@ export function TopicCard({
   renderTrailingAction,
   topic,
   readerState,
+  scene = 'list',
   testID,
   onOpenTopic
 }: TopicCardProps) {
-  const { styles, theme } = useReaderThemeStyles(createStyles);
+  const { settings, styles, theme } = useReaderThemeStyles(createStyles);
   const { getMappingKey } = useMappingHelper();
   const lastOpen = useRef<{ key: string; at: number } | null>(null);
   const openTopicPress = useCallback(() => {
@@ -99,7 +150,11 @@ export function TopicCard({
     lastOpen.current = { key, at: now };
     onOpenTopic(topic);
   }, [onOpenTopic, topic]);
-  const authorMeta = [topic.author || '未知作者', topic.authorLevelLabel || '', readerState.favorite ? '已收藏' : '']
+  const authorMeta = [
+    topic.author || '未知作者',
+    topic.authorLevelLabel,
+    scene !== 'favorites' && readerState.favorite ? '已收藏' : ''
+  ]
     .filter(Boolean)
     .join(' · ');
   const duplicateSourceText = topic.duplicateSources?.length ? `同链：${topic.duplicateSources.join('、')}` : '';
@@ -112,6 +167,7 @@ export function TopicCard({
     return Boolean(label);
   });
   const visibleTopicTags = distinctTags.slice(0, TOPIC_CARD_TAG_LIMIT);
+  const tagColors = useMemo(() => topicTagColorStyles(topic.tags ?? [], theme), [theme, topic.tags]);
   const hiddenTopicTagCount = distinctTags.length - visibleTopicTags.length;
   const accessRequirementText = forumAccessRequirementText(topic.accessRequirement);
   const time = topicListDisplayTimeText(topic);
@@ -122,8 +178,37 @@ export function TopicCard({
   const showReplyCount = !hideReplyCount && typeof topic.replyCount === 'number';
   const showStats = Boolean(readerState.hasNewReplies || showReplyCount || topic.viewCount);
   const trailingAction = renderTrailingAction?.(topic);
+  const showExcerpt = readerState.listDensity === 'loose';
+  const cardLabel = [
+    topic.title,
+    readerState.read ? '已读' : '未读',
+    pinned ? '置顶' : '',
+    showSource ? sourceLabel(topic.source) : '',
+    topic.isAiGenerated ? 'AI' : '',
+    category,
+    accessRequirementText,
+    ...visibleTopicTags,
+    hiddenTopicTagCount ? '+' + hiddenTopicTagCount : '',
+    showExcerpt ? topic.excerpt : '',
+    authorMeta,
+    time,
+    duplicateSourceText,
+    readerState.hasNewReplies ? '有新回复' : '',
+    showReplyCount ? '回复 ' + topic.replyCount : '',
+    topic.viewCount ? '浏览 ' + topic.viewCount : ''
+  ]
+    .filter(Boolean)
+    .join('，');
+  const readTitle = (scene === 'history' || (scene === 'list' && readerState.read)) && styles.cardTitleRead;
+  const titleProps = {
+    style: [styles.cardTitle, readTitle],
+    highlightStyle: styles.highlightText,
+    numberOfLines: showExcerpt ? 3 : 2,
+    text: topic.title,
+    query: highlightQuery
+  };
   const footer = (
-    <View style={[styles.topicFooterRow, trailingAction ? styles.topicFooterWithAction : undefined]}>
+    <View style={styles.topicFooterRow}>
       <View style={styles.topicAuthorChip}>
         <Avatar contentSource={topic.source} name={topic.author} uri={topic.authorAvatar} tiny />
         <View style={styles.topicAuthorTextGroup}>
@@ -173,14 +258,18 @@ export function TopicCard({
   );
   return (
     <View style={[styles.topicRowShell, styles.topicRowSurface]}>
-      <Pressable testID={testID} accessibilityRole="button" style={styles.topicCardPressable} onPress={openTopicPress}>
-        <HighlightedText
-          style={[styles.cardTitle, readerState.read && styles.cardTitleRead]}
-          highlightStyle={styles.highlightText}
-          numberOfLines={readerState.listDensity === 'loose' ? 3 : 2}
-          text={topic.title}
-          query={highlightQuery}
-        />
+      <Pressable
+        testID={testID}
+        accessibilityRole="button"
+        accessibilityLabel={cardLabel}
+        style={trailingAction ? [styles.topicCardPressable, styles.topicCardAboveAction] : styles.topicCardPressable}
+        onPress={openTopicPress}
+      >
+        {settings.showUnreadDot && scene === 'list' && !readerState.read ? (
+          <UnreadTopicTitle title={titleProps} typography={styles.cardTitle} dotStyle={styles.unreadDot} />
+        ) : (
+          <HighlightedText {...titleProps} />
+        )}
         {showMetadata ? (
           <View style={styles.topicMetadata}>
             {pinned ? (
@@ -206,10 +295,10 @@ export function TopicCard({
             ) : null}
             {accessRequirementText ? <Text style={styles.topicAccessBadge}>{accessRequirementText}</Text> : null}
             {visibleTopicTags.map((tag, index) => {
-              const colors = topicTagColorStyle(tag, theme, topic.tags);
+              const colors = tagColors(tag);
               return (
                 <View key={getMappingKey(tag, index)} style={[styles.topicTagPill, colors]}>
-                  <Text style={[styles.topicTagText, { color: colors.color }]} numberOfLines={1}>
+                  <Text style={[styles.topicTagText, { color: colors?.color }]} numberOfLines={1}>
                     {tag.trim()}
                   </Text>
                 </View>
@@ -222,7 +311,7 @@ export function TopicCard({
             ) : null}
           </View>
         ) : null}
-        {topic.excerpt && readerState.listDensity === 'loose' ? (
+        {topic.excerpt && showExcerpt ? (
           <HighlightedText
             style={styles.excerpt}
             highlightStyle={styles.highlightText}
@@ -231,15 +320,22 @@ export function TopicCard({
             query={highlightQuery}
           />
         ) : null}
-        {trailingAction ? (
-          <View style={styles.topicFooterActionRow}>
-            {footer}
-            {trailingAction}
-          </View>
-        ) : (
-          footer
-        )}
+        {trailingAction ? null : footer}
       </Pressable>
+      {trailingAction ? (
+        <View style={styles.topicFooterActionRow}>
+          <Pressable
+            accessible={false}
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+            style={styles.topicFooterPressable}
+            onPress={openTopicPress}
+          >
+            {footer}
+          </Pressable>
+          {trailingAction}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -311,14 +407,15 @@ export function TopicListPlaceholder({
 }
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
-  const fontFamily = fontFamilyValue(settings.fontFamily);
-  const fontSize = createReaderFontSizer(settings);
-  const densityPadding = settings.listDensity === 'compact' ? 11 : settings.listDensity === 'loose' ? 16 : 14;
-  const densityGap = settings.listDensity === 'compact' ? 6 : settings.listDensity === 'loose' ? 10 : 8;
+  const fontFamily = fontFamilyValue(settings.uiFontFamily);
+  const fontSize = createUiFontSizer(settings);
+  const readingFontFamily = fontFamilyValue(settings.fontFamily);
+  const readingFontSize = createReaderFontSizer(settings);
+  const { padding: densityPadding, gap: densityGap } = topicListSpacing[settings.listDensity];
   return StyleSheet.create({
     topicListSeparator: { height: StyleSheet.hairlineWidth, backgroundColor: theme.line },
-    placeholderTitleSlot: { height: fontSize(23), justifyContent: 'center' },
-    placeholderTitle: { height: fontSize(14) },
+    placeholderTitleSlot: { height: readingFontSize(23), justifyContent: 'center' },
+    placeholderTitle: { height: readingFontSize(14) },
     placeholderTag: { height: fontSize(16) },
     placeholderAvatar: { width: 24, height: 24, borderRadius: 12 },
     placeholderByline: { height: fontSize(9), flexShrink: 1 },
@@ -326,10 +423,11 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     topicRowSurface: { backgroundColor: theme.surface },
     topicCardPressable: {
       gap: densityGap,
-      paddingHorizontal: 16,
+      paddingHorizontal: TOPIC_CARD_INSET,
       paddingTop: densityPadding + 2,
       paddingBottom: densityPadding
     },
+    topicCardAboveAction: { paddingBottom: 0 },
     topicMetadata: {
       alignItems: 'center',
       flexDirection: 'row',
@@ -379,14 +477,26 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     },
     cardTitle: {
       color: theme.ink,
-      fontFamily,
-      fontSize: fontSize(16),
+      fontFamily: readingFontFamily,
+      fontSize: readingFontSize(16),
       fontWeight: '600',
       includeFontPadding: false,
-      lineHeight: fontSize(23)
+      lineHeight: readingFontSize(23)
     },
-    cardTitleRead: { color: theme.muted, fontWeight: '500' },
-    excerpt: { color: theme.muted, fontFamily, fontSize: fontSize(13), lineHeight: fontSize(19) },
+    cardTitleRead: { color: theme.muted },
+    unreadDot: {
+      position: 'absolute',
+      start: -(TOPIC_CARD_INSET + UNREAD_DOT_SIZE) / 2,
+      width: UNREAD_DOT_SIZE,
+      height: UNREAD_DOT_SIZE,
+      borderRadius: UNREAD_DOT_SIZE / 2,
+      backgroundColor: theme.primary
+    },
+    excerpt: {
+      color: theme.muted,
+      fontFamily: readingFontFamily,
+      ...textSizeStyle(readingFontSize(13), readingFontSize(19))
+    },
     highlightText: { color: theme.dark ? theme.primary : theme.primaryStrong, fontWeight: '700' },
     topicAccessBadge: {
       maxWidth: '100%',
@@ -413,8 +523,15 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       columnGap: 10,
       rowGap: 5
     },
-    topicFooterWithAction: { flex: 1, minWidth: 0 },
-    topicFooterActionRow: { minHeight: 48, alignItems: 'center', flexDirection: 'row', gap: 8 },
+    topicFooterActionRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 8,
+      marginTop: densityGap,
+      paddingHorizontal: TOPIC_CARD_INSET,
+      paddingBottom: densityPadding
+    },
+    topicFooterPressable: { flex: 1, minWidth: 0, alignSelf: 'stretch', justifyContent: 'center' },
     topicAuthorChip: {
       // Keep space for the avatar and a short byline before moving the entire stats row below it.
       flexBasis: 76,

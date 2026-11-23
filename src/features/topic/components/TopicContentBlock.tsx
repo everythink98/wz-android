@@ -19,7 +19,7 @@ import type {
   ForumContentPart
 } from '@/domain/forum/topicContentSplit';
 import { ForumCallout, forumCalloutPalette } from '@/ui/content/ForumCallout';
-import { fontFamilyValue, lineHeightMultiplier, readerRadii } from '@/ui/theme/tokens';
+import { fontFamilyValue, lineHeightMultiplier, readerRadii, textSizeStyle } from '@/ui/theme/tokens';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { createTopicStyles } from '../styles';
 import { TopicContentPresentationProvider } from '../rendering/TopicContentPresentation';
@@ -141,8 +141,7 @@ function CodeBlock({
             style={{
               color: terminal ? '#9ca3af' : theme.muted,
               fontFamily: fontFamilyValue(settings.fontFamily),
-              fontSize: Math.round(12 * settings.fontScale),
-              lineHeight: Math.round(18 * settings.fontScale)
+              ...textSizeStyle(Math.round(12 * settings.fontScale), Math.round(18 * settings.fontScale))
             }}
           >
             {terminal ? '终端' : '代码'}
@@ -194,7 +193,7 @@ function CodeBlock({
 }
 
 function TerminalReportHeader({ row }: { row: Extract<CompiledForumContentRow, { type: 'terminalReportHeader' }> }) {
-  const { theme } = useReaderThemeStyles(createTopicStyles);
+  const { settings, theme } = useReaderThemeStyles(createTopicStyles);
   const report = useTopicTerminalReport({ defaultTabId: row.defaultTabId, semanticId: row.semanticId });
   return (
     <View style={{ alignSelf: 'stretch', marginTop: 8 }}>
@@ -222,7 +221,15 @@ function TerminalReportHeader({ row }: { row: Extract<CompiledForumContentRow, {
               }}
               onPress={() => report.select(tab.id)}
             >
-              <Text numberOfLines={1} style={{ color: active ? theme.primaryStrong : theme.ink, fontWeight: '700' }}>
+              <Text
+                numberOfLines={1}
+                style={{
+                  color: active ? theme.primaryStrong : theme.ink,
+                  fontFamily: fontFamilyValue(settings.fontFamily),
+                  ...textSizeStyle(Math.round(14 * settings.fontScale)),
+                  fontWeight: '700'
+                }}
+              >
                 {tab.title}
               </Text>
             </Pressable>
@@ -348,8 +355,11 @@ function AncestorFrame({ children, frame }: { children: ReactNode; frame: ForumC
         <Text
           style={{
             color: theme.ink,
-            fontSize: Math.round(16 * settings.fontScale),
-            lineHeight: Math.round(16 * settings.fontScale * lineHeightMultiplier(settings.lineHeight)),
+            fontFamily: fontFamilyValue(settings.fontFamily),
+            ...textSizeStyle(
+              Math.round(16 * settings.fontScale),
+              Math.round(16 * settings.fontScale * lineHeightMultiplier(settings.lineHeight))
+            ),
             width: Math.round(28 * settings.fontScale)
           }}
         >

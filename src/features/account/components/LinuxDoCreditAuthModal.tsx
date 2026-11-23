@@ -120,7 +120,7 @@ export function LinuxDoCreditAuthModal({
           setSupportMultipleWindows={false}
           onShouldStartLoadWithRequest={creditNavigationAllowed}
           onLoadStart={(event) => page.start(event.nativeEvent.url, event.nativeEvent.loading !== false)}
-          onLoadEnd={(event) => page.loadEnd('code' in event.nativeEvent)}
+          onLoadEnd={(event) => page.loadEnd('code' in event.nativeEvent, true)}
           onError={(event) => page.fail(event.nativeEvent.description)}
           onHttpError={(event) => {
             if (event.nativeEvent.url === 'https://credit.linux.do/home' && event.nativeEvent.statusCode >= 400)

@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { ActivityIndicator } from 'react-native-paper';
 import Animated, { Easing, ReduceMotion, useAnimatedStyle, withTiming } from 'react-native-reanimated';
 import type { AppUpdateDownloadProgress, AppUpdateInfo } from '@/platform/update/appUpdate';
 import type { AppUpdateArtifact } from '@/platform/update/appUpdateDownload';
 import type { AppUpdatePhase } from '@/platform/update/useAppUpdateRuntime';
+import type { AppUpdateProgressSource } from '@/platform/update/appUpdateOperation';
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import { CURRENT_APP_VERSION, formatAppUpdateDownloadProgress, sameAppUpdate } from '@/platform/update/appUpdate';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
@@ -18,7 +19,7 @@ export type MoreUpdateCapabilities = {
   phase: AppUpdatePhase;
   artifact: AppUpdateArtifact | null;
   restoreFailed: boolean;
-  progress: AppUpdateDownloadProgress | null;
+  progress: AppUpdateProgressSource;
   info: AppUpdateInfo | null;
   message: string;
   check: () => void;
@@ -42,7 +43,7 @@ function updateAction(runtime: MoreUpdateCapabilities) {
     : { label: '检查更新', icon: RefreshCw, run: runtime.check };
 }
 
-function updateProgress({ artifact, progress }: MoreUpdateCapabilities) {
+function updateProgress(artifact: AppUpdateArtifact | null, progress: AppUpdateDownloadProgress | null) {
   if (artifact?.kind === 'verified') {
     return formatAppUpdateDownloadProgress(artifact.update.version, artifact.bytes, artifact.bytes);
   }
@@ -111,7 +112,12 @@ export function MoreUpdatePanel({ runtime }: { runtime: MoreUpdateCapabilities }
     verifying: '正在校验安装包',
     installing: '正在打开安装确认'
   }[runtime.phase];
-  const progress = updateProgress(runtime);
+  const liveProgress = useSyncExternalStore(
+    runtime.progress.subscribe,
+    runtime.progress.getSnapshot,
+    runtime.progress.getSnapshot
+  );
+  const progress = updateProgress(artifact, liveProgress);
   const { label, icon: ActionIcon, run } = updateAction(runtime);
   const mainDisabled = busy && runtime.phase !== 'downloading';
 

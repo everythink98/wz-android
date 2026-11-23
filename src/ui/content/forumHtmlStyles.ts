@@ -1,5 +1,5 @@
 import { StyleSheet } from 'react-native';
-import type { ComponentProps } from 'react';
+import { useMemo, type ComponentProps } from 'react';
 import type RenderHTML from 'react-native-render-html';
 import {
   readerRadii,
@@ -7,10 +7,12 @@ import {
   fontFamilyValue,
   lineHeightMultiplier,
   LINK_COLOR,
-  type ReaderStyleSettings,
+  READER_APP_FONT_FAMILY,
+  type ReadingTypography,
   type ReaderTheme
 } from '@/ui/theme/tokens';
 import { DISCOURSE_CALLOUT_TITLE_CLASS, DISCOURSE_CALLOUT_TONE_CLASS_PREFIX } from '@/domain/forum/callouts';
+import { isLocalReaderFontFamily } from '@/domain/reader/readerFonts';
 
 type HtmlProps = ComponentProps<typeof RenderHTML>;
 type HtmlAllowedStyles = NonNullable<HtmlProps['allowedStyles']>;
@@ -27,6 +29,20 @@ export const HTML_ALLOWED_INLINE_STYLES: HtmlAllowedStyles = [
   'textDecorationLine'
 ];
 export const HTML_REPLY_CONTENT_CLASS = 'forum-reply-content';
+export const FORUM_HTML_FONTS = {
+  systemFonts: [READER_APP_FONT_FAMILY, 'sans-serif', 'serif', 'monospace'],
+  fallbackFonts: { 'sans-serif': 'sans-serif', serif: 'serif', monospace: 'monospace' }
+} satisfies Pick<HtmlProps, 'systemFonts' | 'fallbackFonts'>;
+
+export function useForumHtmlFonts(family: ReadingTypography['fontFamily']) {
+  return useMemo(
+    () =>
+      isLocalReaderFontFamily(family)
+        ? { ...FORUM_HTML_FONTS, systemFonts: [...FORUM_HTML_FONTS.systemFonts, family] }
+        : FORUM_HTML_FONTS,
+    [family]
+  );
+}
 
 export function buildHtmlRenderingStyles({
   enableDiscourseCallouts = false,
@@ -34,7 +50,7 @@ export function buildHtmlRenderingStyles({
   theme
 }: {
   enableDiscourseCallouts?: boolean;
-  settings: ReaderStyleSettings;
+  settings: ReadingTypography;
   theme: ReaderTheme;
 }) {
   const baseFontSize = Math.round(16 * settings.fontScale);

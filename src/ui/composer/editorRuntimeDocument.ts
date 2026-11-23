@@ -42,6 +42,16 @@ export function createEditorRuntimeDocument() {
       document = { kind: 'ready', config };
       return config;
     },
+    nodeSeekMemberChanged(documentEpoch: number, memberId: string | null) {
+      if (
+        document.kind !== 'ready' ||
+        document.config.site !== 'nodeseek' ||
+        documentEpoch !== (document.config.documentEpoch ?? 0)
+      )
+        return false;
+      document = { kind: 'ready', config: { ...document.config, nodeSeekMemberId: memberId ?? undefined } };
+      return true;
+    },
     destroyed() {
       document = { kind: 'destroyed', config: document.kind === 'empty' ? null : document.config };
     }

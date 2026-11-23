@@ -111,10 +111,15 @@ export function escapeQuotedHtmlTagDelimiters(value: unknown) {
   let inTag = false;
   let quote = '';
   let result = '';
-  for (const char of String(value || '')) {
+  const html = String(value || '');
+  for (let index = 0; index < html.length; index++) {
+    const char = html.charAt(index);
     if (!inTag) {
-      inTag = char === '<';
-      result += char;
+      inTag =
+        char === '<' &&
+        (/[a-z!?]/i.test(html.charAt(index + 1)) ||
+          (html.charAt(index + 1) === '/' && /[a-z]/i.test(html.charAt(index + 2))));
+      result += char === '<' && !inTag ? '&lt;' : char;
       continue;
     }
     if (quote) {

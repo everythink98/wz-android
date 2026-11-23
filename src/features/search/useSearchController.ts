@@ -3,7 +3,6 @@ import { createSearchRecoveryOwner } from './searchRecoveryOwner';
 import { createKeyedSerialRunner } from '@/platform/concurrency/keyedSerialRunner';
 import {
   hashKey,
-  useInfiniteQuery,
   useQueries,
   useQuery,
   useQueryClient,
@@ -64,6 +63,7 @@ import type {
 } from '@/domain/session/sessionContracts';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { forumQueryKeys } from '@/platform/query/serverState';
+import { useFirstPageInfiniteQuery } from '@/platform/query/useFirstPageInfiniteQuery';
 import { RequestCanceledError } from '@/platform/network/request';
 import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 
@@ -623,7 +623,7 @@ export function useSearchController({
     ]
   );
 
-  const singleSearchQuery = useInfiniteQuery({
+  const [singleSearchQuery, refreshSearchFirstPage] = useFirstPageInfiniteQuery<RemoteSearchSourceResult, number>({
     queryKey: singleSearchKey,
     enabled: Boolean(
       searchActive &&
@@ -825,13 +825,17 @@ export function useSearchController({
   useEffect(() => {
     if (!linuxDoVerificationActive) return;
     void queryClient.cancelQueries({
-      predicate: ({ queryKey }) => queryKey[0] === 'forum' && queryKey[2] === 'semantic-search'
+      predicate: ({ queryKey }) =>
+        queryKey[0] === 'forum' &&
+        queryKey[1] === 'linuxdo' &&
+        (queryKey[2] === 'semantic-search' || queryKey[2] === 'search-tags' || queryKey[2] === 'search-users')
     });
   }, [linuxDoVerificationActive, queryClient]);
   const linuxDoAiState = useMemo<LinuxDoAiSearchState>(() => {
     if (!linuxDoAiVisible) return { status: 'idle', enabled: false, count: 0 };
     if (linuxDoSemanticPlan.state === 'blocked') return { status: 'idle', enabled: false, count: 0 };
-    if (linuxDoAiQuery.isPending) return { status: 'loading', enabled: false, count: 0 };
+    if (linuxDoAiQuery.isPending || (linuxDoAiQuery.isError && linuxDoAiQuery.isFetching))
+      return { status: 'loading', enabled: false, count: 0 };
     if (linuxDoAiQuery.isError) return linuxDoAiFailureState(linuxDoAiQuery.error);
     const count = linuxDoAiQuery.data?.items.length || 0;
     return count
@@ -843,6 +847,7 @@ export function useSearchController({
     linuxDoAiQuery.data?.items.length,
     linuxDoAiQuery.error,
     linuxDoAiQuery.isError,
+    linuxDoAiQuery.isFetching,
     linuxDoAiQuery.isPending,
     linuxDoSemanticPlan.state,
     linuxDoAiVisible
@@ -894,7 +899,7 @@ export function useSearchController({
       if (singleSearchQuery.isFetchNextPageError) {
         void singleSearchQuery.fetchNextPage({ cancelRefetch: false });
       } else {
-        void singleSearchQuery.refetch({ cancelRefetch: false });
+        void refreshSearchFirstPage();
       }
     },
     [
@@ -905,7 +910,7 @@ export function useSearchController({
       searchReadIsCurrent,
       singleSearchQuery.fetchNextPage,
       singleSearchQuery.isFetchNextPageError,
-      singleSearchQuery.refetch,
+      refreshSearchFirstPage,
       submittedSearch?.source,
       submittedSource,
       searchRecovery
@@ -991,7 +996,7 @@ export function useSearchController({
               return 'stale';
             const resumed = loadMore
               ? await singleSearchQuery.fetchNextPage({ cancelRefetch: false })
-              : await singleSearchQuery.refetch({ cancelRefetch: false });
+              : await refreshSearchFirstPage();
             if (!searchRecovery.current(recoveryTicket)) return 'stale';
             if (resumed.isError) {
               if (
@@ -1018,7 +1023,7 @@ export function useSearchController({
               return 'stale';
             const resumed = loadMore
               ? await singleSearchQuery.fetchNextPage({ cancelRefetch: false })
-              : await singleSearchQuery.refetch({ cancelRefetch: false });
+              : await refreshSearchFirstPage();
             if (!searchRecovery.current(recoveryTicket)) return 'stale';
             if (resumed.isError) {
               if (
@@ -1051,7 +1056,7 @@ export function useSearchController({
     singleSearchQuery.errorUpdatedAt,
     singleSearchQuery.fetchNextPage,
     singleSearchQuery.isFetchNextPageError,
-    singleSearchQuery.refetch,
+    refreshSearchFirstPage,
     searchQuery,
     searchActive,
     submittedSearch,
@@ -1094,7 +1099,7 @@ export function useSearchController({
             }
           });
         } else if (!externalSearchUrlForPlan(readGateway.getReadPlan(source, 'search'), query)) {
-          void singleSearchQuery.refetch({ cancelRefetch: false });
+          void refreshSearchFirstPage();
         }
       } else {
         setSubmittedSearch(next);
@@ -1122,7 +1127,7 @@ export function useSearchController({
       searchFilters,
       searchQuery,
       searchSource,
-      singleSearchQuery.refetch,
+      refreshSearchFirstPage,
       submittedSearch,
       searchRecovery
     ]
@@ -1269,7 +1274,11 @@ export function useSearchController({
     searchFilters,
     searchGroups,
     searchCandidateReadPlanScopes,
-    searchCandidateRequestsEnabled: searchActive && tagReadPlan.state === 'ready' && userReadPlan.state === 'ready',
+    searchCandidateRequestsEnabled:
+      searchActive &&
+      !(candidateSource === 'linuxdo' && linuxDoVerificationActive) &&
+      tagReadPlan.state === 'ready' &&
+      userReadPlan.state === 'ready',
     searchDiscourseTags,
     searchDiscourseUsers,
     linuxDoAiState,

@@ -442,11 +442,19 @@ describe('source gateway reads', () => {
           post_stream: { posts: [{ id: 2, post_number: 1 }] }
         });
       if (pathname === '/posts/2.json')
-        return Response.json({ id: 2, topic_id: 1, post_number: 1, user_id: 7, raw: '原文', can_edit: true });
+        return Response.json({
+          id: 2,
+          topic_id: 1,
+          post_number: 1,
+          user_id: 7,
+          username: 'alice',
+          raw: '原文',
+          can_edit: true
+        });
       return Response.json(
         pathname === '/site.json'
           ? { categories: [{ id: 4, name: '技术', permission: 1 }] }
-          : { current_user: { id: 7, trust_level: 2 } }
+          : { current_user: { id: 7, username: 'alice', trust_level: 2 } }
       );
     });
     const gateway = createReadGateway({
@@ -459,7 +467,7 @@ describe('source gateway reads', () => {
         source,
         authenticated: true,
         authSurfaceOpen: false,
-        identityKey: 'linuxdo:7',
+        identityKey: 'linuxdo:alice',
         identityTrust: 'confirmed',
         sessionEpoch: 4,
         sourceEnabled: true
@@ -467,7 +475,12 @@ describe('source gateway reads', () => {
     });
     const failure = await (
       scenario.edit
-        ? gateway.getTopicEditContext({ source: 'linuxdo', topicId: '1', identityKey: 'linuxdo:7', userAgent: 'test' })
+        ? gateway.getTopicEditContext({
+            source: 'linuxdo',
+            topicId: '1',
+            identityKey: 'linuxdo:alice',
+            userAgent: 'test'
+          })
         : gateway.getLinuxDoTopicCreationContext({ source: 'linuxdo' })
     ).catch((error: unknown) => error);
     expect(failure).toBeInstanceOf(Error);
@@ -687,7 +700,13 @@ describe('source gateway reads', () => {
         visited: true,
         readPosts: { 2: true }
       });
-      expect(fetcher).toHaveBeenCalledTimes(kind === 'target' ? 1 : 2);
+      expect(response.items.map(({ floor, serverRead }) => [floor, serverRead])).toEqual([
+        [2, true],
+        [3, false]
+      ]);
+      expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+        `https://linux.do/t/1${kind === 'target' ? '/3' : ''}.json?include_raw=true`
+      ]);
       privateMessage = true;
       const privateResponse = await gateway.getReplies(request);
       expect(privateResponse.reading).toBeUndefined();

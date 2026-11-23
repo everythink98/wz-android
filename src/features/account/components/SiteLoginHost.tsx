@@ -1,4 +1,4 @@
-import { type RefObject, useEffect } from 'react';
+import { type RefObject, useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
@@ -62,6 +62,14 @@ export function SiteLoginHost({
   onWebViewState: (state: LoginWebViewDiagnosticState, attempt?: number) => void;
 }) {
   const adapter = LOGIN_FORM_ADAPTERS[site];
+  const sourceUri = loginFormMode
+    ? adapter.loginUrl
+    : site === 'nodeseek'
+      ? NODESEEK_URL
+      : session.isLoggedIn
+        ? YAOHUO_URL + '/wapindex.aspx?sid=-2'
+        : YAOHUO_URL + '/waplogin.aspx?siteid=1000';
+  const [loadedDocument, setLoadedDocument] = useState<{ key: number; source: string; url: string } | null>(null);
   const page = useLoginWebViewLifecycle({
     checking,
     recoveryPending,
@@ -77,10 +85,30 @@ export function SiteLoginHost({
   });
 
   useEffect(() => {
-    if (visible && loginFormMode && !loading && credentialAttempt > 0) {
+    if (
+      visible &&
+      !webViewBlockMessage &&
+      loginFormMode &&
+      !loading &&
+      credentialAttempt > 0 &&
+      loadedDocument?.key === page.key &&
+      loadedDocument.source === sourceUri &&
+      adapter.matchesUrl(loadedDocument.url)
+    ) {
       webViewRef.current?.injectJavaScript(adapter.probeScript(credentialAttempt));
     }
-  }, [adapter, credentialAttempt, loading, loginFormMode, visible, webViewRef]);
+  }, [
+    adapter,
+    credentialAttempt,
+    loadedDocument,
+    loading,
+    loginFormMode,
+    page.key,
+    sourceUri,
+    visible,
+    webViewBlockMessage,
+    webViewRef
+  ]);
 
   return (
     <LoginWebViewModal
@@ -142,15 +170,7 @@ export function SiteLoginHost({
             style={styles.webView}
             key={`${site}-login-${page.key}`}
             ref={webViewRef}
-            source={{
-              uri: loginFormMode
-                ? adapter.loginUrl
-                : site === 'nodeseek'
-                  ? NODESEEK_URL
-                  : session.isLoggedIn
-                    ? YAOHUO_URL + '/wapindex.aspx?sid=-2'
-                    : YAOHUO_URL + '/waplogin.aspx?siteid=1000'
-            }}
+            source={{ uri: sourceUri }}
             javaScriptCanOpenWindowsAutomatically={false}
             sharedCookiesEnabled
             thirdPartyCookiesEnabled
@@ -159,12 +179,14 @@ export function SiteLoginHost({
             onLoadEnd={(event) => {
               if (!page.isCurrent()) return;
               page.loadEnd('code' in event.nativeEvent);
-              if ('code' in event.nativeEvent) return;
-              if (loginFormMode) {
-                webViewRef.current?.injectJavaScript(adapter.probeScript(credentialAttempt));
-              }
+              if ('code' in event.nativeEvent || !event.nativeEvent.url) return;
+              setLoadedDocument({ key: page.key, source: sourceUri, url: event.nativeEvent.url });
             }}
-            onLoadStart={(event) => page.start(event?.nativeEvent.url, event?.nativeEvent.loading !== false)}
+            onLoadStart={(event) => {
+              if (!page.isCurrent()) return;
+              setLoadedDocument(null);
+              page.start(event?.nativeEvent.url, event?.nativeEvent.loading !== false);
+            }}
             onMessage={(event) => {
               if (!page.isCurrent() || onLoginFormMessage(event)) return;
               if (site === 'nodeseek') onHandleMessage?.(event);

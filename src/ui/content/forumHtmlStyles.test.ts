@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as htmlRenderingStyles from './forumHtmlStyles';
-import { createEmptyReaderData, type ReaderSettings } from '@/domain/reader/readerData';
-import { createTheme, LINK_COLOR } from '@/ui/theme/tokens';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { resolveReaderStyleSettings, createTheme, LINK_COLOR } from '@/ui/theme/tokens';
 
 vi.mock('react-native', () => ({
   StyleSheet: {
@@ -10,16 +10,7 @@ vi.mock('react-native', () => ({
 }));
 
 describe('Android HTML rendering styles', () => {
-  const settings: ReaderSettings = {
-    theme: 'light',
-    fontScale: 1,
-    nodeSeekRecoveryThreshold: 1,
-    lineHeight: 'standard',
-    contentWidth: 'standard',
-    fontFamily: 'sans',
-    listDensity: 'standard',
-    contentSources: createEmptyReaderData().settings.contentSources
-  };
+  const settings = resolveReaderStyleSettings(createEmptyReaderData().settings);
 
   it('keeps forum user mentions visually separate from ordinary links', () => {
     const theme = createTheme(settings);

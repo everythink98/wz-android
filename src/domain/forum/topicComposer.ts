@@ -93,8 +93,8 @@ export type CreateTopicInput = { draft: TopicDraft; body: string };
 export type CreateTopicResult =
   | { status: 'posted'; message: string; topic?: Topic }
   | { status: 'enqueued'; message: string }
-  | { status: 'rejected'; message: string }
-  | { status: 'unknown'; message: string };
+  | { status: 'rejected'; message: string; verificationRequired?: true }
+  | { status: 'unknown'; message: string; verificationRequired?: true };
 // A durable receipt needs only the fields accepted by the existing on-disk schema.
 export type TopicSubmissionReceipt =
   | { status: 'posted'; message: string; topic?: Pick<Topic, 'id' | 'source' | 'title'> }
@@ -207,7 +207,11 @@ export function yaohuoFileSizeLimit(file: Pick<TopicDraftAttachment, 'name' | 'm
   return staticImage ? alternate.maxBytes : maxBytes;
 }
 
-export function validateTopicDraft(draft: TopicDraft, context: TopicCreationContext): Record<string, string> {
+export function validateTopicDraft(
+  draft: TopicDraft,
+  context: TopicCreationContext,
+  existingTags: readonly TopicTag[] = []
+): Record<string, string> {
   const errors: Record<string, string> = {};
   if (draft.source !== context.source) return { categoryId: '发帖站点与当前规则不一致，请重新加载' };
   const category = context.categories.find((item) => item.id === draft.categoryId);
@@ -244,7 +248,10 @@ export function validateTopicDraft(draft: TopicDraft, context: TopicCreationCont
       new Set(names).size !== names.length
     )
       errors.tags = '标签不能为空、重复或超出长度限制';
-    if (!context.canCreateTag && draft.tags.some((tag) => !tag.id))
+    if (
+      !context.canCreateTag &&
+      draft.tags.some((tag) => !tag.id && !existingTags.some((known) => known.name === tag.name))
+    )
       errors.tags = '当前账号不能创建新标签，请选择已有标签';
     for (const group of category?.requiredTagGroups ?? []) {
       if (!group.tagNames) continue;
@@ -363,11 +370,10 @@ export type TopicEditContext = TopicEditBaseline & {
   rules: TopicCreationContext;
 };
 export type TopicEditResult = {
-  status: 'saved' | 'partial' | 'conflict' | 'rejected' | 'unknown';
   message: string;
   confirmed?: Partial<TopicEditableFields>;
   latest?: TopicEditableFields;
-};
+} & ({ status: 'saved' | 'conflict' } | { status: 'partial' | 'rejected' | 'unknown'; verificationRequired?: true });
 
 export function topicDraftTarget(draft: Pick<TopicDraft, 'edit'>) {
   return draft.edit ? `edit:${draft.edit.topicId}` : 'create';
@@ -480,7 +486,7 @@ export function validateTopicEdit(draft: TopicDraft, context: TopicEditContext):
   )
     return { body: '编辑目标或账号不一致，请重新进入' };
   const changes = topicEditChanges(draft);
-  const validation = validateTopicDraft(draft, context.rules);
+  const validation = validateTopicDraft(draft, context.rules, context.original.tags);
   const errors: Record<string, string> = {};
   for (const key of Object.keys(changes) as (keyof TopicEditableFields)[]) {
     if (!context.permissions[key]) errors[key] = '原站不允许修改此字段';

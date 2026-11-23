@@ -1,11 +1,13 @@
 import { StyleSheet, StatusBar as NativeStatusBar } from 'react-native';
 import {
+  createUiFontSizer,
   readerRadii,
   type ReaderStyleSettings,
   type ReaderTheme,
   alphaColor,
   fontFamilyValue,
-  LINK_COLOR
+  LINK_COLOR,
+  textSizeStyle
 } from '@/ui/theme/tokens';
 
 export function createTopicTableStyles(theme: ReaderTheme) {
@@ -28,8 +30,9 @@ export function createTopicTableStyles(theme: ReaderTheme) {
 
 export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontScale = settings.fontScale;
-  const titleFontScale = Math.min(fontScale, 1.12);
-  const appFontFamily = fontFamilyValue(settings.fontFamily);
+  const readingFontFamily = fontFamilyValue(settings.fontFamily);
+  const uiFontFamily = fontFamilyValue(settings.uiFontFamily);
+  const uiFontSize = createUiFontSizer(settings);
   const linkColor = theme.dark ? theme.primary : LINK_COLOR;
   const neutralBase = theme.dark ? '#ffffff' : '#000000';
   const replyNeutralSurface = alphaColor(neutralBase, theme.dark ? 0.06 : 0.035);
@@ -43,10 +46,9 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     articleTitle: {
       color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: Math.round(21 * titleFontScale),
-      fontWeight: '600',
-      lineHeight: Math.round(30 * titleFontScale)
+      fontFamily: readingFontFamily,
+      ...textSizeStyle(Math.round(21 * fontScale), Math.round(30 * fontScale)),
+      fontWeight: '600'
     },
     titleOnlyHeaderStack: {
       paddingBottom: 12
@@ -54,7 +56,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     titleOnlyNoticeText: {
       color: theme.muted,
       fontWeight: '400',
-      lineHeight: 18
+      lineHeight: uiFontSize(18)
     },
     buttonDisabled: {
       opacity: 0.45
@@ -72,9 +74,8 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     errorText: {
       color: theme.danger,
-      fontFamily: appFontFamily,
-      fontSize: 13,
-      lineHeight: 19
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(13), uiFontSize(19))
     },
     flex: {
       flex: 1
@@ -86,21 +87,20 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       borderRadius: readerRadii.control,
       borderWidth: StyleSheet.hairlineWidth,
       color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 14,
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(14)),
       paddingHorizontal: 12,
       paddingVertical: 9
     },
     meta: {
       color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 12,
-      lineHeight: 17
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(12), uiFontSize(17))
     },
     panelTitle: {
       color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 15,
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(15)),
       fontWeight: '600' as const
     },
     sectionHeader: {
@@ -111,19 +111,19 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     sectionTitle: {
       color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 17,
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(17)),
       fontWeight: '600'
     },
     topicAccessBadge: {
       alignSelf: 'flex-start',
       overflow: 'hidden',
       color: theme.danger,
-      fontFamily: appFontFamily,
-      fontSize: 11,
+      fontFamily: uiFontFamily,
+      fontSize: uiFontSize(11),
       fontWeight: '600',
       includeFontPadding: false,
-      lineHeight: 16,
+      lineHeight: uiFontSize(16),
       backgroundColor: alphaColor(theme.danger, theme.dark ? 0.16 : 0.08),
       borderColor: alphaColor(theme.danger, 0.34),
       borderRadius: readerRadii.badge,
@@ -145,7 +145,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     readingEntryStatus: { alignSelf: 'center', width: '100%' },
     placeholderParagraph: { gap: Math.round(10 * fontScale), paddingBottom: 10 },
     placeholderLine: { height: Math.round(12 * fontScale) },
-    placeholderMeta: { height: Math.round(8 * fontScale) },
+    placeholderMeta: { height: uiFontSize(8) },
     placeholderReplyAvatar: { width: 32, height: 32, borderRadius: 16 },
     placeholderAuthor: { gap: 5 },
     topicTagPill: {
@@ -168,11 +168,11 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     topicTagText: {
       color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 11,
+      fontFamily: uiFontFamily,
+      fontSize: uiFontSize(11),
       fontWeight: '500',
       includeFontPadding: false,
-      lineHeight: 14,
+      lineHeight: uiFontSize(14),
       textAlignVertical: 'center'
     },
     topicContent: {
@@ -223,10 +223,9 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     replyActionText: {
       flexShrink: 1,
       color: theme.dark ? theme.primary : theme.primaryStrong,
-      fontFamily: appFontFamily,
+      fontFamily: uiFontFamily,
       fontWeight: '500',
-      fontSize: Math.round(14 * fontScale),
-      lineHeight: Math.round(20 * fontScale)
+      ...textSizeStyle(uiFontSize(14), uiFontSize(20))
     },
     topicContentInner: {
       gap: 0,
@@ -245,8 +244,8 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     countText: {
       color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 12,
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(12)),
       fontWeight: '500'
     },
     replySearchBackground: {
@@ -274,12 +273,12 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     replySearchInput: {
       flex: 1,
       minWidth: 0,
-      minHeight: Math.max(46, 24 * fontScale + 16),
+      minHeight: Math.max(46, uiFontSize(24) + 16),
       marginLeft: -16,
       color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 16 * fontScale,
-      lineHeight: 24 * fontScale,
+      fontFamily: uiFontFamily,
+      fontSize: uiFontSize(16),
+      lineHeight: uiFontSize(24),
       includeFontPadding: false,
       textAlignVertical: 'center',
       paddingHorizontal: 0,
@@ -340,42 +339,42 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     detailActionLabel: {
       color: theme.muted,
-      fontFamily: appFontFamily,
+      fontFamily: uiFontFamily,
       flexShrink: 1,
-      fontSize: 12,
+      fontSize: uiFontSize(12),
       fontWeight: '600',
       includeFontPadding: false,
-      lineHeight: 16
+      lineHeight: uiFontSize(16)
     },
     detailActionCount: {
       color: theme.muted,
-      fontFamily: appFontFamily,
+      fontFamily: uiFontFamily,
       flexShrink: 1,
-      fontSize: 12,
+      fontSize: uiFontSize(12),
       fontWeight: '700',
       includeFontPadding: false,
       fontVariant: ['tabular-nums'],
-      lineHeight: 16
+      lineHeight: uiFontSize(16)
     },
     topicPrimaryActionLabel: {
       color: theme.ink,
-      fontSize: Math.round(12 * fontScale),
-      lineHeight: Math.round(16 * fontScale)
+      fontSize: uiFontSize(12),
+      lineHeight: uiFontSize(16)
     },
     topicPrimaryActionCount: {
       color: theme.muted,
-      fontSize: Math.round(12 * fontScale),
+      fontSize: uiFontSize(12),
       fontWeight: '500',
-      lineHeight: Math.round(16 * fontScale),
+      lineHeight: uiFontSize(16),
       fontVariant: ['tabular-nums']
     },
     detailActionCompactLabel: {
-      fontSize: 11,
-      lineHeight: 15
+      fontSize: uiFontSize(11),
+      lineHeight: uiFontSize(15)
     },
     detailActionCompactCount: {
-      fontSize: 11,
-      lineHeight: 15
+      fontSize: uiFontSize(11),
+      lineHeight: uiFontSize(15)
     },
     detailActionLabelActive: {
       color: theme.primary,
@@ -383,8 +382,8 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     noticeText: {
       color: theme.primary,
-      fontFamily: appFontFamily,
-      fontSize: 12,
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(12)),
       fontWeight: '600'
     },
     topicOverflowMenu: {
@@ -450,10 +449,9 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     pollTitle: {
       color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 14,
+      fontFamily: readingFontFamily,
+      ...textSizeStyle(Math.round(14 * fontScale), Math.round(20 * fontScale)),
       fontWeight: '700',
-      lineHeight: 20,
       width: '100%'
     },
     pollMetaWrap: {
@@ -467,9 +465,8 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     pollMetaSummary: {
       color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 12,
-      lineHeight: 18,
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(12), uiFontSize(18)),
       fontVariant: ['tabular-nums']
     },
     pollParticipationPill: {
@@ -486,11 +483,11 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     pollParticipationText: {
       color: theme.primary,
-      fontFamily: appFontFamily,
-      fontSize: 12,
+      fontFamily: uiFontFamily,
+      fontSize: uiFontSize(12),
       fontWeight: '700',
       includeFontPadding: false,
-      lineHeight: 16
+      lineHeight: uiFontSize(16)
     },
     pollMetaPill: {
       backgroundColor: alphaColor(theme.primary, theme.dark ? 0.12 : 0.06),
@@ -498,10 +495,9 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       borderRadius: readerRadii.badge,
       borderWidth: StyleSheet.hairlineWidth,
       color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 12,
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(12), uiFontSize(16)),
       fontWeight: '600',
-      lineHeight: 16,
       paddingHorizontal: 7,
       paddingVertical: 3
     },
@@ -511,10 +507,9 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       borderRadius: readerRadii.badge,
       borderWidth: StyleSheet.hairlineWidth,
       color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 12,
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(12), uiFontSize(16)),
       fontWeight: '600',
-      lineHeight: 16,
       paddingHorizontal: 7,
       paddingVertical: 3
     },
@@ -570,16 +565,14 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     pollOptionText: {
       color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 14,
-      lineHeight: 20
+      fontFamily: readingFontFamily,
+      ...textSizeStyle(Math.round(14 * fontScale), Math.round(20 * fontScale))
     },
     pollOptionCount: {
       color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 12,
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(12), uiFontSize(17)),
       fontWeight: '600',
-      lineHeight: 17,
       textAlign: 'left',
       fontVariant: ['tabular-nums']
     },
@@ -627,29 +620,29 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     nodeSeekStatText: {
       color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 12,
+      fontFamily: uiFontFamily,
+      fontSize: uiFontSize(12),
       fontWeight: '500',
       includeFontPadding: false,
-      lineHeight: 17,
+      lineHeight: uiFontSize(17),
       textAlignVertical: 'center'
     },
     nodeSeekStatLabel: {
       color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 12,
+      fontFamily: uiFontFamily,
+      fontSize: uiFontSize(12),
       fontWeight: '500',
       includeFontPadding: false,
-      lineHeight: 17,
+      lineHeight: uiFontSize(17),
       textAlignVertical: 'center'
     },
     nodeSeekStatValue: {
       color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 12,
+      fontFamily: uiFontFamily,
+      fontSize: uiFontSize(12),
       fontWeight: '700',
       includeFontPadding: false,
-      lineHeight: 17,
+      lineHeight: uiFontSize(17),
       fontVariant: ['tabular-nums'],
       textAlignVertical: 'center'
     },
@@ -675,21 +668,21 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     linuxDoReactionLabel: {
       color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 11,
+      fontFamily: uiFontFamily,
+      fontSize: uiFontSize(11),
       fontWeight: '600',
       includeFontPadding: false,
-      lineHeight: 16,
+      lineHeight: uiFontSize(16),
       maxWidth: 92,
       textAlignVertical: 'center'
     },
     linuxDoReactionCount: {
       color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 12,
+      fontFamily: uiFontFamily,
+      fontSize: uiFontSize(12),
       fontWeight: '700',
       includeFontPadding: false,
-      lineHeight: 17,
+      lineHeight: uiFontSize(17),
       fontVariant: ['tabular-nums'],
       textAlignVertical: 'center'
     },
@@ -712,11 +705,11 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     topicStatusBadgeText: {
       color: theme.primary,
-      fontFamily: appFontFamily,
-      fontSize: 12,
+      fontFamily: uiFontFamily,
+      fontSize: uiFontSize(12),
       fontWeight: '600',
       includeFontPadding: false,
-      lineHeight: 16,
+      lineHeight: uiFontSize(16),
       textAlignVertical: 'center'
     },
     articleBody: {
@@ -754,11 +747,9 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     topicAcceptedAnswerTitle: {
       color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 14,
-      fontWeight: '700',
-      includeFontPadding: false,
-      lineHeight: 19
+      fontFamily: readingFontFamily,
+      ...textSizeStyle(Math.round(14 * fontScale), Math.round(19 * fontScale)),
+      fontWeight: '700'
     },
     topicAcceptedAnswerToggle: {
       alignItems: 'center',
@@ -767,11 +758,11 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     topicAcceptedAnswerToggleText: {
       color: theme.primary,
-      fontFamily: appFontFamily,
-      fontSize: 12,
+      fontFamily: uiFontFamily,
+      fontSize: uiFontSize(12),
       fontWeight: '600',
       includeFontPadding: false,
-      lineHeight: 16
+      lineHeight: uiFontSize(16)
     },
     topicAcceptedAnswerBody: {
       gap: 9,
@@ -791,16 +782,14 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     topicAcceptedAnswerAuthor: {
       color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 13,
-      fontWeight: '600',
-      lineHeight: 18
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(13), uiFontSize(18)),
+      fontWeight: '600'
     },
     topicAcceptedAnswerTime: {
       color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 11,
-      lineHeight: 15
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(11), uiFontSize(15))
     },
     topicAcceptedAnswerPreview: {
       maxHeight: 164,
@@ -818,10 +807,9 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     topicAcceptedAnswerReadMoreText: {
       color: theme.primary,
-      fontFamily: appFontFamily,
-      fontSize: 13,
-      fontWeight: '600',
-      lineHeight: 18
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(13), uiFontSize(18)),
+      fontWeight: '600'
     },
     replyComposerBottomSheetBackground: {
       backgroundColor: theme.surface,
@@ -867,11 +855,11 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     replyOrderButtonText: {
       color: theme.primary,
-      fontFamily: appFontFamily,
-      fontSize: Math.round(12 * fontScale),
+      fontFamily: uiFontFamily,
+      fontSize: uiFontSize(12),
       fontWeight: '700',
       includeFontPadding: false,
-      lineHeight: Math.round(16 * fontScale)
+      lineHeight: uiFontSize(16)
     },
     replyListItem: {
       alignSelf: 'center'
@@ -887,10 +875,10 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     replyEndMarker: {
       alignSelf: 'center',
       color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: Math.round(12 * fontScale),
+      fontFamily: uiFontFamily,
+      fontSize: uiFontSize(12),
       includeFontPadding: false,
-      lineHeight: Math.round(16 * fontScale),
+      lineHeight: uiFontSize(16),
       paddingBottom: 18,
       paddingHorizontal: 12,
       paddingTop: 26,
@@ -933,11 +921,11 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     replyAcceptedNoticeText: {
       color: theme.primary,
-      fontFamily: appFontFamily,
-      fontSize: 12,
+      fontFamily: uiFontFamily,
+      fontSize: uiFontSize(12),
       fontWeight: '700',
       includeFontPadding: false,
-      lineHeight: 16
+      lineHeight: uiFontSize(16)
     },
     replyAcceptedSolution: {
       alignItems: 'center',
@@ -951,11 +939,11 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     replyAcceptedSolutionText: {
       color: theme.primary,
-      fontFamily: appFontFamily,
-      fontSize: 12,
+      fontFamily: uiFontFamily,
+      fontSize: uiFontSize(12),
       fontWeight: '700',
       includeFontPadding: false,
-      lineHeight: 16
+      lineHeight: uiFontSize(16)
     },
     replySystemEvent: {
       paddingVertical: 12
@@ -963,9 +951,8 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     replySystemEventText: {
       color: theme.ink,
       flexShrink: 1,
-      fontFamily: appFontFamily,
-      fontSize: 13,
-      lineHeight: 18
+      fontFamily: readingFontFamily,
+      ...textSizeStyle(Math.round(13 * fontScale), Math.round(18 * fontScale))
     },
     replyHead: {
       alignItems: 'center',
@@ -987,11 +974,10 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     replyFloorText: {
       color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 12,
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(12), uiFontSize(16)),
       fontWeight: '600',
       letterSpacing: 0,
-      lineHeight: 16,
       fontVariant: ['tabular-nums']
     },
     replyAuthorBlock: {
@@ -1008,10 +994,9 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     replyAuthor: {
       color: theme.ink,
       flexShrink: 1,
-      fontFamily: appFontFamily,
-      fontSize: 14,
-      fontWeight: '600',
-      lineHeight: 19
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(14), uiFontSize(19)),
+      fontWeight: '600'
     },
     replyOpBadge: {
       overflow: 'hidden',
@@ -1019,11 +1004,11 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       borderRadius: readerRadii.badge,
       borderWidth: StyleSheet.hairlineWidth,
       color: theme.primary,
-      fontFamily: appFontFamily,
-      fontSize: 10,
+      fontFamily: uiFontFamily,
+      fontSize: uiFontSize(10),
       fontWeight: '700',
       includeFontPadding: false,
-      lineHeight: 14,
+      lineHeight: uiFontSize(14),
       paddingHorizontal: 6,
       textAlignVertical: 'center'
     },
@@ -1033,18 +1018,17 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       borderRadius: readerRadii.badge,
       borderWidth: StyleSheet.hairlineWidth,
       color: theme.danger,
-      fontFamily: appFontFamily,
-      fontSize: 10,
+      fontFamily: uiFontFamily,
+      fontSize: uiFontSize(10),
       fontWeight: '700',
       includeFontPadding: false,
-      lineHeight: 14,
+      lineHeight: uiFontSize(14),
       paddingHorizontal: 6
     },
     replyTime: {
       color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 11,
-      lineHeight: 15
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(11), uiFontSize(15))
     },
     replyContentArea: {
       gap: 8,
@@ -1065,10 +1049,9 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     replyTargetText: {
       color: linkColor,
-      fontFamily: appFontFamily,
-      fontSize: 12,
-      fontWeight: '600',
-      lineHeight: 16
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(12), uiFontSize(16)),
+      fontWeight: '600'
     },
     replyBody: {
       paddingTop: 0
@@ -1091,9 +1074,8 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     replyThanksText: {
       alignSelf: 'flex-start',
       color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 12,
-      lineHeight: 16,
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(12), uiFontSize(16)),
       marginTop: 4
     },
     replyActionRow: {
@@ -1137,10 +1119,9 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     detailsPanelSummaryText: {
       color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: Math.round(16 * fontScale),
-      fontWeight: '600',
-      lineHeight: Math.round(23 * fontScale)
+      fontFamily: readingFontFamily,
+      ...textSizeStyle(Math.round(16 * fontScale), Math.round(23 * fontScale)),
+      fontWeight: '600'
     },
     detailsPanelBody: {
       paddingHorizontal: 12,
@@ -1210,10 +1191,9 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     quotePanelStateText: {
       color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 13,
-      fontWeight: '500',
-      lineHeight: 18
+      fontFamily: readingFontFamily,
+      ...textSizeStyle(Math.round(13 * fontScale), Math.round(18 * fontScale)),
+      fontWeight: '500'
     },
     quotePanelStateIcon: {
       alignItems: 'center',
@@ -1228,10 +1208,9 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     quoteAuthorText: {
       color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 13,
-      fontWeight: '600',
-      lineHeight: 18
+      fontFamily: readingFontFamily,
+      ...textSizeStyle(Math.round(13 * fontScale), Math.round(18 * fontScale)),
+      fontWeight: '600'
     },
     quoteTopicLink: {
       justifyContent: 'center',
@@ -1239,19 +1218,17 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     quoteTopicLinkText: {
       color: theme.dark ? theme.primary : theme.primaryStrong,
-      fontFamily: appFontFamily,
-      fontSize: Math.round(14 * fontScale),
-      fontWeight: '600',
-      lineHeight: Math.round(21 * fontScale)
+      fontFamily: readingFontFamily,
+      ...textSizeStyle(Math.round(14 * fontScale), Math.round(21 * fontScale)),
+      fontWeight: '600'
     },
     quoteMeta: {
       color: alphaColor(theme.ink, 0.7)
     },
     quotePreviewText: {
       color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: Math.round(14 * fontScale),
-      lineHeight: Math.round(22 * fontScale)
+      fontFamily: readingFontFamily,
+      ...textSizeStyle(Math.round(14 * fontScale), Math.round(22 * fontScale))
     },
     quoteBody: {
       paddingTop: 4
@@ -1269,9 +1246,8 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     replyMeta: {
       color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 12,
-      lineHeight: 18
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(12), uiFontSize(18))
     },
     topicAccessNotice: {
       gap: 8,
@@ -1287,25 +1263,22 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     topicAccessNoticeTitle: {
       color: theme.danger,
-      fontFamily: appFontFamily,
-      fontSize: 16,
-      fontWeight: '700' as const,
-      lineHeight: 22
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(16), uiFontSize(22)),
+      fontWeight: '700' as const
     },
     topicAccessNoticeDetail: {
       color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 13,
-      lineHeight: 20
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(13), uiFontSize(20))
     },
     replyNewBadge: {
       alignSelf: 'flex-start' as const,
       overflow: 'hidden' as const,
       color: theme.primary,
-      fontFamily: appFontFamily,
-      fontSize: 11,
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(11), uiFontSize(16)),
       fontWeight: '600' as const,
-      lineHeight: 16,
       backgroundColor: theme.surface2,
       borderColor: theme.line,
       borderRadius: readerRadii.badge,

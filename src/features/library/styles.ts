@@ -1,15 +1,16 @@
 import { StyleSheet } from 'react-native';
 import {
-  createReaderFontSizer,
+  createUiFontSizer,
   readerRadii,
   type ReaderStyleSettings,
   type ReaderTheme,
-  fontFamilyValue
+  fontFamilyValue,
+  textSizeStyle
 } from '@/ui/theme/tokens';
 
 export function createLibraryStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
-  const appFontFamily = fontFamilyValue(settings.fontFamily);
-  const fontSize = createReaderFontSizer(settings);
+  const appFontFamily = fontFamilyValue(settings.uiFontFamily);
+  const fontSize = createUiFontSizer(settings);
   return StyleSheet.create({
     content: {
       flex: 1,
@@ -33,19 +34,18 @@ export function createLibraryStyles(theme: ReaderTheme, settings: ReaderStyleSet
     menuLabel: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: fontSize(15),
+      ...textSizeStyle(fontSize(15)),
       fontWeight: '600'
     },
     meta: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: fontSize(12),
-      lineHeight: fontSize(17)
+      ...textSizeStyle(fontSize(12), fontSize(17))
     },
     replyAvatarText: {
       color: theme.primary,
       fontFamily: appFontFamily,
-      fontSize: fontSize(13),
+      ...textSizeStyle(fontSize(13)),
       fontWeight: '700'
     },
     toolbarRow: {
@@ -78,7 +78,7 @@ export function createLibraryStyles(theme: ReaderTheme, settings: ReaderStyleSet
       color: theme.dark ? theme.primary : theme.primaryStrong,
       flexShrink: 1,
       fontFamily: appFontFamily,
-      fontSize: fontSize(12),
+      ...textSizeStyle(fontSize(12)),
       fontWeight: '600'
     },
     categoryFilterButtonTextDisabled: {
@@ -106,10 +106,8 @@ export function createLibraryStyles(theme: ReaderTheme, settings: ReaderStyleSet
       opacity: 0
     },
     libraryItem: {
-      gap: 8,
       borderBottomColor: theme.line,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      paddingBottom: 10
+      borderBottomWidth: StyleSheet.hairlineWidth
     },
     libraryInlineAction: {
       alignItems: 'center',
@@ -126,20 +124,20 @@ export function createLibraryStyles(theme: ReaderTheme, settings: ReaderStyleSet
     libraryInlineActionText: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: fontSize(12),
+      ...textSizeStyle(fontSize(12)),
       fontWeight: '500'
     },
     libraryIconAction: {
       alignItems: 'center',
       flexShrink: 0,
-      height: 44,
+      height: 48,
       justifyContent: 'center',
-      width: 44
+      width: 48
     },
     librarySectionTitle: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: fontSize(12),
+      ...textSizeStyle(fontSize(12)),
       fontWeight: '600',
       letterSpacing: 0,
       paddingHorizontal: 16,

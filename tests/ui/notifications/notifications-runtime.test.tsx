@@ -2163,6 +2163,33 @@ describe('notification runtime', () => {
     }
   );
 
+  it('settles both in-memory identifiers when disabled source dismissals finish together', async () => {
+    const stored = defaultNotificationState();
+    stored.sources.nodeseek.notificationIdentifier = 'old-n';
+    stored.sources.linuxdo.notificationIdentifier = 'old-l';
+    let persisted = JSON.stringify(stored);
+    jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
+    jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
+      persisted = value;
+    });
+    const release = Promise.withResolvers<void>();
+    jest.mocked(dismissSourceNotificationExact).mockImplementation(() => release.promise);
+    const options = {
+      ...runtimeOptions(undefined, nodeSeekSessions('confirmed'), ['nodeseek', 'linuxdo']),
+      remoteReady: false
+    };
+    const hook = await renderHook(() => useNotificationsRuntime(options), { wrapper: QueryTestWrapper });
+    await waitFor(() => expect(dismissSourceNotificationExact).toHaveBeenCalledTimes(2));
+    await act(async () => release.resolve());
+    await waitFor(async () => {
+      const state = await loadNotificationState();
+      expect(state.sources.nodeseek.notificationIdentifier).toBeUndefined();
+      expect(state.sources.linuxdo.notificationIdentifier).toBeUndefined();
+    });
+    expect(hook.result.current.state.sources.nodeseek.notificationIdentifier).toBeUndefined();
+    expect(hook.result.current.state.sources.linuxdo.notificationIdentifier).toBeUndefined();
+  });
+
   it('settles a cold disabled digest without clearing a replacement after the user re-enables delivery', async () => {
     const stored = defaultNotificationState();
     stored.globalEnabled = true;

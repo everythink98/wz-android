@@ -34,7 +34,7 @@ import { LoadingState } from '@/ui/controls/FeedbackStates';
 import { PillRail } from '@/ui/controls/SelectionControls';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { readerRadii } from '@/ui/theme/tokens';
+import { readerRadii, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
 import {
   formatNotificationTime,
   notificationAccessibilityLabel,
@@ -80,11 +80,9 @@ import { createForumStickerRenderers } from '@/ui/content/ForumStickerContent';
 import { FORUM_STICKER_ELEMENT_MODELS } from '@/ui/content/forumStickerElementModels';
 import { createConversationAutoScrollController } from './conversationAutoScroll';
 import { FORUM_AUDIO_TAG } from '@/domain/forum/html';
-import { buildHtmlRenderingStyles, HTML_ALLOWED_INLINE_STYLES } from '@/ui/content/forumHtmlStyles';
+import { buildHtmlRenderingStyles, HTML_ALLOWED_INLINE_STYLES, useForumHtmlFonts } from '@/ui/content/forumHtmlStyles';
 import { DiscoursePolicyPanel } from '@/ui/content/DiscoursePolicyPanel';
 import { NotificationContactTitle } from './NotificationContactTitle';
-
-const NOTIFICATION_HTML_FONTS = ['sans-serif', 'serif', 'monospace'];
 
 const NOTIFICATION_HTML_VISITORS: ComponentProps<typeof RenderHTML>['domVisitors'] = {
   onElement(element) {
@@ -675,6 +673,13 @@ export function NotificationSettingsScreen({
   );
 }
 
+function notificationHtmlStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
+  return buildHtmlRenderingStyles({ settings, theme });
+}
+function discourseNotificationHtmlStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
+  return buildHtmlRenderingStyles({ settings, theme, enableDiscourseCallouts: true });
+}
+
 const DetailHtml = memo(function DetailHtml({
   contentWidth,
   html,
@@ -696,10 +701,10 @@ const DetailHtml = memo(function DetailHtml({
 }) {
   const { settings, styles, theme } = useReaderThemeStyles(createNotificationStyles);
   const renderableHtml = useMemo(() => normalizeForumStickerMediaHtml(html), [html]);
-  const { htmlTagsStyles, htmlClassesStyles, htmlIgnoredStyles } = useMemo(
-    () => buildHtmlRenderingStyles({ settings, theme, enableDiscourseCallouts: source === 'linuxdo' }),
-    [settings, source, theme]
-  );
+  const forumHtmlFonts = useForumHtmlFonts(settings.fontFamily);
+  const {
+    styles: { htmlTagsStyles, htmlClassesStyles, htmlIgnoredStyles }
+  } = useReaderThemeStyles(source === 'linuxdo' ? discourseNotificationHtmlStyles : notificationHtmlStyles);
   const tagsStyles = useMemo(
     () => ({
       ...htmlTagsStyles,
@@ -889,7 +894,7 @@ const DetailHtml = memo(function DetailHtml({
       renderersProps={renderersProps}
       source={{ html: renderableHtml, baseUrl: mediaContext.referrer?.documentUrl }}
       tagsStyles={tagsStyles}
-      systemFonts={NOTIFICATION_HTML_FONTS}
+      {...forumHtmlFonts}
     />
   );
 });

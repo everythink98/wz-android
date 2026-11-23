@@ -2,8 +2,20 @@ import { describe, expect, it } from 'vitest';
 import { createTopicEditTransport } from '../../../tests/helpers/topicEditingTransport';
 import { draftFromTopicEdit } from '@/domain/forum/topicComposer';
 import { editNodeSeekTopic, loadNodeSeekTopicEditContext } from './topicEditing';
+import { loadNodeSeekTopicCreationContext } from './topicCreation';
 
 describe('NodeSeek own opening edits', () => {
+  it.each([loadNodeSeekTopicCreationContext, loadNodeSeekTopicEditContext])(
+    'keeps verification distinct from malformed permissions',
+    async (load) => {
+      const fetcher = async () =>
+        new Response('verification', { status: 403, headers: { 'cf-mitigated': 'challenge' } });
+      await expect(
+        load({ fetcher, userAgent: 'fixture', topicId: '123', identityKey: 'nodeseek:42' })
+      ).rejects.toMatchObject({ source: 'nodeseek', reason: 'cloudflare' });
+    }
+  );
+
   it('loads original markdown and sends the discussion id and editable fields without category', async () => {
     const transport = createTopicEditTransport('nodeseek');
     const options = { ...transport, userAgent: 'test', topicId: '123', identityKey: 'nodeseek:42' };

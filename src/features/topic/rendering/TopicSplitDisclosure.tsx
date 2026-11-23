@@ -1,4 +1,13 @@
-import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import {
+  createContext,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore
+} from 'react';
 import type { CompiledForumContentRow, ForumContentAncestorFrame } from '@/domain/forum/topicContentSplit';
 
 type TopicSplitDisclosureKind = 'callout' | 'details';
@@ -6,6 +15,7 @@ type TopicSplitDisclosureKind = 'callout' | 'details';
 type TopicSplitDisclosureStoreValue = {
   activeTabByKey: Readonly<Record<string, string>>;
   expandedByKey: Readonly<Record<string, boolean>>;
+  galleries: Map<string, ReturnType<typeof createGalleryPosition>>;
   selectTab: (key: string, tabId: string) => void;
   toggle: (key: string, defaultExpanded: boolean) => void;
 };
@@ -16,58 +26,68 @@ const TopicSplitDisclosureScopeContext = createContext<string | null>(null);
 type TopicSplitDisclosureState = {
   activeTabByKey: Record<string, string>;
   expandedByKey: Record<string, boolean>;
+  galleries: Map<string, ReturnType<typeof createGalleryPosition>>;
   identity?: string;
 };
 
-const EMPTY_ACTIVE_TABS: Readonly<Record<string, string>> = {};
-const EMPTY_DISCLOSURES: Readonly<Record<string, boolean>> = {};
+function createGalleryPosition() {
+  let index = 0;
+  const listeners = new Set<() => void>();
+  return {
+    getSnapshot: () => index,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    select: (next: number) => {
+      if (index === next) return;
+      index = next;
+      listeners.forEach((listener) => listener());
+    }
+  };
+}
 
 export function useTopicSplitDisclosureStore(identity?: string) {
-  const [state, setState] = useState<TopicSplitDisclosureState>(() => ({
-    activeTabByKey: {},
-    expandedByKey: {},
-    identity
-  }));
-  const activeTabByKey = state.identity === identity ? state.activeTabByKey : EMPTY_ACTIVE_TABS;
-  const expandedByKey = state.identity === identity ? state.expandedByKey : EMPTY_DISCLOSURES;
+  const initial = useMemo<TopicSplitDisclosureState>(
+    () => ({ activeTabByKey: {}, expandedByKey: {}, galleries: new Map(), identity }),
+    [identity]
+  );
+  const [state, setState] = useState(initial);
+  const { activeTabByKey, expandedByKey, galleries } = state.identity === identity ? state : initial;
   useEffect(() => {
-    setState((current) =>
-      current.identity === identity ? current : { activeTabByKey: {}, expandedByKey: {}, identity }
-    );
-  }, [identity]);
+    setState((current) => (current.identity === identity ? current : initial));
+  }, [identity, initial]);
   const selectTab = useCallback(
     (key: string, tabId: string) => {
       setState((current) => {
-        const activeTabs = current.identity === identity ? current.activeTabByKey : {};
-        if (activeTabs[key] === tabId && current.identity === identity) return current;
-        return {
-          activeTabByKey: { ...activeTabs, [key]: tabId },
-          expandedByKey: current.identity === identity ? current.expandedByKey : {},
-          identity
-        };
+        const topic = current.identity === identity ? current : initial;
+        if (topic.activeTabByKey[key] === tabId) return topic;
+        return { ...topic, activeTabByKey: { ...topic.activeTabByKey, [key]: tabId } };
       });
     },
-    [identity]
+    [identity, initial]
   );
   const toggle = useCallback(
     (key: string, defaultExpanded: boolean) => {
       setState((current) => {
-        const expanded = current.identity === identity ? current.expandedByKey : {};
+        const topic = current.identity === identity ? current : initial;
+        const expanded = topic.expandedByKey;
         return {
-          activeTabByKey: current.identity === identity ? current.activeTabByKey : {},
+          ...topic,
           expandedByKey: {
             ...expanded,
             [key]: Object.prototype.hasOwnProperty.call(expanded, key) ? !expanded[key] : !defaultExpanded
-          },
-          identity
+          }
         };
       });
     },
-    [identity]
+    [identity, initial]
   );
   return useMemo(
-    () => ({ activeTabByKey, expandedByKey, selectTab, toggle }),
-    [activeTabByKey, expandedByKey, selectTab, toggle]
+    () => ({ activeTabByKey, expandedByKey, galleries, selectTab, toggle }),
+    [activeTabByKey, expandedByKey, galleries, selectTab, toggle]
   );
 }
 
@@ -98,9 +118,13 @@ export function useTopicImageGallery(semanticId: string) {
   const scopeKey = useTopicSplitDisclosureScopeKey();
   if (!store || !scopeKey) throw new Error('TopicSplitDisclosureProvider and scope are required');
   const key = `${scopeKey}\u0000imageGallery\u0000${semanticId}`;
-  const index = Number(store.activeTabByKey[key] || 0);
-  const select = useCallback((next: number) => store.selectTab(key, String(next)), [key, store]);
-  return { index, select };
+  let gallery = store.galleries.get(key);
+  if (!gallery) {
+    gallery = createGalleryPosition();
+    store.galleries.set(key, gallery);
+  }
+  const index = useSyncExternalStore(gallery.subscribe, gallery.getSnapshot, gallery.getSnapshot);
+  return { index, select: gallery.select };
 }
 
 function topicSplitDisclosureKey(scopeKey: string, kind: TopicSplitDisclosureKind, semanticId: string) {

@@ -16,6 +16,14 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
 class DiagnosticLogStoreTest {
+  @Test
+  fun nativeFatalSummarySurvivesWhenPreviousDiagnosticContextFillsTheByteBudget() {
+    val latest = """{"operation":"native-crash"}""" + "\n"
+    val previous = "中".repeat(87_380) + "\n"
+    assertEquals(latest, DiagnosticJournal.nativeCrashWithContext(previous, latest))
+    assertEquals("short\n" + latest, DiagnosticJournal.nativeCrashWithContext("short\n", latest))
+  }
+
   @Test fun retainsOnlyClosedSocketFailureCategoriesAndFiniteTimeouts() {
     val accepted = mapOf<String, Any>(
       "phase" to "request-config", "socketFailure" to "reset", "socketErrno" to "ECONNRESET",

@@ -1,4 +1,4 @@
-import { isRecord, parseHtml } from '@/domain/forum/html';
+import { isRecord } from '@/domain/forum/html';
 import { parseForumTopicLink } from '@/domain/forum/links';
 import type { CreateTopicInput, CreateTopicResult, TopicCreationContext } from '@/domain/forum/topicComposer';
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
@@ -6,7 +6,8 @@ import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
 import { NODESEEK_ACTION_HEADERS, runNodeSeekAction } from './actionClient';
 import { randomNodeSeekContentToken } from './actionRequest';
-import { extractNodeSeekEmbeddedData, NODESEEK_BASE_URL } from './protocol';
+import { parseNodeSeekPageDocument, NODESEEK_BASE_URL, throwIfNodeSeekChallenge } from './protocol';
+import { acceptForumReadResponse } from '@/sources/forumSourceReadAttempt';
 import { normalizeCategories } from './feedParser';
 
 type Options = { fetcher: Fetcher; userAgent: string; signal?: AbortSignal };
@@ -31,7 +32,9 @@ export async function loadNodeSeekTopicCreationContext({
     { fetcher, signal }
   );
   const html = await response.text();
-  const data = extractNodeSeekEmbeddedData(html);
+  const document = parseNodeSeekPageDocument(html, response);
+  throwIfNodeSeekChallenge(response, html, `${NODESEEK_BASE_URL}/new-discussion`, document);
+  const data = document.embedded;
   const user = data && isRecord(data.user) ? data.user : null;
   const rank = user ? Number(user.rank) : NaN;
   if (!response.ok) throw new Error(`NodeSeek 发帖规则读取失败：HTTP ${response.status}`);
@@ -42,11 +45,12 @@ export async function loadNodeSeekTopicCreationContext({
     });
   const categories = normalizeCategories(data!);
   if (!categories.length) throw new Error('NodeSeek 未返回可发帖版块');
-  const title = parseHtml(html).querySelector('input[name="title"]');
+  const title = document.root.querySelector('input[name="title"]');
   const limit = (name: string) => {
     const value = Number(title?.getAttribute(name));
     return Number.isSafeInteger(value) && value > 0 ? value : undefined;
   };
+  acceptForumReadResponse(response);
   return {
     source: 'nodeseek',
     categories,

@@ -11,7 +11,7 @@ import { AppComposition, AppFrame } from '@/app/AppComposition';
 import { AppRoutes } from '@/app/AppRoutes';
 import { createAppStyles } from '@/app/styles';
 import { useAppRuntime } from '@/app/useAppRuntime';
-import { createTheme } from '@/ui/theme/tokens';
+import { resolveReaderStyleSettings, createTheme } from '@/ui/theme/tokens';
 import { render } from '../render';
 import { NavigationContext, NavigationRouteContext } from '@react-navigation/native';
 import { StartupPageLayoutProvider, useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
@@ -87,7 +87,7 @@ describe('App composition bootstrap', () => {
       accountHost: (<Text>账号</Text>) as ReturnType<typeof useAppRuntime>['accountHost'],
       appStyles: createAppStyles(theme),
       mediaTransportIdentity: 'disabled',
-      readerStyleContext: { settings, theme },
+      readerStyleContext: { settings: resolveReaderStyleSettings(settings), theme },
       routes,
       sessionEpochs: { linuxdo: 0, nodeseek: 0, yaohuo: 0 },
       theme
@@ -190,7 +190,7 @@ describe('App composition bootstrap', () => {
       accountHost: (<Text>账号</Text>) as ReturnType<typeof useAppRuntime>['accountHost'],
       appStyles: createAppStyles(theme),
       mediaTransportIdentity: 'loading',
-      readerStyleContext: { settings, theme },
+      readerStyleContext: { settings: resolveReaderStyleSettings(settings), theme },
       routes: null,
       sessionEpochs: { linuxdo: 0, nodeseek: 0, yaohuo: 0 },
       startupRecovery: (
@@ -241,7 +241,7 @@ describe('App composition bootstrap', () => {
       accountHost: (<Text>账号 WebView 已阻止</Text>) as ReturnType<typeof useAppRuntime>['accountHost'],
       appStyles: createAppStyles(theme),
       mediaTransportIdentity: 'loading',
-      readerStyleContext: { settings, theme },
+      readerStyleContext: { settings: resolveReaderStyleSettings(settings), theme },
       routes: null,
       sessionEpochs: { linuxdo: 0, nodeseek: 0, yaohuo: 0 },
       theme

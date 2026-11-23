@@ -16,6 +16,7 @@ import {
   normalizeContentSourcePreferences,
   type ContentSourcePreference
 } from './contentSourcePreferences';
+import { isReaderFontFamily, type ReaderFontFamily } from './readerFonts';
 
 export const readerDataVersion = 2;
 export const MAX_HISTORY_RECORDS = 5000;
@@ -44,12 +45,15 @@ interface DeletedRecords {
 
 export interface ReaderSettings {
   listDensity: 'compact' | 'standard' | 'loose';
+  showUnreadDot: boolean;
   theme: 'light' | 'dark';
   fontScale: number;
+  uiFontScale: number | null;
   nodeSeekRecoveryThreshold: number;
   lineHeight: 'compact' | 'standard' | 'loose';
   contentWidth: 'narrow' | 'standard' | 'wide';
-  fontFamily: 'sans' | 'serif';
+  fontFamily: ReaderFontFamily;
+  uiFontFamily: ReaderFontFamily;
   contentSources: ContentSourcePreference[];
 }
 
@@ -63,17 +67,24 @@ export interface ReaderData {
 }
 
 type ReaderDecodeMode = 'sanitize' | 'migration' | 'backup';
-type ReaderBackupContent = Omit<ReaderData, 'settings'> & { settings: Partial<ReaderSettings> };
+type ReaderRecords = Omit<ReaderData, 'settings'>;
+type ReaderBackupContent = ReaderRecords & {
+  settings: Partial<ReaderSettings>;
+  legacyUiFontScale?: number;
+};
 
 function createDefaultReaderSettings(): ReaderSettings {
   return {
     listDensity: 'standard',
+    showUnreadDot: true,
     theme: 'light',
     fontScale: 1,
+    uiFontScale: null,
     nodeSeekRecoveryThreshold: 1,
     lineHeight: 'standard',
     contentWidth: 'standard',
-    fontFamily: 'sans',
+    fontFamily: 'app',
+    uiFontFamily: 'app',
     contentSources: defaultContentSourcePreferences()
   };
 }
@@ -457,7 +468,26 @@ function limitDeletedRecordMap(records: Record<string, string>) {
 }
 
 export function sanitizeReaderSettings(value: unknown): ReaderSettings {
-  return { ...createDefaultReaderSettings(), ...readerSettingsPatch(value) };
+  const settings = readerSettingsPatch(value);
+  if (hasLegacyTypography(value)) {
+    settings.uiFontScale = settings.fontScale ?? null;
+    settings.fontFamily ??= 'system';
+  }
+  return { ...createDefaultReaderSettings(), ...settings };
+}
+
+function hasLegacyTypography(value: unknown): value is Record<string, unknown> {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    !Object.hasOwn(value, 'uiFontScale') &&
+    !Object.hasOwn(value, 'uiFontFamily')
+  );
+}
+
+function isLegacySystemFont(value: unknown) {
+  return value === 'sans' || value === 'serif';
 }
 
 export function normalizeFontScale(value: unknown, fallback = 1) {
@@ -475,21 +505,29 @@ function readerSettingsPatch(value: unknown): Partial<ReaderSettings> {
   const patch: Partial<ReaderSettings> = {};
   if (base.listDensity === 'compact' || base.listDensity === 'standard' || base.listDensity === 'loose')
     patch.listDensity = base.listDensity;
+  if (typeof base.showUnreadDot === 'boolean') patch.showUnreadDot = base.showUnreadDot;
   if (base.theme === 'light' || base.theme === 'dark') patch.theme = base.theme;
   if (typeof base.fontScale === 'number' && Number.isFinite(base.fontScale))
     patch.fontScale = normalizeFontScale(base.fontScale);
+  if (Object.hasOwn(base, 'uiFontScale')) {
+    if (base.uiFontScale === null) patch.uiFontScale = null;
+    else if (typeof base.uiFontScale === 'number' && Number.isFinite(base.uiFontScale))
+      patch.uiFontScale = normalizeFontScale(base.uiFontScale);
+  }
   if (typeof base.nodeSeekRecoveryThreshold === 'number' && Number.isFinite(base.nodeSeekRecoveryThreshold))
     patch.nodeSeekRecoveryThreshold = Math.max(1, Math.min(5, Math.round(base.nodeSeekRecoveryThreshold)));
   if (base.lineHeight === 'compact' || base.lineHeight === 'standard' || base.lineHeight === 'loose')
     patch.lineHeight = base.lineHeight;
   if (base.contentWidth === 'narrow' || base.contentWidth === 'standard' || base.contentWidth === 'wide')
     patch.contentWidth = base.contentWidth;
-  if (base.fontFamily === 'sans' || base.fontFamily === 'serif') patch.fontFamily = base.fontFamily;
+  if (isReaderFontFamily(base.fontFamily)) patch.fontFamily = base.fontFamily;
+  else if (isLegacySystemFont(base.fontFamily)) patch.fontFamily = 'system';
+  if (isReaderFontFamily(base.uiFontFamily)) patch.uiFontFamily = base.uiFontFamily;
   if (Array.isArray(base.contentSources)) patch.contentSources = normalizeContentSourcePreferences(base.contentSources);
   return patch;
 }
 
-function decodeReaderData(value: unknown, mode: ReaderDecodeMode): ReaderBackupContent {
+function decodeReaderData(value: unknown, mode: ReaderDecodeMode): ReaderRecords & { settings: unknown } {
   const parsed = readerDataSchema.safeParse(value);
   if (!parsed.success) {
     if (mode === 'sanitize') return createEmptyReaderData();
@@ -507,23 +545,42 @@ function decodeReaderData(value: unknown, mode: ReaderDecodeMode): ReaderBackupC
       history: normalizeDeletedRecordMap(deleted.history, mode),
       followedUsers: normalizeDeletedRecordMap(deleted.followedUsers, mode)
     },
-    settings: readerSettingsPatch(data.settings)
+    settings: data.settings
   };
 }
 
 export function readReaderBackupContent(value: unknown): ReaderBackupContent {
-  return decodeReaderData(value, 'backup');
+  const data = decodeReaderData(value, 'backup');
+  const settings = readerSettingsPatch(data.settings);
+  // Decoding validates the record maps but fills absent groups with empty ones.
+  const completeOldBackup =
+    hasLegacyTypography(data.settings) &&
+    settings.theme !== undefined &&
+    settings.listDensity !== undefined &&
+    isLegacySystemFont(data.settings.fontFamily) &&
+    settings.lineHeight !== undefined &&
+    settings.contentWidth !== undefined &&
+    value !== null &&
+    typeof value === 'object' &&
+    ['favorites', 'history', 'followedUsers', 'deletedRecords'].every(
+      (key) => Object.hasOwn(value, key) && Object.getOwnPropertyDescriptor(value, key)?.value !== undefined
+    );
+  return {
+    ...data,
+    settings,
+    ...(completeOldBackup && settings.fontScale !== undefined ? { legacyUiFontScale: settings.fontScale } : {})
+  };
 }
 
 export function sanitizeReaderData(value: unknown): ReaderData {
   const data = decodeReaderData(value, 'sanitize');
-  return { ...data, settings: { ...createDefaultReaderSettings(), ...data.settings } };
+  return { ...data, settings: sanitizeReaderSettings(data.settings) };
 }
 
 // Migration validates the persisted representation without rewriting summaries, keys or retention.
 export function validateStoredReaderData(value: unknown): ReaderData {
   const data = decodeReaderData(value, 'migration');
-  return { ...data, settings: { ...createDefaultReaderSettings(), ...data.settings } };
+  return { ...data, settings: sanitizeReaderSettings(data.settings) };
 }
 
 export function validateStoredReaderRecords(
@@ -622,7 +679,11 @@ export function mergeReaderData(localValue: unknown, remote: ReaderBackupContent
       history: limitDeletedRecordMap(history.deleted),
       followedUsers: limitDeletedRecordMap(followedUsers.deleted)
     },
-    settings: { ...local.settings, ...remote.settings }
+    settings: {
+      ...local.settings,
+      uiFontScale: local.settings.uiFontScale ?? remote.legacyUiFontScale ?? null,
+      ...remote.settings
+    }
   };
 }
 

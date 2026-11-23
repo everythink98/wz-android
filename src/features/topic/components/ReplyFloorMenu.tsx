@@ -29,9 +29,9 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     selected: { backgroundColor: alphaColor(theme.primary, theme.dark ? 0.18 : 0.08) },
     label: {
       color: theme.ink,
-      fontFamily: fontFamilyValue(settings.fontFamily),
-      fontSize: Math.round(14 * settings.fontScale),
-      lineHeight: Math.round(20 * settings.fontScale),
+      fontFamily: fontFamilyValue(settings.uiFontFamily),
+      fontSize: Math.round(14 * settings.uiFontScale),
+      lineHeight: Math.round(20 * settings.uiFontScale),
       fontVariant: ['tabular-nums'],
       includeFontPadding: false
     },
@@ -86,7 +86,7 @@ export function ReplyFloorMenu({
       : 'first' in choices
         ? currentFloor - choices.first
         : choices.floors.indexOf(currentFloor);
-  const rowHeight = Math.max(48, Math.ceil(20 * settings.fontScale * fontScale) + 16);
+  const rowHeight = Math.max(48, Math.ceil(20 * settings.uiFontScale * fontScale) + 16);
   const text = input.trim();
   const floor = Number(text);
   const valid = /^\d+$/.test(text) && Number.isSafeInteger(floor) && floor > 0;
@@ -104,7 +104,11 @@ export function ReplyFloorMenu({
 
   const layerWidth = layer?.width ?? width;
   const layerHeight = layer?.height ?? height;
-  const menuWidth = Math.min(Math.max(116, anchor.width), layerWidth - 16);
+  const lastFloor = 'first' in choices ? choices.first + choices.count - 1 : (choices.floors.at(-1) ?? 1);
+  const labelSize = styles.label.fontSize * fontScale;
+  // Two CJK characters, spaces and tabular digits must fit between the row's horizontal insets.
+  const labelWidth = 24 + Math.ceil(labelSize * (2.55 + 0.6 * String(lastFloor).length));
+  const menuWidth = Math.min(Math.max(116, labelWidth, anchor.width), layerWidth - 16);
   const left = Math.max(8, Math.min(anchor.x, layerWidth - menuWidth - 8));
   const bottomEdge = Math.min(anchor.top, keyboardTop ?? layerHeight, layerHeight) - 8;
 

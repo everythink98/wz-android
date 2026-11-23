@@ -10,7 +10,7 @@ import * as DraftStore from '@/platform/persistence/topicDrafts';
 import * as RuntimeContext from '@/features/topic-composer/TopicComposerRouteRuntime';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
-import { createTheme } from '@/ui/theme/tokens';
+import { resolveReaderStyleSettings, createTheme } from '@/ui/theme/tokens';
 import { createTopicProofTransport, topicProofBody, topicProofTitle } from '../../helpers/topicCreationTransport';
 import { TopicCreationFixture, type TopicProofObservation } from '../topicCreationFixture';
 import { QueryTestWrapper } from '../QueryTestWrapper';
@@ -79,7 +79,7 @@ jest.mock('@react-navigation/native', () => {
 
 const sites = ['nodeseek', 'linuxdo', 'yaohuo'] as const;
 const settings = createEmptyReaderData().settings;
-const style = { settings, theme: createTheme(settings) };
+const style = { settings: resolveReaderStyleSettings(settings), theme: createTheme(settings) };
 const marker = (token: string) => `file:///synthetic-cache/topic-proof-${token}.seeded`;
 beforeEach(async () => {
   jest.restoreAllMocks();

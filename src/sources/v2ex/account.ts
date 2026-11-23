@@ -49,11 +49,13 @@ function v2exMemberActivityDate(text: string) {
   if (!match) {
     return '';
   }
-  const year = new Date().getFullYear();
+  const today = new Date();
+  const year = today.getFullYear();
   const month = Number(match[1]);
   const day = Number(match[2]);
-  const date = new Date(Date.UTC(year, month - 1, day, 0, 0, 0));
-  return Number.isNaN(date.getTime()) ? '' : date.toISOString();
+  const futureDay = month > today.getMonth() + 1 || (month === today.getMonth() + 1 && day > today.getDate());
+  const date = new Date(Date.UTC(futureDay ? year - 1 : year, month - 1, day));
+  return date.getUTCMonth() === month - 1 && date.getUTCDate() === day ? date.toISOString() : '';
 }
 
 function v2exMemberActivityDisplayTime(text: string) {

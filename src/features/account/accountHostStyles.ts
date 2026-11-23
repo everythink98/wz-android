@@ -4,11 +4,12 @@ import {
   alphaColor,
   fontFamilyValue,
   readerRadii,
-  type ReaderTheme
+  type ReaderTheme,
+  textSizeStyle
 } from '@/ui/theme/tokens';
 
 export function createAccountHostStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
-  const fontFamily = fontFamilyValue(settings.fontFamily);
+  const fontFamily = fontFamilyValue(settings.uiFontFamily);
   const success = theme.dark ? '#3DD68C' : '#218358';
   return StyleSheet.create({
     flex: {
@@ -67,20 +68,18 @@ export function createAccountHostStyles(theme: ReaderTheme, settings: ReaderStyl
     verificationTitle: {
       color: theme.ink,
       fontFamily,
-      fontSize: Math.round(20 * settings.fontScale),
+      ...textSizeStyle(Math.round(20 * settings.uiFontScale)),
       fontWeight: '600'
     },
     verificationBody: {
       color: theme.muted,
       fontFamily,
-      fontSize: Math.round(14 * settings.fontScale),
-      lineHeight: Math.round(22 * settings.fontScale)
+      ...textSizeStyle(Math.round(14 * settings.uiFontScale), Math.round(22 * settings.uiFontScale))
     },
     verificationHint: {
       color: theme.muted,
       fontFamily,
-      fontSize: Math.round(12 * settings.fontScale),
-      lineHeight: Math.round(18 * settings.fontScale)
+      ...textSizeStyle(Math.round(12 * settings.uiFontScale), Math.round(18 * settings.uiFontScale))
     },
     verificationResult: {
       borderTopColor: theme.line,
@@ -101,7 +100,7 @@ export function createAccountHostStyles(theme: ReaderTheme, settings: ReaderStyl
       flex: 1,
       color: theme.ink,
       fontFamily,
-      fontSize: Math.round(14 * settings.fontScale),
+      ...textSizeStyle(Math.round(14 * settings.uiFontScale)),
       fontWeight: '500'
     },
     webViewErrorPlaceholder: {

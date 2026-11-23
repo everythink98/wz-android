@@ -30,6 +30,7 @@ let mockDraftRead: ((identityKey: string) => Promise<void>) | undefined;
 const mockDeletedFiles: string[] = [];
 const mockCopiedFiles = new Set<string>();
 const mockFileSizes = new Map<string, number>();
+const mockCopyFailures = new Set<string>();
 const mockFileSizeResults = new Map<string, 'zero' | 'unavailable'>();
 jest.mock('expo-sqlite', () => ({
   openDatabaseAsync: async () => {
@@ -78,6 +79,7 @@ jest.mock('expo-file-system', () => {
       return result === 'zero' ? 0 : (mockFileSizes.get(this.uri) ?? 20);
     }
     copy(target: File) {
+      if (mockCopyFailures.has(this.uri)) throw new Error('无法读取此附件');
       mockCopiedFiles.add(target.uri);
       mockFileSizes.set(target.uri, mockFileSizes.get(this.uri) ?? 20);
     }
@@ -222,6 +224,7 @@ beforeEach(() => {
   mockDeletedFiles.length = 0;
   mockCopiedFiles.clear();
   mockFileSizes.clear();
+  mockCopyFailures.clear();
   mockFileSizeResults.clear();
   mockDatabase?.exec(
     'DELETE FROM topic_drafts; DELETE FROM discarded_topic_drafts; DELETE FROM topic_submission_attempts; DELETE FROM topic_creation_preferences;'
@@ -233,6 +236,36 @@ afterEach(() => {
 });
 
 describe('topic draft lifecycle', () => {
+  it('keeps an untouched new draft out of SQLite through autosave, flush and discard', async () => {
+    const runtime = runtimeFor();
+    const hook = await renderHook(() =>
+      useTopicComposerController({
+        runtime,
+        intent: { kind: 'create', initialSource: 'nodeseek' },
+        active: true,
+        onPosted: () => {},
+        onAccepted: () => {}
+      })
+    );
+    try {
+      await waitFor(() => expect(hook.result.current.context?.source).toBe('nodeseek'));
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 450));
+        await hook.result.current.flush();
+      });
+      expect(await loadTopicDraft('nodeseek', 'nodeseek:123')).toBeNull();
+
+      jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {
+        buttons?.find((button) => button.text === '丢弃')?.onPress?.();
+      });
+      await act(async () => hook.result.current.discard());
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 450)));
+      expect(await loadTopicDraft('nodeseek', 'nodeseek:123')).toBeNull();
+    } finally {
+      await hook.unmount();
+    }
+  });
+
   it.each(['success', 'failure'] as const)(
     'ignores an old account hydration %s while the new read is pending',
     async (outcome) => {
@@ -1532,6 +1565,58 @@ describe('topic draft lifecycle', () => {
       expect(mockDeletedFiles).toEqual([...mockCopiedFiles]);
     }
   );
+
+  it('uploads the other selected images when copying a single file fails', async () => {
+    const saved = storedDraft();
+    const hook = await setup(
+      saved,
+      runtimeFor('123', async (url, init) => {
+        prepareRequestToSend(init);
+        return url.includes('api.nodeimage')
+          ? response('{"url":"https://img.invalid/retained.gif"}')
+          : response(`<script>decode('${config}')</script>`);
+      })
+    );
+    const names = ['first.gif', 'broken.gif', 'last.gif'];
+    mockCopyFailures.add('file:///broken.gif');
+    jest.mocked(DocumentPicker.getDocumentAsync).mockResolvedValueOnce({
+      canceled: false,
+      assets: names.map((name) => ({ uri: `file:///${name}`, name, mimeType: 'image/gif', size: 20, lastModified: 0 }))
+    });
+
+    await act(async () => {
+      await hook.result.current.pickAttachments('image', true);
+    });
+    expect(
+      (await loadTopicDraft('nodeseek', saved.identityKey))?.attachments.map(({ name, status }) => [name, status])
+    ).toEqual([
+      ['first.gif', 'uploaded'],
+      ['last.gif', 'uploaded']
+    ]);
+    expect(hook.result.current.error).toContain('broken.gif');
+  });
+
+  it('keeps a stored attachment while the picker is open', async () => {
+    const picker = deferred<DocumentPicker.DocumentPickerResult>();
+    const saved = storedDraft();
+    const file = attachment(saved);
+    saved.attachments = [file];
+    mockCopiedFiles.add(file.uri);
+    jest.mocked(DocumentPicker.getDocumentAsync).mockReturnValueOnce(picker.promise);
+    const hook = await setup(saved);
+    let picking!: Promise<string | undefined | void>;
+    await act(() => {
+      picking = hook.result.current.pickAttachments('image');
+    });
+    await waitFor(() => expect(DocumentPicker.getDocumentAsync).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      await hook.result.current.removeAttachment(file);
+      picker.resolve({ canceled: true, assets: null });
+      await picking;
+    });
+    expect((await loadTopicDraft('nodeseek', saved.identityKey))?.attachments).toEqual([file]);
+  });
 
   it('retains picked files without uploading when the picker returns in the background', async () => {
     const picker = deferred<DocumentPicker.DocumentPickerResult>();

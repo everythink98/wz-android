@@ -1175,6 +1175,22 @@ describe('topic block image loading', () => {
     );
   });
 
+  it('releases a retained generation exactly once when video source preparation fails', async () => {
+    mockGetDefaultUserAgent.mockRejectedValueOnce(new Error('user agent unavailable'));
+    const screen = await render(
+      <ForumContentVideo
+        mediaContext={nodeSeekVideoMediaContext}
+        src="https://cdn.example.com/broken-video.mp4"
+        theme={theme}
+      />
+    );
+    await waitFor(() => expect(mockGetDefaultUserAgent).toHaveBeenCalled());
+    expect(mockCreateVideoPlayer).not.toHaveBeenCalled();
+    expect(mockReleaseReadNetworkGeneration).toHaveBeenCalledWith(mockRetainReadNetworkGeneration.mock.calls[0]?.[0]);
+    await screen.unmount();
+    expect(mockReleaseReadNetworkGeneration).toHaveBeenCalledTimes(1);
+  });
+
   it('reports native video progress only when the buffered position advances', async () => {
     const progress = jest.fn();
     const admission = {
@@ -1997,6 +2013,26 @@ describe('topic block image loading', () => {
     }
   });
 
+  it('retries a loading unmanaged video when its source rotated before another source in one render', async () => {
+    const generation = getReadNetworkRuntimeSnapshot().generation;
+    mockVideoStatus = 'loading';
+    const video = await render(
+      <ForumContentVideo
+        mediaContext={{ contentSource: 'nodeseek', sessionIdentity: 'nodeseek:coalesced-video' }}
+        src="https://cdn.example.com/coalesced-video.mp4"
+        theme={theme}
+      />
+    );
+    await waitFor(() => expect(mockReplaceMediaSource).toHaveBeenCalledTimes(1));
+    await act(() => {
+      publishReadNetworkRuntimeRotation(generation + 1, 'nodeseek');
+      publishReadNetworkRuntimeRotation(generation + 2, 'linuxdo');
+    });
+    await waitFor(() => expect(mockReplaceMediaSource).toHaveBeenCalledTimes(2));
+    expect(mockRetainReadNetworkGeneration).toHaveBeenLastCalledWith(generation + 2);
+    await video.unmount();
+  });
+
   it('creates no video player until its native generation lease is acquired', async () => {
     const leasedGeneration = getReadNetworkRuntimeSnapshot().generation;
     let resolveRetain: ((lease: { generation: number; retained: boolean }) => void) | undefined;
@@ -2585,7 +2621,7 @@ describe('topic block image loading', () => {
       }
     ],
     ['theme', { theme: createTheme({ ...readerData.settings, theme: 'dark' }) }],
-    ['font family', { settings: { ...readerData.settings, fontFamily: 'serif' } }],
+    ['font family', { settings: { ...readerData.settings, fontFamily: 'system' } }],
     ['font scale', { settings: { ...readerData.settings, fontScale: 1.1 } }],
     ['line height', { settings: { ...readerData.settings, lineHeight: 'loose' } }],
     ['NodeSeek User-Agent', { nodeSeekMediaUserAgent: 'latest-agent' }],
@@ -2883,6 +2919,34 @@ describe('topic block image loading', () => {
     await fireEvent(progress, 'slidingComplete', 129.156);
     expect(onSeek).toHaveBeenCalledTimes(1);
     expect(onSeek).toHaveBeenCalledWith(129.156);
+  });
+
+  it('bounds a drag to the current audio duration and discards it when the slider is interrupted', async () => {
+    const onSeek = jest.fn();
+    const tree = (duration: number, status: 'ready' | 'error', position: number) => (
+      <ForumContentAudio
+        duration={duration}
+        status={status}
+        position={position}
+        error={null}
+        playing={false}
+        theme={theme}
+        onPlay={jest.fn()}
+        onPause={jest.fn()}
+        onRetry={jest.fn()}
+        onSeek={onSeek}
+      />
+    );
+    const screen = await render(tree(120, 'ready', 3));
+    const slider = () => screen.getByTestId('forum-content-audio-progress');
+    await fireEvent(slider(), 'slidingStart', 3);
+    await fireEvent(slider(), 'valueChange', 90);
+    await screen.rerender(tree(50, 'ready', 8));
+    expect(slider().props.value).toBe(50);
+    await screen.rerender(tree(50, 'error', 12));
+    await screen.rerender(tree(50, 'ready', 13));
+    expect(slider().props.value).toBe(13);
+    expect(onSeek).not.toHaveBeenCalled();
   });
 
   it('keeps pause and seek available while an already loaded audio buffers', async () => {
@@ -3574,8 +3638,11 @@ describe('topic block image loading', () => {
       )
     );
 
+    const player = mockCreateVideoPlayer.mock.results[0]!.value as ReturnType<typeof createMockManualVideoPlayer>;
     await screen.unmount();
-
+    expect(player.release.mock.invocationCallOrder[0]).toBeLessThan(
+      mockReleaseReadNetworkGeneration.mock.invocationCallOrder[0]
+    );
     expect(mockReleasedVideoPlayerAccesses).toBe(0);
   });
 

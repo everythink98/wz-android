@@ -63,6 +63,8 @@ describe('Native behavior test selection', () => {
       'TopicShareCapture',
       'NetworkProxyProfile',
       'NetworkUserAgent',
+      'ReaderFontsModule',
+      'ReaderFontRendering',
       'ForumPlatformPackage'
     ].map((name) => `com.wz.reader.${name}Test`);
     expect(nativeTestTasks[':forum-platform:testDebugUnitTest'].classes).toEqual(expect.arrayContaining(owners));
@@ -93,6 +95,8 @@ describe('Native behavior test selection', () => {
     ['src/platform/update/appUpdateDownload.ts', ':forum-platform:testDebugUnitTest'],
     ['src/platform/android/forumSearchCustomTab.ts', ':forum-platform:testDebugUnitTest'],
     ['src/platform/android/secureRandom.ts', ':forum-platform:testDebugUnitTest'],
+    ['src/platform/storage/readerFonts.ts', ':forum-platform:testDebugUnitTest'],
+    ['src/domain/reader/readerFonts.ts', ':forum-platform:testDebugUnitTest'],
     ['src/platform/notifications/notificationSystem.ts', ':forum-platform:testDebugUnitTest'],
     ['src/ui/media/PreviewRegionImage.tsx', ':forum-platform:testDebugUnitTest'],
     ['src/ui/sheets/ComposerBottomSheet.tsx', ':app:testReleaseUnitTest'],

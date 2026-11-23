@@ -1,15 +1,18 @@
 import { recordUserInteraction } from '@/platform/network/userPresence';
-import type { ReactNode } from 'react';
+import { useContext, useState, type ReactNode } from 'react';
 import {
   Modal,
   Pressable,
+  ScrollView,
   StyleSheet,
   View,
+  useWindowDimensions,
   type LayoutChangeEvent,
   type StyleProp,
   type ViewStyle
 } from 'react-native';
 import { List } from 'react-native-paper';
+import { SafeAreaInsetsContext } from 'react-native-safe-area-context';
 import type { LucideIcon } from 'lucide-react-native';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { NavigationGlass } from '@/ui/navigation/NavigationGlass';
@@ -60,16 +63,16 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     },
     text: {
       color: theme.ink,
-      fontFamily: fontFamilyValue(settings.fontFamily),
-      fontSize: Math.round(14 * settings.fontScale),
-      lineHeight: Math.round(20 * settings.fontScale),
+      fontFamily: fontFamilyValue(settings.uiFontFamily),
+      fontSize: Math.round(14 * settings.uiFontScale),
+      lineHeight: Math.round(20 * settings.uiFontScale),
       includeFontPadding: false,
       fontWeight: '500'
     },
     textCompact: {
-      fontSize: Math.round(13 * settings.fontScale),
+      fontSize: Math.round(13 * settings.uiFontScale),
       includeFontPadding: false,
-      lineHeight: Math.round(18 * settings.fontScale)
+      lineHeight: Math.round(18 * settings.uiFontScale)
     },
     textSelected: {
       color: theme.primary
@@ -81,6 +84,7 @@ export function PopupMenu({
   accessibilityLabel,
   children,
   placementStyle,
+  scrollable = false,
   testID,
   visible,
   onLayerLayout,
@@ -89,12 +93,21 @@ export function PopupMenu({
   accessibilityLabel: string;
   children: ReactNode;
   placementStyle: StyleProp<ViewStyle>;
+  scrollable?: boolean;
   testID?: string;
   visible: boolean;
   onLayerLayout?: (event: LayoutChangeEvent) => void;
   onRequestClose: () => void;
 }) {
   const { styles } = useReaderThemeStyles(createStyles);
+  const { height } = useWindowDimensions();
+  const insets = useContext(SafeAreaInsetsContext);
+  const [layerHeight, setLayerHeight] = useState<number>();
+  const placement = StyleSheet.flatten(placementStyle);
+  const top = typeof placement?.top === 'number' ? placement.top : (insets?.top ?? 0);
+  const bottom = typeof placement?.bottom === 'number' ? placement.bottom : (insets?.bottom ?? 0);
+  const available = Math.max(0, (layerHeight ?? height) - top - bottom);
+  const maxHeight = Math.min(available, typeof placement?.maxHeight === 'number' ? placement.maxHeight : available);
   return (
     <Modal
       transparent
@@ -106,7 +119,10 @@ export function PopupMenu({
     >
       <View
         style={styles.layer}
-        onLayout={onLayerLayout}
+        onLayout={(event) => {
+          if (scrollable) setLayerHeight(event.nativeEvent.layout.height);
+          onLayerLayout?.(event);
+        }}
         onTouchStart={recordUserInteraction}
         onTouchMove={recordUserInteraction}
       >
@@ -116,9 +132,15 @@ export function PopupMenu({
           style={styles.dismiss}
           onPress={onRequestClose}
         />
-        <View testID={testID} style={[styles.menu, placementStyle]}>
+        <View testID={testID} style={[styles.menu, placementStyle, scrollable && { maxHeight }]}>
           <NavigationGlass variant="surface" />
-          {children}
+          {scrollable ? (
+            <ScrollView testID={testID && `${testID}-scroll`} keyboardShouldPersistTaps="handled">
+              {children}
+            </ScrollView>
+          ) : (
+            children
+          )}
         </View>
       </View>
     </Modal>

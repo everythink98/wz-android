@@ -22,6 +22,7 @@ import java.util.Date
 import java.util.TimeZone
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 
 /** One bounded channel. Called only by the journal's serial writer. */
 internal class DiagnosticLogStore(
@@ -137,7 +138,7 @@ object DiagnosticJournal {
     class JsStoreBound(val directory: File, val js: DiagnosticLogStore) : StorageBinding
     class StoresBound(val directory: File, val js: DiagnosticLogStore, val native: DiagnosticLogStore) : StorageBinding
   }
-  private var binding: StorageBinding = StorageBinding.Unbound
+  @Volatile private var binding: StorageBinding = StorageBinding.Unbound
   private val storage: File? get() = when (val current = binding) {
     StorageBinding.Unbound -> null
     is StorageBinding.DirectoryBound -> current.directory
@@ -160,8 +161,8 @@ object DiagnosticJournal {
       nativeStore?.append(batch.filter { it.first == "native" }.map { it.second })
     }
   )
-  private var crashWriteFailureCount = 0L
-  private var crashReadFailureCount = 0L
+  private val crashWriteFailureCount = AtomicLong()
+  private val crashReadFailureCount = AtomicLong()
 
   var buildId: String = ""
     private set
@@ -192,7 +193,7 @@ object DiagnosticJournal {
       val previous = try { JSONObject(sessionFile.readText()) } catch (_: Exception) { null }
       recordStartupPhase("diagnostics-read")
       val session = JSONObject(context()).put("pid", Process.myPid()).put("startedAt", System.currentTimeMillis())
-      try { atomicWrite(sessionFile, session.toString()) } catch (_: Exception) { crashWriteFailureCount++ }
+      try { atomicWrite(sessionFile, session.toString()) } catch (_: Exception) { crashWriteFailureCount.incrementAndGet() }
       recordStartupPhase("diagnostics-written")
       recordApp("startup", "success", mapOf("state" to "started"))
       executor.execute { collectPreviousExit(application, previous) }
@@ -221,7 +222,7 @@ object DiagnosticJournal {
         override fun onActivitySaveInstanceState(activity: Activity, state: Bundle) = Unit
         override fun onActivityDestroyed(activity: Activity) = Unit
       })
-    } catch (_: Exception) { crashWriteFailureCount++ }
+    } catch (_: Exception) { crashWriteFailureCount.incrementAndGet() }
     finally { android.os.Trace.endSection() }
   }
 
@@ -324,12 +325,15 @@ object DiagnosticJournal {
     val previousJsCrash = try {
       crash.readText().takeIf { it.contains(processSessionId) && it.contains("\"operation\":\"js-error\"") } ?: ""
     } catch (_: Exception) { "" }
-    writeCrash(previousJsCrash + line)
+    writeCrash(nativeCrashWithContext(previousJsCrash, line))
   }
+
+  internal fun nativeCrashWithContext(previous: String, latest: String): String =
+    if (previous.toByteArray().size + latest.toByteArray().size <= MAX_CRASH_BYTES) previous + latest else latest
 
   fun persistJsCrash(lines: String): Boolean = try {
     writeCrash(lines); flushBeforeCrash(); true
-  } catch (_: Exception) { crashWriteFailureCount++; false }
+  } catch (_: Exception) { crashWriteFailureCount.incrementAndGet(); false }
 
   private fun flushBeforeCrash() {
     try { executor.submit { pendingBatch.flush() }.get(250, TimeUnit.MILLISECONDS) }
@@ -365,13 +369,13 @@ object DiagnosticJournal {
       val crash = try {
         val file = storage?.let { File(it, "crash.jsonl") }
         if (file?.exists() == true) file.readText() else ""
-      } catch (_: Exception) { crashReadFailureCount++; "" }
+      } catch (_: Exception) { crashReadFailureCount.incrementAndGet(); "" }
       complete(mapOf(
         "jsLines" to js, "nativeLines" to native, "crashLines" to crash,
         "health" to mapOf(
           "available" to (storage != null), "queueDroppedCount" to pendingBatch.droppedCount,
-          "crashWriteFailureCount" to crashWriteFailureCount,
-          "crashReadFailureCount" to crashReadFailureCount,
+          "crashWriteFailureCount" to crashWriteFailureCount.get(),
+          "crashReadFailureCount" to crashReadFailureCount.get(),
           "js" to (jsStore?.health() ?: emptyMap<String, Any>()),
           "native" to (nativeStore?.health() ?: emptyMap<String, Any>())
         )
@@ -405,25 +409,32 @@ object DiagnosticJournal {
       "imageContentType" to setOf("image", "svg", "html", "other", "unknown")
     )
   private val networkNumbers = setOf("surfaceGeneration", "generation", "previousGeneration", "elapsedMs", "queuedCount", "runningCount", "leaseCount", "cronetActiveCount", "status", "byteCount", "attempt", "cookieCount", "loginCookieCount", "storedLoginCookieCount", "cfClearanceCount", "storedCfClearanceCount", "cfClearanceDistinctCount", "storedCfClearanceDistinctCount", "cfClearancePartitionedCount", "cfClearanceUnpartitionedCount", "cookieRevision", "cookieIndex", "cookieEpoch", "requestCookieEpoch", "cookieWriteSequence")
-  private val networkIdentities = setOf("userAgentHash", "callId", "clientId", "poolId", "dispatcherId", "connectionId", "forumPoolId", "mediaPoolId", "imageClientId")
   private val networkTimeoutNumbers = setOf("connectTimeoutMs", "readTimeoutMs", "writeTimeoutMs", "callTimeoutMs")
+  private val networkBooleans = setOf("hasDiscoursePresent", "hasLoginCookie", "loginCookieChanged", "cookieBarrierBlocked",
+    "hasCfClearance", "hasStoredCfClearance", "isCfClearanceCurrent", "isLoginCookieCurrent", "didCfClearanceChange")
+  private val networkStringPatterns by lazy {
+    val identity = Regex("[0-9a-f]{1,8}")
+    val trace = Regex("(?:trace-[1-9][0-9]{0,9}|[0-9a-f]{1,16})")
+    val session = Regex("session-[a-z0-9]{1,16}-[a-z0-9]{1,16}")
+    mapOf(
+      "userAgentHash" to identity, "callId" to identity, "clientId" to identity, "poolId" to identity,
+      "dispatcherId" to identity, "connectionId" to identity, "forumPoolId" to identity, "mediaPoolId" to identity,
+      "imageClientId" to identity, "imageTraceId" to trace, "traceId" to trace, "traceIdentity" to trace,
+      "imageSessionId" to session, "appSessionId" to session, "requestId" to Regex("request-[1-9][0-9]{0,9}"),
+      "mediaRef" to Regex("media-[1-9][0-9]{0,9}"), "errorType" to Regex("[A-Za-z][A-Za-z0-9_$]{0,79}")
+    )
+  }
 
   internal fun safeNetworkFields(fields: Map<String, Any>): Map<String, Any> {
     val output = mutableMapOf<String, Any>()
     for ((key, value) in fields) {
       when {
         key == "socketLocalPort" && value is Int && value in 1..65535 -> output[key] = value
-        value is Boolean && key in setOf("hasDiscoursePresent", "hasLoginCookie", "loginCookieChanged", "cookieBarrierBlocked", "hasCfClearance", "hasStoredCfClearance", "isCfClearanceCurrent", "isLoginCookieCurrent", "didCfClearanceChange") -> output[key] = value
-        value is String && networkEnums[key]?.contains(value) == true -> output[key] = value
+        value is Boolean && key in networkBooleans -> output[key] = value
+        value is String && (networkEnums[key]?.contains(value) == true || networkStringPatterns[key]?.matches(value) == true) -> output[key] = value
         value is Number && key in networkTimeoutNumbers && value.toDouble().isFinite() &&
           value.toDouble() in 0.0..1_000_000_000.0 && value.toDouble() % 1.0 == 0.0 -> output[key] = value
         value is Number && key in networkNumbers && value.toDouble().isFinite() && value.toDouble() in 0.0..1_000_000_000.0 -> output[key] = value
-        value is String && key in networkIdentities && value.matches(Regex("[0-9a-f]{1,8}")) -> output[key] = value
-        value is String && key in setOf("imageTraceId", "traceId", "traceIdentity") && value.matches(Regex("(?:trace-[1-9][0-9]{0,9}|[0-9a-f]{1,16})")) -> output[key] = value
-        value is String && key in setOf("imageSessionId", "appSessionId") && value.matches(Regex("session-[a-z0-9]{1,16}-[a-z0-9]{1,16}")) -> output[key] = value
-        value is String && key == "requestId" && value.matches(Regex("request-[1-9][0-9]{0,9}")) -> output[key] = value
-        value is String && key == "mediaRef" && value.matches(Regex("media-[1-9][0-9]{0,9}")) -> output[key] = value
-        value is String && key == "errorType" && value.matches(Regex("[A-Za-z][A-Za-z0-9_$]{0,79}")) -> output[key] = value
       }
     }
     return output

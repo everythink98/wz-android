@@ -276,6 +276,13 @@ internal object TextClassifierApi26 {
   }
 }
 
+internal inline fun writeForumClipboard(write: () -> Unit): Boolean = try {
+  write()
+  true
+} catch (_: RuntimeException) {
+  false
+}
+
 internal fun String.trimToForumParcelableSize(maxLength: Int = MAX_PARCELABLE_TEXT_LENGTH): String {
   require(maxLength >= 0)
   if (length <= maxLength) return this

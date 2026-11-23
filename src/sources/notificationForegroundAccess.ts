@@ -17,7 +17,7 @@ export async function readForegroundNotificationAccess({
   const userId = String(session.currentUser?.id || '').trim();
   const username = String(session.currentUser?.username || '').trim();
   if (!session.isLoggedIn || session.identityTrust !== 'confirmed' || !userId) {
-    throw new Error('账号身份尚未确认');
+    throw Object.assign(new Error('账号身份尚未确认'), { source, loginRequired: true });
   }
   return {
     fetcher,

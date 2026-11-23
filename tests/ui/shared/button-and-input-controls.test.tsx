@@ -1,19 +1,57 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { useState } from 'react';
-import { PixelRatio, StyleSheet } from 'react-native';
+import { Dimensions, StyleSheet, Text } from 'react-native';
+import { SafeAreaInsetsContext } from 'react-native-safe-area-context';
 import { Search } from 'lucide-react-native';
+import { PaperProvider } from 'react-native-paper';
 import { getAnimatedStyle } from 'react-native-reanimated';
-import { fireEvent, render, waitFor } from '../render';
+import { act, fireEvent, render, waitFor } from '../render';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 import { createTheme } from '@/ui/theme/tokens';
 import { AppButton, FloatingIconButton, IconButton } from '@/ui/controls/ButtonControls';
 import { AppSwitch, AppTextInput } from '@/ui/controls/InputControls';
 import { ExpandablePanel, MenuButton } from '@/ui/controls/ExpandableControls';
-import { PopupMenuItem } from '@/ui/controls/PopupMenu';
+import { PopupMenu, PopupMenuItem } from '@/ui/controls/PopupMenu';
+import { ScreenTopBar } from '@/ui/controls/ScreenTopBar';
 import { PillRail } from '@/ui/controls/SelectionControls';
 
 describe('Shared action and form controls', () => {
+  it('tracks the current system top inset as the window changes', async () => {
+    const tree = (top: number) => (
+      <SafeAreaInsetsContext.Provider value={{ top, left: 0, right: 0, bottom: 0 }}>
+        <ScreenTopBar>
+          <Text>主题</Text>
+        </ScreenTopBar>
+      </SafeAreaInsetsContext.Provider>
+    );
+    const view = await render(tree(48));
+    expect(StyleSheet.flatten(view.getByText('主题').parent?.props.style).paddingTop).toBe(56);
+    await view.rerender(tree(0));
+    expect(StyleSheet.flatten(view.getByText('主题').parent?.props.style).paddingTop).toBe(8);
+  });
+
+  it('allows long menu contents to scroll between an anchor and the bottom safe area', async () => {
+    const view = await render(
+      <SafeAreaInsetsContext.Provider value={{ top: 0, left: 0, right: 0, bottom: 20 }}>
+        <PopupMenu
+          scrollable
+          visible
+          accessibilityLabel="关闭筛选"
+          testID="filter-menu"
+          placementStyle={{ position: 'absolute', top: 140 }}
+          onRequestClose={jest.fn()}
+        >
+          <PopupMenuItem label="最后一个选项" onPress={jest.fn()} />
+        </PopupMenu>
+      </SafeAreaInsetsContext.Provider>
+    );
+    const menu = view.getByTestId('filter-menu');
+    await fireEvent(menu.parent!, 'layout', { nativeEvent: { layout: { width: 520, height: 300, x: 0, y: 0 } } });
+    expect(StyleSheet.flatten(menu.props.style).maxHeight).toBeLessThanOrEqual(140);
+    expect(view.getByTestId('filter-menu-scroll')).toBeTruthy();
+  });
+
   it('keeps secondary labels compact inside a full-sized touch target', async () => {
     const view = await render(
       <PillRail
@@ -154,38 +192,85 @@ describe('Shared action and form controls', () => {
     expect(view.getByLabelText('筛选作者').props.editable).toBe(false);
   });
 
-  it.each([1, 1.4])('keeps form labels and values in the selected font at %s scale', async (fontScale) => {
-    const settings = { ...createEmptyReaderData().settings, fontScale, fontFamily: 'serif' as const };
-    const theme = createTheme(settings);
-    const form = (value: string) => (
-      <ReaderStyleProvider value={{ settings, theme }}>
-        <AppTextInput accessibilityLabel="悬赏妖晶" value={value} onChangeText={() => undefined} />
-      </ReaderStyleProvider>
-    );
-    const view = await render(form(''));
-    const inputSize = Math.round(14 * fontScale);
-    const systemScale = PixelRatio.getFontScale();
-    const label = () => view.getByText('悬赏妖晶', { includeHiddenElements: true });
-    const assertTypography = async (floating: boolean) => {
-      const labelSize = (floating ? 12 : 16) * fontScale;
-      await waitFor(() => {
-        const labelView = label();
-        expect(getAnimatedStyle(labelView)).toMatchObject({ fontFamily: 'serif', fontSize: labelSize });
-        expect(view.getByLabelText('悬赏妖晶')).toHaveStyle({ fontFamily: 'serif', fontSize: inputSize });
-        if (!labelView.parent) throw new Error('The floating label must have a positioning container');
-        const labelTop = getAnimatedStyle(labelView.parent).top;
-        expect(labelTop).toBeCloseTo((floating ? 0 : 26 * systemScale) - (labelSize * systemScale) / 2);
-      });
-    };
+  it.each([
+    { variant: 'outlined', direction: 'ltr', fontScale: 1, initialValue: '' },
+    { variant: 'outlined', direction: 'rtl', fontScale: 1.4, initialValue: '2000' },
+    { variant: 'filled', direction: 'ltr', fontScale: 1.4, initialValue: '2000' }
+  ] as const)(
+    'keeps a stable label layout in $variant $direction fields at $fontScale scale',
+    async ({ variant, direction, fontScale, initialValue }) => {
+      const settings = { ...createEmptyReaderData().settings, uiFontScale: fontScale, uiFontFamily: 'system' as const };
+      const theme = createTheme(settings);
+      const form = (value: string) => (
+        <ReaderStyleProvider value={{ settings, theme }}>
+          <PaperProvider direction={direction}>
+            <AppTextInput
+              variant={variant}
+              accessibilityLabel="悬赏妖晶"
+              value={value}
+              onChangeText={() => undefined}
+            />
+          </PaperProvider>
+        </ReaderStyleProvider>
+      );
+      const view = await render(form(initialValue));
+      const inputSize = Math.round(14 * fontScale);
+      const label = () => view.getByText('悬赏妖晶', { includeHiddenElements: true });
+      const labelHeight = 23;
+      const fieldHeight = 70;
+      const filledPadding = Math.ceil(8 * Dimensions.get('window').fontScale);
+      const field = label().parent?.parent;
+      if (!field) throw new Error('The floating label needs its input field');
+      await fireEvent(label(), 'layout', { nativeEvent: { layout: { height: labelHeight } } });
+      await fireEvent(field, 'layout', { nativeEvent: { layout: { height: fieldHeight } } });
 
-    await assertTypography(false);
-    await fireEvent(view.getByLabelText('悬赏妖晶'), 'focus');
-    await assertTypography(true);
-    await view.rerender(form('2000'));
-    await fireEvent(view.getByLabelText('悬赏妖晶'), 'blur');
-    await assertTypography(true);
-    await view.rerender(form(''));
-    await assertTypography(false);
+      const assertTypography = async (floating: boolean) => {
+        const scale = floating ? 0.75 : 1;
+        const translateX = floating && variant === 'outlined' ? (direction === 'rtl' ? 4 : -4) : 0;
+        const translateY = floating
+          ? variant === 'outlined'
+            ? -(labelHeight * scale) / 2
+            : filledPadding
+          : (fieldHeight - labelHeight) / 2;
+        await waitFor(() => {
+          const labelView = label();
+          expect(labelView).toHaveStyle({ fontFamily: 'sans-serif', fontSize: 16 * fontScale });
+          expect(labelView).toHaveProp('numberOfLines', 1);
+          expect(view.getByLabelText('悬赏妖晶')).toHaveStyle({ fontFamily: 'sans-serif', fontSize: inputSize });
+          if (!labelView.parent) throw new Error('The floating label must have a positioning container');
+          expect(labelView.parent).toHaveStyle({
+            top: 0,
+            transformOrigin: direction === 'rtl' ? 'right top' : 'left top'
+          });
+          expect(getAnimatedStyle(labelView.parent).transform).toEqual([{ translateX }, { translateY }, { scale }]);
+        });
+      };
+
+      await assertTypography(Boolean(initialValue));
+      await view.rerender(form(''));
+      await assertTypography(false);
+      await fireEvent(view.getByLabelText('悬赏妖晶'), 'focus');
+      await assertTypography(true);
+      await view.rerender(form('2000'));
+      await fireEvent(view.getByLabelText('悬赏妖晶'), 'blur');
+      await assertTypography(true);
+      await view.rerender(form(''));
+      await assertTypography(false);
+    }
+  );
+
+  it('updates input metrics when Android changes font scale in the same runtime', async () => {
+    const original = Dimensions.get('window');
+    try {
+      await act(async () => Dimensions.set({ window: { ...original, fontScale: 0.9 } }));
+      const view = await render(<AppTextInput label="缩放测试" />);
+      const field = () => view.getByText('缩放测试', { includeHiddenElements: true }).parent?.parent;
+      expect(field()).toHaveStyle({ minHeight: 51 });
+      await act(async () => Dimensions.set({ window: { ...original, fontScale: 2 } }));
+      expect(field()).toHaveStyle({ minHeight: 112 });
+    } finally {
+      await act(async () => Dimensions.set({ window: original }));
+    }
   });
 
   it('retains native switch state and its pending accessibility state', async () => {

@@ -1,5 +1,5 @@
 import { recordUserInteraction } from '@/platform/network/userPresence';
-import { useContext, useEffect, useState, type ReactNode, type RefObject } from 'react';
+import { useContext, useLayoutEffect, useState, type ReactNode, type RefObject } from 'react';
 import { Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { X } from 'lucide-react-native';
 import { SafeAreaInsetsContext } from 'react-native-safe-area-context';
@@ -46,17 +46,17 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     headerCopy: { flex: 1, minWidth: 0, gap: 2 },
     title: {
       color: theme.ink,
-      fontFamily: fontFamilyValue(settings.fontFamily),
-      fontSize: Math.round(17 * settings.fontScale),
-      lineHeight: Math.round(22 * settings.fontScale),
+      fontFamily: fontFamilyValue(settings.uiFontFamily),
+      fontSize: Math.round(17 * settings.uiFontScale),
+      lineHeight: Math.round(22 * settings.uiFontScale),
       includeFontPadding: false,
       fontWeight: '600'
     },
     subtitle: {
       color: theme.muted,
-      fontFamily: fontFamilyValue(settings.fontFamily),
-      fontSize: Math.round(12 * settings.fontScale),
-      lineHeight: Math.round(17 * settings.fontScale),
+      fontFamily: fontFamilyValue(settings.uiFontFamily),
+      fontSize: Math.round(12 * settings.uiFontScale),
+      lineHeight: Math.round(17 * settings.uiFontScale),
       includeFontPadding: false
     }
   });
@@ -124,6 +124,9 @@ export function ModalSheetFrame({
   const localImeInsets = Platform.OS === 'android' && Number(Platform.Version) >= 30 && !!keyboardHostRef;
   const trackImeInsets = localImeInsets && keyboardAvoiding && keyboardAvoidingEnabled && visible;
   const imeBottom = useSharedValue(0);
+  useLayoutEffect(() => {
+    if (!trackImeInsets) imeBottom.value = 0;
+  }, [imeBottom, trackImeInsets]);
   const onImeInsets = useEvent<ComposerImeInsetsEvent>(
     (event) => {
       'worklet';
@@ -136,14 +139,25 @@ export function ModalSheetFrame({
   // follows native Insets instead of keyboardDidHide's early target visibility.
   const [androidKeyboardResetKey, setAndroidKeyboardResetKey] = useState(0);
   const [androidKeyboardVisible, setAndroidKeyboardVisible] = useState(false);
-  useEffect(() => {
+  const [initialKeyboardTop, setInitialKeyboardTop] = useState<number>();
+  const [windowBottom, setWindowBottom] = useState(0);
+  useLayoutEffect(() => {
     if (Platform.OS !== 'android' || !visible || !keyboardAvoiding || localImeInsets) {
       setAndroidKeyboardVisible(false);
+      setInitialKeyboardTop(undefined);
+      setWindowBottom(0);
       return;
     }
-    const showSubscription = Keyboard.addListener('keyboardDidShow', () => setAndroidKeyboardVisible(true));
+    // KeyboardAvoidingView receives future events only. On first layout its window may already avoid the IME.
+    setAndroidKeyboardVisible(Keyboard.isVisible());
+    setInitialKeyboardTop(Keyboard.metrics()?.screenY);
+    const showSubscription = Keyboard.addListener('keyboardDidShow', () => {
+      setInitialKeyboardTop(undefined);
+      setAndroidKeyboardVisible(true);
+    });
     const hideSubscription = Keyboard.addListener('keyboardDidHide', () => {
       setAndroidKeyboardVisible(false);
+      setInitialKeyboardTop(undefined);
       setAndroidKeyboardResetKey((current) => current + 1);
     });
     return () => {
@@ -189,7 +203,16 @@ export function ModalSheetFrame({
       key={Platform.OS === 'android' && !keyboardHostRef ? `${visible}-${androidKeyboardResetKey}` : undefined}
       behavior={keyboardHostRef ? 'padding' : 'height'}
       enabled={keyboardAvoidingEnabled && visible && (Platform.OS !== 'android' || androidKeyboardVisible)}
-      style={styles.root}
+      onLayout={
+        initialKeyboardTop === undefined
+          ? undefined
+          : ({ nativeEvent: { layout } }) => setWindowBottom(layout.y + layout.height)
+      }
+      style={[
+        styles.root,
+        keyboardAvoidingEnabled &&
+          initialKeyboardTop !== undefined && { paddingBottom: Math.max(0, windowBottom - initialKeyboardTop) }
+      ]}
     >
       {sheet}
     </KeyboardAvoidingView>

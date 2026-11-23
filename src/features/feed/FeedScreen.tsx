@@ -65,6 +65,7 @@ import { LoadingCover } from '@/ui/controls/ContentLoadingPlaceholder';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 
 const AUTO_LOAD_SCROLL_STEP = 80;
+const FeedPager = memo(TabView);
 
 export const FeedScreen = memo(function FeedScreen({
   active = true,
@@ -380,6 +381,7 @@ export const FeedScreen = memo(function FeedScreen({
   const feedFilterMenu = filterMenuOpen ? (
     <PopupMenu
       accessibilityLabel="关闭列表筛选菜单"
+      scrollable
       placementStyle={[styles.linuxDoFilterMenu, { top: sourceHeaderHeight + secondaryHeaderHeight }]}
       visible
       onRequestClose={closeFeedFilterMenu}
@@ -712,7 +714,7 @@ export const FeedScreen = memo(function FeedScreen({
   return (
     <View style={styles.content} onLayout={onPageLayout}>
       {feedFilterMenu}
-      <TabView
+      <FeedPager
         animationEnabled={false}
         style={styles.feedPager}
         initialLayout={feedInitialLayout}

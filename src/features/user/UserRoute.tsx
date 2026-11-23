@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import { useIsFocused } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { Topic } from '@/domain/forum/models';
+import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 
 import { userKey } from '@/domain/reader/readerData';
 
@@ -30,6 +31,12 @@ export function UserRoute({ navigation, route }: UserRouteProps) {
 
 function EnabledUserRoute({ navigation, route, runtime }: UserRouteProps & { runtime: UserRouteRuntimeValue }) {
   const active = useIsFocused();
+  const requestNodeSeekVerification = runtime.account.requestNodeSeekVerification;
+  const showNodeSeekVerification = useCallback(
+    (message?: string, recovery?: LinuxDoReadRecovery) =>
+      requestNodeSeekVerification(message || 'NodeSeek 需要完成 Cloudflare 验证', recovery),
+    [requestNodeSeekVerification]
+  );
   const controller = useUserController({
     active,
     sessionEpochs: runtime.account.sessionEpochs,
@@ -37,8 +44,7 @@ function EnabledUserRoute({ navigation, route, runtime }: UserRouteProps & { run
     onRetryIdentityStatus: runtime.account.reconcileAccountStatus,
     readerData: runtime.reader.data,
     showLinuxDoVerification: runtime.account.showLinuxDoVerification,
-    showNodeSeekVerification: (message, recovery) =>
-      runtime.account.requestNodeSeekVerification(message || 'NodeSeek 需要完成 Cloudflare 验证', recovery),
+    showNodeSeekVerification,
     showYaohuoLogin: runtime.account.showYaohuoLogin,
     readGateway: runtime.account.readGateway,
     user: route.params.user

@@ -27,12 +27,21 @@ export type NodeSeekPageDocument = {
   root: ReturnType<typeof parseHtml>;
 };
 
-export function parseNodeSeekPageDocument(html: string): NodeSeekPageDocument {
-  return {
+const responseDocuments = new WeakMap<Response, NodeSeekPageDocument>();
+
+export function parseNodeSeekPageDocument(html: string, response?: Response): NodeSeekPageDocument {
+  const previous = response && responseDocuments.get(response);
+  if (previous) return previous;
+  let root: NodeSeekPageDocument['root'] | undefined;
+  const document: NodeSeekPageDocument = {
     embedded: extractNodeSeekEmbeddedData(html),
     html,
-    root: parseHtml(html)
+    get root() {
+      return (root ??= parseHtml(html));
+    }
   };
+  if (response) responseDocuments.set(response, document);
+  return document;
 }
 
 export function nodeSeekTopicUrl(id: string) {
@@ -332,6 +341,17 @@ export function isNodeSeekChallengeResponse(
     return true;
   }
   return isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: html });
+}
+
+export function throwIfNodeSeekChallenge(
+  response: Response,
+  html: string,
+  url: string,
+  document?: NodeSeekPageDocument
+) {
+  if (isNodeSeekChallengeResponse(response, html, url, document)) {
+    throw Object.assign(new Error('NodeSeek 需要完成 Cloudflare 验证'), { source: 'nodeseek', reason: 'cloudflare' });
+  }
 }
 
 export function parseViewCount(value: unknown) {

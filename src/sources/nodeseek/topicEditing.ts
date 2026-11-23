@@ -11,7 +11,13 @@ import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { NODESEEK_ACTION_HEADERS, runNodeSeekAction } from './actionClient';
 import { randomNodeSeekContentToken } from './actionRequest';
-import { extractNodeSeekEmbeddedData, nodeSeekEmbeddedUserId, nodeSeekTopicUrl } from './protocol';
+import {
+  parseNodeSeekPageDocument,
+  nodeSeekEmbeddedUserId,
+  nodeSeekTopicUrl,
+  throwIfNodeSeekChallenge
+} from './protocol';
+import { acceptForumReadResponse } from '@/sources/forumSourceReadAttempt';
 
 type Options = { fetcher: Fetcher; userAgent: string; signal?: AbortSignal };
 
@@ -35,7 +41,10 @@ export async function loadNodeSeekTopicEditContext(
     ),
     { fetcher, signal }
   );
-  const data = extractNodeSeekEmbeddedData(await response.text());
+  const html = await response.text();
+  const document = parseNodeSeekPageDocument(html, response);
+  throwIfNodeSeekChallenge(response, html, nodeSeekTopicUrl(topicId), document);
+  const data = document.embedded;
   const post = isRecord(data?.postData) ? data.postData : {};
   const user = isRecord(data?.user) ? data.user : {};
   const first = Array.isArray(post.comments) && isRecord(post.comments[0]) ? post.comments[0] : {};
@@ -68,6 +77,7 @@ export async function loadNodeSeekTopicEditContext(
       : isRecord(post.category) && typeof post.category.key === 'string'
         ? post.category.key
         : String(post.categoryLink || '').match(/\/categories\/([^/?#]+)/)?.[1] || '';
+  acceptForumReadResponse(response);
   return {
     source: 'nodeseek',
     topicId,

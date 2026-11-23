@@ -168,9 +168,9 @@ export function discourseReplyWindow(data: unknown, limit: number) {
   );
   const remainingIds = new Set(posts.map((post) => String(post.id)));
   let firstIndex: number | undefined;
-  let nextOffset = 1;
-  for (let index = 0; index < stream.length && remainingIds.size > 0; index++) {
-    if (index in stream && remainingIds.delete(String(stream[index])) && index > 0) {
+  let nextOffset = 0;
+  for (let index = 1; index < stream.length && remainingIds.size > 0; index++) {
+    if (index in stream && remainingIds.delete(String(stream[index]))) {
       firstIndex ??= index;
       nextOffset = index;
     }

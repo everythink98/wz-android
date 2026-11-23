@@ -26,7 +26,7 @@ import type { Screen } from '@/ui/navigation/types';
 import type { MoreBadgeState } from '@/ui/navigation/moreBadge';
 import { NavigationBackdropTarget } from '@/ui/navigation/NavigationGlass';
 import { createTheme } from '@/ui/theme/tokens';
-import { act, fireEvent, render, waitFor } from '../render';
+import { act, fireEvent, render, waitFor, within } from '../render';
 import { createTestStyles as createStyles } from '../styleFixture';
 
 jest.mock('lucide-react-native', () => {
@@ -287,6 +287,21 @@ async function renderNavigator(moreHasBadge = false) {
 }
 
 describe('App navigator UI state', () => {
+  it('renders one laid-out label per tab alongside the icon layers', async () => {
+    const view = await renderNavigator();
+    const label = within(view.getByTestId('main-tab-search'));
+    expect(label.getAllByText('搜索', { includeHiddenElements: true })).toHaveLength(1);
+    expect(label.getByText('搜索')).toHaveStyle({
+      fontFamily: 'WzNotoSansSC',
+      fontSize: 10,
+      lineHeight: 14,
+      includeFontPadding: false
+    });
+    await fireEvent.press(view.getByTestId('main-tab-search'));
+    expect(label.getAllByText('搜索', { includeHiddenElements: true })).toHaveLength(1);
+    expect(label.getByText('搜索')).toHaveStyle({ fontWeight: '600' });
+  });
+
   it('keeps the clock and native callbacks usable without recording every navigation frame', async () => {
     const clock = jest.spyOn(performance, 'now');
     const measure = jest.spyOn(View.prototype, 'measure');

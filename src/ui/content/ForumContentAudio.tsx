@@ -36,14 +36,13 @@ export function ForumContentAudio({
 }) {
   const [dragPosition, setDragPosition] = useState<number | null>(null);
   const safeDuration = Number.isFinite(duration) ? Math.max(0, duration) : 0;
-  const safePosition = Math.min(
-    safeDuration || Number.POSITIVE_INFINITY,
-    Math.max(0, Number.isFinite(position) ? position : 0)
-  );
-  const displayedPosition = dragPosition ?? safePosition;
   const loading = status === 'loading';
   const failed = status === 'error';
   const sliderDisabled = loading || failed || safeDuration <= 0;
+  if (sliderDisabled && dragPosition !== null) setDragPosition(null);
+  const clampPosition = (value: number) =>
+    Math.min(safeDuration || Number.POSITIVE_INFINITY, Math.max(0, Number.isFinite(value) ? value : 0));
+  const displayedPosition = clampPosition(dragPosition ?? position);
   const buttonLabel = failed ? '音频加载失败，点按重试' : playWhenReady ? '暂停音频' : '播放音频';
 
   return (
@@ -110,8 +109,9 @@ export function ForumContentAudio({
             value={displayedPosition}
             onSlidingStart={(value) => setDragPosition(value)}
             onValueChange={setDragPosition}
+            onTouchCancel={() => setDragPosition(null)}
             onSlidingComplete={(value) => {
-              onSeek(value);
+              if (!sliderDisabled) onSeek(clampPosition(value));
               setDragPosition(null);
             }}
           />

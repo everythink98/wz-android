@@ -124,6 +124,10 @@ describe('Network proxy settings', () => {
     expect(view.getByLabelText('端口').props.value).toBe('1080');
     expect(view.getByLabelText('密码').props.value).toBe(' ');
     expect(view.getByLabelText('确定').props.accessibilityState.disabled).toBe(false);
+    const firstProfile = onUpsertProfile.mock.calls[0]![0];
+    await fireEvent.changeText(view.getByLabelText('端口'), '1081');
+    await fireEvent.press(view.getByLabelText('确定'));
+    expect(onUpsertProfile.mock.calls[1]![0]).toEqual({ ...firstProfile, port: 1081 });
   });
 
   it.each(['success', 'failure'] as const)(

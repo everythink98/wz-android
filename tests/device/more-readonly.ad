@@ -64,4 +64,6 @@ find "label=\"展开外观\"" click
 wait label="收起外观" 10000
 scroll down 0.3
 wait label="主题" 10000
-wait label="字号" 10000
+wait id="appearance-interface-font-scale-slider" 10000
+scroll down 0.3
+wait id="appearance-reading-font-scale-slider" 10000

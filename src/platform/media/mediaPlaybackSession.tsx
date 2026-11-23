@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react';
 import type { VideoPlayer } from 'expo-video';
+import { recordDiagnosticError } from '@/platform/diagnostics/diagnostics';
 import { recordMediaBudgetTimeout } from './mediaPlaybackDiagnostics';
 
 const NO_PROGRESS_TIMEOUT_MS = 30_000;
@@ -203,14 +204,23 @@ export class MediaPlaybackHandle {
 
   dispose() {
     if (this.lifetime.phase === 'disposed') return;
-    if (this.readiness.phase === 'confirmed') this.session.remember(this.id, this.player.currentTime);
-    this.pause();
     const releasePlayer = this.lifetime.phase === 'detached' ? this.lifetime.releasePlayer : null;
     this.lifetime = { phase: 'disposed' };
-    for (const subscription of this.subscriptions) subscription.remove();
     this.clearTimer();
     this.session.remove(this);
-    releasePlayer?.();
+    this.commitIntent('suspended');
+    // An externally released Expo player can reject native reads, pause and listener removal independently.
+    const release = (action: () => void) => {
+      try {
+        action();
+      } catch (error) {
+        recordDiagnosticError('media', 'player-error', error, { mediaKind: this.kind });
+      }
+    };
+    if (this.readiness.phase === 'confirmed') release(() => this.session.remember(this.id, this.player.currentTime));
+    release(() => this.player.pause());
+    for (const subscription of this.subscriptions) release(() => subscription.remove());
+    if (releasePlayer) release(releasePlayer);
     for (const callback of this.disposeCallbacks) callback();
     this.disposeCallbacks = [];
   }

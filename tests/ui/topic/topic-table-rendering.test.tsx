@@ -582,6 +582,30 @@ describe('native topic structured rendering', () => {
     expect(mockWithDecay).not.toHaveBeenCalled();
   });
 
+  it('updates the horizontal limit when the viewport changes without a new content measurement', async () => {
+    const tree = (viewportWidth: number) => (
+      <TopicHorizontalScroll
+        accessibilityLabel="表格"
+        semanticId="wide"
+        testID="table-resize"
+        viewportWidth={viewportWidth}
+      >
+        <View />
+      </TopicHorizontalScroll>
+    );
+    const view = await render(tree(320));
+    await fireEvent(view.getByTestId('table-resize'), 'contentSizeChange', 640, 60);
+    await fireEvent(view.getByTestId('table-resize'), 'accessibilityAction', {
+      nativeEvent: { actionName: 'increment' }
+    });
+    expect(mockAnimatedScrollTo).toHaveBeenLastCalledWith(expect.anything(), 256, 0, false);
+    await view.rerender(tree(560));
+    await fireEvent(view.getByTestId('table-resize'), 'accessibilityAction', {
+      nativeEvent: { actionName: 'increment' }
+    });
+    expect(mockAnimatedScrollTo).toHaveBeenLastCalledWith(expect.anything(), 80, 0, false);
+  });
+
   it('routes drag scroll to shared table offsets and rejects finished or stale drags', async () => {
     const row = compileForumContent({ html: '<pre>one two</pre>', role: 'opening', source: 'nodeseek' }).rows[0]!;
     const screen = await render(

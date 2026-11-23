@@ -42,7 +42,7 @@ describe('foreground notification access', () => {
         session: { ...session('linuxdo'), identityTrust: 'unknown' },
         fetcher
       })
-    ).rejects.toThrow('账号身份尚未确认');
+    ).rejects.toMatchObject({ message: '账号身份尚未确认', source: 'linuxdo', loginRequired: true });
 
     expect(fetcher).not.toHaveBeenCalled();
   });

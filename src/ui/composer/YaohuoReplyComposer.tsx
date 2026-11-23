@@ -25,11 +25,13 @@ import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import {
   createReaderFontSizer,
+  createUiFontSizer,
   readerRadii,
   type ReaderStyleSettings,
   alphaColor,
   fontFamilyValue,
-  type ReaderTheme
+  type ReaderTheme,
+  textSizeStyle
 } from '@/ui/theme/tokens';
 import { YAOHUO_FACE_ITEMS, yaohuoFaceImageUrl } from './expressionCatalogs';
 import { createYaohuoComposerPanels } from './yaohuoComposerPanels';
@@ -84,6 +86,8 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const neutral = theme.dark ? '#ffffff' : '#000000';
   const neutralSurface = alphaColor(neutral, theme.dark ? 0.06 : 0.035);
   const neutralBorder = alphaColor(neutral, theme.dark ? 0.12 : 0.09);
+  const uiFontSize = createUiFontSizer(settings);
+  const uiFontFamily = fontFamilyValue(settings.uiFontFamily);
   return StyleSheet.create({
     composer: { gap: 10, paddingHorizontal: 16, paddingTop: 14, width: '100%' },
     embedded: { flex: 1, minHeight: 0, gap: 0, paddingHorizontal: 0, paddingTop: 0 },
@@ -100,9 +104,8 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     },
     bodyLabel: {
       color: theme.muted,
-      fontFamily,
-      fontSize: scaled(12),
-      lineHeight: scaled(18),
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(12), uiFontSize(18)),
       paddingHorizontal: 16,
       paddingTop: 12,
       paddingBottom: 4
@@ -131,7 +134,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       justifyContent: 'space-between',
       minHeight: 40
     },
-    title: { flex: 1, color: theme.ink, fontFamily, fontSize: scaled(15), fontWeight: '600' },
+    title: { flex: 1, color: theme.ink, fontFamily: uiFontFamily, ...textSizeStyle(uiFontSize(15)), fontWeight: '600' },
     toolbar: {
       backgroundColor: theme.surface2,
       borderColor: 'transparent',
@@ -154,10 +157,9 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     },
     selectedFaceText: {
       color: theme.ink,
-      fontFamily,
-      fontSize: scaled(12),
-      fontWeight: '700',
-      lineHeight: scaled(18)
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(12), uiFontSize(18)),
+      fontWeight: '700'
     },
     selectedFaceImage: { height: 24, width: 24 },
     facePanel: {
@@ -181,7 +183,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       width: 64
     },
     faceChipActive: { backgroundColor: theme.mist, borderColor: theme.primary },
-    faceText: { color: theme.ink, fontFamily, fontSize: scaled(12), fontWeight: '500' },
+    faceText: { color: theme.ink, fontFamily: uiFontFamily, ...textSizeStyle(uiFontSize(12)), fontWeight: '500' },
     faceImage: { height: 36, width: 36 },
     input: {
       backgroundColor: theme.surface,
@@ -190,8 +192,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       borderWidth: StyleSheet.hairlineWidth,
       color: theme.ink,
       fontFamily,
-      fontSize: scaled(14),
-      lineHeight: scaled(21),
+      ...textSizeStyle(scaled(14), scaled(21)),
       maxHeight: 180,
       minHeight: 92,
       paddingHorizontal: 12,
@@ -200,9 +201,13 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     },
     actions: { alignItems: 'center', flexDirection: 'row', gap: 8, justifyContent: 'flex-end' },
     disabled: { opacity: 0.45 },
-    disabledReason: { color: theme.muted, fontFamily, fontSize: scaled(12), lineHeight: scaled(18) },
-    error: { color: theme.danger, fontFamily, fontSize: scaled(12), lineHeight: scaled(18) },
-    status: { color: theme.muted, fontFamily, fontSize: scaled(12), lineHeight: scaled(18) }
+    disabledReason: {
+      color: theme.muted,
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(12), uiFontSize(18))
+    },
+    error: { color: theme.danger, fontFamily: uiFontFamily, ...textSizeStyle(uiFontSize(12), uiFontSize(18)) },
+    status: { color: theme.muted, fontFamily: uiFontFamily, ...textSizeStyle(uiFontSize(12), uiFontSize(18)) }
   });
 }
 
@@ -272,8 +277,14 @@ export function YaohuoReplyComposer({
   // Portal forwards parent props after the input's native change has committed.
   // Echo typing locally so TextInput never restores the preceding parent value.
   const [inputContent, setInputContent] = useState(content);
-  useLayoutEffect(() => setInputContent(content), [content]);
-  const contentRef = useCommittedRef(inputContent);
+  const contentRef = useRef(content);
+  const contentVersionRef = useRef(0);
+  useLayoutEffect(() => {
+    if (contentRef.current === content) return;
+    contentVersionRef.current += 1;
+    contentRef.current = content;
+    setInputContent(content);
+  }, [content]);
   // Let the IME own selection while composing; only toolbar actions move it.
   const selectionRef = useRef<Selection>({ start: content.length, end: content.length });
   const [panels] = useState(createYaohuoComposerPanels);
@@ -306,12 +317,11 @@ export function YaohuoReplyComposer({
   }, [panelActive, onPanelChange]);
   const [imagePending, setImagePending] = useState<'keyboard' | 'upload' | null>(null);
   const [imageError, setImageError] = useState('');
-  const contentVersionRef = useRef(0);
   const imageRequestRef = useRef<{ version: number } | null>(null);
   const uploadAllowed = useCommittedRef(!actionBusy && !disabledReason);
   useLayoutEffect(() => {
     contentVersionRef.current += 1;
-  }, [content, format, presentation]);
+  }, [format, presentation]);
   useLayoutEffect(
     () => () => {
       imageRequestRef.current = null;
@@ -343,7 +353,7 @@ export function YaohuoReplyComposer({
       setInputContent(value);
       onContentChange(value);
     },
-    [contentRef, onContentChange]
+    [onContentChange]
   );
   const uploadAtSelection = async () => {
     if (!onUploadImage || actionBusy || disabledReason || imageRequestRef.current || panels.pending) return;
@@ -574,7 +584,8 @@ export function YaohuoReplyComposer({
           closePanels();
         }}
         onSelectionChange={(event) => {
-          selectionRef.current = event.nativeEvent.selection;
+          const { start, end } = event.nativeEvent.selection;
+          selectionRef.current = { start: Math.min(start, end), end: Math.max(start, end) };
         }}
       />
       {presentation === 'embedded' ? (

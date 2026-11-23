@@ -201,6 +201,46 @@ describe('Image preview controller', () => {
     }
   });
 
+  it('starts a new scope save while the old preparation waits and keeps the new save single-flight', async () => {
+    const oldPreparation = Promise.withResolvers<void>();
+    const newDownload = Promise.withResolvers<void>();
+    const beforeSave = jest.fn<() => Promise<void>>().mockReturnValueOnce(oldPreparation.promise).mockResolvedValue();
+    mockSaveImageUriToLibrary.mockImplementation(() => newDownload.promise);
+    const notify = jest.fn();
+    const view = await renderHook(
+      ({ scope }: { scope: string }) =>
+        useImagePreviewController({
+          scope,
+          beforeSave,
+          contentWidth: 360,
+          contentSource: null,
+          notify
+        }),
+      { initialProps: { scope: 'first' } }
+    );
+    let oldSave: Promise<void> | undefined;
+    let currentSave: Promise<void> | undefined;
+    try {
+      await act(() => view.result.current.openImagePreview('https://images.example/first.jpg'));
+      oldSave = view.result.current.savePreviewImage();
+      await view.rerender({ scope: 'second' });
+      await act(() => view.result.current.openImagePreview('https://images.example/second.jpg'));
+      currentSave = view.result.current.savePreviewImage();
+      await Promise.resolve();
+      expect(mockSaveImageUriToLibrary).toHaveBeenCalledTimes(1);
+      expect(mockSaveImageUriToLibrary.mock.calls[0][0]).toBe('https://images.example/second.jpg');
+      oldPreparation.resolve();
+      await oldSave;
+      await view.result.current.savePreviewImage();
+      expect(beforeSave).toHaveBeenCalledTimes(2);
+      expect(mockSaveImageUriToLibrary).toHaveBeenCalledTimes(1);
+    } finally {
+      oldPreparation.resolve();
+      newDownload.resolve();
+      await Promise.all([oldSave, currentSave]);
+    }
+  });
+
   it('forwards NodeSeek media credentials to the save request', async () => {
     mockSaveImageUriToLibrary.mockResolvedValue();
     const imageUrl = 'https://www.nodeseek.com/uploads/private-topic.png';

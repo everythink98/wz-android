@@ -1288,16 +1288,15 @@ class ForumContentSelectionView(
       failClosed("copy-mapping-mismatch")
       return null
     }
-    return try {
+    val written = writeForumClipboard {
       val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
       val clip = ClipData.newPlainText("forum-content", copied)
       clipboardWriterForTest?.invoke(clip) ?: clipboard.setPrimaryClip(clip)
-      copied
-    } catch (_: SecurityException) {
-      emitError("copy-denied")
-      Toast.makeText(context, R.string.forum_selection_copy_denied, Toast.LENGTH_SHORT).show()
-      null
     }
+    if (written) return copied
+    emitError("copy-denied")
+    Toast.makeText(context, R.string.forum_selection_copy_denied, Toast.LENGTH_SHORT).show()
+    return null
   }
 
   private fun postAutoScroll() {

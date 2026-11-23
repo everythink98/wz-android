@@ -1,7 +1,8 @@
-import { describe, expect, it, jest } from '@jest/globals';
-import { act, fireEvent, render } from '../render';
+import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { onlineManager, QueryClient } from '@tanstack/react-query';
+import { act, fireEvent, render, waitFor } from '../render';
 import React from 'react';
-import { StatusBar, StyleSheet, View } from 'react-native';
+import { Dimensions, StatusBar, StyleSheet, View } from 'react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { AppearancePanel } from '@/features/more/components/AppearancePanel';
 import { ReadingSettingsScreen } from '@/features/more/ReadingSettingsScreen';
@@ -15,12 +16,33 @@ import {
 } from '@/ui/navigation/NavigationGlass';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from '../styleFixture';
+import { createQueryTestWrapper, QueryTestWrapper } from '../QueryTestWrapper';
+import {
+  downloadableReaderFonts,
+  downloadReaderFont,
+  listLocalReaderFonts,
+  pickLocalReaderFont,
+  prepareLocalReaderFont,
+  type ReaderFontDownloadProgress
+} from '@/platform/storage/readerFonts';
+
+jest.mock('@/platform/storage/readerFonts', () => ({
+  ...jest.requireActual<typeof import('@/platform/storage/readerFonts')>('@/platform/storage/readerFonts'),
+  downloadReaderFont: jest.fn(),
+  listLocalReaderFonts: jest.fn(),
+  pickLocalReaderFont: jest.fn(),
+  prepareLocalReaderFont: jest.fn()
+}));
 
 jest.mock('lucide-react-native', () => {
   const Icon = () => null;
   return {
+    Check: Icon,
     CheckCircle: Icon,
+    ChevronDown: Icon,
+    Download: Icon,
     ExternalLink: Icon,
+    FilePlus2: Icon,
     Image: Icon,
     Minus: Icon,
     Plus: Icon,
@@ -48,6 +70,10 @@ const theme = createTheme(readerData.settings);
 const styles = createStyles(theme, readerData.settings, 800);
 
 describe('Topic and More controls', () => {
+  beforeEach(() => {
+    jest.mocked(listLocalReaderFonts).mockReset().mockResolvedValue([]);
+  });
+
   it('keeps a compact primary action readable and at least 48 dp tall to touch', async () => {
     const view = await render(<AppButton compact variant="solid" label="确认" testID="confirm" onPress={jest.fn()} />);
     const { hitSlop } = view.getByRole('button', { name: '确认' }).props;
@@ -170,13 +196,17 @@ describe('Topic and More controls', () => {
   it('keeps reading controls close to the native header even with a tall status bar', async () => {
     const statusBarHeight = jest.replaceProperty(StatusBar, 'currentHeight', 64);
     try {
-      const view = await render(<ReadingSettingsScreen settings={readerData.settings} onUpdateSettings={jest.fn()} />);
-      let content = view.getByText('主题').parent;
+      const view = await render(<ReadingSettingsScreen settings={readerData.settings} onUpdateSettings={jest.fn()} />, {
+        wrapper: QueryTestWrapper
+      });
+      let content = view.getByText('阅读字体').parent;
       while (content && !content.props.contentContainerStyle) content = content.parent;
       const contentStyle = StyleSheet.flatten(content?.props.contentContainerStyle);
       expect(contentStyle.paddingTop).toBeLessThanOrEqual(16);
-      expect(view.getByText('主题')).toBeVisible();
-      expect(view.getByLabelText('增大字号')).toBeVisible();
+      expect(view.getByText('阅读字体')).toBeVisible();
+      expect(view.queryByText('界面字体')).toBeNull();
+      expect(view.queryByLabelText('界面字号')).toBeNull();
+      expect(view.getByLabelText('增大阅读字号')).toBeVisible();
     } finally {
       statusBarHeight.restore();
     }
@@ -237,7 +267,10 @@ describe('Topic and More controls', () => {
     expect(onRequestClose).toHaveBeenCalledTimes(1);
   });
 
-  it('reports visible appearance choices as setting patches', async () => {
+  it('offers direct theme and layout choices and reserves the dropdown for fonts', async () => {
+    const measurement = jest.spyOn(View.prototype, 'measureInWindow').mockImplementation((callback) => {
+      callback(20, 160, 225, 210);
+    });
     const onUpdateSettings = jest.fn();
     const view = await render(
       <AppearancePanel
@@ -246,22 +279,242 @@ describe('Topic and More controls', () => {
         styles={styles}
         theme={theme}
         onUpdateSettings={onUpdateSettings}
-      />
+      />,
+      { wrapper: QueryTestWrapper }
     );
 
-    await fireEvent.press(view.getByText('深色'));
-    await fireEvent.press(view.getAllByText('宽松')[0]);
-    await fireEvent.press(view.getByText('宽'));
-    await fireEvent.press(view.getByText('衬线'));
-    await fireEvent.press(view.getAllByText('紧凑')[1]);
+    try {
+      expect(view.getByRole('radio', { name: '主题，浅色', checked: true })).toBeVisible();
+      await fireEvent.press(view.getByRole('radio', { name: '主题，深色' }));
+      await fireEvent.press(view.getByRole('radio', { name: '行距，宽松' }));
+      await fireEvent.press(view.getByRole('radio', { name: '正文宽度，宽' }));
+      await fireEvent.press(view.getByRole('radio', { name: '列表密度，紧凑' }));
+      const unreadDot = view.getByRole('switch', { name: '显示未读圆点' });
+      expect(unreadDot.props.value).toBe(true);
+      await fireEvent(unreadDot, 'valueChange', false);
+      expect(view.queryByRole('menuitem', { name: '跟随系统' })).toBeNull();
+      await fireEvent.press(view.getByTestId('appearance-reading-font-dropdown'));
+      const systemFont = await view.findByRole('menuitem', { name: '跟随系统' });
+      expect(view.queryByRole('menuitem', { name: '衬线' })).toBeNull();
+      expect(view.queryByRole('menuitem', { name: '无衬线' })).toBeNull();
+      await fireEvent.press(systemFont);
+      expect(onUpdateSettings.mock.calls).toEqual([
+        [{ theme: 'dark' }],
+        [{ lineHeight: 'loose' }],
+        [{ contentWidth: 'wide' }],
+        [{ listDensity: 'compact' }],
+        [{ showUnreadDot: false }],
+        [{ fontFamily: 'system' }]
+      ]);
+    } finally {
+      measurement.mockRestore();
+    }
+  });
 
-    expect(onUpdateSettings.mock.calls).toEqual([
-      [{ theme: 'dark' }],
-      [{ lineHeight: 'loose' }],
-      [{ contentWidth: 'wide' }],
-      [{ fontFamily: 'serif' }],
-      [{ listDensity: 'compact' }]
-    ]);
+  it('shares imported fonts while offline and handles a canceled picker', async () => {
+    const measurement = jest.spyOn(View.prototype, 'measureInWindow').mockImplementation((callback) => {
+      callback(20, 160, 225, 225);
+    });
+    const family = `WzLocalFont_${'a'.repeat(64)}` as const;
+    const localFont = { family, name: '本地阅读字体' };
+    const chooseFont = jest.mocked(pickLocalReaderFont);
+    chooseFont.mockResolvedValueOnce(null).mockImplementationOnce(async () => {
+      jest.mocked(listLocalReaderFonts).mockResolvedValue([localFont]);
+      return localFont;
+    });
+    const onUpdateSettings = jest.fn();
+    const wasOnline = onlineManager.isOnline();
+    onlineManager.setOnline(false);
+    const view = await render(
+      <AppearancePanel
+        settings={readerData.settings}
+        showSettingsPanel
+        styles={styles}
+        theme={theme}
+        onUpdateSettings={onUpdateSettings}
+      />,
+      { wrapper: QueryTestWrapper }
+    );
+    try {
+      await fireEvent.press(view.getByTestId('appearance-reading-font-dropdown'));
+      await fireEvent.press(await view.findByRole('menuitem', { name: '新增字体' }));
+      expect(onUpdateSettings).not.toHaveBeenCalled();
+      await fireEvent.press(view.getByTestId('appearance-reading-font-dropdown'));
+      await fireEvent.press(await view.findByRole('menuitem', { name: '新增字体' }));
+      await waitFor(() => expect(onUpdateSettings).toHaveBeenCalledWith({ fontFamily: family }));
+      await fireEvent.press(view.getByTestId('appearance-interface-font-dropdown'));
+      await fireEvent.press(await view.findByRole('menuitem', { name: localFont.name }));
+      await waitFor(() => expect(onUpdateSettings).toHaveBeenLastCalledWith({ uiFontFamily: family }));
+    } finally {
+      onlineManager.setOnline(wasOnline);
+      measurement.mockRestore();
+      chooseFont.mockReset();
+    }
+  });
+
+  it('keeps the font menu open across download, installation and selection', async () => {
+    const dimensions = jest.spyOn(Dimensions, 'get').mockReturnValue({
+      width: 360,
+      height: 720,
+      scale: 3,
+      fontScale: 1
+    });
+    const measurement = jest.spyOn(View.prototype, 'measureInWindow').mockImplementation((callback) => {
+      callback(180, 160, 164, 48);
+    });
+    const font = downloadableReaderFonts.find((entry) => entry.name === 'Inter')!;
+    const installed = { family: font.family, name: font.name };
+    const result = Promise.withResolvers<typeof installed>();
+    const subscription = Promise.withResolvers<(event: ReaderFontDownloadProgress) => void>();
+    const download = jest.mocked(downloadReaderFont).mockImplementationOnce((_font, onProgress) => {
+      subscription.resolve(onProgress);
+      return result.promise;
+    });
+    const onUpdateSettings = jest.fn();
+    const wasOnline = onlineManager.isOnline();
+    const appearance = (fontFamily = readerData.settings.fontFamily) => (
+      <AppearancePanel
+        settings={{ ...readerData.settings, fontFamily }}
+        showSettingsPanel
+        styles={styles}
+        theme={theme}
+        onUpdateSettings={onUpdateSettings}
+      />
+    );
+    const view = await render(appearance(), { wrapper: QueryTestWrapper });
+    try {
+      expect(view.getByLabelText('界面字体，思源黑体')).toBeTruthy();
+      await fireEvent.press(view.getByLabelText('阅读字体，思源黑体'));
+      expect(await view.findByText('Noto Sans SC')).toBeOnTheScreen();
+      expect(view.getByRole('menuitem', { name: '思源宋体，安装' })).toBeOnTheScreen();
+      await fireEvent.press(view.getByRole('menuitem', { name: 'Inter，安装' }));
+      const reportProgress = await subscription.promise;
+      const installing = view.getByRole('menuitem', { name: 'Inter，正在连接…', busy: true });
+      expect(installing).not.toHaveStyle({ opacity: 0.5 });
+      for (const name of ['跟随系统', '新增字体']) {
+        const option = view.getByRole('menuitem', { name });
+        expect(option).toBeDisabled();
+        expect(option).toHaveStyle({ opacity: 0.5 });
+      }
+      const otherFont = view.getByTestId('appearance-interface-font-dropdown', { includeHiddenElements: true });
+      expect(otherFont).toBeDisabled();
+      expect(otherFont).toHaveStyle({ opacity: 0.5 });
+      const menuID = 'appearance-reading-font-dropdown-menu-view';
+      const openMenu = view.getByTestId(menuID);
+      const listID = 'appearance-reading-font-dropdown-options';
+      const openList = view.getByTestId(listID);
+      expect(StyleSheet.flatten(openMenu.props.style)).toMatchObject({
+        left: 72,
+        top: 214,
+        width: 272,
+        maxHeight: 336
+      });
+
+      await act(async () => reportProgress({ phase: 'downloading', percent: 35 }));
+      expect(await view.findByRole('menuitem', { name: 'Inter，下载中 35%', busy: true })).toBeOnTheScreen();
+      expect(view.getByTestId('appearance-font-download-progress')).toBeOnTheScreen();
+      await act(async () => reportProgress({ phase: 'downloading', percent: 36 }));
+      expect(await view.findByRole('menuitem', { name: 'Inter，下载中 36%', busy: true })).toBeOnTheScreen();
+
+      await act(async () => reportProgress({ phase: 'installing' }));
+      expect(await view.findByRole('menuitem', { name: 'Inter，正在安装…', busy: true })).toBeOnTheScreen();
+      expect(view.getByTestId('appearance-font-installing')).toBeOnTheScreen();
+      expect(view.getByTestId(menuID)).toBe(openMenu);
+      expect(view.getByTestId(listID)).toBe(openList);
+      expect(onUpdateSettings).not.toHaveBeenCalled();
+      expect(download).toHaveBeenCalledWith(font, expect.any(Function));
+      jest.mocked(listLocalReaderFonts).mockResolvedValue([installed]);
+      await act(async () => result.resolve(installed));
+      await waitFor(() => expect(onUpdateSettings.mock.calls).toEqual([[{ fontFamily: font.family }]]));
+      await view.rerender(appearance(font.family));
+      expect(view.getByRole('menuitem', { name: 'Inter', selected: true })).toBeOnTheScreen();
+      expect(view.getByTestId(menuID)).toBe(openMenu);
+      expect(view.getByTestId(listID)).toBe(openList);
+
+      onlineManager.setOnline(false);
+      await fireEvent.press(view.getByRole('button', { name: '关闭阅读字体选择' }));
+      await fireEvent.press(view.getByLabelText('界面字体，思源黑体'));
+      await fireEvent.press(await view.findByRole('menuitem', { name: 'Inter' }));
+      await waitFor(() => expect(onUpdateSettings).toHaveBeenLastCalledWith({ uiFontFamily: font.family }));
+      expect(download).toHaveBeenCalledTimes(1);
+    } finally {
+      onlineManager.setOnline(wasOnline);
+      dimensions.mockRestore();
+      measurement.mockRestore();
+      download.mockReset();
+    }
+  });
+
+  it('keeps the chosen font after a failed download and allows another tap to retry', async () => {
+    const measurement = jest.spyOn(View.prototype, 'measureInWindow').mockImplementation((callback) => {
+      callback(20, 160, 225, 225);
+    });
+    const font = downloadableReaderFonts.find((entry) => entry.name === 'Inter')!;
+    const download = jest
+      .mocked(downloadReaderFont)
+      .mockRejectedValueOnce(new Error('字体下载失败，请重试。'))
+      .mockResolvedValueOnce({ family: font.family, name: font.name });
+    const onUpdateSettings = jest.fn();
+    const view = await render(
+      <AppearancePanel
+        settings={readerData.settings}
+        showSettingsPanel
+        styles={styles}
+        theme={theme}
+        onUpdateSettings={onUpdateSettings}
+      />,
+      { wrapper: QueryTestWrapper }
+    );
+    try {
+      await fireEvent.press(view.getByLabelText('阅读字体，思源黑体'));
+      await fireEvent.press(await view.findByRole('menuitem', { name: 'Inter，安装' }));
+      expect(await view.findByText('字体下载失败，请重试。')).toBeOnTheScreen();
+      expect(onUpdateSettings).not.toHaveBeenCalled();
+      await fireEvent.press(view.getByRole('menuitem', { name: 'Inter，重试' }));
+      await waitFor(() => expect(onUpdateSettings.mock.calls).toEqual([[{ fontFamily: font.family }]]));
+      expect(view.queryByText('字体下载失败，请重试。')).toBeNull();
+      expect(download).toHaveBeenCalledTimes(2);
+    } finally {
+      measurement.mockRestore();
+      download.mockReset();
+    }
+  });
+
+  it('offers to reinstall a catalog font that cannot be opened', async () => {
+    const measurement = jest.spyOn(View.prototype, 'measureInWindow').mockImplementation((callback) => {
+      callback(20, 160, 225, 44);
+    });
+    const font = downloadableReaderFonts.find((entry) => entry.name === 'Inter')!;
+    const stored = { family: font.family, name: font.name };
+    jest.mocked(listLocalReaderFonts).mockResolvedValue([stored]);
+    const prepare = jest.mocked(prepareLocalReaderFont).mockResolvedValueOnce(false);
+    const download = jest.mocked(downloadReaderFont).mockResolvedValueOnce(stored);
+    const client = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity, retry: false } } });
+    const onUpdateSettings = jest.fn();
+    const view = await render(
+      <AppearancePanel
+        settings={readerData.settings}
+        showSettingsPanel
+        styles={styles}
+        theme={theme}
+        onUpdateSettings={onUpdateSettings}
+      />,
+      { wrapper: createQueryTestWrapper(client) }
+    );
+    try {
+      await fireEvent.press(view.getByLabelText('阅读字体，思源黑体'));
+      await fireEvent.press(await view.findByRole('menuitem', { name: 'Inter' }));
+      await waitFor(() => expect(prepare).toHaveBeenCalledWith(font.family));
+      expect(onUpdateSettings).not.toHaveBeenCalled();
+      await fireEvent.press(view.getByLabelText('阅读字体，思源黑体'));
+      await fireEvent.press(await view.findByRole('menuitem', { name: 'Inter，安装' }));
+      expect(download).toHaveBeenCalledWith(font, expect.any(Function));
+      await waitFor(() => expect(onUpdateSettings).toHaveBeenCalledWith({ fontFamily: font.family }));
+    } finally {
+      measurement.mockRestore();
+      prepare.mockReset();
+      download.mockReset();
+    }
   });
 
   it('previews font-scale dragging and commits the setting once on completion', async () => {
@@ -273,10 +526,11 @@ describe('Topic and More controls', () => {
         styles={styles}
         theme={theme}
         onUpdateSettings={onUpdateSettings}
-      />
+      />,
+      { wrapper: QueryTestWrapper }
     );
 
-    const slider = view.getByTestId('appearance-font-scale-slider');
+    const slider = view.getByTestId('appearance-reading-font-scale-slider');
     await act(async () => slider.props.onValueChange(1.15));
     expect(view.getByText('115%')).toBeTruthy();
     expect(onUpdateSettings).not.toHaveBeenCalled();
@@ -285,9 +539,12 @@ describe('Topic and More controls', () => {
     expect(onUpdateSettings).toHaveBeenCalledTimes(1);
     expect(onUpdateSettings).toHaveBeenLastCalledWith({ fontScale: 1.15 });
 
-    await fireEvent.press(view.getByLabelText('减小字号'));
+    await fireEvent.press(view.getByLabelText('减小阅读字号'));
     expect(view.getByText('110%')).toBeTruthy();
     expect(onUpdateSettings).toHaveBeenCalledTimes(2);
     expect(onUpdateSettings).toHaveBeenLastCalledWith({ fontScale: 1.1 });
+    await act(async () => view.getByTestId('appearance-interface-font-scale-slider').props.onSlidingComplete(0.85));
+    expect(onUpdateSettings).toHaveBeenLastCalledWith({ uiFontScale: 0.85 });
+    expect(view.getByLabelText('阅读字号').props.accessibilityValue.now).toBe(110);
   });
 });

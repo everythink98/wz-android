@@ -89,6 +89,13 @@ type RecoverySession = {
   lastCheckTraceId?: string;
 };
 
+function interruptedRecoveryClose(session: RecoverySession) {
+  return {
+    authoritativeResult: session.dedicated,
+    reason: session.dedicated ? 'authoritative-recovery' : 'initialization-incomplete'
+  } as const;
+}
+
 type LinuxDoCheckOwner = {
   requestId: number;
   generation: number;
@@ -517,6 +524,22 @@ export function useVerificationController({
     [cancelLinuxDoEgressProbe, linuxDoWebViewSessionRef, setLinuxDoWebViewKey]
   );
 
+  const retireLinuxDoWebViewForClear = useCallback(() => {
+    const documentKey = nextLinuxDoWebViewSession('refresh');
+    if (linuxDoWebViewMountTimerRef.current) clearTimeout(linuxDoWebViewMountTimerRef.current);
+    linuxDoWebViewMountTimerRef.current = null;
+    linuxDoWebViewRef.current?.stopLoading();
+    setLoadingLinuxDoPage(false);
+    setMountLinuxDoWebView(false);
+    return documentKey;
+  }, [
+    linuxDoWebViewMountTimerRef,
+    linuxDoWebViewRef,
+    nextLinuxDoWebViewSession,
+    setLoadingLinuxDoPage,
+    setMountLinuxDoWebView
+  ]);
+
   const setLoadingLinuxDoPageForSession = useCallback(
     (value: boolean, webViewKey?: number) => {
       if (webViewKey !== undefined && webViewKey !== linuxDoWebViewSessionRef.current) {
@@ -617,7 +640,7 @@ export function useVerificationController({
       setLoadingLinuxDoPageForSession(false);
       void awaitLinuxDoWebViewUnmount().then(() => {
         if (recoverySessionRef.current === session && isLinuxDoSurfaceVisible())
-          onLinuxDoSurfaceClosed({ authoritativeResult: true, reason: 'authoritative-recovery' });
+          onLinuxDoSurfaceClosed(interruptedRecoveryClose(session));
       });
       publishRecovery();
       return;
@@ -1275,6 +1298,19 @@ export function useVerificationController({
         validateRecoveryTargets(session);
         await awaitLinuxDoWebViewUnmount();
         if (!current()) return;
+        if (!session.dedicated) {
+          await handoffLinuxDoCookies(trace.traceId);
+          if (!current()) return;
+          const result = await reconcileAccountStatus('linuxdo', { publishAnonymous: true });
+          if (recoverySessionRef.current !== session || linuxDoActiveCheckRef.current !== check) return;
+          if (result.status === 'changed' || result.status === 'anonymous') {
+            closeLinuxDoPanel(true, 'authoritative-recovery', true);
+            finishLinuxDoVerificationTrace(trace, 'stale', { reason: 'stale' });
+            return;
+          }
+          if (!current() || result.status === 'stale') return;
+          if (result.status === 'unknown') throw new Error(result.error);
+        }
         onLinuxDoSurfaceClosed({
           authoritativeResult: true,
           reason: 'authoritative-recovery',
@@ -1368,6 +1404,7 @@ export function useVerificationController({
       currentLinuxDoVerificationTrace,
       finishLinuxDoVerificationTrace,
       getRecoveryScope,
+      handoffLinuxDoCookies,
       isLinuxDoSurfaceVisible,
       linuxDoWebViewSessionRef,
       linuxDoWebViewMountTimerRef,
@@ -1376,6 +1413,7 @@ export function useVerificationController({
       notify,
       onLinuxDoSurfaceClosed,
       publishRecovery,
+      reconcileAccountStatus,
       setChecking,
       setLinuxDoWebViewError,
       setLoadingLinuxDoPage,
@@ -1588,8 +1626,7 @@ export function useVerificationController({
       recoverySessionRef.current.targets
         .filter((target) => target.outcome !== 'completed')
         .forEach(cancelRecoveryTarget);
-      if (isLinuxDoSurfaceVisible())
-        onLinuxDoSurfaceClosed({ authoritativeResult: true, reason: 'authoritative-recovery' });
+      if (isLinuxDoSurfaceVisible()) onLinuxDoSurfaceClosed(interruptedRecoveryClose(session));
       setChecking(false);
       publishRecovery();
       const trace = linuxDoVerificationTraceRef.current;
@@ -1624,6 +1661,7 @@ export function useVerificationController({
     checkLinuxDoCookie,
     closeLinuxDoPanel,
     handleLinuxDoMessage,
+    retireLinuxDoWebViewForClear,
     resetLinuxDoWebView,
     setLinuxDoWebViewErrorForSession,
     setLoadingLinuxDoPageForSession,

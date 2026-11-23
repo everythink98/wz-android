@@ -1,4 +1,13 @@
-import { createContext, type ComponentRef, type ReactNode, useCallback, useContext, useMemo } from 'react';
+import {
+  createContext,
+  type ComponentRef,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useLayoutEffect,
+  useMemo,
+  useRef
+} from 'react';
 import { StyleSheet, View, type AccessibilityActionEvent, type StyleProp, type ViewStyle } from 'react-native';
 import { GestureDetector, GestureStateManager, useNativeGesture, usePanGesture } from 'react-native-gesture-handler';
 import Animated, {
@@ -210,6 +219,7 @@ export function TopicHorizontalScroll({
   const offset = useTopicHorizontalOffset(semanticId);
   const initialMaximum = contentWidth === undefined ? 0 : Math.max(0, contentWidth - viewportWidth);
   const maximumOffset = useSharedValue(initialMaximum);
+  const measuredWidth = useRef<number | null>(null);
   const selectionNativeId = useTopicSelectionHorizontalTarget(offset, maximumOffset);
   const panIntent = useSharedValue<HorizontalPanIntent>({ phase: 'unclaimed', startX: 0, startY: 0 });
   const scrollViewRef = useAnimatedRef<ComponentRef<typeof Animated.ScrollView>>();
@@ -282,12 +292,17 @@ export function TopicHorizontalScroll({
   });
   const handleContentSizeChange = useCallback(
     (width: number) => {
+      measuredWidth.current = width;
       const maximum = Number.isFinite(width) ? Math.max(0, width - viewportWidth) : 0;
       maximumOffset.value = maximum;
       if (offset.value > maximum) offset.value = maximum;
     },
     [maximumOffset, offset, viewportWidth]
   );
+  useLayoutEffect(() => {
+    const width = contentWidth ?? measuredWidth.current;
+    if (width !== null) handleContentSizeChange(width);
+  }, [contentWidth, handleContentSizeChange]);
   const handleAccessibilityAction = useCallback(
     ({ nativeEvent }: AccessibilityActionEvent) => {
       const direction = nativeEvent.actionName === 'increment' ? 1 : nativeEvent.actionName === 'decrement' ? -1 : 0;

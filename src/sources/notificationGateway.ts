@@ -480,19 +480,20 @@ export function createNotificationGateway({
       return runWithAccess(source, 'notification-upload', options, async (access) => {
         if (source === 'yaohuo') throw new Error('妖火私信仅支持纯文本');
         assertNotAborted(options.signal);
+        const fetcher = options.beforeSend ? withRequestBeforeSend(access.fetcher, options.beforeSend) : access.fetcher;
         let imageUrl: string;
         if (source === 'nodeseek') {
           imageUrl = await uploadNodeSeekReplyImage({
             apiKey: options.nodeImageApiKey || '',
             file: options.file,
-            fetcher: options.beforeSend ? withRequestBeforeSend(access.fetcher, options.beforeSend) : access.fetcher,
+            fetcher,
             signal: options.signal,
             timeoutMs: access.timeoutMs
           });
         } else {
           const request = buildDiscourseActionRequest({ type: 'upload', file: options.file });
           const data = await runLinuxDoAction({
-            fetcher: access.fetcher,
+            fetcher,
             request,
             signal: options.signal,
             timeoutMs: access.timeoutMs,

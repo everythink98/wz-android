@@ -12,6 +12,11 @@ import type {
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import {
+  acceptForumReadResponse,
+  collectForumReadResponses,
+  rejectForumReadResponse
+} from '@/sources/forumSourceReadAttempt';
+import {
   cloudflareChallengeDiagnostics,
   isCloudflareChallengeResponse,
   LinuxDoCloudflareError
@@ -39,11 +44,18 @@ function normalizeTag(value: unknown): TopicTag | null {
 
 export async function loadLinuxDoTopicCreationContext(options: Options): Promise<TopicCreationContext> {
   const { fetcher, userAgent, signal } = options;
+  const required = collectForumReadResponses(fetcher);
   const browserFetchIntent = { owner: 'topic', priority: 'foreground' } as const;
   const [siteValue, sessionValue, bootstrapResponse] = await Promise.all([
-    runLinuxDoAction({ ...options, browserFetchIntent, request: { path: '/site.json', method: 'GET', headers: {} } }),
     runLinuxDoAction({
       ...options,
+      fetcher: required.fetcher,
+      browserFetchIntent,
+      request: { path: '/site.json', method: 'GET', headers: {} }
+    }),
+    runLinuxDoAction({
+      ...options,
+      fetcher: required.fetcher,
       browserFetchIntent,
       request: { path: '/session/current.json', method: 'GET', headers: {} }
     }),
@@ -129,6 +141,9 @@ export async function loadLinuxDoTopicCreationContext(options: Options): Promise
     .map((extension) => extension.trim().replace(/^\./, '').toLowerCase())
     .filter(Boolean);
   if (!allowedExtensions.length) throw new Error('linux.do 未返回附件类型规则');
+  required.accept();
+  if (hasPreloadedRules) acceptForumReadResponse(bootstrapResponse);
+  else rejectForumReadResponse(bootstrapResponse);
   return {
     source: 'linuxdo',
     categories,
@@ -197,11 +212,15 @@ export async function createLinuxDoTopic({
   if (draft.source !== 'linuxdo' || !draft.title.trim() || !body.trim() || !/^\d+$/.test(draft.categoryId))
     throw new Error('linux.do 发帖内容或版块不正确');
   let data: Record<string, unknown>;
-  const submission: { receiptPolicy: TopicCreationReceiptPolicy } = { receiptPolicy: 'ordinary-errors' };
+  const submission: { receiptPolicy: TopicCreationReceiptPolicy; postStarted: boolean } = {
+    receiptPolicy: 'ordinary-errors',
+    postStarted: false
+  };
   try {
     data = await runLinuxDoAction({
       ...options,
       fetcher: async (url, init) => {
+        if (init?.method === 'POST') submission.postStarted = true;
         const response = await options.fetcher(url, init);
         if (init?.method === 'POST' && [408, 409].includes(response.status)) {
           const payload: unknown = await response
@@ -238,15 +257,17 @@ export async function createLinuxDoTopic({
       }
     });
   } catch (error) {
+    if (error instanceof LinuxDoCloudflareError) {
+      const uncertain = submission.postStarted && error.status !== 403;
+      return {
+        status: uncertain ? 'unknown' : 'rejected',
+        message: uncertain ? `${error.message}；发布结果未知，请到原站核对` : error.message,
+        verificationRequired: true
+      };
+    }
     if (submission.receiptPolicy === 'uncertain-response')
       return { status: 'unknown', message: 'linux.do 未确认是否已发布，请到原站核对，勿直接重发' };
-    if (
-      isRecord(error) &&
-      typeof error.status === 'number' &&
-      error.status >= 400 &&
-      error.status < 500 &&
-      !(error instanceof Error && /Cloudflare/i.test(error.name))
-    )
+    if (isRecord(error) && typeof error.status === 'number' && error.status >= 400 && error.status < 500)
       return { status: 'rejected', message: error instanceof Error ? error.message : 'linux.do 拒绝了发帖请求' };
     if (error instanceof Error && error.message === 'linux.do 返回内容格式不正确')
       return { status: 'unknown', message: 'linux.do 返回了无法确认的结果，请到原站核对' };

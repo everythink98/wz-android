@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { inactivePostInteractionActions } from '../../../topicInteractionFixture';
+import { createStardustPayments } from '@/features/topic/actions/stardustPayments';
 import { useWindowDimensions } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import type { FlashListRef } from '@shopify/flash-list';
@@ -325,6 +326,7 @@ function TopicScenarioScreen({
   state?: ActionState;
 }) {
   const topic = useMemo(() => createTopic(source, state, scene), [scene, source, state]);
+  const [stardustPayments] = useState(createStardustPayments);
   const decisionFor = useMemo(
     () => decisionForScenario(source, state, scene, pendingTarget),
     [pendingTarget, scene, source, state]
@@ -355,6 +357,8 @@ function TopicScenarioScreen({
         }),
         lockNodeSeekPoll: async () => undefined,
         payNodeSeekStardust: async () => 'canceled' as const,
+        stardustPayments,
+        stardustPayer: 'nodeseek:fixture',
         submitReply: async () => undefined,
         uploadReplyImage: async () => undefined,
         uploadReplyImageMarkup: async () => undefined,
@@ -363,7 +367,7 @@ function TopicScenarioScreen({
         setPolicyAcceptance: async () => undefined,
         votePoll: async (_poll: TopicPoll, _optionIds: string[]) => undefined
       }) satisfies TopicActionsController,
-    [decisionFor, state]
+    [decisionFor, stardustPayments, state]
   );
   const replyEndError: SourceErrorInfo | null =
     scene === 'replies-partial' ? { kind: 'ordinary', message: '更多回复暂时不可用', retryable: true } : null;

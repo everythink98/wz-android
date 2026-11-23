@@ -9,7 +9,7 @@ import { PillRail } from '@/ui/controls/SelectionControls';
 import { readNetworkLog, type NetworkLogEntry } from '@/platform/diagnostics/networkLog';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { createReaderFontSizer, readerRadii, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
+import { createUiFontSizer, readerRadii, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
 import { errorMessage } from '@/platform/network/errors';
 import { sourceCatalog, sourceValues, type Source } from '@/domain/forum/sourceCatalog';
 import { checkForumConnectivity } from './forumConnectivity';
@@ -32,7 +32,7 @@ const modeTitle = (mode?: NetworkMode) => modeRows.find((row) => row.id === mode
 type Runtime = MoreRouteRuntimeValue['proxy'];
 
 function createSettingsStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
-  const font = createReaderFontSizer(settings);
+  const font = createUiFontSizer(settings);
   return StyleSheet.create({
     page: { flex: 1, backgroundColor: theme.background },
     content: { paddingHorizontal: 18, paddingTop: 16, paddingBottom: 32, gap: 22 },
@@ -447,6 +447,7 @@ export function NetworkSettingsRoute({
         onUpsertProfile={async (profile) => {
           await proxy.upsertProxyProfile(profile);
           if (networkMode(proxy.proxyState) !== 'proxy') {
+            await proxy.selectProxyProfile(profile.id);
             await proxy.setNetworkMode('proxy');
             close();
           }

@@ -33,6 +33,7 @@ export function TopicMenu({
 }) {
   return (
     <PopupMenu
+      scrollable
       accessibilityLabel="关闭更多操作"
       placementStyle={styles.topicOverflowMenu}
       visible={visible}

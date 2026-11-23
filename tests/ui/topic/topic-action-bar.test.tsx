@@ -3,7 +3,7 @@ import type { LucideIcon, LucideProps } from 'lucide-react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { DetailActionButton, type DetailActionTone } from '@/features/topic/components/TopicActionBar';
 import { createTopicStyles } from '@/features/topic/styles';
-import { createTheme } from '@/ui/theme/tokens';
+import { resolveReaderStyleSettings, createTheme } from '@/ui/theme/tokens';
 import { fireEvent, render } from '../render';
 
 const TestIcon = (({ color, fill, size, strokeWidth }: LucideProps) => (
@@ -25,7 +25,7 @@ async function renderAction({
   compact = false,
   count = 12,
   disabled = false,
-  fontScale = 1,
+  uiFontScale = 1,
   iconSize,
   onLongPress,
   pending = false,
@@ -37,15 +37,15 @@ async function renderAction({
   compact?: boolean;
   count?: number;
   disabled?: boolean;
-  fontScale?: number;
+  uiFontScale?: number;
   iconSize?: number;
   onLongPress?: () => void;
   pending?: boolean;
   tone?: DetailActionTone;
 } = {}) {
-  const settings = { ...createEmptyReaderData().settings, fontScale, theme: appearance };
+  const settings = { ...createEmptyReaderData().settings, uiFontScale, theme: appearance };
   const theme = createTheme(settings);
-  const styles = createTopicStyles(theme, settings);
+  const styles = createTopicStyles(theme, resolveReaderStyleSettings(settings));
   const onPress = jest.fn();
   const view = await render(
     <DetailActionButton
@@ -214,8 +214,8 @@ describe('topic post action rail', () => {
     expect(StyleSheet.flatten(view.getByLabelText('点赞').props.style).opacity).toBe(0.45);
   });
 
-  it('scales main action labels and counts with the existing app font setting', async () => {
-    const { theme, view } = await renderAction({ fontScale: 1.4 });
+  it('scales main action labels and counts with the interface size', async () => {
+    const { theme, view } = await renderAction({ uiFontScale: 1.4 });
     const labelStyle = StyleSheet.flatten(view.getByText('赞').props.style);
     const countStyle = StyleSheet.flatten(view.getByText('12').props.style);
 

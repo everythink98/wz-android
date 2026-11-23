@@ -34,7 +34,8 @@ const TEST_THEME = {
   primary: '#1267d6',
   primarySoft: '#e8f2ff',
   danger: '#b3261e',
-  fontScale: 1
+  fontScale: 1,
+  uiFontScale: 1
 };
 
 const mountedRuntimes: { host: HTMLDivElement; root: ReturnType<typeof createRoot> }[] = [];
@@ -163,6 +164,52 @@ function activateToolbarUpload(
 }
 
 describe('Composer editor runtime codec', () => {
+  it('creates the source editor on its first switch and preserves it on later switches', async () => {
+    const { host, send } = await mountRuntime({ mode: 'rich', markdown: '保留初始正文' });
+    expect(host.querySelector('.cm-editor')).toBeNull();
+    await send({ type: 'SET_MODE', payload: { mode: 'source' } });
+    const source = host.querySelector('.cm-editor');
+    expect(source?.textContent).toContain('保留初始正文');
+    await send({ type: 'SET_MODE', payload: { mode: 'rich' } });
+    await send({ type: 'SET_MODE', payload: { mode: 'source' } });
+    expect(host.querySelector('.cm-editor')).toBe(source);
+  });
+
+  it('hydrates rich images only when entering rich mode from an initial source draft', async () => {
+    const url = 'https://example.com/image.png';
+    const { host, send } = await mountRuntime({ mode: 'source', markdown: '![正文图片](' + url + ')' });
+    expect(host.querySelector('.editor-pane img')).toBeNull();
+    await send({ type: 'SET_MODE', payload: { mode: 'rich' } });
+    expect(host.querySelector('.editor-pane img')?.getAttribute('src')).toBe(url);
+  });
+
+  it('updates the receive tool for the current member and ignores a stale document message', async () => {
+    const { host, postMessage, send, toolbarAction } = await mountRuntime({
+      site: 'nodeseek',
+      mode: 'source',
+      documentEpoch: 7,
+      markdown: '账号切换时保留',
+      nodeSeekMemberId: '42'
+    });
+    await toolbarAction('stardust');
+    const members = () =>
+      [...host.querySelectorAll<HTMLInputElement>('[aria-label="Stardust 收款卡片"] input')].map(
+        (input) => input.value
+      );
+    expect(members()).toContain('42');
+    await send({ type: 'SET_NODESEEK_MEMBER', payload: { documentEpoch: 6, memberId: '999' } });
+    expect(members()).toContain('42');
+    await send({ type: 'SET_NODESEEK_MEMBER', payload: { documentEpoch: 7, memberId: '84' } });
+    expect(members()).toContain('84');
+    await send({ type: 'SET_NODESEEK_MEMBER', payload: { documentEpoch: 7, memberId: null } });
+    expect(members()).toContain('账号待确认');
+    await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'member-change' } });
+    expect(
+      postMessage.mock.calls.map(([raw]) => JSON.parse(raw)).findLast((entry) => entry.type === 'SNAPSHOT')?.payload
+        .snapshot.markdown
+    ).toBe('账号切换时保留');
+  });
+
   it('preserves nested task items and checked states in editable Markdown', async () => {
     const { host } = await mountRuntime({ site: 'nodeseek', markdown: '- [ ] parent\n  - [x] child' });
     const editor = host.querySelector<HTMLElement & { editor: Editor }>('.composer-document')!.editor;
@@ -660,8 +707,6 @@ describe('Composer editor runtime codec', () => {
     'names the $site $intentKind source input through mode switches and a new empty document',
     async ({ site, intentKind, label, nextIntentKind, nextLabel }) => {
       const { host, send, toolbarAction } = await mountRuntime({ site, intentKind });
-      const source = EditorView.findFromDOM(host.querySelector('.cm-editor')!)!;
-      const input = source.contentDOM;
       const richInput = host.querySelector<HTMLElement>('.ProseMirror')!;
       expect(richInput.getAttribute('aria-label')).toBe(`${label}富文本编辑器`);
       const switchMode = async (mode: 'rich' | 'source') => {
@@ -680,6 +725,8 @@ describe('Composer editor runtime codec', () => {
       };
 
       await switchMode('source');
+      const source = EditorView.findFromDOM(host.querySelector('.cm-editor')!)!;
+      const input = source.contentDOM;
       expect(input.getAttribute('aria-label')).toBe(`${label}源码编辑器`);
       expect(input.getAttribute('role')).toBe('textbox');
       expect(input.getAttribute('aria-multiline')).toBe('true');
@@ -1359,7 +1406,7 @@ describe('Composer editor runtime codec', () => {
       const markdown = mode === 'source' ? '本机草稿末字新输入' : '本机草稿末字';
       const types = () => postMessage.mock.calls.map(([raw]) => JSON.parse(raw).type);
       expect(types()).toContain('READY');
-      expect(host.querySelector('.ProseMirror')?.textContent).toBe('本机草稿末字');
+      expect(host.querySelector('.ProseMirror')?.textContent).toBe(mode === 'rich' ? '本机草稿末字' : '');
       expect(document.getElementById('composer-initial-document')).toBeNull();
       if (mode === 'source') {
         const source = EditorView.findFromDOM(host.querySelector('.cm-editor')!)!;
@@ -1576,11 +1623,11 @@ describe('Composer editor runtime codec', () => {
       const { host, send, postMessage, toolbarAction } = await mountRuntime({ mode, markdown: '前文后文' });
       const input = host.querySelector<HTMLElement>(mode === 'rich' ? '.composer-document' : '.cm-content')!;
       const editor = (host.querySelector('.composer-document') as HTMLElement & { editor: Editor }).editor;
-      const source = EditorView.findFromDOM(host.querySelector('.cm-editor')!)!;
+      const source = () => EditorView.findFromDOM(host.querySelector('.cm-editor')!)!;
       await send({ type: 'COMMAND', payload: { name: 'focus' } });
       await act(async () => {
         if (mode === 'rich') editor.commands.setTextSelection(3);
-        else source.dispatch({ selection: { anchor: 2 } });
+        else source().dispatch({ selection: { anchor: 2 } });
         await new Promise(requestAnimationFrame);
       });
       let policyAtRequest: string | null = null;
@@ -1640,8 +1687,8 @@ describe('Composer editor runtime codec', () => {
           editor.view.dispatch(editor.state.tr.insertText('新增', 3));
           editor.commands.setTextSelection(1);
         } else {
-          source.dispatch({ changes: { from: 2, insert: '新增' } });
-          source.dispatch({ selection: { anchor: 0 } });
+          source().dispatch({ changes: { from: 2, insert: '新增' } });
+          source().dispatch({ selection: { anchor: 0 } });
         }
       });
       let focusedAtAck = true;
@@ -1821,6 +1868,10 @@ describe('Composer editor runtime codec', () => {
         mode,
         runtimeStyle: true
       });
+      if (mode === 'source') {
+        await send({ type: 'SET_MODE', payload: { mode: 'rich' } });
+        await send({ type: 'SET_MODE', payload: { mode: 'source' } });
+      }
       const document = host.querySelector<HTMLElement>('.composer-document')!;
       const editor = (document as HTMLElement & { editor: Editor }).editor;
       await act(async () => editor.commands.setNodeSelection(0));
@@ -2516,8 +2567,7 @@ describe('Composer editor runtime codec', () => {
   it('focuses the source input only after its pane is visible and preserves the document', async () => {
     const { host } = await mountRuntime({ markdown: '保留正文', runtimeStyle: true, waitForFrame: false });
     const richInput = host.querySelector<HTMLElement>('.ProseMirror')!;
-    const sourceInput = host.querySelector<HTMLElement>('.cm-content')!;
-    const pane = sourceInput.closest<HTMLElement>('.source-pane')!;
+    const pane = host.querySelector<HTMLElement>('.source-pane')!;
     await act(async () => richInput.focus());
     expect(document.activeElement).toBe(richInput);
 
@@ -2529,7 +2579,7 @@ describe('Composer editor runtime codec', () => {
       return frames.length;
     });
     const focus = vi.spyOn(HTMLElement.prototype, 'focus').mockImplementation(function (this: HTMLElement, options) {
-      if (this === sourceInput)
+      if (this.classList.contains('cm-content') && pane.contains(this))
         observedFocus.push({ active: pane.classList.contains('active'), display: getComputedStyle(pane).display });
       originalFocus.call(this, options);
     });
@@ -2541,6 +2591,7 @@ describe('Composer editor runtime codec', () => {
         // Exercise a frame before the external bridge update commits.
         frames.splice(0).forEach((callback) => callback(performance.now()));
       });
+      const sourceInput = pane.querySelector<HTMLElement>('.cm-content')!;
       expect(pane.classList.contains('active')).toBe(true);
       expect(document.activeElement).toBe(sourceInput);
       expect(sourceInput.textContent).toBe('保留正文');
@@ -3899,7 +3950,8 @@ describe('Composer editor runtime codec', () => {
           primary: '#1267d6',
           primarySoft: '#e8f2ff',
           danger: '#b3261e',
-          fontScale: 1
+          fontScale: 1,
+          uiFontScale: 1
         }
       }
     });
@@ -4240,14 +4292,14 @@ describe('Composer editor runtime codec', () => {
     'keeps a failed %s document out of new-epoch snapshots and recovers only after explicit INIT',
     async (mode) => {
       const { host, postMessage, send } = await mountRuntime({ mode, markdown: '原文档正文', documentEpoch: 1 });
-      const source = EditorView.findFromDOM(host.querySelector('.cm-editor')!)!;
+      const source = mode === 'source' ? EditorView.findFromDOM(host.querySelector('.cm-editor')!)! : null;
       const editor = host.querySelector<HTMLElement & { editor: Editor }>('.composer-document')!.editor;
-      if (mode === 'source')
+      if (source)
         await act(async () => source.dispatch({ changes: { from: source.state.doc.length, insert: '待保存编辑' } }));
       else await act(async () => editor.view.dispatch(editor.state.tr.insertText('待保存编辑', 2)));
       let failed = false;
       let restore: () => void;
-      if (mode === 'source') {
+      if (source) {
         const originalDispatch = source.dispatch;
         const failure = vi.spyOn(source, 'dispatch').mockImplementation(function (this: EditorView, ...transactions) {
           if (
@@ -4285,13 +4337,13 @@ describe('Composer editor runtime codec', () => {
       }
       expect(failed).toBe(true);
       const since = postMessage.mock.calls.length;
-      const inactiveMarkdown = mode === 'source' ? source.state.doc.toString() : editor.getMarkdown();
-      if (mode === 'source')
+      const inactiveMarkdown = source ? source.state.doc.toString() : editor.getMarkdown();
+      if (source)
         await act(async () =>
           source.dispatch({ changes: { from: source.state.doc.length, insert: '失效文档期间输入' } })
         );
       else await act(async () => editor.view.dispatch(editor.state.tr.insertText('失效文档期间输入', 2)));
-      expect.soft(mode === 'source' ? source.state.doc.toString() : editor.getMarkdown()).toBe(inactiveMarkdown);
+      expect.soft(source ? source.state.doc.toString() : editor.getMarkdown()).toBe(inactiveMarkdown);
       await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'inactive-document' } });
       await act(async () => new Promise((resolve) => window.setTimeout(resolve, 650)));
       const afterFailure = postMessage.mock.calls.slice(since).map(([raw]) => JSON.parse(String(raw)));
@@ -4315,7 +4367,7 @@ describe('Composer editor runtime codec', () => {
         .findLast((event) => event.payload?.requestId === 'recovered-document');
       expect(recovered.payload.documentEpoch).toBe(3);
       expect(recovered.payload.snapshot).toMatchObject({ markdown: '显式重试新正文', revision: 0 });
-      if (mode === 'source')
+      if (source)
         await act(async () => source.dispatch({ changes: { from: source.state.doc.length, insert: '后续输入' } }));
       else await act(async () => editor.view.dispatch(editor.state.tr.insertText('后续输入', 2)));
       await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'after-recovery-edit' } });

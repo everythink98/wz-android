@@ -6,7 +6,7 @@ import { getReplies, getTopic } from '@/sources/sourceRead';
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
 import { forumBrowserResponse } from '@/features/account/browserFetchQueue';
 import { textContentFromHtml } from '@/domain/forum/html';
-import { requirePreparedForumContent } from '@/domain/forum/topicContentSplit';
+import * as contentSplit from '@/domain/forum/topicContentSplit';
 import {
   getNodeSeekCurrentUserIdentity,
   getNodeSeekReplies,
@@ -1178,7 +1178,7 @@ describe('Android local sources', () => {
       replyCount: 30
     });
     const reply = result.items[0];
-    const rows = requirePreparedForumContent(reply.preparedContent, reply.contentHtml, {
+    const rows = contentSplit.requirePreparedForumContent(reply.preparedContent, reply.contentHtml, {
       polls: reply.polls,
       role: 'reply',
       source: 'nodeseek'
@@ -2742,7 +2742,7 @@ describe('Android local sources', () => {
       );
 
       const topic = await getNodeSeekTopic('812712', { fetcher });
-      const compiled = requirePreparedForumContent(topic.preparedContent, topic.contentHtml, {
+      const compiled = contentSplit.requirePreparedForumContent(topic.preparedContent, topic.contentHtml, {
         polls: topic.polls,
         role: 'opening',
         source: 'nodeseek',
@@ -3005,6 +3005,7 @@ describe('Android local sources', () => {
               commentId: 812345,
               floorIndex: 12,
               poster: { name: '凡想世界', uid: 54874, isMe: true, profile: '/space/54874' },
+              content: '<p>Discarded embedded copy</p>',
               markdown: 'Bd',
               time: { createdDate: '2026-07-04T06:34:00.000Z' }
             }
@@ -3029,6 +3030,7 @@ describe('Android local sources', () => {
     `)
     );
 
+    const prepare = vi.spyOn(contentSplit, 'prepareSanitizedForumContent');
     const replies = await getNodeSeekReplies('806638', {
       fetcher,
       order: 'oldest',
@@ -3046,6 +3048,11 @@ describe('Android local sources', () => {
       canEdit: true,
       canLike: false
     });
+    try {
+      expect(prepare.mock.calls.filter(([html]) => String(html).includes('Discarded embedded copy')).length).toBe(0);
+    } finally {
+      prepare.mockRestore();
+    }
   });
 
   it('preserves explicit zero statistics for a new NodeSeek user', async () => {

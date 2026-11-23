@@ -1,17 +1,21 @@
 import { StyleSheet } from 'react-native';
 import {
   createReaderFontSizer,
+  createUiFontSizer,
   readerRadii,
   type ReaderStyleSettings,
   alphaColor,
   fontFamilyValue,
   lineHeightMultiplier,
-  type ReaderTheme
+  type ReaderTheme,
+  textSizeStyle
 } from '@/ui/theme/tokens';
 
 export function createNotificationStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontFamily = fontFamilyValue(settings.fontFamily);
   const scaled = createReaderFontSizer(settings);
+  const uiFontSize = createUiFontSizer(settings);
+  const uiFontFamily = fontFamilyValue(settings.uiFontFamily);
   return StyleSheet.create({
     screen: { flex: 1, backgroundColor: theme.surface },
     listContent: { flexGrow: 1, backgroundColor: theme.surface, paddingBottom: 24 },
@@ -44,8 +48,13 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
       columnGap: 12,
       rowGap: 4
     },
-    controlLabel: { color: theme.ink, fontFamily, fontSize: scaled(13), fontWeight: '500', lineHeight: scaled(20) },
-    controlMeta: { color: theme.muted, fontFamily, fontSize: scaled(11), lineHeight: scaled(16) },
+    controlLabel: {
+      color: theme.ink,
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(13), uiFontSize(20)),
+      fontWeight: '500'
+    },
+    controlMeta: { color: theme.muted, fontFamily: uiFontFamily, ...textSizeStyle(uiFontSize(11), uiFontSize(16)) },
     sourceNotice: {
       gap: 6,
       borderBottomColor: theme.line,
@@ -54,7 +63,13 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
       paddingVertical: 8
     },
     noticeGroup: { marginHorizontal: 16, marginTop: 12, marginBottom: 8 },
-    noticeTitle: { color: theme.ink, fontFamily, fontSize: scaled(16), fontWeight: '600', marginBottom: 4 },
+    noticeTitle: {
+      color: theme.ink,
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(16)),
+      fontWeight: '600',
+      marginBottom: 4
+    },
     noticeRow: {
       minHeight: 52,
       flexDirection: 'row',
@@ -65,10 +80,15 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
       borderBottomWidth: StyleSheet.hairlineWidth
     },
     noticeCopy: { flex: 1, minWidth: 0, gap: 3 },
-    noticeSite: { color: theme.ink, fontFamily, fontSize: scaled(14), lineHeight: scaled(20), fontWeight: '500' },
+    noticeSite: {
+      color: theme.ink,
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(14), uiFontSize(20)),
+      fontWeight: '500'
+    },
     sourceErrorText: { flex: 1 },
-    noticeText: { color: theme.muted, fontFamily, fontSize: scaled(12), lineHeight: scaled(18) },
-    errorText: { color: theme.danger, fontFamily, fontSize: scaled(12), lineHeight: scaled(18) },
+    noticeText: { color: theme.muted, fontFamily: uiFontFamily, ...textSizeStyle(uiFontSize(12), uiFontSize(18)) },
+    errorText: { color: theme.danger, fontFamily: uiFontFamily, ...textSizeStyle(uiFontSize(12), uiFontSize(18)) },
     row: {
       minHeight: 78,
       alignItems: 'flex-start',
@@ -89,18 +109,39 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
     },
     rowBody: { flex: 1, minWidth: 0, gap: 4 },
     actorRow: { alignItems: 'center', flexDirection: 'row', gap: 6 },
-    actorText: { flex: 1, color: theme.ink, fontFamily, fontSize: scaled(13), lineHeight: scaled(18) },
+    actorText: {
+      flex: 1,
+      color: theme.ink,
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(13), uiFontSize(18))
+    },
     actorName: { fontWeight: '500' },
     actionText: { color: theme.muted, fontWeight: '400' },
-    unreadLabel: { color: theme.primary, fontFamily, fontSize: scaled(11), lineHeight: scaled(16), fontWeight: '600' },
-    title: { color: theme.ink, fontFamily, fontSize: scaled(15), fontWeight: '500', lineHeight: scaled(22) },
+    unreadLabel: {
+      color: theme.primary,
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(11), uiFontSize(16)),
+      fontWeight: '600'
+    },
+    title: { color: theme.ink, fontFamily, ...textSizeStyle(scaled(15), scaled(22)), fontWeight: '500' },
     titleUnread: { fontWeight: '600' },
-    preview: { color: theme.muted, fontFamily, fontSize: scaled(13), lineHeight: scaled(20) },
-    meta: { color: theme.muted, fontFamily, fontSize: scaled(11), lineHeight: scaled(16) },
+    preview: { color: theme.muted, fontFamily, ...textSizeStyle(scaled(13), scaled(20)) },
+    meta: { color: theme.muted, fontFamily: uiFontFamily, ...textSizeStyle(uiFontSize(11), uiFontSize(16)) },
     centeredState: { alignItems: 'center', gap: 10, paddingHorizontal: 28, paddingVertical: 40 },
     stateActions: { alignItems: 'center', justifyContent: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-    stateTitle: { color: theme.ink, fontFamily, fontSize: scaled(15), fontWeight: '600', textAlign: 'center' },
-    stateText: { color: theme.muted, fontFamily, fontSize: scaled(13), lineHeight: scaled(20), textAlign: 'center' },
+    stateTitle: {
+      color: theme.ink,
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(15)),
+      fontWeight: '600',
+      textAlign: 'center'
+    },
+    stateText: {
+      color: theme.muted,
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(13), uiFontSize(20)),
+      textAlign: 'center'
+    },
     footer: { minHeight: 56, alignItems: 'center', justifyContent: 'center', gap: 8, padding: 12 },
     paginationSources: {
       flexDirection: 'row',
@@ -112,7 +153,11 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
       paddingTop: 12
     },
     settingsContent: { gap: 20, padding: 16, paddingBottom: 40 },
-    settingsIntro: { color: theme.muted, fontFamily, fontSize: scaled(13), lineHeight: scaled(20) },
+    settingsIntro: {
+      color: theme.muted,
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(13), uiFontSize(20))
+    },
     settingsSection: {
       borderTopColor: theme.line,
       borderTopWidth: StyleSheet.hairlineWidth
@@ -127,8 +172,13 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
       paddingVertical: 6
     },
     settingBody: { flex: 1, minWidth: 0, gap: 2 },
-    settingLabel: { color: theme.ink, fontFamily, fontSize: scaled(15), fontWeight: '600', lineHeight: scaled(21) },
-    settingMeta: { color: theme.muted, fontFamily, fontSize: scaled(12), lineHeight: scaled(18) },
+    settingLabel: {
+      color: theme.ink,
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(15), uiFontSize(21)),
+      fontWeight: '600'
+    },
+    settingMeta: { color: theme.muted, fontFamily: uiFontFamily, ...textSizeStyle(uiFontSize(12), uiFontSize(18)) },
     permissionBox: {
       gap: 8,
       backgroundColor: theme.surface2,
@@ -152,9 +202,8 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
     conversationContextText: {
       flex: 1,
       color: theme.muted,
-      fontFamily,
-      fontSize: scaled(11),
-      lineHeight: scaled(16)
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(11), uiFontSize(16))
     },
     conversationOriginal: {
       gap: 6,
@@ -166,10 +215,9 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
     },
     conversationOriginalLabel: {
       color: theme.muted,
-      fontFamily,
-      fontSize: scaled(11),
-      fontWeight: '600',
-      lineHeight: scaled(16)
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(11), uiFontSize(16)),
+      fontWeight: '600'
     },
     detailHeaderContent: { gap: 12 },
     conversationSpacer: { flexGrow: 1 },
@@ -184,25 +232,22 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
     detailActorBody: { flex: 1, minWidth: 0, gap: 1 },
     detailActorName: {
       color: theme.ink,
-      fontFamily,
-      fontSize: scaled(13),
-      fontWeight: '600',
-      lineHeight: scaled(19)
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(13), uiFontSize(19)),
+      fontWeight: '600'
     },
-    detailTitle: { color: theme.ink, fontFamily, fontSize: scaled(18), fontWeight: '700', lineHeight: scaled(26) },
-    detailMeta: { color: theme.muted, fontFamily, fontSize: scaled(12), lineHeight: scaled(18) },
+    detailTitle: { color: theme.ink, fontFamily, ...textSizeStyle(scaled(18), scaled(26)), fontWeight: '700' },
+    detailMeta: { color: theme.muted, fontFamily: uiFontFamily, ...textSizeStyle(uiFontSize(12), uiFontSize(18)) },
     detailBody: {
       color: theme.ink,
       fontFamily,
-      fontSize: scaled(15),
-      lineHeight: Math.round(scaled(15) * lineHeightMultiplier(settings.lineHeight))
+      ...textSizeStyle(scaled(15), Math.round(scaled(15) * lineHeightMultiplier(settings.lineHeight)))
     },
     detailLink: { color: theme.primary, fontWeight: '600' },
     conversationNotice: {
       color: theme.muted,
-      fontFamily,
-      fontSize: scaled(12),
-      lineHeight: scaled(18),
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(12), uiFontSize(18)),
       textAlign: 'center'
     },
     detailViewport: { flex: 1 },
@@ -249,22 +294,19 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
     messageAuthor: {
       flexShrink: 1,
       color: theme.muted,
-      fontFamily,
-      fontSize: scaled(11),
-      fontWeight: '500',
-      lineHeight: scaled(16)
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(11), uiFontSize(16)),
+      fontWeight: '500'
     },
     messageTime: {
       color: theme.muted,
-      fontFamily,
-      fontSize: scaled(11),
-      lineHeight: scaled(16)
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(11), uiFontSize(16))
     },
     messageBody: {
       color: theme.ink,
       fontFamily,
-      fontSize: scaled(14),
-      lineHeight: Math.round(scaled(14) * lineHeightMultiplier(settings.lineHeight))
+      ...textSizeStyle(scaled(14), Math.round(scaled(14) * lineHeightMultiplier(settings.lineHeight)))
     },
     replyDock: {
       gap: 6,
@@ -290,9 +332,8 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
     replyLauncherTitle: {
       flex: 1,
       color: theme.muted,
-      fontFamily,
-      fontSize: scaled(14),
-      lineHeight: scaled(20)
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(14), uiFontSize(20))
     },
     replyLauncherDraftText: {
       color: theme.ink
@@ -301,19 +342,17 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
       backgroundColor: theme.primarySoft,
       borderRadius: readerRadii.badge,
       color: theme.primary,
-      fontFamily,
-      fontSize: scaled(11),
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(11), uiFontSize(16)),
       fontWeight: '600',
-      lineHeight: scaled(16),
       overflow: 'hidden',
       paddingHorizontal: 6,
       paddingVertical: 2
     },
     replyDisabledReason: {
       color: theme.muted,
-      fontFamily,
-      fontSize: scaled(11),
-      lineHeight: scaled(16),
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(11), uiFontSize(16)),
       marginTop: 5
     },
     readFailure: {

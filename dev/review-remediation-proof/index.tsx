@@ -75,7 +75,7 @@ import type { Source, Topic } from '@/domain/forum/models';
 import { FeedScreen } from '@/features/feed/FeedScreen';
 import { useFeedController } from '@/features/feed/useFeedController';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
-import { createTheme } from '@/ui/theme/tokens';
+import { resolveReaderStyleSettings, createTheme } from '@/ui/theme/tokens';
 import { useNetworkProxyRuntime } from '@/platform/network/useNetworkProxyRuntime';
 import { withRequestBeforeSend } from '@/platform/network/request';
 import { validateWritableSessionTicket, type SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
@@ -1955,7 +1955,10 @@ function userOptions(source: Source, readGateway: ReturnType<typeof createReadGa
   };
 }
 const proofReader = createEmptyReaderData();
-const proofStyle = { settings: proofReader.settings, theme: createTheme(proofReader.settings) };
+const proofStyle = {
+  settings: resolveReaderStyleSettings(proofReader.settings),
+  theme: createTheme(proofReader.settings)
+};
 const feedReader = {
   ...proofReader,
   settings: {

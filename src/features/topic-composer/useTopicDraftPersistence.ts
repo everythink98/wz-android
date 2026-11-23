@@ -43,9 +43,13 @@ export function useTopicDraftPersistence(input: {
       (current.kind === 'retired' || current.revision >= value.revision)
     );
   }, []);
+  const hasSavedDraft = useCallback((draftId: string) => {
+    const current = durability.current;
+    return current.kind === 'saved' && current.draftId === draftId;
+  }, []);
   const persist = useCallback(
     async (value: TopicDraft) => {
-      if (alreadyDurable(value)) return;
+      if (value.revision === 0 || alreadyDurable(value)) return;
       const operation = tail.current
         .catch(() => undefined)
         .then(async () => {
@@ -97,7 +101,7 @@ export function useTopicDraftPersistence(input: {
           const current = inputRef.current.getDraft();
           if (current?.id !== before.id) throw new Error('草稿已切换，请重试');
           if (current.revision === latest.revision) {
-            report({ kind: 'saved' });
+            report({ kind: hasSavedDraft(latest.id) ? 'saved' : 'fresh' });
             return latest;
           }
           latest = current;
@@ -109,7 +113,7 @@ export function useTopicDraftPersistence(input: {
         throw cause;
       }
     },
-    [inputRef, persist, report]
+    [hasSavedDraft, inputRef, persist, report]
   );
   const edited = useCallback(() => report({ kind: 'saving' }), [report]);
   const restored = useCallback(
@@ -153,6 +157,7 @@ export function useTopicDraftPersistence(input: {
   return {
     saveStatus: feedback.kind === 'failed' ? feedback.message : messages[feedback.kind],
     persist,
+    hasSavedDraft,
     flush,
     edited,
     restored,

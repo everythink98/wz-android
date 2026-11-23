@@ -7,6 +7,7 @@ import { ComposerBottomSheet } from '@/ui/sheets/ComposerBottomSheet';
 
 const mockKeyboard = { height: { value: 0 }, state: { value: 0 } };
 const mockKeyboardState = { UNKNOWN: 0, OPENING: 1, OPEN: 2, CLOSING: 3, CLOSED: 4 } as const;
+let mockTopInset = 0;
 const mockFrames = new Set<() => void>();
 let mockQueuedUI: (() => void)[] | null = null;
 const mockAnimatedStyles = new Set<() => Record<string, unknown>>();
@@ -93,7 +94,7 @@ jest.mock('react-native-reanimated', () => ({
 }));
 jest.mock('react-native-safe-area-context', () => ({
   ...jest.requireActual<typeof import('react-native-safe-area-context')>('react-native-safe-area-context'),
-  useSafeAreaInsets: () => ({ top: 0, bottom: 24, left: 0, right: 0 })
+  useSafeAreaInsets: () => ({ top: mockTopInset, bottom: 24, left: 0, right: 0 })
 }));
 
 function fixedGeometry() {
@@ -130,6 +131,7 @@ async function acknowledgeKeyboardHidden(view: Awaited<ReturnType<typeof render>
 describe('Composer native keyboard viewport', () => {
   beforeEach(() => {
     mockKeyboard.height.value = 0;
+    mockTopInset = 0;
     mockKeyboard.state.value = mockKeyboardState.CLOSED;
     mockQueuedUI = null;
     mockHoldAnimations = false;
@@ -849,6 +851,69 @@ describe('Composer native keyboard viewport', () => {
       expect(footerBottom()).toBe(windowHeight - Math.max(height, 24) - 8);
     }
   });
+  it.each([false, true])('fits a sheet above a tall keyboard and below the status bar (fixed=%s)', async (fixed) => {
+    mockTopInset = 32;
+    const height = Dimensions.get('window').height;
+    const keyboardHeight = height - 150;
+    mockKeyboard.height.value = keyboardHeight;
+    mockKeyboard.state.value = mockKeyboardState.OPEN;
+    const view = await render(
+      <ComposerBottomSheet dark={false} fixedContent={fixed} visible onOpenChange={() => {}}>
+        {() => <Text>正文</Text>}
+      </ComposerBottomSheet>
+    );
+    if (!fixed)
+      await fireEvent(view.getByTestId('composer-bottom-sheet-content'), 'layout', {
+        nativeEvent: { layout: { width: 400, height: 800, x: 0, y: 0 } }
+      });
+    const geometry = fixedGeometry();
+    expect(fixedBottom() - (geometry.height ?? geometry.maxHeight!)).toBeGreaterThanOrEqual(mockTopInset);
+    expect(fixedBottom() - geometry.paddingBottom).toBe(height - keyboardHeight);
+  });
+
+  it.each([true, false])(
+    'recognizes a fresh IME after resume without requiring a foreground OPENING frame (%s)',
+    async (closedFrame) => {
+      const visible = jest.spyOn(Keyboard, 'isVisible').mockReturnValue(false);
+      const prior = jest.mocked(AppState.addEventListener).mock.calls.length;
+      try {
+        await render(
+          <ComposerBottomSheet dark={false} fixedContent visible onOpenChange={() => {}}>
+            {() => <Text>正文</Text>}
+          </ComposerBottomSheet>
+        );
+        const change = jest
+          .mocked(AppState.addEventListener)
+          .mock.calls.slice(prior)
+          .findLast(([event]) => event === 'change')![1];
+        const bottom = fixedBottom();
+        await act(() => {
+          mockKeyboard.state.value = mockKeyboardState.OPEN;
+          mockKeyboard.height.value = 300;
+          change('background');
+          mockFrames.forEach((frame) => frame());
+          if (closedFrame) {
+            change('active');
+            mockKeyboard.state.value = mockKeyboardState.CLOSED;
+            mockKeyboard.height.value = 0;
+          } else {
+            mockKeyboard.state.value = mockKeyboardState.OPENING;
+            mockKeyboard.height.value = 96;
+          }
+          mockFrames.forEach((frame) => frame());
+          visible.mockReturnValue(true);
+          if (!closedFrame) change('active');
+          mockKeyboard.state.value = mockKeyboardState.OPEN;
+          mockKeyboard.height.value = 280;
+          mockFrames.forEach((frame) => frame());
+        });
+        expect(fixedBottom()).toBe(bottom - 256);
+      } finally {
+        visible.mockRestore();
+      }
+    }
+  );
+
   it('keeps the sheet at the bottom when a hidden keyboard reports stale IME height after an external Activity', async () => {
     const visible = jest.spyOn(Keyboard, 'isVisible').mockReturnValue(false);
     const subscriptions = jest.mocked(AppState.addEventListener).mock.calls.length;

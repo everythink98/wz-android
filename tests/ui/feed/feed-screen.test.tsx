@@ -37,6 +37,7 @@ let mockTabViewProps: {
 } | null = null;
 let mockPagerPosition: Animated.Value;
 let mockFlashListMountCount = 0;
+let mockFeedPagerRenders = 0;
 const mockFlashListRenderItemByTopicId = new Map<string, unknown>();
 const mockFlashListScrollToOffset = jest.fn<(options: { animated: boolean; offset: number }) => void>();
 const mockActionOpacityTiming = jest.fn<(value: unknown, options?: unknown) => unknown>((value) => value);
@@ -199,6 +200,7 @@ jest.mock('react-native-tab-view', () => {
       renderScene: (input: { route: { key: string } }) => React.ReactNode;
     }) => {
       mockTabViewProps = props;
+      mockFeedPagerRenders++;
       const jumpTo = (key: string) => {
         const index = props.navigationState.routes.findIndex((route) => route.key === key);
         if (index >= 0) props.onIndexChange(index);
@@ -1177,6 +1179,7 @@ describe('Feed loading', () => {
     expect(view.getByLabelText('发帖')).toBeTruthy();
     expect(view.queryByText('发帖')).toBeNull();
     await scroll(0);
+    const initialPagerRenders = mockFeedPagerRenders;
     await scroll(500);
     await waitFor(() => expect(mockActionOpacityTiming).toHaveBeenCalledWith(0, { duration: 160 }));
     expect(view.queryByLabelText('发帖')).toBeNull();
@@ -1194,6 +1197,7 @@ describe('Feed loading', () => {
     expect(view.queryByLabelText('发帖')).toBeNull();
     await scroll(470);
     await waitFor(() => expect(mockActionOpacityTiming).toHaveBeenCalledWith(1, { duration: 160 }));
+    expect(mockFeedPagerRenders - initialPagerRenders).toBe(0);
     await fireEvent.press(view.getByLabelText('发帖'));
     expect(onCreateTopic).toHaveBeenCalledTimes(1);
     await scroll(550);

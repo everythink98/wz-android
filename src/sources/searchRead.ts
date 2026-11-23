@@ -81,9 +81,10 @@ export async function searchTopics({
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<SearchResponse> {
+  const adapterQuery = positiveSearchQuery(query);
   if (source === 'yaohuo') {
-    return searchYaohuoDirect({
-      query,
+    const response = await searchYaohuoDirect({
+      query: adapterQuery,
       page,
       limit,
       category: filter?.source === 'yaohuo' ? filter.category : undefined,
@@ -91,8 +92,8 @@ export async function searchTopics({
       signal,
       timeoutMs
     });
+    return filterSearchItems(requireSearchTopicTitles(response), query);
   }
-  const adapterQuery = positiveSearchQuery(query);
   const options = {
     authenticated: nodeSeekAuthenticated,
     limit,
