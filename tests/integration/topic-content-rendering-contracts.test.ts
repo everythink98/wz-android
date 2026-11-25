@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
-import { parseForumContentHtml } from '@/domain/forum/html';
+import { parseForumContentHtml, textContentFromHtml } from '@/domain/forum/html';
+import { stripHtml } from '@/domain/forum/text';
+import { highlightHtml } from '@/ui/text/highlight';
 import type { Reply } from '@/domain/forum/models';
 import {
   compileForumContent,
@@ -315,5 +317,44 @@ describe('topic content rendering contracts', () => {
       'https://img.example/signature-1.webp',
       'https://img.example/reply-2.webp'
     ]);
+  });
+
+  it('keeps sanitized media URLs and alt attributes single-decoded and preserves links and image src during search highlighting', () => {
+    const rawHtml =
+      '<![if !vml]><p><a [foo]="boards" href="https://forum.example/guides/boards?label=&amp;copy;">Read boards &amp;copy;</a></p><![endif]>' +
+      '<p><img src="https://img.example/guides/boards.png?label=&amp;copy;" alt="&amp;copy; boards" data-original="https://img.example/guides/boards-full.png?label=&amp;copy;"></p>' +
+      '<pre><code>x<y &amp; boards</code></pre>';
+    const prepared = prepareSanitizedForumContent(rawHtml, {
+      baseUrl: 'https://forum.example/',
+      role: 'opening',
+      source: 'linuxdo'
+    });
+
+    expect(prepared.contentPlan.previewImages).toEqual([
+      expect.objectContaining({
+        source: 'https://img.example/guides/boards.png?label=&copy;',
+        alt: '&copy; boards',
+        dataOriginal: 'https://img.example/guides/boards-full.png?label=&copy;',
+        originalSource: 'https://img.example/guides/boards-full.png?label=&copy;'
+      })
+    ]);
+
+    const richHtml = prepared.contentPlan.rows
+      .filter((row): row is Extract<(typeof prepared.contentPlan.rows)[number], { html: string }> => 'html' in row)
+      .map((row) => row.html)
+      .join('');
+    const highlighted = highlightHtml(richHtml, 'boards');
+    const highlightedRoot = parseForumContentHtml(highlighted);
+
+    expect(highlightedRoot.querySelector('a')?.getAttribute('href')).toBe(
+      'https://forum.example/guides/boards?label=&copy;'
+    );
+    expect(highlightedRoot.querySelector('img')?.getAttribute('src')).toBe(
+      'https://img.example/guides/boards.png?label=&copy;'
+    );
+    expect(highlightedRoot.querySelector('img')?.getAttribute('alt')).toBe('&copy; boards');
+    expect(highlighted).toContain('<mark>boards</mark>');
+    expect(stripHtml(highlighted)).toBe(stripHtml(richHtml));
+    expect(textContentFromHtml(highlighted)).toBe(textContentFromHtml(richHtml));
   });
 });

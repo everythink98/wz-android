@@ -1,6 +1,9 @@
 import { hashKey } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import type { WebView, WebViewMessageEvent } from 'react-native-webview';
+import { isRecord } from '@/domain/forum/html';
+import { forumReadOperationIsPublic, type ForumReadOperation } from '@/domain/forum/readPlan';
+import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
 import { sanitizeWebViewUserAgent, diagnosticUserAgentHash } from '@/platform/android/userAgent';
 import { errorMessage } from '@/platform/network/errors';
 import type { SiteSessionEvent } from '@/domain/session/siteSessionState';
@@ -21,11 +24,8 @@ import {
 } from '@/platform/network/linuxDoLoginInitialization';
 import type { Fetcher } from '@/platform/network/request';
 import { appQueryClient } from '@/platform/query/serverState';
-import type {
-  AccountReconcileResult,
-  LinuxDoVerificationRecovery as LinuxDoReadRecovery,
-  LinuxDoReadResumeOutcome
-} from '@/domain/session/sessionContracts';
+import type { AccountReconcileResult, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
+import type { LinuxDoVerificationRecovery } from '@/platform/query/readRecovery';
 import type { AuthSurfaceCloseReason } from '@/domain/session/authSurfaceCoordinator';
 
 const LINUXDO_PANEL_CLOSE_SETTLE_MS = 350;
@@ -65,7 +65,7 @@ type LinuxDoVerificationPhase = 'idle' | 'preparing' | 'awaiting-clearance' | 'c
 
 type RecoveryTarget = {
   id: string;
-  recovery: LinuxDoReadRecovery;
+  recovery: LinuxDoVerificationRecovery;
   outcome: 'pending' | LinuxDoReadResumeOutcome;
   error?: string;
 };
@@ -100,7 +100,7 @@ type LinuxDoCheckOwner = {
   requestId: number;
   generation: number;
   webViewSession: number;
-} & ({ kind: 'account' } | { kind: 'recovery'; session: RecoverySession });
+} & ({ kind: 'account' } | { kind: 'recovery'; session: RecoverySession; controller: AbortController });
 
 type QueuedLinuxDoVerification =
   | { phase: 'empty' }
@@ -110,7 +110,7 @@ type QueuedLinuxDoVerification =
       trace: DiagnosticTrace;
       message: string;
       promise: Promise<boolean>;
-      recovery?: LinuxDoReadRecovery;
+      recovery?: LinuxDoVerificationRecovery;
       resolve: (accepted: boolean) => void;
     };
 
@@ -120,7 +120,100 @@ type LinuxDoCloseHandoff = {
   timer: ReturnType<typeof setTimeout> | null;
 };
 
-function isActiveRecoveryQuery(recovery: LinuxDoReadRecovery) {
+const LINUXDO_ANONYMOUS_QUERY_OPERATIONS: Readonly<Record<string, ForumReadOperation>> = {
+  categories: 'categories',
+  feed: 'feed',
+  topic: 'topic',
+  'topic-reply': 'reply',
+  user: 'user-profile'
+};
+
+export function linuxDoRecoveryScopeKey(
+  snapshot: Pick<SessionRuntimeSnapshot, 'identityKey' | 'identityTrust' | 'sessionEpoch' | 'sourceEnabled'>
+) {
+  return JSON.stringify([
+    snapshot.identityKey,
+    snapshot.identityTrust,
+    snapshot.sessionEpoch,
+    snapshot.sourceEnabled !== false
+  ]);
+}
+
+function parseLinuxDoRecoveryScope(scope: string) {
+  if (!scope) return null;
+  try {
+    const parsed: unknown = JSON.parse(scope);
+    if (
+      !Array.isArray(parsed) ||
+      parsed.length !== 4 ||
+      typeof parsed[0] !== 'string' ||
+      (parsed[1] !== 'confirmed' && parsed[1] !== 'none' && parsed[1] !== 'unknown') ||
+      typeof parsed[2] !== 'number' ||
+      !Number.isSafeInteger(parsed[2]) ||
+      typeof parsed[3] !== 'boolean'
+    )
+      return null;
+    return {
+      identityKey: parsed[0],
+      identityTrust: parsed[1] as SessionRuntimeSnapshot['identityTrust'],
+      sessionEpoch: parsed[2],
+      sourceEnabled: parsed[3]
+    };
+  } catch {
+    return null;
+  }
+}
+
+function isConfirmedAnonymousRecoveryScope(scope: string) {
+  const parsed = parseLinuxDoRecoveryScope(scope);
+  return (
+    parsed !== null &&
+    parsed.identityKey === 'linuxdo:anonymous' &&
+    parsed.identityTrust === 'none' &&
+    parsed.sourceEnabled
+  );
+}
+
+function isUnknownRecoveryScope(scope: string) {
+  const parsed = parseLinuxDoRecoveryScope(scope);
+  return parsed !== null && parsed.identityTrust === 'unknown';
+}
+
+function readPlanScopeAllowsLinuxDoAnonymous(source: 'linuxdo' | 'all', scope: unknown) {
+  if (typeof scope !== 'string') return false;
+  return source === 'linuxdo' ? scope === 'public:omit' : scope.split(',').includes('linuxdo:public:omit');
+}
+
+function linuxDoRecoveryAllowsAnonymousAccess(recovery: LinuxDoVerificationRecovery) {
+  if ('kind' in recovery) return false;
+  const { queryKey } = recovery;
+  if (!Array.isArray(queryKey) || queryKey[0] !== 'forum') return false;
+  const source = queryKey[1];
+  const kind = queryKey[2];
+  if ((source !== 'linuxdo' && source !== 'all') || typeof kind !== 'string') return false;
+  if (source === 'all' && kind !== 'feed' && kind !== 'categories') return false;
+  const operation = LINUXDO_ANONYMOUS_QUERY_OPERATIONS[kind];
+  if (!operation || !forumReadOperationIsPublic('linuxdo', operation)) return false;
+  const params = queryKey[3];
+  if (!isRecord(params) || !readPlanScopeAllowsLinuxDoAnonymous(source, params.readPlanScope)) return false;
+  if (source === 'linuxdo' && kind === 'topic' && queryKey[4] === 'replies') {
+    if (!forumReadOperationIsPublic('linuxdo', 'replies')) return false;
+    const replyParams = queryKey[5];
+    if (!isRecord(replyParams) || !readPlanScopeAllowsLinuxDoAnonymous(source, replyParams.readPlanScope)) return false;
+  }
+  for (let index = 4; index < queryKey.length; index += 1) {
+    const segment = queryKey[index];
+    if (
+      isRecord(segment) &&
+      'readPlanScope' in segment &&
+      !readPlanScopeAllowsLinuxDoAnonymous(source, segment.readPlanScope)
+    )
+      return false;
+  }
+  return true;
+}
+
+function isActiveRecoveryQuery(recovery: LinuxDoVerificationRecovery) {
   if ('kind' in recovery) return recovery.isCurrent();
   if (recovery.isCurrent) return recovery.isCurrent();
   return (
@@ -136,7 +229,7 @@ function isActiveRecoveryQuery(recovery: LinuxDoReadRecovery) {
 
 function markReadingRecovery(
   trace: DiagnosticTrace | null,
-  recovery: LinuxDoReadRecovery,
+  recovery: LinuxDoVerificationRecovery,
   state: DiagnosticFields['readingRecoveryState']
 ) {
   if (trace && 'kind' in recovery) {
@@ -233,7 +326,7 @@ export function useVerificationController({
   const linuxDoTerminalWebViewSessionRef = useRef<number | null>(null);
   const recoverySessionRef = useRef<RecoverySession | null>(null);
   const canceledQueriesRef = useRef(new WeakMap<object, number | undefined>());
-  const linuxDoCanceledRecoveriesRef = useRef(new WeakSet<LinuxDoReadRecovery>());
+  const linuxDoCanceledRecoveriesRef = useRef(new WeakSet<LinuxDoVerificationRecovery>());
   const linuxDoActiveCheckRef = useRef<LinuxDoCheckOwner | null>(null);
   const checkLinuxDoCookieRef = useRef<() => Promise<void>>(async () => undefined);
   const linuxDoCloseRef = useRef<LinuxDoCloseHandoff>({
@@ -245,7 +338,7 @@ export function useVerificationController({
   useCommitRefValue(onQueuedLinuxDoLoginCanceledRef, onQueuedLinuxDoLoginCanceled);
   const changeLinuxDoPanelRef = useRef<(visible: boolean, startAtChallenge?: boolean) => boolean>(() => false);
   const showLinuxDoVerificationRef = useRef<
-    ((message?: string, recovery?: LinuxDoReadRecovery) => Promise<boolean>) | null
+    ((message?: string, recovery?: LinuxDoVerificationRecovery) => Promise<boolean>) | null
   >(null);
 
   const cancelLinuxDoEgressProbe = useCallback(
@@ -309,26 +402,38 @@ export function useVerificationController({
     [onRecoveryStateChanged]
   );
 
-  const cancelRecoveryTarget = useCallback((target: { recovery: LinuxDoReadRecovery }) => {
+  const cancelRecoveryTarget = useCallback((target: { recovery: LinuxDoVerificationRecovery }) => {
+    if (linuxDoCanceledRecoveriesRef.current.has(target.recovery)) return;
     linuxDoCanceledRecoveriesRef.current.add(target.recovery);
     if ('kind' in target.recovery) target.recovery.cancel();
     else {
-      target.recovery.cancel?.();
       const query = appQueryClient.getQueryCache().find({ queryKey: target.recovery.queryKey, exact: true });
       if (query) canceledQueriesRef.current.set(query, query.state?.errorUpdatedAt);
-      void appQueryClient.cancelQueries({ queryKey: target.recovery.queryKey, exact: true });
+      if (target.recovery.cancel) target.recovery.cancel();
+      else void appQueryClient.cancelQueries({ queryKey: target.recovery.queryKey, exact: true });
     }
   }, []);
+
+  const invalidateLinuxDoCheck = useCallback(
+    (reason?: 'unmount') => {
+      const check = linuxDoActiveCheckRef.current;
+      linuxDoActiveCheckRef.current = null;
+      checkingRequestIdRef.current += 1;
+      if (check?.kind === 'recovery') check.controller.abort();
+      if (reason !== 'unmount') setChecking(false);
+    },
+    [checkingRequestIdRef, setChecking]
+  );
 
   useEffect(
     () => () => {
       cancelLinuxDoEgressProbe('unmount');
       ++linuxDoVerificationGenerationRef.current;
+      invalidateLinuxDoCheck('unmount');
       recoverySessionRef.current?.targets
         .filter((target) => target.outcome !== 'completed')
         .forEach(cancelRecoveryTarget);
       recoverySessionRef.current = null;
-      ++checkingRequestIdRef.current;
       const queued = linuxDoCloseRef.current.request;
       if (queued.phase !== 'empty')
         finishDiagnosticTrace(queued.trace, 'canceled', { source: 'linuxdo', reason: 'canceled' });
@@ -347,22 +452,29 @@ export function useVerificationController({
       if (linuxDoWebViewMountTimerRef.current) clearTimeout(linuxDoWebViewMountTimerRef.current);
       if (linuxDoCloseRef.current.timer) clearTimeout(linuxDoCloseRef.current.timer);
     },
-    [cancelLinuxDoEgressProbe, cancelRecoveryTarget, checkingRequestIdRef, linuxDoWebViewMountTimerRef]
+    [cancelLinuxDoEgressProbe, cancelRecoveryTarget, invalidateLinuxDoCheck, linuxDoWebViewMountTimerRef]
   );
 
   const validateRecoveryTargets = useCallback(
-    (session: RecoverySession) => {
+    (session: RecoverySession, anonymousOnly = false) => {
       for (const target of session.targets) {
         if (target.outcome !== 'pending' && target.outcome !== 'verification-required') continue;
         const recovery = target.recovery;
+        const anonymousDisallowed = anonymousOnly && !linuxDoRecoveryAllowsAnonymousAccess(recovery);
         if (
+          anonymousDisallowed ||
           session.scope !== getRecoveryScope() ||
           !isActiveRecoveryQuery(recovery) ||
           ('kind' in recovery && recovery.isExpired?.())
         ) {
           target.outcome = 'stale';
           markReadingRecovery(linuxDoVerificationTraceRef.current, recovery, 'stale');
-          target.error = 'kind' in recovery ? '待同步阅读记录已过期或失效，本次未补发。' : '原页面已离开或账号已变化。';
+          target.error =
+            'kind' in recovery
+              ? '待同步阅读记录已过期或失效，本次未补发。'
+              : anonymousDisallowed
+                ? '当前为未登录状态，无法继续该账号读取。'
+                : '原页面已离开或账号已变化。';
           cancelRecoveryTarget(target);
         }
       }
@@ -555,12 +667,6 @@ export function useVerificationController({
     [linuxDoWebViewSessionRef, setLoadingLinuxDoPage]
   );
 
-  const invalidateLinuxDoCheck = useCallback(() => {
-    checkingRequestIdRef.current += 1;
-    linuxDoActiveCheckRef.current = null;
-    setChecking(false);
-  }, [checkingRequestIdRef, setChecking]);
-
   const beginLinuxDoDocumentNavigation = useCallback(
     (webViewKey: number) => {
       if (webViewKey !== linuxDoWebViewSessionRef.current || !isLinuxDoSurfaceVisible() || !canOpenLinuxDoPanel())
@@ -631,6 +737,7 @@ export function useVerificationController({
       (recoverySessionRef.current && recoverySessionRef.current.phase !== 'web')
     )
       return;
+    invalidateLinuxDoCheck();
     const session = recoverySessionRef.current;
     if (session && !validateRecoveryTargets(session)) {
       session.phase = 'result';
@@ -656,15 +763,12 @@ export function useVerificationController({
       });
     }
     const nextSession = nextLinuxDoWebViewSession('refresh');
-    checkingRequestIdRef.current += 1;
-    linuxDoActiveCheckRef.current = null;
     if (linuxDoWebViewMountTimerRef.current) {
       clearTimeout(linuxDoWebViewMountTimerRef.current);
       linuxDoWebViewMountTimerRef.current = null;
     }
     linuxDoWebViewRef.current?.stopLoading();
     setMountLinuxDoWebView(false);
-    setChecking(false);
     setLoadingLinuxDoPageForSession(true, nextSession);
     setLinuxDoWebViewErrorForSession('', nextSession);
     const mount = () => {
@@ -687,15 +791,14 @@ export function useVerificationController({
     onLinuxDoSurfaceClosed,
     publishRecovery,
     validateRecoveryTargets,
-    checkingRequestIdRef,
     currentLinuxDoVerificationTrace,
+    invalidateLinuxDoCheck,
     linuxDoWebViewMountTimerRef,
     linuxDoWebViewRef,
     linuxDoWebViewSessionRef,
     isLinuxDoSurfaceVisible,
     nextLinuxDoWebViewSession,
     prepareLinuxDoCookieResponseBarrier,
-    setChecking,
     setLinuxDoWebViewErrorForSession,
     setLoadingLinuxDoPageForSession,
     setMountLinuxDoWebView
@@ -956,7 +1059,7 @@ export function useVerificationController({
   useCommitRefValue(changeLinuxDoPanelRef, changeLinuxDoPanel);
 
   const showLinuxDoVerification = useCallback(
-    async (message = 'linux.do 需要完成 Cloudflare 验证', recovery?: LinuxDoReadRecovery) => {
+    async (message = 'linux.do 需要完成 Cloudflare 验证', recovery?: LinuxDoVerificationRecovery) => {
       if (!canOpenLinuxDoPanel()) return false;
       if (!recovery && (recoverySessionRef.current || isLinuxDoSurfaceVisible())) return true;
       if (recovery) {
@@ -968,7 +1071,7 @@ export function useVerificationController({
           return false;
         }
         const id = 'kind' in recovery ? 'reading:' + recovery.batchId : hashKey(recovery.queryKey);
-        if (!('kind' in recovery)) {
+        if (!('kind' in recovery) && !recovery.explicit) {
           const query = appQueryClient.getQueryCache().find({ queryKey: recovery.queryKey, exact: true });
           if (
             query &&
@@ -1237,7 +1340,7 @@ export function useVerificationController({
     if (validateRecoveryTargets(session)) {
       session.phase = 'web';
       onBeforeLinuxDoSurfaceOpened();
-      onLinuxDoSurfaceOpened({ accountBarrier: false });
+      onLinuxDoSurfaceOpened({ accountBarrier: !session.dedicated });
       resetLinuxDoWebView();
     }
     publishRecovery();
@@ -1256,6 +1359,7 @@ export function useVerificationController({
       const check: LinuxDoCheckOwner = {
         kind: 'recovery',
         session,
+        controller: new AbortController(),
         requestId: ++checkingRequestIdRef.current,
         generation: linuxDoVerificationGenerationRef.current,
         webViewSession: linuxDoWebViewSessionRef.current
@@ -1298,18 +1402,49 @@ export function useVerificationController({
         validateRecoveryTargets(session);
         await awaitLinuxDoWebViewUnmount();
         if (!current()) return;
+        let anonymousOnly = false;
         if (!session.dedicated) {
           await handoffLinuxDoCookies(trace.traceId);
           if (!current()) return;
           const result = await reconcileAccountStatus('linuxdo', { publishAnonymous: true });
-          if (recoverySessionRef.current !== session || linuxDoActiveCheckRef.current !== check) return;
-          if (result.status === 'changed' || result.status === 'anonymous') {
+          if (
+            recoverySessionRef.current !== session ||
+            linuxDoActiveCheckRef.current !== check ||
+            checkingRequestIdRef.current !== check.requestId ||
+            linuxDoWebViewSessionRef.current !== check.webViewSession ||
+            check.generation !== linuxDoVerificationGenerationRef.current
+          )
+            return;
+          if (result.status === 'stale') return;
+          if (result.status === 'unknown') {
+            if (result.errorInfo?.reason !== 'account_handoff_storage') throw new Error(result.error);
+            for (const target of session.targets) {
+              if (target.outcome !== 'pending' && target.outcome !== 'verification-required') continue;
+              target.outcome = 'verification-required';
+              target.error = result.error;
+            }
+            session.phase = 'result';
+            publishRecovery();
+            finishLinuxDoVerificationTrace(trace, 'failure', { reason: 'storage_error' });
+            return;
+          }
+          const nextScope = getRecoveryScope();
+          const scopeChanged = session.scope !== nextScope;
+          const unknownIdentity = isUnknownRecoveryScope(session.scope) || isUnknownRecoveryScope(nextScope);
+          const stablyAnonymous =
+            result.status === 'anonymous' && !scopeChanged && isConfirmedAnonymousRecoveryScope(session.scope);
+          if (
+            result.status === 'changed' ||
+            scopeChanged ||
+            unknownIdentity ||
+            (result.status === 'anonymous' && !stablyAnonymous)
+          ) {
             closeLinuxDoPanel(true, 'authoritative-recovery', true);
             finishLinuxDoVerificationTrace(trace, 'stale', { reason: 'stale' });
             return;
           }
-          if (!current() || result.status === 'stale') return;
-          if (result.status === 'unknown') throw new Error(result.error);
+          if (!current()) return;
+          anonymousOnly = stablyAnonymous;
         }
         onLinuxDoSurfaceClosed({
           authoritativeResult: true,
@@ -1318,15 +1453,18 @@ export function useVerificationController({
         });
         await awaitLinuxDoCookieHandoff();
         if (!current()) return;
+        validateRecoveryTargets(session, anonymousOnly);
         markDiagnosticStage(trace, 'apply', { source: 'linuxdo', state: 'resuming-read' });
         // Snapshot this check's targets; notifications arriving later wait for another explicit check.
         for (const target of [...session.targets]) {
           if (!current()) return;
-          validateRecoveryTargets(session);
+          validateRecoveryTargets(session, anonymousOnly);
           if (target.outcome !== 'pending' && target.outcome !== 'verification-required') continue;
           markReadingRecovery(trace, target.recovery, 'resuming');
           try {
-            const outcome = await target.recovery.resume();
+            const recovery = target.recovery;
+            const outcome =
+              'kind' in recovery ? await recovery.resume() : await recovery.resume(check.controller.signal);
             if (!current()) return;
             target.outcome = outcome;
             if (outcome === 'failed') {
@@ -1389,8 +1527,7 @@ export function useVerificationController({
         finishLinuxDoVerificationTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
       } finally {
         if (linuxDoActiveCheckRef.current === check) {
-          linuxDoActiveCheckRef.current = null;
-          setChecking(false);
+          invalidateLinuxDoCheck();
         }
       }
     },
@@ -1403,6 +1540,7 @@ export function useVerificationController({
       closeLinuxDoPanel,
       currentLinuxDoVerificationTrace,
       finishLinuxDoVerificationTrace,
+      invalidateLinuxDoCheck,
       getRecoveryScope,
       handoffLinuxDoCookies,
       isLinuxDoSurfaceVisible,
@@ -1610,6 +1748,7 @@ export function useVerificationController({
     const session = recoverySessionRef.current;
     if (session?.phase === 'checking') {
       ++linuxDoVerificationGenerationRef.current;
+      invalidateLinuxDoCheck();
       recoverySessionRef.current = {
         ...session,
         phase: 'result',
@@ -1627,7 +1766,6 @@ export function useVerificationController({
         .filter((target) => target.outcome !== 'completed')
         .forEach(cancelRecoveryTarget);
       if (isLinuxDoSurfaceVisible()) onLinuxDoSurfaceClosed(interruptedRecoveryClose(session));
-      setChecking(false);
       publishRecovery();
       const trace = linuxDoVerificationTraceRef.current;
       if (trace) finishLinuxDoVerificationTrace(trace, 'canceled', { reason: 'canceled' });
@@ -1648,8 +1786,7 @@ export function useVerificationController({
     invalidateLinuxDoCheck,
     isLinuxDoSurfaceVisible,
     onLinuxDoSurfaceClosed,
-    publishRecovery,
-    setChecking
+    publishRecovery
   ]);
 
   return {

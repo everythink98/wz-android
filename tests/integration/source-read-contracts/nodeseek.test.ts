@@ -341,7 +341,7 @@ describe('Android local sources', () => {
     const topic = await getNodeSeekTopic('102', { fetcher });
 
     expect(topic.contentHtml).toContain('<iframe');
-    expect(topic.contentHtml).toContain('https://player.bilibili.com/player.html?bvid=BV1GUdgBdESz&p=2');
+    expect(topic.contentHtml).toContain('https://player.bilibili.com/player.html?bvid=BV1GUdgBdESz&amp;p=2');
     expect(topic.contentHtml).not.toContain('<img');
   });
 

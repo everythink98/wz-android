@@ -11,6 +11,7 @@ import {
   parseHtml,
   parsePositiveInteger,
   textExcerpt,
+  textExcerptFromPlainText,
   toIsoString,
   transformForumElements,
   type ForumTextSegment,
@@ -848,7 +849,13 @@ export function normalizePostData(
     lastReplyAt,
     ...(replyCount !== undefined ? { replyCount } : {}),
     viewCount: parseViewCount(data.views),
-    excerpt: rendered?.excerpt || textExcerpt(first.content || first.markdown),
+    excerpt:
+      rendered?.excerpt ||
+      (typeof first.content === 'string' && first.content.trim()
+        ? hasHtmlTag(first.content)
+          ? textExcerpt(first.content)
+          : textExcerptFromPlainText(first.content)
+        : textExcerptFromPlainText(first.markdown || '')),
     contentHtml: rendered?.contentHtml || nodeSeekContentCandidateHtml(first.content, first.markdown),
     commentId: optionalInteger(first.commentId),
     canEdit: poster.isMe === true,

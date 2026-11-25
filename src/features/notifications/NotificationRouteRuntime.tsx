@@ -1,11 +1,18 @@
 import { createContext, useContext, type ReactNode } from 'react';
 import type { NotificationSource } from '@/domain/forum/sourceCatalog';
-import type { AccountReconcileResult, LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
+import type { AccountReconcileResult } from '@/domain/session/sessionContracts';
+import type { ReadRecovery } from '@/platform/query/readRecovery';
 import type { WritableSessionTicket } from '@/domain/session/writableSessionGate';
 import type { ReadGateway } from '@/sources/readGateway';
-import type { NotificationsRuntimeValue } from './useNotificationsRuntime';
+import type { NotificationOperationOutcome, NotificationsRuntimeValue } from './useNotificationsRuntime';
 
-export type NotificationRouteRuntimeValue = NotificationsRuntimeValue & {
+export type NotificationRouteRuntimeValue = Omit<
+  NotificationsRuntimeValue,
+  'readPermissionState' | 'requestPermission' | 'setGlobalEnabled'
+> & {
+  readPermissionState?: NotificationsRuntimeValue['readPermissionState'];
+  requestPermission?: NotificationsRuntimeValue['requestPermission'];
+  setGlobalEnabled: (enabled: boolean) => Promise<NotificationOperationOutcome | boolean>;
   composer: {
     ensureNodeImageApiKey: () => Promise<string | null>;
     ensureWritableSession: (source: NotificationSource) => Promise<WritableSessionTicket>;
@@ -15,7 +22,7 @@ export type NotificationRouteRuntimeValue = NotificationsRuntimeValue & {
   contentWidth: number;
   notify: (message: string) => void;
   reconcileAccountStatus: (source: NotificationSource) => Promise<AccountReconcileResult>;
-  openAccountSurface: (source: NotificationSource, message: string, recovery?: LinuxDoReadRecovery) => Promise<void>;
+  openAccountSurface: (source: NotificationSource, message: string, recovery?: ReadRecovery) => Promise<void>;
 };
 
 const NotificationRouteRuntimeContext = createContext<NotificationRouteRuntimeValue | null>(null);

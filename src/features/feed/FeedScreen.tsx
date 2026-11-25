@@ -73,6 +73,7 @@ export const FeedScreen = memo(function FeedScreen({
   categories,
   categoryFilter,
   feedHasMore,
+  feedManualContinuation,
   feedItems,
   feedOutcomeKind,
   feedPage,
@@ -104,6 +105,7 @@ export const FeedScreen = memo(function FeedScreen({
   categories: Category[];
   categoryFilter: string;
   feedHasMore: boolean;
+  feedManualContinuation?: boolean;
   feedItems: Topic[];
   feedOutcomeKind?: SourceLoadOutcomeKind;
   feedPage: number;
@@ -233,7 +235,7 @@ export const FeedScreen = memo(function FeedScreen({
   );
   const requestFeedLoadMore = useCallback(
     (source: 'button' | 'scroll' = 'button', offsetY = 0) => {
-      if (!feedHasMore || busy || refreshing || loadingMore) {
+      if (!feedHasMore || busy || refreshing || loadingMore || (source === 'scroll' && feedManualContinuation)) {
         return;
       }
       const request = pageRequests.begin(feedPage + 1, source, offsetY, AUTO_LOAD_SCROLL_STEP);
@@ -244,7 +246,7 @@ export const FeedScreen = memo(function FeedScreen({
         () => settle(true)
       );
     },
-    [busy, feedHasMore, feedPage, loadingMore, onLoadMore, pageRequests, refreshing]
+    [busy, feedHasMore, feedManualContinuation, feedPage, loadingMore, onLoadMore, pageRequests, refreshing]
   );
 
   const handleScroll = useCallback(

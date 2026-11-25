@@ -22,7 +22,8 @@ vi.mock('react-native', () => ({
 }));
 
 const serverStateMocks = vi.hoisted(() => ({
-  recoveryActive: vi.fn(() => true)
+  recoveryActive: vi.fn(() => true),
+  query: null as { isActive: () => boolean; state: { errorUpdatedAt: number } } | null
 }));
 
 const egressMocks = vi.hoisted(() => ({
@@ -47,14 +48,18 @@ vi.mock('@/platform/network/linuxDoLoginInitialization', () => ({
   waitForLinuxDoLoginInitialization: vi.fn(async () => true)
 }));
 
-vi.mock('@/platform/query/serverState', () => ({
-  appQueryClient: {
-    cancelQueries: vi.fn(async () => undefined),
-    getQueryCache: () => ({
-      find: () => ({ isActive: serverStateMocks.recoveryActive })
-    })
-  }
-}));
+vi.mock('@/platform/query/serverState', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/platform/query/serverState')>();
+  return {
+    ...actual,
+    appQueryClient: {
+      cancelQueries: vi.fn(async () => undefined),
+      getQueryCache: () => ({
+        find: () => serverStateMocks.query ?? { isActive: serverStateMocks.recoveryActive }
+      })
+    }
+  };
+});
 
 import type { SiteSessionEvent, SiteSessionState } from '@/domain/session/siteSessionState';
 import type { AccountReconcileResult, LinuxDoReadingRecovery } from '@/domain/session/sessionContracts';
@@ -62,6 +67,8 @@ import type { Fetcher } from '@/platform/network/request';
 import { waitForLinuxDoLoginInitialization } from '@/platform/network/linuxDoLoginInitialization';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import type { DiagnosticEvent, DiagnosticFields } from '@/platform/diagnostics/diagnosticPolicy';
+import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
+import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { useVerificationController } from './useVerificationController';
 
 const ref = <T>(current: T) => ({ current });
@@ -93,8 +100,12 @@ function createController(
     getLinuxDoSurfaceGeneration?: () => number | undefined;
     onBeforeLinuxDoSurfaceOpened?: () => void;
     prepareLinuxDoCookieResponseBarrier?: () => Promise<void>;
-    reconcileAccountStatus?: (source: 'linuxdo') => Promise<AccountReconcileResult>;
+    reconcileAccountStatus?: (
+      source: 'linuxdo',
+      options?: { publishAnonymous: boolean }
+    ) => Promise<AccountReconcileResult>;
     awaitLinuxDoCookieHandoff?: () => Promise<void>;
+    handoffLinuxDoCookies?: (parentTraceId?: string) => Promise<void>;
     awaitLinuxDoWebViewUnmount?: () => Promise<void>;
     canOpenLinuxDoPanel?: () => boolean;
     getRecoveryScope?: () => string;
@@ -132,6 +143,7 @@ function createController(
     fetcher: options.fetcher,
     getLinuxDoSurfaceGeneration: options.getLinuxDoSurfaceGeneration,
     awaitLinuxDoCookieHandoff: options.awaitLinuxDoCookieHandoff,
+    handoffLinuxDoCookies: options.handoffLinuxDoCookies,
     awaitLinuxDoWebViewUnmount: options.awaitLinuxDoWebViewUnmount,
     canOpenLinuxDoPanel: options.canOpenLinuxDoPanel,
     getRecoveryScope: options.getRecoveryScope,
@@ -198,6 +210,7 @@ afterEach(() => {
   vi.clearAllMocks();
   vi.mocked(waitForLinuxDoLoginInitialization).mockReset().mockResolvedValue(true);
   serverStateMocks.recoveryActive.mockReset().mockReturnValue(true);
+  serverStateMocks.query = null;
   vi.useRealTimers();
 });
 
@@ -976,6 +989,57 @@ describe('linux.do visible verification coordinator', () => {
     expect(resume).not.toHaveBeenCalled();
     expect(reconcileAccountStatus).not.toHaveBeenCalled();
   });
+
+  it.each(['close', 'replace', 'background', 'unmount'] as const)(
+    'aborts the active page recovery on %s before a late response can commit',
+    async (exit) => {
+      const { controller } = createController();
+      const entered = Promise.withResolvers<AbortSignal | undefined>();
+      const pending = Promise.withResolvers<void>();
+      const commit = vi.fn();
+      await controller.showLinuxDoVerification('页面验证', {
+        queryKey: recoveryQueryKeyFor('pending'),
+        resume: async (signal) => {
+          entered.resolve(signal);
+          await pending.promise;
+          if (signal?.aborted) return 'stale';
+          commit();
+          return 'completed';
+        }
+      });
+      const check = controller.checkLinuxDoCookie();
+      const signal = await entered.promise;
+      if (exit === 'close') controller.closeLinuxDoPanel();
+      if (exit === 'replace') controller.showNodeSeekVerification();
+      if (exit === 'background') controller.cancelLinuxDoCheckForInactiveApp();
+      if (exit === 'unmount') effectCleanups.splice(0).forEach((cleanup) => cleanup());
+      pending.resolve();
+      await check;
+      expect(signal?.aborted).toBe(true);
+      expect(commit).not.toHaveBeenCalled();
+    }
+  );
+
+  it('keeps a dismissed error from reopening automatically and allows a new explicit recovery', async () => {
+    vi.useFakeTimers();
+    serverStateMocks.query = { isActive: () => true, state: { errorUpdatedAt: 1 } };
+    const { controller } = createController();
+    const recovery = {
+      queryKey: recoveryQueryKeyFor('explicit-retry'),
+      cancel: vi.fn(),
+      resume: vi.fn(async () => 'completed' as const)
+    };
+    expect(await controller.showLinuxDoVerification('页面验证', { ...recovery, explicit: true })).toBe(true);
+    controller.closeLinuxDoPanel();
+    expect(recovery.cancel).toHaveBeenCalledOnce();
+    expect(appQueryClient.cancelQueries).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(350);
+    expect(await controller.showLinuxDoVerification('页面验证', recovery)).toBe(false);
+    expect(await controller.showLinuxDoVerification('再次验证', { ...recovery, explicit: true })).toBe(true);
+    await controller.checkLinuxDoCookie();
+    expect(recovery.resume).toHaveBeenCalledOnce();
+  });
+
   it('attaches reading to an existing verification without resetting its WebView', async () => {
     const { controller, linuxDoWebViewSessionRef, reconcileAccountStatus } = createController();
     const resumePage = vi.fn(async () => 'completed' as const);
@@ -2017,5 +2081,253 @@ describe('bounded recovery sessions', () => {
     const next = createController();
     await next.controller.showLinuxDoVerification('expired', { ...reading, batchId: 11 });
     expect(next.onLinuxDoSurfaceOpened).not.toHaveBeenCalled();
+  });
+
+  it('hands off cookies before checking account and resumes public reads attached to manual login when stably anonymous', async () => {
+    const order: string[] = [];
+    const anonymousScope = JSON.stringify(['linuxdo:anonymous', 'none', 0, true]);
+    const handoffLinuxDoCookies = vi.fn(async () => {
+      order.push('handoff');
+    });
+    const reconcileAccountStatus = vi.fn(async () => {
+      order.push('reconcile');
+      return { status: 'anonymous', session: anonymousSession } as const;
+    });
+    const { controller, showLinuxDoPanelRef } = createController({
+      getRecoveryScope: () => anonymousScope,
+      handoffLinuxDoCookies,
+      reconcileAccountStatus
+    });
+    controller.changeLinuxDoPanel(true);
+    const topicCancel = vi.fn();
+    const topicResume = vi.fn(async () => {
+      order.push('resume-topic');
+      return 'completed' as const;
+    });
+    const feedCancel = vi.fn();
+    const feedResume = vi.fn(async () => {
+      order.push('resume-feed');
+      return 'completed' as const;
+    });
+    const aggregateCancel = vi.fn();
+    const aggregateResume = vi.fn(async () => {
+      order.push('resume-aggregate');
+      return 'completed' as const;
+    });
+    await controller.showLinuxDoVerification('主题验证', {
+      queryKey: forumQueryKeys.topic({
+        source: 'linuxdo',
+        topicId: '101',
+        scope: initialForumSessionEpochs,
+        readPlanScope: 'public:omit'
+      }),
+      isCurrent: () => true,
+      cancel: topicCancel,
+      resume: topicResume
+    });
+    await controller.showLinuxDoVerification('首页验证', {
+      queryKey: forumQueryKeys.feed({
+        source: 'linuxdo',
+        scope: initialForumSessionEpochs,
+        readPlanScope: 'public:omit'
+      }),
+      isCurrent: () => true,
+      cancel: feedCancel,
+      resume: feedResume
+    });
+    await controller.showLinuxDoVerification('聚合首页验证', {
+      queryKey: forumQueryKeys.feed({
+        source: 'all',
+        enabledSourcesKey: 'v2ex,linuxdo',
+        scope: initialForumSessionEpochs,
+        readPlanScope: 'v2ex:public:omit,linuxdo:public:omit'
+      }),
+      isCurrent: () => true,
+      cancel: aggregateCancel,
+      resume: aggregateResume
+    });
+
+    await controller.checkLinuxDoCookie();
+
+    expect(order).toEqual(['handoff', 'reconcile', 'resume-topic', 'resume-feed', 'resume-aggregate']);
+    expect(reconcileAccountStatus).toHaveBeenCalledWith('linuxdo', { publishAnonymous: true });
+    expect(topicResume).toHaveBeenCalledTimes(1);
+    expect(feedResume).toHaveBeenCalledTimes(1);
+    expect(aggregateResume).toHaveBeenCalledTimes(1);
+    expect(topicCancel).not.toHaveBeenCalled();
+    expect(feedCancel).not.toHaveBeenCalled();
+    expect(aggregateCancel).not.toHaveBeenCalled();
+    expect(showLinuxDoPanelRef.current).toBe(false);
+  });
+
+  it('resumes only anonymous-allowed public reads and rejects private or reading targets when stably anonymous', async () => {
+    const anonymousScope = JSON.stringify(['linuxdo:anonymous', 'none', 0, true]);
+    const { controller, onRecoveryStateChanged } = createController({
+      getRecoveryScope: () => anonymousScope,
+      reconcileAccountStatus: async () => ({ status: 'anonymous', session: anonymousSession })
+    });
+    controller.changeLinuxDoPanel(true);
+    const publicTopic = {
+      queryKey: forumQueryKeys.topic({
+        source: 'linuxdo',
+        topicId: '202',
+        scope: initialForumSessionEpochs,
+        readPlanScope: 'public:omit'
+      }),
+      isCurrent: () => true,
+      cancel: vi.fn(),
+      resume: vi.fn(async () => 'completed' as const)
+    };
+    const privateReads = [
+      forumQueryKeys.levelProfile({ source: 'linuxdo', sessionEpochs: initialForumSessionEpochs }),
+      forumQueryKeys.accountData({
+        source: 'linuxdo',
+        kind: 'ldc-account',
+        userId: 'alice',
+        sessionEpoch: 0,
+        readPlanScope: 'authenticated:0'
+      }),
+      forumQueryKeys.notificationList({
+        source: 'linuxdo',
+        identityKey: 'linuxdo:alice',
+        unreadOnly: false
+      }),
+      forumQueryKeys.topic({
+        source: 'linuxdo',
+        topicId: '203',
+        scope: initialForumSessionEpochs,
+        readPlanScope: 'authenticated:0'
+      }),
+      ['create-topic', 'linuxdo:alice', 'draft-1', 0, 'tags'] as const
+    ].map((queryKey) => ({
+      queryKey,
+      isCurrent: () => true,
+      cancel: vi.fn(),
+      resume: vi.fn(async () => 'completed' as const)
+    }));
+    const reading: LinuxDoReadingRecovery = {
+      kind: 'reading',
+      batchId: 404,
+      isCurrent: () => true,
+      cancel: vi.fn(),
+      resume: vi.fn(async () => 'completed' as const)
+    };
+    await controller.showLinuxDoVerification('公开主题', publicTopic);
+    for (const target of privateReads) await controller.showLinuxDoVerification('私有读取', target);
+    await controller.showLinuxDoVerification('阅读记录', reading);
+
+    await controller.checkLinuxDoCookie();
+
+    expect(publicTopic.resume).toHaveBeenCalledTimes(1);
+    expect(publicTopic.cancel).not.toHaveBeenCalled();
+    for (const target of privateReads) {
+      expect(target.resume).not.toHaveBeenCalled();
+      expect(target.cancel).toHaveBeenCalledTimes(1);
+    }
+    expect(reading.resume).not.toHaveBeenCalled();
+    expect(reading.cancel).toHaveBeenCalledTimes(1);
+    expect(onRecoveryStateChanged).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        phase: 'result',
+        results: [
+          expect.objectContaining({ kind: 'page', outcome: 'completed' }),
+          ...privateReads.map(() => expect.objectContaining({ kind: 'page', outcome: 'stale' })),
+          expect.objectContaining({ kind: 'reading', outcome: 'stale' })
+        ]
+      })
+    );
+  });
+
+  it.each([
+    'account-switch',
+    'logged-in-to-anonymous',
+    'unknown-to-anonymous',
+    'unknown-to-logged-in',
+    'identity-still-unknown',
+    'source-disabled',
+    'session-epoch-changed',
+    'left-original-page',
+    'stale-webview-callback'
+  ] as const)('never resumes attached reads when %s prevents stable recovery', async (scenario) => {
+    let scope =
+      scenario === 'account-switch' || scenario === 'logged-in-to-anonymous'
+        ? JSON.stringify(['linuxdo:alice', 'confirmed', 0, true])
+        : scenario === 'unknown-to-anonymous' ||
+            scenario === 'unknown-to-logged-in' ||
+            scenario === 'identity-still-unknown'
+          ? JSON.stringify(['linuxdo:anonymous', 'unknown', 0, true])
+          : JSON.stringify(['linuxdo:anonymous', 'none', 0, true]);
+    let pageCurrent = true;
+    const deferredReconcile = Promise.withResolvers<AccountReconcileResult>();
+    const reconcileAccountStatus = vi.fn(async (): Promise<AccountReconcileResult> => {
+      if (scenario === 'stale-webview-callback') return deferredReconcile.promise;
+      if (scenario === 'account-switch') {
+        scope = JSON.stringify(['linuxdo:bob', 'confirmed', 1, true]);
+        return {
+          status: 'changed',
+          session: {
+            ...loggedInSession,
+            currentUser: { ...loggedInSession.currentUser!, id: '99', username: 'bob', displayName: 'Bob' }
+          }
+        };
+      }
+      if (scenario === 'logged-in-to-anonymous') {
+        scope = JSON.stringify(['linuxdo:anonymous', 'none', 1, true]);
+        return { status: 'anonymous', session: anonymousSession };
+      }
+      if (scenario === 'unknown-to-anonymous') {
+        scope = JSON.stringify(['linuxdo:anonymous', 'none', 0, true]);
+        return { status: 'anonymous', session: anonymousSession };
+      }
+      if (scenario === 'unknown-to-logged-in') {
+        scope = JSON.stringify(['linuxdo:alice', 'confirmed', 0, true]);
+        return { status: 'same', session: loggedInSession };
+      }
+      if (scenario === 'identity-still-unknown') {
+        return {
+          status: 'unknown',
+          error: 'identity still unknown',
+          errorInfo: { kind: 'ordinary', message: 'identity still unknown' }
+        };
+      }
+      if (scenario === 'source-disabled') {
+        scope = JSON.stringify(['linuxdo:anonymous', 'none', 0, false]);
+        return { status: 'anonymous', session: anonymousSession };
+      }
+      if (scenario === 'session-epoch-changed') {
+        scope = JSON.stringify(['linuxdo:anonymous', 'none', 1, true]);
+        return { status: 'anonymous', session: anonymousSession };
+      }
+      return { status: 'anonymous', session: anonymousSession };
+    });
+    const { controller } = createController({
+      getRecoveryScope: () => scope,
+      reconcileAccountStatus
+    });
+    controller.changeLinuxDoPanel(true);
+    const cancel = vi.fn();
+    const resume = vi.fn(async () => 'completed' as const);
+    await controller.showLinuxDoVerification('公开主题', {
+      queryKey: forumQueryKeys.topic({
+        source: 'linuxdo',
+        topicId: '303',
+        scope: initialForumSessionEpochs,
+        readPlanScope: 'public:omit'
+      }),
+      isCurrent: () => pageCurrent,
+      cancel,
+      resume
+    });
+    if (scenario === 'left-original-page') pageCurrent = false;
+    const checking = controller.checkLinuxDoCookie();
+    if (scenario === 'stale-webview-callback') {
+      await vi.waitFor(() => expect(reconcileAccountStatus).toHaveBeenCalledOnce());
+      controller.closeLinuxDoPanel();
+      deferredReconcile.resolve({ status: 'anonymous', session: anonymousSession });
+    }
+    await checking;
+
+    expect(resume).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledTimes(1);
   });
 });

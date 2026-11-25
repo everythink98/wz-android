@@ -22,24 +22,18 @@ import type { LibraryListItem } from './libraryScreenItems';
 import { LibraryScreen } from './LibraryScreen';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { queryReaderCategories, queryReaderPage } from '@/platform/storage/readerDataStore';
+import { readerLibraryQueryKeys } from '@/platform/query/serverState';
 import type { ReaderCommand, ReaderPageRequest } from '@/domain/reader/readerRecordState';
 
 import { useReaderDataActionsController } from './useReaderDataActionsController';
 import { useLibraryRouteRuntime } from './LibraryRouteRuntime';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
-
-export { LibraryRouteRuntimeProvider, type LibraryRouteRuntimeValue } from './LibraryRouteRuntime';
+import { allLibraryFilters, resolveLibraryFilters } from './model/libraryFilters';
 
 function useCollectionPages(request: Omit<ReaderPageRequest, 'after'>, enabled: boolean) {
   const query = useInfiniteQuery({
-    queryKey: [
-      'reader-library',
-      request.collection,
-      request.sources.slice().sort().join('|'),
-      request.source,
-      request.category
-    ],
+    queryKey: readerLibraryQueryKeys.page(request),
     enabled,
     initialPageParam: undefined as ReaderPageRequest['after'],
     queryFn: ({ pageParam }) => queryReaderPage({ ...request, after: pageParam }),
@@ -68,7 +62,11 @@ export function LibraryRoute() {
   const getFocusOwner = useCallback(() => (navigation.isFocused() ? focusOwner.current : null), [navigation]);
   const listRef = useRef<FlashListRef<FollowedUserRecord | LibraryListItem> | null>(null);
   useScrollToTop(listRef);
-  const [libraryTab, setLibraryTab] = useState<LibraryTab>(route.params?.initialTab ?? 'favorites');
+  const [selection, setSelection] = useState(() => ({
+    tab: route.params?.initialTab ?? 'favorites',
+    ...allLibraryFilters
+  }));
+  const libraryTab = selection.tab;
   const commit = runtime.reader.commit;
   const commitReaderData = useCallback(
     (command: ReaderCommand) => {
@@ -80,31 +78,45 @@ export function LibraryRoute() {
     commitReaderData,
     readerDataRef: runtime.reader.dataRef
   });
-  const [sourceFilter, setSourceFilter] = useState<FeedSource>('all');
-  const [categoryFilter, setCategoryFilter] = useState('all');
   const collection = libraryTab === 'users' ? 'followedUsers' : libraryTab;
   const categoryQuery = useQuery({
-    queryKey: ['reader-library', collection, 'categories', runtime.enabledSources.slice().sort().join('|')],
+    queryKey: readerLibraryQueryKeys.categories(collection, runtime.enabledSources),
     enabled: active && runtime.reader.loaded && collection !== 'followedUsers',
     queryFn: () => queryReaderCategories({ collection, sources: runtime.enabledSources }),
     placeholderData: (previous, previousQuery) =>
-      previousQuery?.queryKey[1] === collection
-        ? previous?.filter((category) => runtime.enabledSources.includes(category.source))
+      readerLibraryQueryKeys.collection(collection).every((part, index) => previousQuery?.queryKey[index] === part)
+        ? previous
         : undefined,
     staleTime: Infinity,
     retry: false
   });
-  const categories = useMemo(() => categoryQuery.data ?? [], [categoryQuery.data]);
+  const categoriesReady = categoryQuery.data !== undefined && !categoryQuery.isPlaceholderData;
+  const { source, category, categoryItems } = useMemo(
+    () => resolveLibraryFilters(selection, runtime.enabledSources, categoryQuery.data ?? [], categoriesReady),
+    [selection, runtime.enabledSources, categoryQuery.data, categoriesReady]
+  );
+  if (source !== selection.source || category !== selection.category) {
+    setSelection({ tab: libraryTab, source, category });
+  }
+  const changeTab = useCallback((tab: LibraryTab) => {
+    setSelection((current) => (current.tab === tab ? current : { tab, ...allLibraryFilters }));
+  }, []);
+  const changeSource = useCallback((nextSource: FeedSource) => {
+    setSelection((current) =>
+      current.source === nextSource ? current : { ...current, source: nextSource, category: 'all' }
+    );
+  }, []);
+  const changeCategory = useCallback((nextCategory: string) => {
+    setSelection((current) => (current.category === nextCategory ? current : { ...current, category: nextCategory }));
+  }, []);
   const { refetch: refetchCategories } = categoryQuery;
   const retryCategories = useCallback(() => {
     void refetchCategories();
   }, [refetchCategories]);
-  const source = sourceFilter === 'all' || runtime.enabledSources.includes(sourceFilter) ? sourceFilter : 'all';
-  const category = source === sourceFilter ? categoryFilter : 'all';
-  const requestFor = (candidate: ReaderPageRequest['collection']) => ({
+  const requestFor = (candidate: ReaderPageRequest['collection']): Omit<ReaderPageRequest, 'after'> => ({
     collection: candidate,
     sources: runtime.enabledSources,
-    source: candidate === collection ? source : ('all' as const),
+    source: candidate === collection ? source : 'all',
     category: candidate === collection ? category : 'all'
   });
   const favorites = useCollectionPages(
@@ -197,8 +209,7 @@ export function LibraryRoute() {
     <LibraryScreen
       active={active}
       getFocusOwner={getFocusOwner}
-      categories={categories}
-      categoriesReady={categoryQuery.data !== undefined && !categoryQuery.isPlaceholderData}
+      categoryItems={categoryItems}
       onRetryCategories={categoryQuery.isError ? retryCategories : undefined}
       enabledSources={runtime.enabledSources}
       favoriteRecords={favoriteRecords}
@@ -207,10 +218,10 @@ export function LibraryRoute() {
       libraryTab={libraryTab}
       loaded={runtime.reader.loaded && Boolean(pages.data)}
       loadingMore={pages.isFetchingNextPage}
-      sourceFilter={sourceFilter}
-      categoryFilter={categoryFilter}
-      onSourceFilter={setSourceFilter}
-      onCategoryFilter={setCategoryFilter}
+      sourceFilter={source}
+      categoryFilter={category}
+      onSourceFilter={changeSource}
+      onCategoryFilter={changeCategory}
       historyCountToClear={historyCountToClear}
       error={pages.isError}
       onRetry={retry}
@@ -223,7 +234,7 @@ export function LibraryRoute() {
       onOpenUser={openUser}
       onRemove={actions.removeLibraryTopic}
       onRemoveUser={actions.removeFollowedUser}
-      onTabChange={setLibraryTab}
+      onTabChange={changeTab}
     />
   );
 }

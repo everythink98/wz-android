@@ -142,11 +142,13 @@ export function nodeImageAuthFlowCanAcceptMessage(
     identityKey: string;
     identityTrust: string;
     sessionEpoch: number;
+    sourceEnabled?: boolean;
   },
   credentialGeneration: number
 ) {
   return (
     flow.state.phase !== 'terminal' &&
+    runtime.sourceEnabled !== false &&
     runtime.identityTrust === 'confirmed' &&
     runtime.identityKey === flow.owner.identityKey &&
     runtime.sessionEpoch === flow.owner.sessionEpoch &&
@@ -177,6 +179,7 @@ export async function processNodeImageAuthMessage(
     identityKey: string;
     identityTrust: string;
     sessionEpoch: number;
+    sourceEnabled?: boolean;
   },
   credentialGeneration: number,
   effects: {

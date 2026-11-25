@@ -2,7 +2,8 @@ import type { Source, Topic, UserDetails, UserTopicsPage } from '@/domain/forum/
 import { createEmptyReaderData, sanitizeReaderSettings, topicKey, userKey, type ReaderSettings } from './readerData';
 import { applyContentSourceEdit, type ContentSourceEdit } from './contentSourcePreferences';
 
-export type ReaderStatus = 'loading' | 'ready' | 'recovery';
+export type ReaderStatus = 'loading' | 'ready' | 'recovery' | 'restart-required';
+export const readerStorageRestartMessage = '本机资料事务状态不明，请重新启动后恢复。';
 
 export const readerCollections = ['favorites', 'history', 'followedUsers'] as const;
 export type ReaderCollection = (typeof readerCollections)[number];

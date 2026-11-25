@@ -46,6 +46,16 @@ export class CredentialVaultError extends Error {
   }
 }
 
+export class CredentialDeletionIncompleteError extends Error {
+  constructor(
+    readonly summary: CredentialSummary,
+    cause: unknown
+  ) {
+    super(cause instanceof Error ? cause.message : '删除保存的登录信息未完成。', { cause });
+    this.name = 'CredentialDeletionIncompleteError';
+  }
+}
+
 type StoredCredential = SavedCredential & { version: 1 };
 type CredentialSlot = 0 | 1;
 type CredentialValueSlot = CredentialSlot | 'legacy';
@@ -338,10 +348,25 @@ async function remove(site: CredentialSite): Promise<void> {
       secureOptions(summary.protection, '删除保存的登录信息')
     );
   }
-  await SecureStore.deleteItemAsync(valueStorageKey(site));
-  await SecureStore.deleteItemAsync(valueStorageKey(site, 0));
-  await SecureStore.deleteItemAsync(valueStorageKey(site, 1));
-  await SecureStore.deleteItemAsync(storageKey(site, 'summary'));
+  const summaryKey = storageKey(site, 'summary');
+  const activeSlot = summary.hasCredential ? (storedSummary?.slot ?? 'legacy') : null;
+  for (const slot of ['legacy', 0, 1] as const) {
+    if (slot !== activeSlot) await SecureStore.deleteItemAsync(valueStorageKey(site, slot));
+  }
+  if (!storedSummary || activeSlot === null) {
+    await SecureStore.deleteItemAsync(summaryKey);
+    return;
+  }
+
+  // Publish that the value is unavailable before removing its only live slot.
+  const pendingCleanup: StoredSummary = { ...storedSummary, state: 'invalidated', cleanupSlots: [activeSlot] };
+  await SecureStore.setItemAsync(summaryKey, JSON.stringify(pendingCleanup));
+  try {
+    await SecureStore.deleteItemAsync(valueStorageKey(site, activeSlot));
+    await SecureStore.deleteItemAsync(summaryKey);
+  } catch (error) {
+    throw new CredentialDeletionIncompleteError(summaryFromStored(site, pendingCleanup), error);
+  }
 }
 
 function runExclusive<T>(site: CredentialSite, operation: () => Promise<T>): Promise<T> {

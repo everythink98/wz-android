@@ -30,17 +30,17 @@ import { canonicalEnabledSourcesKey, projectContentSourcePreferences } from '@/d
 import { createSiteSessionStates } from '@/domain/session/siteSessionState';
 import { FeedRoute, FeedRouteRuntimeProvider, type FeedRouteRuntimeValue } from '@/features/feed/FeedRoute';
 import { useFeedController } from '@/features/feed/useFeedController';
-import {
-  LibraryRoute,
-  LibraryRouteRuntimeProvider,
-  type LibraryRouteRuntimeValue
-} from '@/features/library/LibraryRoute';
+import { LibraryRoute } from '@/features/library/LibraryRoute';
+import { LibraryRouteRuntimeProvider, type LibraryRouteRuntimeValue } from '@/features/library/LibraryRouteRuntime';
 import { useReaderDataActionsController } from '@/features/library/useReaderDataActionsController';
-import { MoreRoute, MoreRouteRuntimeProvider, type MoreRouteRuntimeValue } from '@/features/more/MoreRoute';
+import { MoreRoute } from '@/features/more/MoreRoute';
+import { MoreRouteRuntimeProvider, type MoreRouteRuntimeValue } from '@/features/more/MoreRouteRuntime';
 import { NodeSeekServicesPanel } from '@/features/more/components/NodeSeekServicesPanel';
-import { SearchRoute, SearchRouteRuntimeProvider, type SearchRouteRuntimeValue } from '@/features/search/SearchRoute';
+import { SearchRoute } from '@/features/search/SearchRoute';
+import { SearchRouteRuntimeProvider, type SearchRouteRuntimeValue } from '@/features/search/SearchRouteRuntime';
 import { useSearchController } from '@/features/search/useSearchController';
-import { TopicRoute, TopicRouteRuntimeProvider, type TopicRouteRuntimeValue } from '@/features/topic/TopicRoute';
+import { TopicRoute } from '@/features/topic/TopicRoute';
+import { TopicRouteRuntimeProvider, type TopicRouteRuntimeValue } from '@/features/topic/TopicRouteRuntime';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { queryReaderCategories, queryReaderPage } from '@/platform/storage/readerDataStore';
 import type { ReadGateway } from '@/sources/readGateway';
@@ -276,6 +276,7 @@ const feedRuntime = {
   enabledSourcesKey: 'v2ex,linuxdo,nodeseek,yaohuo',
   account: {
     linuxDoVerificationVisible: false,
+    nodeSeekVerificationVisible: false,
     readGateway,
     requestNodeSeekVerification: jest.fn(),
     sessionEpochs: initialForumSessionEpochs,

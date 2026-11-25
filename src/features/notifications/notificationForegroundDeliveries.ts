@@ -1,9 +1,9 @@
 import type { NotificationSource } from '@/domain/forum/sourceCatalog';
+import type { NotificationDeliveryScope } from '@/platform/notifications/notificationStore';
 import type { createNotificationSourceLifecycleRegistry } from './notificationSourceLifecycle';
 
-export type ForegroundDelivery = {
+export type ForegroundDelivery = NotificationDeliveryScope & {
   source: NotificationSource;
-  identityKey: string;
   epoch: number;
   generation: number;
   lifecycle: ReturnType<typeof createNotificationSourceLifecycleRegistry>[NotificationSource];

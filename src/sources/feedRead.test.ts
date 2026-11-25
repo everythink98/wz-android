@@ -8,7 +8,7 @@ vi.mock('expo-secure-store', () => ({
 
 import { getCategories, getFeed } from './feedRead';
 import { mergeTopics } from '@/domain/forum/feed';
-import type { FeedResponse } from '@/domain/forum/models';
+import type { FeedResponse, Source } from '@/domain/forum/models';
 import { accessRequirementLevelValue } from '@/domain/forum/presentation';
 import { getReplies, getTopic } from './sourceRead';
 import { searchTopics } from './searchRead';
@@ -18,7 +18,13 @@ import { registerForumReadResponseEvidence } from './forumSourceReadAttempt';
 import { beginDiagnosticTrace, setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { getDefaultAndroidWebViewUserAgent } from '@/platform/android/androidWebViewUserAgent';
+import { isExplicitlyUnseenLinuxDoTopic } from '@/sources/linuxdo/reader';
 import * as v2exReader from '@/sources/v2ex/reader';
+
+function publicFeedCursor(sourceList: readonly Source[], wire: object) {
+  const bind = JSON.stringify([sourceList.map((source) => [source, 'public']), '', '']);
+  return encodeURIComponent(JSON.stringify({ bind, ...wire }));
+}
 
 it('fills aggregate pages with unique candidates and merges access before buffering the remainder', async () => {
   const buffered = Array.from({ length: 20 }, (_, index) => ({
@@ -42,7 +48,7 @@ it('fills aggregate pages with unique candidates and merges access before buffer
         headers: { 'content-type': 'application/json' }
       })
   );
-  const cursor = encodeURIComponent(JSON.stringify({ buffers: { linuxdo: buffered }, nextPages: { linuxdo: 2 } }));
+  const cursor = publicFeedCursor(['linuxdo'], { buffers: { linuxdo: buffered }, nextPages: { linuxdo: 2 } });
   const first = await getFeed({ source: 'all', page: 2, cursor, limit: 30, includedSources: ['linuxdo'], fetcher });
 
   expect(first.items).toHaveLength(30);
@@ -163,9 +169,10 @@ describe('feed read', () => {
       url: 'https://www.nodeseek.com/post-1-1',
       pinned: false
     };
-    const cursor = encodeURIComponent(
-      JSON.stringify({ buffers: { nodeseek: [oldPin, cachedTopic] }, nextPages: { nodeseek: 2 } })
-    );
+    const cursor = publicFeedCursor(['nodeseek'], {
+      buffers: { nodeseek: [oldPin, cachedTopic] },
+      nextPages: { nodeseek: 2 }
+    });
     const fetcher = vi.fn(
       async () => new Response(nodeSeekRow(1, '2026-10-01T00:00:00Z', true) + nodeSeekRow(2, '2026-09-01T00:00:00Z'))
     );
@@ -231,13 +238,11 @@ describe('feed read', () => {
       .mockResolvedValueOnce({ items: [topic('3')], errors: {}, hasMore: true, nextPage: 2, nextCursor: 'new' })
       .mockResolvedValueOnce({ items: [], errors: {}, hasMore: false, nextPage: null });
     try {
-      let cursor = encodeURIComponent(
-        JSON.stringify({
-          buffers: { v2ex: [topic('1'), topic('2')] },
-          nextPages: { v2ex: 2 },
-          sourceCursors: { v2ex: 'old' }
-        })
-      );
+      let cursor = publicFeedCursor(['v2ex'], {
+        buffers: { v2ex: [topic('1'), topic('2')] },
+        nextPages: { v2ex: 2 },
+        sourceCursors: { v2ex: 'old' }
+      });
       const ids = [];
       for (const page of [2, 3, 4, 5]) {
         const result = await getFeed({
@@ -265,7 +270,7 @@ describe('feed read', () => {
 
   it('drains cached topics without promising another page for an unusable source cursor', async () => {
     const item = { source: 'v2ex', id: '1', title: '缓存主题', url: 'https://www.v2ex.com/t/1', createdAt: '' };
-    const cursor = encodeURIComponent(JSON.stringify({ buffers: { v2ex: [item] }, sourceCursors: { v2ex: 'orphan' } }));
+    const cursor = publicFeedCursor(['v2ex'], { buffers: { v2ex: [item] }, sourceCursors: { v2ex: 'orphan' } });
     const fetcher = vi.fn();
     const result = await getFeed({ source: 'all', includedSources: ['v2ex'], page: 2, cursor, fetcher });
     expect(result.items).toEqual([item]);
@@ -276,7 +281,7 @@ describe('feed read', () => {
   it('keeps valid cached topics when a source buffer includes an invalid row or another site', async () => {
     const item = { source: 'v2ex', id: '1', title: '缓存主题', url: 'https://www.v2ex.com/t/1', createdAt: '' };
     const rows = [item, { ...item, source: 'yaohuo', id: '2' }, { ...item, id: '3', url: 42 }];
-    const cursor = encodeURIComponent(JSON.stringify({ buffers: { v2ex: rows } }));
+    const cursor = publicFeedCursor(['v2ex'], { buffers: { v2ex: rows } });
     const fetcher = vi.fn();
     const result = await getFeed({ source: 'all', includedSources: ['v2ex'], page: 2, cursor, fetcher });
     expect(result.items).toEqual([item]);
@@ -366,7 +371,7 @@ describe('feed read', () => {
     const first = await getFeed(options);
     const wire = JSON.parse(decodeURIComponent(first.nextCursor || ''));
     expect(first.items.map((topic) => topic.id)).toEqual(['1', '2']);
-    expect(Object.keys(wire)).toEqual(['buffers', 'nextPages', 'sourceCursors']);
+    expect(Object.keys(wire)).toEqual(['bind', 'buffers', 'nextPages', 'sourceCursors']);
     expect(wire.buffers.linuxdo.map((topic: { id: string }) => topic.id)).toEqual(['3']);
     expect(wire.nextPages).toEqual({});
     expect(wire.sourceCursors).toEqual({});
@@ -389,13 +394,11 @@ describe('feed read', () => {
         url: `https://linux.do/t/topic/${index + 1}`,
         createdAt: index === 0 ? '2026-05-20T00:00:00Z' : ''
       }));
-      const cursor = encodeURIComponent(
-        JSON.stringify({
-          buffers: { linuxdo: buffered },
-          nextPages: { linuxdo: 5 },
-          sourceCursors: { linuxdo: 'provider-cursor' }
-        })
-      );
+      const cursor = publicFeedCursor(['linuxdo'], {
+        buffers: { linuxdo: buffered },
+        nextPages: { linuxdo: 5 },
+        sourceCursors: { linuxdo: 'provider-cursor' }
+      });
       const fetcher = vi.fn(async () => {
         if (mode === 'retry') throw new Error('temporary failure');
         return new Response('{"topic_list":{"topics":[]}}', { headers: { 'content-type': 'application/json' } });
@@ -414,6 +417,7 @@ describe('feed read', () => {
       if (mode === 'next-page') expect(response.hasMore).toBe(false);
       else
         expect(JSON.parse(decodeURIComponent(response.nextCursor || ''))).toEqual({
+          bind: JSON.parse(decodeURIComponent(cursor)).bind,
           buffers: {},
           nextPages: { linuxdo: 5 },
           sourceCursors: { linuxdo: 'provider-cursor' }
@@ -1166,25 +1170,23 @@ describe('feed read', () => {
 
   it('preserves every source cursor when buffered content settles an otherwise failed page', async () => {
     const sourceCursor = 'opaque-v2ex-cursor';
-    const cursor = encodeURIComponent(
-      JSON.stringify({
-        buffers: {
-          v2ex: [
-            {
-              source: 'v2ex',
-              id: 'buffered',
-              title: 'Buffered topic',
-              author: 'alice',
-              url: 'https://www.v2ex.com/t/buffered',
-              createdAt: '2026-08-06T00:00:00.000Z',
-              replyCount: 0
-            }
-          ]
-        },
-        nextPages: { nodeseek: 2, linuxdo: 2, v2ex: 2, yaohuo: 2 },
-        sourceCursors: { v2ex: sourceCursor }
-      })
-    );
+    const cursor = publicFeedCursor(['nodeseek', 'linuxdo', 'v2ex', 'yaohuo'], {
+      buffers: {
+        v2ex: [
+          {
+            source: 'v2ex',
+            id: 'buffered',
+            title: 'Buffered topic',
+            author: 'alice',
+            url: 'https://www.v2ex.com/t/buffered',
+            createdAt: '2026-08-06T00:00:00.000Z',
+            replyCount: 0
+          }
+        ]
+      },
+      nextPages: { nodeseek: 2, linuxdo: 2, v2ex: 2, yaohuo: 2 },
+      sourceCursors: { v2ex: sourceCursor }
+    });
     const fetcher = vi.fn(async () => {
       throw new Error('temporary failure');
     });
@@ -1545,5 +1547,999 @@ describe('feed read', () => {
 
     expect(result.items).toEqual([{ source: 'v2ex', id: 'create', name: '分享创造' }]);
     expect(fetcher.mock.calls.map(([input]) => input)).toEqual(['https://www.v2ex.com/api/topics/latest.json']);
+  });
+});
+
+describe('linux.do feed pagination through single-site and aggregate entries', () => {
+  const linuxDoTopic = (id: number) => ({
+    id,
+    slug: `topic-${id}`,
+    title: `Topic ${id}`,
+    created_at: new Date(Date.UTC(2026, 9, 1, 12, 0, 0) - id * 60_000).toISOString(),
+    posts_count: 1
+  });
+
+  const json = (body: unknown) =>
+    new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } });
+
+  it('continues to the first normal linux.do page when the pin index fails and the first page is all pins', async () => {
+    const pins = [1, 2].map((id) => ({
+      ...linuxDoTopic(id),
+      pinned: true,
+      pinned_globally: true,
+      last_read_post_number: 1,
+      highest_post_number: 1
+    }));
+    const requests: string[] = [];
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      requests.push(url.pathname + url.search);
+      if (url.pathname === '/filter.json')
+        return new Response(JSON.stringify({ errors: ['Pin index unavailable'] }), { status: 503 });
+      const page = Number(url.searchParams.get('page') || 0);
+      const topics =
+        page === 0 ? pins : page === 1 ? [linuxDoTopic(1), linuxDoTopic(3)] : [linuxDoTopic(2), linuxDoTopic(4)];
+      return json({
+        topic_list: { topics, more_topics_url: page < 2 ? `/latest?order=created&page=${page + 1}` : null }
+      });
+    });
+    const options = {
+      source: 'all' as const,
+      includedSources: ['linuxdo'] as const,
+      limit: 30,
+      discourseAuth: { authenticated: true, userAgent: 'fixture' },
+      fetcher
+    };
+    const first = await getFeed(options);
+    expect(first.items.map(({ id }) => id)).toEqual(['3']);
+    expect(first.topicUpdates?.filter((item) => item.pinned).map((item) => [item.id, item.reading])).toEqual([
+      ['1', undefined],
+      ['2', undefined]
+    ]);
+    expect(requests).toEqual([
+      '/latest.json?order=created&ascending=false',
+      '/filter.json?q=in%3Apinned',
+      '/latest.json?order=created&ascending=false&page=1'
+    ]);
+    const second = await getFeed({ ...options, page: first.nextPage!, cursor: first.nextCursor ?? undefined });
+    expect(second.items.map(({ id }) => id)).toEqual(['4']);
+    expect(second.hasMore).toBe(false);
+  });
+
+  it('bounds repeated single-topic linux.do pages in aggregate reads and emits no continuation cursor', async () => {
+    const requestedPages: (string | null)[] = [];
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (!url.searchParams.has('order')) return json({ topic_list: { topics: [] } });
+      requestedPages.push(url.searchParams.get('page'));
+      return json({
+        topic_list: { topics: [linuxDoTopic(1)], more_topics_url: '/latest?order=created&page=1' }
+      });
+    });
+
+    const options = { source: 'all' as const, includedSources: ['linuxdo'] as const, limit: 30, fetcher };
+    const result = await getFeed(options);
+    expect(requestedPages).toEqual([null]);
+    expect(result.items.map((item) => item.id)).toEqual(['1']);
+    const next = await getFeed({ ...options, page: result.nextPage!, cursor: result.nextCursor! });
+
+    expect(requestedPages).toEqual([null, '1']);
+    expect(next.items).toHaveLength(0);
+    expect(next).toMatchObject({ hasMore: false, nextPage: null, nextCursor: undefined });
+  });
+
+  it('continues past replayed full linux.do pages in aggregate reads while the position advances', async () => {
+    const requestedPages: (string | null)[] = [];
+    const pageRows = [linuxDoTopic(1), linuxDoTopic(2), linuxDoTopic(3)];
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (!url.searchParams.has('order')) return json({ topic_list: { topics: [] } });
+      const pageParam = url.searchParams.get('page');
+      requestedPages.push(pageParam);
+      return json({
+        topic_list: {
+          topics: pageParam === '3' ? [linuxDoTopic(4), linuxDoTopic(5), linuxDoTopic(6)] : pageRows,
+          more_topics_url: pageParam === '3' ? null : `/latest?order=created&page=${Number(pageParam || 0) + 1}`
+        }
+      });
+    });
+
+    const first = await getFeed({ source: 'all', includedSources: ['linuxdo'], limit: 3, fetcher });
+    expect(requestedPages).toEqual([null]);
+    expect(first.items.map((item) => item.id)).toEqual(['1', '2', '3']);
+    expect(first).toMatchObject({ hasMore: true, nextPage: 2 });
+    const wire = JSON.parse(decodeURIComponent(first.nextCursor || '')) as {
+      nextPages?: Record<string, number>;
+      sourceCursors?: Record<string, string>;
+    };
+    expect(wire.nextPages?.linuxdo).toBe(2);
+    expect(wire.sourceCursors?.linuxdo).toBeTruthy();
+
+    requestedPages.length = 0;
+    const second = await getFeed({
+      source: 'all',
+      includedSources: ['linuxdo'],
+      page: first.nextPage!,
+      cursor: first.nextCursor ?? undefined,
+      limit: 3,
+      fetcher
+    });
+    expect(requestedPages).toEqual(['1', '2', '3']);
+    expect(second.items.map((item) => item.id)).toEqual(['4', '5', '6']);
+    expect(second).toMatchObject({ hasMore: false, nextPage: null, nextCursor: undefined });
+  });
+
+  it('bounds consecutive invalid linux.do pages in aggregate reads while preserving valid topics', async () => {
+    const requestedPages: (string | null)[] = [];
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (!url.searchParams.has('order')) return json({ topic_list: { topics: [] } });
+      const pageParam = url.searchParams.get('page');
+      requestedPages.push(pageParam);
+      const page = Number(pageParam || 0);
+      if (page > 2) throw new Error('exceeded invalid page bound');
+      return json({
+        topic_list: {
+          topics: page === 0 ? [linuxDoTopic(1)] : page === 1 ? [{ id: 91 }] : [{}],
+          more_topics_url: '/latest?page=next'
+        }
+      });
+    });
+
+    const options = { source: 'all' as const, includedSources: ['linuxdo'] as const, limit: 3, fetcher };
+    const result = await getFeed(options);
+    expect(requestedPages).toEqual([null]);
+    expect(result.items.map((item) => item.id)).toEqual(['1']);
+    const next = await getFeed({ ...options, page: result.nextPage!, cursor: result.nextCursor! });
+
+    expect(requestedPages).toEqual([null, '1', '2']);
+    expect(next.items).toHaveLength(0);
+    expect(next).toMatchObject({ hasMore: false, nextPage: null, nextCursor: undefined });
+  });
+
+  it.each(['linuxdo', 'all'] as const)(
+    'forwards linux.do cursors across short pages with overflow in %s feed reads',
+    async (feedSource) => {
+      const requestedPages: (string | null)[] = [];
+      const pages = new Map<number, ReturnType<typeof linuxDoTopic>[]>([
+        [0, [linuxDoTopic(1), linuxDoTopic(2)]],
+        [1, [linuxDoTopic(3), linuxDoTopic(4)]],
+        [2, [linuxDoTopic(5), linuxDoTopic(6)]]
+      ]);
+      const fetcher = vi.fn(async (input: string) => {
+        const url = new URL(input);
+        if (!url.searchParams.has('order')) return json({ topic_list: { topics: [] } });
+        const pageParam = url.searchParams.get('page');
+        requestedPages.push(pageParam);
+        const page = Number(pageParam || 0);
+        return json({
+          topic_list: {
+            topics: pages.get(page) ?? [],
+            more_topics_url: page < 2 ? '/latest?page=next' : null
+          }
+        });
+      });
+
+      const baseOptions =
+        feedSource === 'all'
+          ? { source: 'all' as const, includedSources: ['linuxdo'] as const, limit: 3, fetcher }
+          : { source: 'linuxdo' as const, limit: 3, fetcher };
+      const first = await getFeed(baseOptions);
+      expect(requestedPages).toEqual(feedSource === 'all' ? [null] : [null, '1']);
+      expect(first.items.map((item) => item.id)).toEqual(feedSource === 'all' ? ['1', '2'] : ['1', '2', '3']);
+      expect(first).toMatchObject({ hasMore: true, nextPage: 2 });
+      expect(first.nextCursor).toBeTruthy();
+
+      requestedPages.length = 0;
+      const second = await getFeed({
+        ...baseOptions,
+        page: first.nextPage!,
+        cursor: first.nextCursor ?? undefined
+      });
+      expect(requestedPages).toEqual(['1', '2']);
+      expect(second.items.map((item) => item.id)).toEqual(feedSource === 'all' ? ['3', '4', '5'] : ['4', '5', '6']);
+      if (feedSource === 'all') {
+        const third = await getFeed({ ...baseOptions, page: second.nextPage!, cursor: second.nextCursor! });
+        expect(requestedPages).toEqual(['1', '2', '2']);
+        expect(third.items.map((item) => item.id)).toEqual(['6']);
+        expect(third).toMatchObject({ hasMore: false, nextPage: null, nextCursor: undefined });
+      } else {
+        expect(second.hasMore).toBe(false);
+        expect(second.nextPage).toBeNull();
+        expect(second.nextCursor ?? null).toBeNull();
+      }
+    }
+  );
+
+  it('stops cleanly in aggregate reads when the last linux.do page points to its own position', async () => {
+    const requestedPages: (string | null)[] = [];
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (!url.searchParams.has('order')) return json({ topic_list: { topics: [] } });
+      const pageParam = url.searchParams.get('page');
+      requestedPages.push(pageParam);
+      const page = Number(pageParam || 0);
+      return json({
+        topic_list: {
+          topics: page === 0 ? [linuxDoTopic(1), linuxDoTopic(2)] : [linuxDoTopic(3)],
+          more_topics_url: '/latest?order=created&page=1'
+        }
+      });
+    });
+
+    const options = { source: 'all' as const, includedSources: ['linuxdo'] as const, limit: 5, fetcher };
+    const result = await getFeed(options);
+    expect(requestedPages).toEqual([null]);
+    expect(result.items.map((item) => item.id)).toEqual(['1', '2']);
+    const next = await getFeed({ ...options, page: result.nextPage!, cursor: result.nextCursor! });
+
+    expect(requestedPages).toEqual([null, '1']);
+    expect(next.items.map((item) => item.id)).toEqual(['3']);
+    expect(next).toMatchObject({ hasMore: false, nextPage: null, nextCursor: undefined });
+  });
+
+  it('reads an old plain page-number linux.do aggregate cursor and transitions it to sourceCursors', async () => {
+    const requestedPages: (string | null)[] = [];
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      const pageParam = url.searchParams.get('page');
+      requestedPages.push(pageParam);
+      const page = Number(pageParam || 0);
+      return json({
+        topic_list: {
+          topics:
+            page === 1
+              ? Array.from({ length: 30 }, (_, index) => linuxDoTopic(31 + index))
+              : page === 2
+                ? [linuxDoTopic(61), linuxDoTopic(62)]
+                : [],
+          more_topics_url: page === 1 ? '/latest?order=created&page=2' : null
+        }
+      });
+    });
+
+    const legacyAggregateCursor = encodeURIComponent(
+      JSON.stringify({
+        nextPages: { linuxdo: 2 },
+        buffers: {
+          linuxdo: [
+            {
+              source: 'linuxdo',
+              id: '900',
+              title: 'Prior scope',
+              url: 'https://linux.do/t/prior/900',
+              createdAt: '2026-10-20T00:00:00Z',
+              reading: { topicId: '900', lastReadPostNumber: 7 }
+            }
+          ]
+        },
+        pinnedTopicKeys: ['linuxdo:31']
+      })
+    );
+    const first = await getFeed({
+      source: 'all',
+      includedSources: ['linuxdo'],
+      page: 2,
+      cursor: legacyAggregateCursor,
+      limit: 30,
+      fetcher
+    });
+    expect(requestedPages).toEqual(['1']);
+    expect(first.items.map((item) => item.id)).toEqual(Array.from({ length: 30 }, (_, index) => String(31 + index)));
+    expect(first).toMatchObject({ hasMore: true, nextPage: 3 });
+    const wire = JSON.parse(decodeURIComponent(first.nextCursor || '')) as {
+      nextPages?: Record<string, number>;
+      sourceCursors?: Record<string, string>;
+    };
+    expect(wire.nextPages?.linuxdo).toBe(3);
+    expect(wire.sourceCursors?.linuxdo).toBeTruthy();
+
+    requestedPages.length = 0;
+    const second = await getFeed({
+      source: 'all',
+      includedSources: ['linuxdo'],
+      page: first.nextPage!,
+      cursor: first.nextCursor ?? undefined,
+      limit: 30,
+      fetcher
+    });
+    expect(requestedPages).toEqual(['2']);
+    expect(second.items.map((item) => item.id)).toEqual(['61', '62']);
+    expect(second).toMatchObject({ hasMore: false, nextPage: null, nextCursor: undefined });
+  });
+
+  it('restarts the aggregate on a changed filter before applying prior buffers and pin keys', async () => {
+    const cursor = publicFeedCursor(['linuxdo'], {
+      nextPages: { linuxdo: 2 },
+      pinnedTopicKeys: ['linuxdo:31']
+    });
+    const pages: (string | null)[] = [];
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.searchParams.has('order')) {
+        pages.push(url.searchParams.get('page'));
+        expect(url.searchParams.get('category')).toBe('42');
+        return json({ topic_list: { topics: [linuxDoTopic(31)] } });
+      }
+      return json({ topic_list: { topics: [] } });
+    });
+    const result = await getFeed({
+      source: 'all',
+      includedSources: ['linuxdo'],
+      page: 2,
+      cursor,
+      category: '42',
+      fetcher
+    });
+    expect(pages).toEqual([null]);
+    expect(result.items.map((item) => item.id)).toEqual(['31']);
+    expect(result.hasMore).toBe(false);
+  });
+
+  it.each([3, 30])(
+    'returns the %s-row upstream aggregate linux.do head without filling after pin dedupe',
+    async (size) => {
+      const rows = Array.from({ length: size }, (_, index) => ({
+        ...linuxDoTopic(index + 1),
+        ...(index === 0 ? { pinned: true, pinned_globally: true } : {})
+      }));
+      const fetcher = vi.fn(async (input: string) => {
+        const url = new URL(input);
+        if (url.pathname === '/filter.json') return json({ topic_list: { topics: [rows[0]] } });
+        if (url.searchParams.get('page')) return json({ topic_list: { topics: [linuxDoTopic(31)] } });
+        return json({ topic_list: { topics: rows, more_topics_url: '/latest?order=created&page=1' } });
+      });
+      const options = {
+        source: 'all' as const,
+        includedSources: ['linuxdo'] as const,
+        limit: 30,
+        discourseAuth: { authenticated: true, identityKey: 'linuxdo:fixture', userAgent: 'fixture' },
+        fetcher
+      };
+      const result = await getFeed(options);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(result.items.map((item) => item.id)).toEqual(rows.slice(1).map((item) => String(item.id)));
+      const next = await getFeed({ ...options, page: result.nextPage!, cursor: result.nextCursor! });
+      expect(next.items.map((item) => item.id)).toEqual(['31']);
+      expect(fetcher).toHaveBeenCalledTimes(3);
+    }
+  );
+
+  it('returns the first usable linux.do page after retrying a failed aggregate head', async () => {
+    let latestReady = false;
+    const pin = { ...linuxDoTopic(1), pinned: true, pinned_globally: true };
+    const linuxDoRequests: [string, string | null][] = [];
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.hostname === 'www.v2ex.com') {
+        return new Response('<div class="cell item"><a class="topic-link" href="/t/101#reply0">V2EX 101</a></div>');
+      }
+      const page = url.searchParams.get('page');
+      linuxDoRequests.push([url.pathname, page]);
+      if (!latestReady || page) return new Response(null, { status: 503 });
+      if (url.pathname === '/filter.json') return json({ topic_list: { topics: [pin] } });
+      return json({
+        topic_list: {
+          topics: [pin, ...Array.from({ length: 29 }, (_, index) => linuxDoTopic(index + 2))],
+          more_topics_url: '/latest?order=created&page=1'
+        }
+      });
+    });
+    const options = {
+      source: 'all' as const,
+      includedSources: ['linuxdo', 'v2ex'] as const,
+      limit: 30,
+      discourseAuth: { authenticated: true, identityKey: 'linuxdo:fixture', userAgent: 'fixture' },
+      fetcher
+    };
+    const initial = await getFeed(options);
+    expect(initial.items.map((item) => item.source)).toEqual(['v2ex']);
+    expect(initial.errors.linuxdo).toBeDefined();
+    expect(initial.nextCursor).toBeTruthy();
+    latestReady = true;
+    linuxDoRequests.length = 0;
+    const retried = await getFeed({ ...options, page: initial.nextPage!, cursor: initial.nextCursor! });
+
+    expect(retried.items.filter((item) => item.source === 'linuxdo').map((item) => item.id)).toEqual(
+      Array.from({ length: 29 }, (_, index) => String(index + 2))
+    );
+    expect(retried.errors).toEqual({});
+    expect(retried.nextCursor).not.toBe(initial.nextCursor);
+    expect(linuxDoRequests).toEqual([
+      ['/latest.json', null],
+      ['/filter.json', null]
+    ]);
+  });
+
+  it('loads 30 regular aggregate topics after two pages containing 60 indexed pins', async () => {
+    const pages: (string | null)[] = [];
+    const topicsAt = (page: number) =>
+      Array.from({ length: 30 }, (_, index) => ({
+        ...linuxDoTopic(page * 30 + index + 1),
+        ...(page < 2 ? { pinned: true, pinned_globally: true } : {})
+      }));
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      const pageParam = url.searchParams.get('page');
+      const page = Number(pageParam || 0);
+      const pinned = url.pathname === '/filter.json';
+      if (!pinned) pages.push(pageParam);
+      return json({
+        topic_list: {
+          topics: topicsAt(page),
+          more_topics_url: pinned
+            ? page === 0
+              ? '/filter?q=in%3Apinned&page=1'
+              : null
+            : page < 2
+              ? `/latest?order=created&page=${page + 1}`
+              : null
+        }
+      });
+    });
+    const result = await getFeed({
+      source: 'all',
+      includedSources: ['linuxdo'],
+      limit: 30,
+      discourseAuth: { authenticated: true, identityKey: 'linuxdo:fixture', userAgent: 'fixture' },
+      fetcher
+    });
+    expect(pages).toEqual([null, '1', '2']);
+    expect(fetcher).toHaveBeenCalledTimes(5);
+    expect(result.items.map((item) => item.id)).toEqual(Array.from({ length: 30 }, (_, index) => String(61 + index)));
+    expect(result).toMatchObject({ hasMore: false, errors: {} });
+  });
+
+  it('preserves linux.do overflow cursor across buffered multi-source aggregate pages', async () => {
+    const linuxDoPages: (string | null)[] = [];
+    const pages = new Map<number, ReturnType<typeof linuxDoTopic>[]>([
+      [0, [linuxDoTopic(1), linuxDoTopic(2)]],
+      [1, [linuxDoTopic(3), linuxDoTopic(4), linuxDoTopic(5)]],
+      [2, [linuxDoTopic(6)]]
+    ]);
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.hostname === 'www.v2ex.com') {
+        return new Response(
+          '<div class="cell item"><a class="topic-link" href="/t/101#reply0">V2EX 101</a></div>' +
+            '<div class="cell item"><a class="topic-link" href="/t/102#reply0">V2EX 102</a></div>'
+        );
+      }
+      if (!url.searchParams.has('order')) return json({ topic_list: { topics: [] } });
+      const pageParam = url.searchParams.get('page');
+      linuxDoPages.push(pageParam);
+      const page = Number(pageParam || 0);
+      return json({
+        topic_list: {
+          topics: pages.get(page) ?? [],
+          more_topics_url: page < 2 ? '/latest?page=next' : null
+        }
+      });
+    });
+
+    const options = {
+      source: 'all' as const,
+      includedSources: ['linuxdo', 'v2ex'] as const,
+      limit: 2,
+      fetcher
+    };
+    const seenLinuxDoIds: string[] = [];
+    let current = await getFeed(options);
+    seenLinuxDoIds.push(...current.items.filter((item) => item.source === 'linuxdo').map((item) => item.id));
+    for (let guard = 0; guard < 6 && current.hasMore; guard++) {
+      current = await getFeed({
+        ...options,
+        page: current.nextPage!,
+        cursor: current.nextCursor ?? undefined
+      });
+      seenLinuxDoIds.push(...current.items.filter((item) => item.source === 'linuxdo').map((item) => item.id));
+    }
+
+    expect(linuxDoPages).toEqual([null, '1', '2']);
+    expect(seenLinuxDoIds).toEqual(['1', '2', '3', '4', '5', '6']);
+    expect(current).toMatchObject({ hasMore: false, nextPage: null, nextCursor: undefined });
+  });
+
+  it.each(['linuxdo', 'all'] as const)(
+    'reaches page 3 regular topics in %s feeds after two pages of 60 pre-registered pinned announcements',
+    async (feedSource) => {
+      const pinRow = (id: number) => ({
+        ...linuxDoTopic(id),
+        category_id: 2,
+        pinned: true,
+        pinned_globally: true
+      });
+      const pinnedFirst30 = Array.from({ length: 30 }, (_, index) => pinRow(index + 1));
+      const pinnedSecond30 = Array.from({ length: 30 }, (_, index) => pinRow(index + 31));
+      const page0Regular = Array.from({ length: 30 }, (_, index) => linuxDoTopic(101 + index));
+      const page3Regular = Array.from({ length: 5 }, (_, index) => linuxDoTopic(131 + index));
+      const requestedPages: (string | null)[] = [];
+      const fetcher = vi.fn(async (input: string) => {
+        const url = new URL(input);
+        if (url.pathname === '/filter.json') {
+          const filterPage = Number(url.searchParams.get('page') || 0);
+          return json({
+            categories: [{ id: 2, name: '公告', slug: 'announcements' }],
+            topic_list: {
+              topics: filterPage === 0 ? pinnedFirst30 : pinnedSecond30,
+              more_topics_url: filterPage === 0 ? '/filter?q=in%3Apinned&page=1' : null
+            }
+          });
+        }
+        const pageParam = url.searchParams.get('page');
+        requestedPages.push(pageParam);
+        const upstreamPage = Number(pageParam || 0);
+        const topics =
+          upstreamPage === 0
+            ? page0Regular
+            : upstreamPage === 1
+              ? pinnedFirst30
+              : upstreamPage === 2
+                ? pinnedSecond30
+                : upstreamPage === 3
+                  ? page3Regular
+                  : [];
+        return json({
+          categories: [{ id: 2, name: '公告', slug: 'announcements' }],
+          topic_list: {
+            topics,
+            more_topics_url: upstreamPage < 3 ? `/latest?order=created&page=${upstreamPage + 1}` : null
+          }
+        });
+      });
+
+      const discourseAuth = { authenticated: true, userAgent: 'fixture' };
+      const baseOptions =
+        feedSource === 'all'
+          ? { source: 'all' as const, includedSources: ['linuxdo'] as const, limit: 30, discourseAuth, fetcher }
+          : { source: 'linuxdo' as const, limit: 30, discourseAuth, fetcher };
+      const first = await getFeed(baseOptions);
+      expect(requestedPages).toEqual([null]);
+      expect(first).toMatchObject({ hasMore: true, nextPage: 2 });
+      expect(first.nextCursor).toBeTruthy();
+      if (feedSource === 'all') {
+        expect(first.items.map((item) => item.id)).toEqual(page0Regular.map((item) => String(item.id)));
+        expect(first.items.some((item) => item.pinned)).toBe(false);
+      } else {
+        expect(first.items).toHaveLength(90);
+      }
+
+      requestedPages.length = 0;
+      const second = await getFeed({
+        ...baseOptions,
+        page: first.nextPage!,
+        cursor: first.nextCursor ?? undefined
+      });
+      expect(requestedPages).toEqual(['1', '2', '3']);
+      expect(second.items.map((item) => item.id)).toEqual(['131', '132', '133', '134', '135']);
+      expect(second.items.some((item) => item.pinned)).toBe(false);
+      expect(second.hasMore).toBe(false);
+      expect(second.nextPage).toBeNull();
+      expect(second.nextCursor ?? null).toBeNull();
+    }
+  );
+
+  it('applies newly pinned exclusion and newly added level requirements to buffered linux.do topics across aggregate pages', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.hostname === 'www.v2ex.com') {
+        return new Response(
+          '<div class="cell item"><a class="topic-link" href="/t/501#reply0">V2EX 501</a><span title="2026-10-01 20:05:00 +08:00"></span></div>' +
+            '<div class="cell item"><a class="topic-link" href="/t/502#reply0">V2EX 502</a><span title="2026-10-01 20:04:00 +08:00"></span></div>' +
+            '<div class="cell item"><a class="topic-link" href="/t/503#reply0">V2EX 503</a><span title="2026-10-01 19:50:00 +08:00"></span></div>'
+        );
+      }
+      if (!url.searchParams.has('order')) return json({ topic_list: { topics: [] } });
+      const upstreamPage = Number(url.searchParams.get('page') || 0);
+      if (upstreamPage === 0) {
+        return json({
+          topic_list: {
+            topics: [linuxDoTopic(1), linuxDoTopic(2), linuxDoTopic(3), linuxDoTopic(4)],
+            more_topics_url: '/latest?order=created&page=1'
+          }
+        });
+      }
+      if (upstreamPage === 1) {
+        return json({
+          topic_list: {
+            topics: [
+              { ...linuxDoTopic(3), pinned: true, pinned_globally: true },
+              { ...linuxDoTopic(4), required_trust_level: 3 },
+              linuxDoTopic(5),
+              linuxDoTopic(6)
+            ],
+            more_topics_url: '/latest?order=created&page=2'
+          }
+        });
+      }
+      return json({
+        topic_list: {
+          topics: [linuxDoTopic(3), linuxDoTopic(7)],
+          more_topics_url: null
+        }
+      });
+    });
+
+    const options = {
+      source: 'all' as const,
+      includedSources: ['linuxdo', 'v2ex'] as const,
+      limit: 4,
+      fetcher
+    };
+    const first = await getFeed(options);
+    expect(first.items.filter((item) => item.source === 'linuxdo').map((item) => item.id)).toEqual(['1', '2']);
+    expect(first).toMatchObject({ hasMore: true, nextPage: 2 });
+
+    const second = await getFeed({
+      ...options,
+      page: first.nextPage!,
+      cursor: first.nextCursor ?? undefined
+    });
+    const secondLinuxDo = second.items.filter((item) => item.source === 'linuxdo');
+    expect(secondLinuxDo.map((item) => item.id)).not.toContain('3');
+    const updatedLevelTopic = secondLinuxDo.find((item) => item.id === '4');
+    expect(updatedLevelTopic?.accessRequirement).toMatchObject({ type: 'level', label: '需等级' });
+    expect(accessRequirementLevelValue(updatedLevelTopic?.accessRequirement)).toBe(3);
+
+    const allSubsequentIds: string[] = [];
+    let current = second;
+    for (let guard = 0; guard < 4 && current.hasMore; guard++) {
+      current = await getFeed({
+        ...options,
+        page: current.nextPage!,
+        cursor: current.nextCursor ?? undefined
+      });
+      allSubsequentIds.push(...current.items.filter((item) => item.source === 'linuxdo').map((item) => item.id));
+    }
+    expect(allSubsequentIds).not.toContain('3');
+    expect(allSubsequentIds).toContain('7');
+    expect(current.hasMore).toBe(false);
+  });
+
+  it.each(['linuxdo', 'all'] as const)(
+    'delivers unseen topics past consecutive distinct seen overlap pages in %s feeds',
+    async (feedSource) => {
+      const page0 = Array.from({ length: 2 }, (_, index) => linuxDoTopic(index + 1));
+      const initialPage1 = [linuxDoTopic(3), linuxDoTopic(4), linuxDoTopic(5)];
+      const shiftedPage1 = [linuxDoTopic(3), linuxDoTopic(5), linuxDoTopic(4)];
+      const page2 = [linuxDoTopic(1), linuxDoTopic(2)];
+      const page3 = [linuxDoTopic(3), linuxDoTopic(4)];
+      const page4 = [linuxDoTopic(6), linuxDoTopic(7)];
+      let page1Reads = 0;
+      const fetcher = vi.fn(async (input: string) => {
+        const url = new URL(input);
+        if (!url.searchParams.has('order')) return json({ topic_list: { topics: [] } });
+        const upstreamPage = Number(url.searchParams.get('page') || 0);
+        if (upstreamPage === 0) {
+          return json({ topic_list: { topics: page0, more_topics_url: '/latest?order=created&page=1' } });
+        }
+        if (upstreamPage === 1) {
+          page1Reads += 1;
+          return json({
+            topic_list: {
+              topics: page1Reads === 1 ? initialPage1 : shiftedPage1,
+              more_topics_url: '/latest?order=created&page=2'
+            }
+          });
+        }
+        const topics = upstreamPage === 2 ? page2 : upstreamPage === 3 ? page3 : upstreamPage === 4 ? page4 : [];
+        return json({
+          topic_list: {
+            topics,
+            more_topics_url: upstreamPage < 4 ? `/latest?order=created&page=${upstreamPage + 1}` : null
+          }
+        });
+      });
+
+      const baseOptions =
+        feedSource === 'all'
+          ? { source: 'all' as const, includedSources: ['linuxdo'] as const, limit: 3, fetcher }
+          : { source: 'linuxdo' as const, limit: 3, fetcher };
+      const first = await getFeed(baseOptions);
+      expect(first.items.map((item) => item.id)).toEqual(feedSource === 'all' ? ['1', '2'] : ['1', '2', '3']);
+      expect(first.hasMore).toBe(true);
+
+      const second = await getFeed({
+        ...baseOptions,
+        page: first.nextPage!,
+        cursor: first.nextCursor ?? undefined
+      });
+      expect(second.items.map((item) => item.id)).toEqual(feedSource === 'all' ? ['3', '4', '5'] : ['5', '4', '6']);
+      expect(second.hasMore).toBe(true);
+
+      const third = await getFeed({
+        ...baseOptions,
+        page: second.nextPage!,
+        cursor: second.nextCursor ?? undefined
+      });
+      expect(third.items.map((item) => item.id)).toEqual(feedSource === 'all' ? ['6', '7'] : ['7']);
+      expect(third.hasMore).toBe(false);
+    }
+  );
+
+  it.each([false, true])('keeps aggregate buffer rows with only current reading evidence: %s', async (hasUpdates) => {
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.hostname === 'www.v2ex.com') {
+        return new Response(
+          '<div class="cell item"><a class="topic-link" href="/t/601#reply0">V2EX 601</a><span title="2026-10-01 20:05:00 +08:00"></span></div>' +
+            '<div class="cell item"><a class="topic-link" href="/t/602#reply0">V2EX 602</a><span title="2026-10-01 20:04:00 +08:00"></span></div>' +
+            '<div class="cell item"><a class="topic-link" href="/t/603#reply0">V2EX 603</a><span title="2026-10-01 19:50:00 +08:00"></span></div>'
+        );
+      }
+      if (url.pathname === '/filter.json' || !url.searchParams.has('order')) {
+        return json({ topic_list: { topics: [] } });
+      }
+      const upstreamPage = Number(url.searchParams.get('page') || 0);
+      if (upstreamPage === 0) {
+        return json({
+          topic_list: {
+            topics: [
+              { ...linuxDoTopic(1), unseen: true, highest_post_number: 5 },
+              { ...linuxDoTopic(2), unseen: true, highest_post_number: 5 },
+              { ...linuxDoTopic(30), unseen: true, highest_post_number: 10 },
+              { ...linuxDoTopic(31), unseen: true, highest_post_number: 8 }
+            ],
+            more_topics_url: '/latest?order=created&page=1'
+          }
+        });
+      }
+      return json({
+        topic_list: {
+          topics: hasUpdates
+            ? [
+                { ...linuxDoTopic(30), unseen: false, last_read_post_number: 7, highest_post_number: 12 },
+                { ...linuxDoTopic(31), unseen: false, highest_post_number: 8 },
+                { ...linuxDoTopic(32), unseen: true, highest_post_number: 6 }
+              ]
+            : [],
+          more_topics_url: null
+        }
+      });
+    });
+
+    const discourseAuth = { authenticated: true, readingScope: 'alice:buffered-reading', userAgent: 'fixture' };
+    const options = {
+      source: 'all' as const,
+      includedSources: ['linuxdo', 'v2ex'] as const,
+      limit: 4,
+      discourseAuth,
+      fetcher
+    };
+    const first = await getFeed(options);
+    expect(first.items.filter((item) => item.source === 'linuxdo').map((item) => item.id)).toEqual(['1', '2']);
+    expect(first.hasMore).toBe(true);
+
+    const second = await getFeed({
+      ...options,
+      page: first.nextPage!,
+      cursor: first.nextCursor ?? undefined
+    });
+    const secondLinuxDo = second.items.filter((item) => item.source === 'linuxdo');
+    expect(secondLinuxDo.map((item) => item.id)).toEqual(hasUpdates ? ['30', '31', '32'] : ['30', '31']);
+    expect(secondLinuxDo.map((topic) => topic.reading)).toEqual(
+      hasUpdates
+        ? [
+            { topicId: '30', highestPostNumber: 12, lastReadPostNumber: 7, readPostNumbers: [] },
+            { topicId: '31', highestPostNumber: 8, readPostNumbers: [] },
+            { topicId: '32', highestPostNumber: 6, readPostNumbers: [] }
+          ]
+        : [undefined, undefined]
+    );
+    expect(isExplicitlyUnseenLinuxDoTopic(secondLinuxDo[0])).toBe(false);
+    expect(isExplicitlyUnseenLinuxDoTopic(secondLinuxDo[1])).toBe(false);
+    if (hasUpdates) expect(isExplicitlyUnseenLinuxDoTopic(secondLinuxDo[2])).toBe(true);
+  });
+
+  it('delivers 90 unique linux.do topics in aggregate feeds across 1-30 -> 31-60 -> 1-30 -> 16-30 -> 61-90', async () => {
+    const requestedPages: (string | null)[] = [];
+    const pages = new Map<number, ReturnType<typeof linuxDoTopic>[]>([
+      [0, Array.from({ length: 30 }, (_, index) => linuxDoTopic(index + 1))],
+      [1, Array.from({ length: 30 }, (_, index) => linuxDoTopic(index + 31))],
+      [2, Array.from({ length: 30 }, (_, index) => linuxDoTopic(index + 1))],
+      [3, Array.from({ length: 15 }, (_, index) => linuxDoTopic(index + 16))],
+      [4, Array.from({ length: 30 }, (_, index) => linuxDoTopic(index + 61))]
+    ]);
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (!url.searchParams.has('order')) return json({ topic_list: { topics: [] } });
+      const pageParam = url.searchParams.get('page');
+      requestedPages.push(pageParam);
+      const upstreamPage = Number(pageParam || 0);
+      return json({
+        topic_list: {
+          topics: pages.get(upstreamPage) ?? [],
+          more_topics_url: upstreamPage < 4 ? `/latest?order=created&page=${upstreamPage + 1}` : null
+        }
+      });
+    });
+
+    const options = { source: 'all' as const, includedSources: ['linuxdo'] as const, limit: 30, fetcher };
+    const first = await getFeed(options);
+    expect(requestedPages).toEqual([null]);
+    expect(first.items.map((item) => item.id)).toEqual(Array.from({ length: 30 }, (_, index) => String(index + 1)));
+
+    requestedPages.length = 0;
+    const second = await getFeed({ ...options, page: first.nextPage!, cursor: first.nextCursor ?? undefined });
+    expect(requestedPages).toEqual(['1']);
+    expect(second.items.map((item) => item.id)).toEqual(Array.from({ length: 30 }, (_, index) => String(index + 31)));
+
+    requestedPages.length = 0;
+    const third = await getFeed({ ...options, page: second.nextPage!, cursor: second.nextCursor ?? undefined });
+    expect(requestedPages).toEqual(['2', '3', '4']);
+    expect(third.items.map((item) => item.id)).toEqual(Array.from({ length: 30 }, (_, index) => String(index + 61)));
+    expect(third).toMatchObject({ hasMore: false, nextPage: null, nextCursor: undefined });
+
+    const allIds = [...first.items, ...second.items, ...third.items].map((item) => item.id);
+    expect(allIds).toHaveLength(90);
+    expect(new Set(allIds).size).toBe(90);
+  });
+
+  it('preserves 240 unique linux.do topics in aggregate feeds on an 8-page loop and stops automatic serial reads', async () => {
+    const requestedPages: (string | null)[] = [];
+    const pages = Array.from({ length: 8 }, (_, pageIndex) =>
+      Array.from({ length: 30 }, (_, offset) => linuxDoTopic(pageIndex * 30 + offset + 1))
+    );
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (!url.searchParams.has('order')) return json({ topic_list: { topics: [] } });
+      const pageParam = url.searchParams.get('page');
+      requestedPages.push(pageParam);
+      const upstreamPage = Number(pageParam || 0);
+      if (upstreamPage > 13) throw new Error('infinite 8-page aggregate loop');
+      return json({
+        topic_list: {
+          topics: upstreamPage < 8 ? pages[upstreamPage]! : [...pages[upstreamPage % 8]!].reverse(),
+          more_topics_url: `/latest?order=created&page=${upstreamPage + 1}`
+        }
+      });
+    });
+
+    const options = { source: 'all' as const, includedSources: ['linuxdo'] as const, limit: 30, fetcher };
+    const collected: string[] = [];
+    let current = await getFeed(options);
+    collected.push(...current.items.map((item) => item.id));
+    for (let guard = 0; guard < 10 && current.hasMore && !current.manualContinuation; guard++) {
+      current = await getFeed({ ...options, page: current.nextPage!, cursor: current.nextCursor ?? undefined });
+      collected.push(...current.items.map((item) => item.id));
+    }
+
+    expect(collected).toHaveLength(240);
+    expect(new Set(collected).size).toBe(240);
+    expect(current).toMatchObject({ hasMore: true, manualContinuation: true, nextPage: 10, errors: {} });
+    expect(requestedPages).toEqual([null, ...Array.from({ length: 13 }, (_, index) => String(index + 1))]);
+  });
+
+  it('keeps other aggregate sources advancing and returns a manually continuable cursor when linux.do exhausts its overlap budget', async () => {
+    const linuxDoPages: (string | null)[] = [];
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.hostname === 'www.v2ex.com') {
+        if (url.pathname === '/recent') {
+          return new Response(
+            '<div class="cell"><a class="topic-link" href="/t/903#reply0">V2EX 903</a><span title="2026-10-01 19:50:00 +08:00"></span></div>'
+          );
+        }
+        return new Response(
+          '<div class="cell item"><a class="topic-link" href="/t/901#reply0">V2EX 901</a><span title="2026-10-01 20:05:00 +08:00"></span></div>' +
+            '<div class="cell item"><a class="topic-link" href="/t/902#reply0">V2EX 902</a><span title="2026-10-01 20:04:00 +08:00"></span></div>' +
+            '<a href="/recent">更多新主题</a>'
+        );
+      }
+      if (!url.searchParams.has('order')) return json({ topic_list: { topics: [] } });
+      const pageParam = url.searchParams.get('page');
+      linuxDoPages.push(pageParam);
+      const upstreamPage = Number(pageParam || 0);
+      if (upstreamPage === 0) {
+        return json({
+          topic_list: {
+            topics: Array.from({ length: 16 }, (_, index) => linuxDoTopic(index + 1)),
+            more_topics_url: '/latest?order=created&page=1'
+          }
+        });
+      }
+      if (upstreamPage >= 1 && upstreamPage <= 6) {
+        return json({
+          topic_list: {
+            topics: [linuxDoTopic(upstreamPage)],
+            more_topics_url: `/latest?order=created&page=${upstreamPage + 1}`
+          }
+        });
+      }
+      return json({
+        topic_list: {
+          topics: upstreamPage === 7 ? [linuxDoTopic(17), linuxDoTopic(18)] : [],
+          more_topics_url: null
+        }
+      });
+    });
+
+    const options = { source: 'all' as const, includedSources: ['linuxdo', 'v2ex'] as const, limit: 8, fetcher };
+    const first = await getFeed(options);
+    expect(linuxDoPages).toEqual([null]);
+    expect(first.items.filter((item) => item.source === 'linuxdo').map((item) => item.id)).toEqual([
+      '1',
+      '2',
+      '3',
+      '4',
+      '5',
+      '6'
+    ]);
+    expect(first.items.filter((item) => item.source === 'v2ex').map((item) => item.id)).toEqual(['901', '902']);
+
+    // Drain the 10 buffered linux.do topics on page 2 (8 items) so page 3 has 2 buffered (< limit 8) and triggers refill.
+    linuxDoPages.length = 0;
+    const drain = await getFeed({ ...options, page: first.nextPage!, cursor: first.nextCursor ?? undefined });
+    expect(linuxDoPages).toEqual([]);
+    expect(drain.items.map((item) => `${item.source}:${item.id}`)).toEqual([
+      'linuxdo:7',
+      'v2ex:903',
+      'linuxdo:8',
+      'linuxdo:9',
+      'linuxdo:10',
+      'linuxdo:11',
+      'linuxdo:12',
+      'linuxdo:13'
+    ]);
+
+    linuxDoPages.length = 0;
+    const second = await getFeed({ ...options, page: drain.nextPage!, cursor: drain.nextCursor ?? undefined });
+    expect(linuxDoPages).toEqual(['1', '2', '3', '4', '5', '6']);
+    expect(second.items.map((item) => `${item.source}:${item.id}`)).toEqual(['linuxdo:14', 'linuxdo:15', 'linuxdo:16']);
+    expect(second).toMatchObject({ hasMore: true, manualContinuation: true, nextPage: 4 });
+    expect(second.nextCursor).toBeTruthy();
+
+    linuxDoPages.length = 0;
+    const third = await getFeed({ ...options, page: second.nextPage!, cursor: second.nextCursor ?? undefined });
+    expect(linuxDoPages).toEqual(['7']);
+    expect(third.items.map((item) => `${item.source}:${item.id}`)).toEqual(['linuxdo:17', 'linuxdo:18']);
+    expect(third).toMatchObject({ hasMore: false, nextPage: null, nextCursor: undefined });
+  });
+
+  it('forwards already-displayed linux.do metadata updates via aggregate topicUpdates without consuming the 30-item quota or duplicating rows', async () => {
+    const requestedPages: (string | null)[] = [];
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (!url.searchParams.has('order')) return json({ topic_list: { topics: [] } });
+      const pageParam = url.searchParams.get('page');
+      requestedPages.push(pageParam);
+      const upstreamPage = Number(pageParam || 0);
+      if (upstreamPage === 0) {
+        return json({
+          topic_list: {
+            topics: Array.from({ length: 30 }, (_, index) => linuxDoTopic(index + 1)),
+            more_topics_url: '/latest?order=created&page=1'
+          }
+        });
+      }
+      return json({
+        topic_list: {
+          topics: [
+            { ...linuxDoTopic(1), pinned: true, pinned_globally: true },
+            { ...linuxDoTopic(2), required_trust_level: 3 },
+            ...Array.from({ length: 30 }, (_, index) => linuxDoTopic(index + 31))
+          ],
+          more_topics_url: null
+        }
+      });
+    });
+
+    const options = { source: 'all' as const, includedSources: ['linuxdo'] as const, limit: 30, fetcher };
+    const first = await getFeed(options);
+    expect(requestedPages).toEqual([null]);
+    expect(first.items).toHaveLength(30);
+
+    requestedPages.length = 0;
+    const second = await getFeed({ ...options, page: first.nextPage!, cursor: first.nextCursor ?? undefined });
+    expect(requestedPages).toEqual(['1']);
+    expect(second.items.map((item) => item.id)).toEqual(Array.from({ length: 30 }, (_, index) => String(index + 31)));
+    const updates = (second as { topicUpdates?: { id: string; pinned?: boolean; accessRequirement?: unknown }[] })
+      .topicUpdates;
+    expect(updates?.map((item) => item.id)).toEqual(['1', '2']);
+    expect(updates?.find((item) => item.id === '1')?.pinned).toBe(true);
+    expect(updates?.find((item) => item.id === '2')?.accessRequirement).toMatchObject({
+      type: 'level',
+      label: '需等级'
+    });
   });
 });

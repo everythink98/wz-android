@@ -195,6 +195,7 @@ function notificationState(globalEnabled = true): NotificationState {
     version: 1,
     globalEnabled,
     hasOptedIn: globalEnabled,
+    androidPermissionRequestStarted: globalEnabled,
     sources: {
       nodeseek: { ...sourceState },
       linuxdo: { ...sourceState },
@@ -302,6 +303,20 @@ describe('notification screens', () => {
     } finally {
       formatTime.mockRestore();
     }
+  });
+
+  it('renders a NodeSeek system message summary without repeating raw Markdown', async () => {
+    const preview = '您的帖子『[标题](https://www.nodeseek.com/post-1-1)』被星辰点赞';
+    const item: ForumNotification = {
+      ...notification,
+      kind: 'private-message',
+      actor: { name: '系统通知' },
+      title: '系统通知',
+      preview
+    };
+    const view = await render(<NotificationsScreen {...listProps()} items={[item]} />);
+    expect(view.getByText('您的帖子『标题』被星辰点赞')).toBeTruthy();
+    expect(view.queryByText(preview)).toBeNull();
   });
 
   it('keeps unchanged message rows idle while pagination settles and updates only changed messages', async () => {
@@ -2085,6 +2100,85 @@ describe('notification screens', () => {
     );
 
     expect(view.getByText('系统通知权限未开启')).toBeTruthy();
+    await fireEvent.press(view.getByText('打开系统设置'));
+    expect(onOpenSystemSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it('distinguishes system permission read failure from user denial in notification settings', async () => {
+    const onRetryInitialization = jest.fn();
+    const view = await render(
+      <NotificationSettingsScreen
+        backgroundEnabled={false}
+        backgroundError=""
+        busy={false}
+        enabledSources={['nodeseek', 'linuxdo', 'yaohuo']}
+        permission="unavailable"
+        sessions={projectTestAccountSessions(createSiteSessionStates())}
+        state={{ ...notificationState(), globalEnabled: true }}
+        onOpenSystemSettings={jest.fn()}
+        onRetryInitialization={onRetryInitialization}
+        onToggleGlobal={jest.fn()}
+        onToggleSource={jest.fn()}
+      />
+    );
+
+    expect(view.getByText('系统通知权限读取失败')).toBeTruthy();
+    expect(view.queryByText('系统通知权限未开启')).toBeNull();
+    expect(view.queryByText('打开系统设置')).toBeNull();
+    await fireEvent.press(view.getByText('重试通知初始化'));
+    expect(onRetryInitialization).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers continue requesting permission while enabled intent has not started Android permission prompt and switches to system settings once started', async () => {
+    const onOpenSystemSettings = jest.fn();
+    const onRequestPermission = jest.fn();
+    const pendingState = {
+      ...notificationState(true),
+      globalEnabled: true,
+      hasOptedIn: true,
+      androidPermissionRequestStarted: false
+    } as NotificationState;
+    const startedState = {
+      ...notificationState(true),
+      globalEnabled: true,
+      hasOptedIn: true,
+      androidPermissionRequestStarted: true
+    } as NotificationState;
+    const props = {
+      backgroundEnabled: false,
+      backgroundError: '',
+      busy: false,
+      enabledSources: ['nodeseek', 'linuxdo', 'yaohuo'] as const,
+      permission: 'denied' as const,
+      sessions: projectTestAccountSessions(createSiteSessionStates()),
+      onOpenSystemSettings,
+      onToggleGlobal: jest.fn(),
+      onToggleSource: jest.fn()
+    };
+
+    const view = await render(
+      <NotificationSettingsScreen
+        {...props}
+        state={pendingState}
+        {...({ onRequestPermission } as Record<string, unknown>)}
+      />
+    );
+    expect(view.getByText('系统通知权限未开启')).toBeTruthy();
+    expect(view.getByText('继续申请权限')).toBeTruthy();
+    expect(view.queryByText('打开系统设置')).toBeNull();
+    await fireEvent.press(view.getByText('继续申请权限'));
+    expect(onRequestPermission).toHaveBeenCalledTimes(1);
+    expect(onOpenSystemSettings).not.toHaveBeenCalled();
+
+    await view.rerender(
+      <NotificationSettingsScreen
+        {...props}
+        state={startedState}
+        {...({ onRequestPermission } as Record<string, unknown>)}
+      />
+    );
+    expect(view.queryByText('继续申请权限')).toBeNull();
+    expect(view.getByText('打开系统设置')).toBeTruthy();
     await fireEvent.press(view.getByText('打开系统设置'));
     expect(onOpenSystemSettings).toHaveBeenCalledTimes(1);
   });

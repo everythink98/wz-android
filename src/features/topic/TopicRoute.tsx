@@ -16,6 +16,7 @@ import { OriginalImageUpgradeBoundary } from '@/platform/media/originalImageLoad
 
 import { topicKey, topicSummary } from '@/domain/reader/readerData';
 import type { TopicLocationTarget, Topic, TopicDetail, UserReference } from '@/domain/forum/models';
+import { siteSessionIdentityKey } from '@/domain/session/siteSessionState';
 
 import { ImagePreviewModal } from '@/ui/media/ImagePreviewModal';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
@@ -36,8 +37,6 @@ import { useTopicController } from './useTopicController';
 import { useTopicSessionController } from './useTopicSessionController';
 import { TopicRouteBackBoundary } from './useTopicRouteBeforeRemove';
 import { useTopicRouteRuntime, type TopicRouteRuntimeValue } from './TopicRouteRuntime';
-
-export { TopicRouteRuntimeProvider, type TopicRouteRuntimeValue } from './TopicRouteRuntime';
 
 type TopicRouteProps = NativeStackScreenProps<RootStackParamList, 'Topic'>;
 type TopicShareState = ({ kind: 'options'; topic: Topic } | { kind: 'image'; topic: TopicDetail }) & {
@@ -128,19 +127,23 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
   const requestTopicLocation = useCallback(
     (location: TopicLocationTarget) => {
       if (!navigation.isFocused()) return;
-      topicView.changeCommentQuery('');
-      topicView.changeReplyFilter('all');
+      topicView.clearReplyFilters();
       locationRequestIdRef.current = Math.max(locationRequestIdRef.current, route.params.locationRequestId ?? 0) + 1;
       navigation.setParams({ location, locationRequestId: locationRequestIdRef.current });
     },
     [navigation, route.params.locationRequestId, topicView]
   );
+  const linuxDoSession = runtime.account.sessionViewModels.linuxdo;
   const topicController = useTopicController({
     focused,
     isSoleTopicRoute,
     appActive: runtime.appActive,
     commitReaderData: runtime.reader.commit,
     sessionEpochs: runtime.account.sessionEpochs,
+    linuxDoIdentityKey:
+      linuxDoSession?.identityTrust === 'confirmed' && linuxDoSession.isLoggedIn
+        ? siteSessionIdentityKey(linuxDoSession)
+        : undefined,
     notify: runtime.notify,
     onRetryIdentityStatus: runtime.account.reconcileAccountStatus,
     onNodeSeekTopicVerificationRequired: runtime.account.requestNodeSeekVerification,
@@ -159,6 +162,7 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     openTopic,
     refreshTopicReplies,
     refreshWholeTopic,
+    verifyNodeSeek,
     isReadRecoveryCurrent,
     topicBusy,
     topicDetail,
@@ -334,14 +338,6 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
       resume: refreshWholeTopic
     });
   }, [isReadRecoveryCurrent, refreshWholeTopic, runtime.account, topic.source, topicError?.message, topicQueryKey]);
-  const verifyNodeSeek = useCallback(() => {
-    if (topic.source !== 'nodeseek') return;
-    runtime.account.requestNodeSeekVerification(topicError?.message || 'NodeSeek 需要完成 Cloudflare 验证', {
-      queryKey: topicQueryKey,
-      isCurrent: isReadRecoveryCurrent,
-      resume: refreshWholeTopic
-    });
-  }, [isReadRecoveryCurrent, refreshWholeTopic, runtime, topic.source, topicError?.message, topicQueryKey]);
   const copyLink = useCallback(
     async (current: Topic) => {
       if (navigation.isFocused()) await copyTopicLink(current.url);

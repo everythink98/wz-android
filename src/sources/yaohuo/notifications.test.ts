@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { parseHtml } from '@/domain/forum/html';
 import { yaohuoNotificationAdapter } from './notifications';
 import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 
@@ -465,8 +466,13 @@ describe('Yaohuo notifications', () => {
       expect(detail.messages?.[1]?.contentHtml).not.toMatch(/回复时间|回复内容/);
       expect(detail.messages?.[1]?.contentHtml).toContain('href="https://www.yaohuo.me/bbs-321.html"');
       expect(detail.messages?.[1]?.contentHtml).toContain(
-        'href="https://www.yaohuo.me/bbs/book_re.aspx?classid=177&id=321&tofloor=90&fromuserid=1000"'
+        'href="https://www.yaohuo.me/bbs/book_re.aspx?classid=177&amp;id=321&amp;tofloor=90&amp;fromuserid=1000"'
       );
+      expect(
+        parseHtml(detail.messages?.[1]?.contentHtml || '')
+          .querySelectorAll('a')
+          .map((link) => link.getAttribute('href'))
+      ).toContain('https://www.yaohuo.me/bbs/book_re.aspx?classid=177&id=321&tofloor=90&fromuserid=1000');
     } finally {
       dateParse.mockRestore();
     }

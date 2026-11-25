@@ -4,6 +4,8 @@ import type { SiteSessionState } from './siteSessionState';
 
 export type CredentialSite = SessionSource;
 
+export type NotificationSessionAccess = 'foreground-read' | 'settled-session';
+
 export type RequestAccountRecheck = (
   source: SessionSource,
   requestSessionEpoch: number,
@@ -25,15 +27,4 @@ export type LinuxDoReadingRecovery = {
   failureMessage?: string;
   resume: () => Promise<LinuxDoReadResumeOutcome>;
   cancel: () => void;
-};
-
-export type LinuxDoVerificationRecovery = LinuxDoReadRecovery | LinuxDoReadingRecovery;
-
-export type LinuxDoReadRecovery = {
-  queryKey: readonly unknown[];
-  // Local owner callback: explicit reads may have no automatically enabled Query observer.
-  isCurrent?: () => boolean;
-  // Settle local reads that are waiting for verification without a Query observer.
-  cancel?: () => void;
-  resume: () => Promise<LinuxDoReadResumeOutcome>;
 };

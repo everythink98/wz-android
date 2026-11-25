@@ -6,7 +6,8 @@ import {
   type SessionSite,
   type SiteSessionViewModels
 } from '@/domain/session/siteSessionState';
-import type { LinuxDoLevelProfile, ReadGateway } from '@/sources/readGateway';
+import type { ReadGateway } from '@/sources/readGateway';
+import type { LinuxDoLevelProfile } from '@/sources/linuxdo/level';
 import type { NodeSeekAttendanceBoard, NodeSeekCheckInState, NodeSeekCreditCurrency } from '@/domain/forum/accountData';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { ExpandableContent, MenuButton } from '@/ui/controls/ExpandableControls';

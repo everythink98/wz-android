@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { parseForumContentHtml } from '@/domain/forum/html';
+import { htmlElementAttribute, parseForumContentHtml } from '@/domain/forum/html';
 import type { TopicDetail } from '@/domain/forum/models';
+import { prepareSanitizedForumContent } from '@/domain/forum/topicContentSplit';
 import { prepareTopicShareContent } from './topicShareContent';
 
 const topic: TopicDetail = {
@@ -15,6 +16,24 @@ const topic: TopicDetail = {
 };
 
 describe('topic share content', () => {
+  it.each([
+    ['?a=1&copy=2', '?a=1&copy=2'],
+    ['?a=1&amp;copy;', '?a=1&copy;']
+  ])('preserves the detail lazy image address %s when preparing a share', (markupQuery, expectedQuery) => {
+    const imagePath = 'https://images.example/lazy.png';
+    const detail = prepareSanitizedForumContent(
+      '<p><img src="/thumbnail.png" data-src="' + imagePath + markupQuery + '" alt="&amp;copy;"></p>',
+      { baseUrl: topic.url, role: 'opening', source: topic.source }
+    );
+    const { html, imageCount } = prepareTopicShareContent({ ...topic, contentHtml: detail.contentHtml });
+    const shareImage = parseForumContentHtml(html).querySelector('[data-share-image-index]');
+
+    expect(imageCount).toBe(1);
+    expect(detail.contentPlan.previewImages[0]?.dataSource).toBe(imagePath + expectedQuery);
+    expect(htmlElementAttribute(shareImage, 'src')).toBe(imagePath + expectedQuery);
+    expect(htmlElementAttribute(shareImage, 'alt')).toBe('&copy;');
+  });
+
   it.each(['nodeseek', 'linuxdo', 'v2ex', 'yaohuo'] as const)('allows an image-only opening body from %s', (source) => {
     const result = prepareTopicShareContent({
       ...topic,

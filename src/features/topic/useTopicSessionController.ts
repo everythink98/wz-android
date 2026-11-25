@@ -103,7 +103,13 @@ export function filterTopicSessionReplies({
           )
         : [];
     } else if (topicDetail) {
-      replies = replies.filter((reply) => Boolean(topicDetail.author) && reply.author === topicDetail.author);
+      const ownerId = source === 'nodeseek' ? userFromTopic(topicDetail)?.id : topicDetail.authorId?.trim();
+      replies = replies.filter((reply) => {
+        const replyId = source === 'nodeseek' ? userFromReply(reply, source)?.id : reply.authorId?.trim();
+        return ownerId && replyId
+          ? ownerId === replyId
+          : Boolean(topicDetail.author) && reply.author === topicDetail.author;
+      });
     }
   } else if (replyFilter === 'images') {
     replies = filterRepliesWithImages(replies, source);
@@ -238,7 +244,11 @@ export function useTopicSessionController({ notify, topic }: { notify: (message:
     () => ({
       changeCommentQuery: setCommentQuery,
       changeReplyFilter: setReplyFilter,
-      changeReplyOrder: setReplyOrder
+      changeReplyOrder: setReplyOrder,
+      clearReplyFilters() {
+        setCommentQuery('');
+        setReplyFilter('all');
+      }
     }),
     []
   );

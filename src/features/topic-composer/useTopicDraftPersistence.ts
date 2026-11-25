@@ -5,11 +5,13 @@ import { saveTopicDraft } from '@/platform/persistence/topicDrafts';
 import { errorMessage } from '@/platform/network/errors';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 
+export type TopicDraftBodySource = 'local' | 'remote' | 'fresh';
 type Durability =
   { kind: 'unknown' } | { kind: 'saved'; draftId: string; revision: number } | { kind: 'retired'; draftId: string };
+type DisplayedBodySource = { draftId: string; source: TopicDraftBodySource };
 type Feedback =
   | { kind: 'empty' }
-  | { kind: 'saving' | 'saved' | 'restored' | 'fresh' | 'discarded' }
+  | { kind: 'saving' | 'saved' | 'restored' | 'remote' | 'fresh' | 'discarded' }
   | { kind: 'failed'; message: string };
 
 export class TopicDraftConflictError extends Error {
@@ -26,6 +28,7 @@ export function useTopicDraftPersistence(input: {
 }) {
   const inputRef = useCommittedRef(input);
   const durability = useRef<Durability>({ kind: 'unknown' });
+  const displayedSource = useRef<DisplayedBodySource | null>(null);
   const tail = useRef<Promise<unknown>>(Promise.resolve());
   const issues = useRef<{ draftId: string; issues: ComposerSnapshot['validationIssues'] } | null>(null);
   const [feedback, setFeedback] = useState<Feedback>({ kind: 'empty' });
@@ -60,8 +63,10 @@ export function useTopicDraftPersistence(input: {
           if (!(await saveTopicDraft(value, expectedRevision, inputRef.current.completedSubmissionId(value))))
             throw new TopicDraftConflictError();
           const current = inputRef.current.getDraft();
-          if (current?.id === value.id)
+          if (current?.id === value.id) {
             durability.current = { kind: 'saved', draftId: value.id, revision: value.revision };
+            displayedSource.current = { draftId: value.id, source: 'local' };
+          }
           if (current?.id === value.id && current.revision === value.revision && inputRef.current.isMounted()) {
             report({ kind: 'saved' });
             inputRef.current.onSaved(value.source);
@@ -101,7 +106,11 @@ export function useTopicDraftPersistence(input: {
           const current = inputRef.current.getDraft();
           if (current?.id !== before.id) throw new Error('草稿已切换，请重试');
           if (current.revision === latest.revision) {
-            report({ kind: hasSavedDraft(latest.id) ? 'saved' : 'fresh' });
+            const source = displayedSource.current?.draftId === latest.id ? displayedSource.current.source : undefined;
+            report({
+              kind:
+                source === 'remote' && latest.revision === 0 ? 'remote' : hasSavedDraft(latest.id) ? 'saved' : 'fresh'
+            });
             return latest;
           }
           latest = current;
@@ -117,11 +126,12 @@ export function useTopicDraftPersistence(input: {
   );
   const edited = useCallback(() => report({ kind: 'saving' }), [report]);
   const restored = useCallback(
-    (stored: TopicDraft | null) => {
+    (draft: TopicDraft, stored: TopicDraft | null, source: TopicDraftBodySource = stored ? 'local' : 'fresh') => {
       durability.current = stored
         ? { kind: 'saved', draftId: stored.id, revision: stored.revision }
         : { kind: 'unknown' };
-      report({ kind: stored ? 'restored' : 'fresh' });
+      displayedSource.current = { draftId: draft.id, source };
+      report({ kind: source === 'local' ? 'restored' : source });
     },
     [report]
   );
@@ -134,11 +144,27 @@ export function useTopicDraftPersistence(input: {
     },
     [report]
   );
+  const conflict = useCallback(
+    (draftId: string) => {
+      if (inputRef.current.getDraft()?.id === draftId)
+        report({ kind: 'failed', message: `保存失败：${new TopicDraftConflictError().message}` });
+    },
+    [inputRef, report]
+  );
   const retire = useCallback((draftId: string) => {
     durability.current = { kind: 'retired', draftId };
+    if (displayedSource.current?.draftId === draftId) displayedSource.current = null;
   }, []);
-  const fresh = useCallback(() => report({ kind: 'fresh' }), [report]);
-  const discarded = useCallback(() => report({ kind: 'discarded' }), [report]);
+  const fresh = useCallback(() => {
+    const current = inputRef.current.getDraft();
+    displayedSource.current = current ? { draftId: current.id, source: 'fresh' } : null;
+    report({ kind: 'fresh' });
+  }, [inputRef, report]);
+  const discarded = useCallback(() => {
+    const current = inputRef.current.getDraft();
+    displayedSource.current = current ? { draftId: current.id, source: 'fresh' } : null;
+    report({ kind: 'discarded' });
+  }, [inputRef, report]);
   const recordSnapshot = useCallback((draftId: string, value: ComposerSnapshot['validationIssues']) => {
     issues.current = { draftId, issues: value };
   }, []);
@@ -151,6 +177,7 @@ export function useTopicDraftPersistence(input: {
     saving: '正在保存…',
     saved: '已保存到本机',
     restored: '已恢复本机草稿',
+    remote: '已载入原站最新内容',
     fresh: '自动保存到本机',
     discarded: '草稿已丢弃'
   };
@@ -162,6 +189,7 @@ export function useTopicDraftPersistence(input: {
     edited,
     restored,
     restorationFailed,
+    conflict,
     retire,
     fresh,
     discarded,

@@ -9,7 +9,8 @@ import {
 export const NODEIMAGE_API_KEY_STORAGE_KEY = 'nodeimage-api-key';
 
 const nodeImageApiKeyWriteGate = createCredentialWriteGate();
-type CredentialPersistenceState = { phase: 'stable' } | { phase: 'restore-required'; previousValue: string | null };
+type CredentialPersistenceState =
+  { phase: 'stable' } | { phase: 'restore-required'; previousValue: string | null; writtenValue: string };
 let credentialPersistence: CredentialPersistenceState = { phase: 'stable' };
 
 export type NodeImageApiKeyCredential = Readonly<{
@@ -63,18 +64,17 @@ function parseNodeImageCredential(rawValue: string | null): NodeImageApiKeyCrede
   return unverifiedNodeImageCredential(raw);
 }
 
-async function writeNodeImageCredential(credential: NodeImageApiKeyCredential) {
-  await SecureStore.setItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY, JSON.stringify(credential));
-}
-
 // Called only within the credential write queue. This obligation survives failures in this process, not restarts.
 async function restoreNodeImageCredential() {
   const persistence = credentialPersistence;
   if (persistence.phase === 'stable') return;
-  if (persistence.previousValue === null) {
-    await SecureStore.deleteItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY);
-  } else {
-    await SecureStore.setItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY, persistence.previousValue);
+  const currentValue = await SecureStore.getItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY);
+  if (currentValue === persistence.writtenValue) {
+    if (persistence.previousValue === null) {
+      await SecureStore.deleteItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY);
+    } else if (persistence.previousValue !== persistence.writtenValue) {
+      await SecureStore.setItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY, persistence.previousValue);
+    }
   }
   credentialPersistence = { phase: 'stable' };
 }
@@ -140,7 +140,8 @@ export async function saveNodeImageApiKeyForGeneration(
   value: string,
   authorizationOwner: string,
   settledOwner: string,
-  isAuthorizationCurrent: () => boolean = () => true
+  isAuthorizationCurrent: () => boolean = () => true,
+  onCommit?: (apiKey: string) => boolean
 ) {
   const authorizedIdentityKey = confirmedNodeSeekOwner(authorizationOwner);
   const settledIdentityKey = confirmedNodeSeekOwner(settledOwner);
@@ -151,6 +152,7 @@ export async function saveNodeImageApiKeyForGeneration(
   if (!apiKey) {
     throw new Error('请输入 NodeImage API Key');
   }
+  const serializedCredential = JSON.stringify(verifiedNodeImageCredential(apiKey, settledIdentityKey));
   return enqueueCredentialWriteForGeneration(nodeImageApiKeyWriteGate, generation, async ({ isCurrent }) => {
     if (!isAuthorizationCurrent()) {
       return undefined;
@@ -163,9 +165,13 @@ export async function saveNodeImageApiKeyForGeneration(
     if (!isCurrent() || !isAuthorizationCurrent()) {
       return undefined;
     }
-    credentialPersistence = { phase: 'restore-required', previousValue };
-    await writeNodeImageCredential(verifiedNodeImageCredential(apiKey, settledIdentityKey));
+    credentialPersistence = { phase: 'restore-required', previousValue, writtenValue: serializedCredential };
+    await SecureStore.setItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY, serializedCredential);
     if (!isCurrent() || !isAuthorizationCurrent()) {
+      await restoreNodeImageCredential();
+      return undefined;
+    }
+    if (onCommit && !onCommit(apiKey)) {
       await restoreNodeImageCredential();
       return undefined;
     }

@@ -209,7 +209,7 @@ describe('notification gateway', () => {
     );
   });
 
-  it.each(['identity', 'disabled', 'aborted'] as const)(
+  it.each(['identity', 'disabled', 'aborted', 'policy version'] as const)(
     'blocks policy writes if %s changes during CSRF preparation',
     async (change) => {
       let allowed = true;
@@ -225,8 +225,11 @@ describe('notification gateway', () => {
         sourceAllowed: () => (change === 'disabled' ? allowed : true),
         privateAccessAllowed: () => (change === 'identity' ? allowed : true)
       });
+      const assertPolicyCurrent = () => {
+        if (change === 'policy version' && !allowed) throw new Error('公告状态已变化，请刷新后重试');
+      };
       await expect(
-        gateway.setPolicyAcceptance(announcement, policy, true, 'linuxdo:7', controller.signal)
+        gateway.setPolicyAcceptance(announcement, policy, true, 'linuxdo:7', controller.signal, assertPolicyCurrent)
       ).rejects.toBeInstanceOf(Error);
       expect(fetcher.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(['/session/csrf']);
     }
@@ -923,6 +926,28 @@ describe('notification gateway', () => {
       expect(committed).not.toHaveBeenCalled();
     }
   );
+
+  it('uses a separate private write gate during a read-only foreground recovery', async () => {
+    const sourceAdapter = adapter('ok');
+    sourceAdapter.markAllRead = vi.fn(async () => ({ confirmed: true }));
+    const gateway = createNotificationGateway({
+      adapters: {
+        nodeseek: sourceAdapter,
+        linuxdo: adapter('ok'),
+        yaohuo: adapter('ok')
+      },
+      privateAccessAllowed: () => true,
+      privateWriteAllowed: () => false,
+      readAccess: async () => ({ identityKey: 'nodeseek:user', userId: 'user' })
+    });
+
+    await gateway.listPage('nodeseek', { expectedIdentityKey: 'nodeseek:user' });
+    expect(sourceAdapter.listPage).toHaveBeenCalledTimes(1);
+    await expect(gateway.markAllRead('nodeseek', 'nodeseek:user')).rejects.toMatchObject({
+      reason: 'private-access-stale'
+    });
+    expect(sourceAdapter.markAllRead).not.toHaveBeenCalled();
+  });
 
   it('does no access or adapter work for an explicit empty aggregate allowlist', async () => {
     const sourceAdapter = adapter('ok');

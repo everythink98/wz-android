@@ -19,6 +19,10 @@ import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 
+internal fun pngStreamFixture(size: Int) = ByteArray(size) { (it % 251).toByte() }.apply {
+  byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a).copyInto(this)
+}
+
 @RunWith(AndroidJUnit4::class)
 class ImageDownloadInstrumentedTest {
   @Test fun managedDownloadsIdentifyUnlabeledImagesWithoutSavingHtml() {
@@ -70,7 +74,7 @@ class ImageDownloadInstrumentedTest {
     try {
       for (mode in listOf("cancel", "output-failure")) {
         okhttp3.mockwebserver.MockWebServer().use { server ->
-          server.enqueue(okhttp3.mockwebserver.MockResponse().setHeader("Content-Type", "image/png").setBody(okio.Buffer().write(ByteArray(1024 * 1024))))
+          server.enqueue(okhttp3.mockwebserver.MockResponse().setHeader("Content-Type", "image/png").setBody(okio.Buffer().write(pngStreamFixture(1024 * 1024))))
           val call = NetworkProxyRuntime.imageCallFactory.newCall(Request.Builder().url(server.url("/failure.png"))
             .tag(ImageRequestPurpose::class.java, ImageRequestPurpose.IMAGE_SAVE).build())
           var chunks = 0
@@ -100,7 +104,7 @@ class ImageDownloadInstrumentedTest {
     val context = instrumentation.targetContext
     val activity = instrumentation.startActivitySync(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     val directory = File(context.cacheDir, "image-stream-proof-${System.nanoTime()}")
-    val block = ByteArray(32 * 1024) { (it % 251).toByte() }
+    val block = pngStreamFixture(32 * 1024)
     val worker = Executors.newSingleThreadExecutor()
     try {
       for (mib in listOf(1, 25, 100)) {

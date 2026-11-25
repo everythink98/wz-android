@@ -344,6 +344,7 @@ function ControllerFeed({
     categoryFilter: controller.categoryFilter,
     feedOutcomeKind: controller.feedOutcomeKind,
     feedHasMore: controller.activeFeedState.hasMore,
+    feedManualContinuation: controller.activeFeedState.manualContinuation,
     feedPage: controller.activeFeedState.page,
     feedSource: controller.feedSource,
     feedFilters: controller.feedFilters,
@@ -1645,5 +1646,113 @@ describe('Feed loading', () => {
     await fireEvent.press(view.getByLabelText('妖火茶馆'));
     expect(view.getByLabelText('妖火茶馆，已选择')).toBeTruthy();
     expect(view.queryByLabelText('列表筛选')).toBeNull();
+  });
+
+  it('hands off to the footer load-more button after linux.do overlap budget exhaustion and recovers after a 503 load-more error', async () => {
+    appQueryClient.clear();
+    const makeRow = (id: number, extra: Record<string, unknown> = {}) => ({
+      id,
+      slug: `topic-${id}`,
+      title: `主题 ${id}`,
+      created_at: new Date(Date.UTC(2026, 9, 10, 12, 0, 0) - id * 60_000).toISOString(),
+      posts_count: 1,
+      ...extra
+    });
+    let failPage7Once = true;
+    const requestedPages: (string | null)[] = [];
+    const fetcher = jest.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.pathname === '/filter.json' || !url.searchParams.has('order')) {
+        return Response.json({ topic_list: { topics: [] } });
+      }
+      const pageParam = url.searchParams.get('page');
+      requestedPages.push(pageParam);
+      const upstreamPage = Number(pageParam || 0);
+      if (upstreamPage === 0) {
+        return Response.json({
+          topic_list: {
+            topics: Array.from({ length: 30 }, (_, index) => makeRow(index + 1)),
+            more_topics_url: '/latest?order=created&page=1'
+          }
+        });
+      }
+      if (upstreamPage >= 1 && upstreamPage <= 6) {
+        const start = (upstreamPage - 1) * 5 + 1;
+        return Response.json({
+          topic_list: {
+            topics: Array.from({ length: 5 }, (_, index) => makeRow(start + index)),
+            more_topics_url: `/latest?order=created&page=${upstreamPage + 1}`
+          }
+        });
+      }
+      if (upstreamPage === 7 && failPage7Once) {
+        failPage7Once = false;
+        return new Response('unavailable', { status: 503 });
+      }
+      return Response.json({
+        topic_list: {
+          topics: [makeRow(31), makeRow(32)],
+          more_topics_url: null
+        }
+      });
+    });
+    const gateway = createReadGateway({
+      fetcher,
+      anonymousFetcher: fetcher,
+      getEnabledSources: () => ['linuxdo'],
+      linuxDoUserAgent: () => 'saved',
+      nodeSeekUserAgent: () => 'saved',
+      readSessionRuntimeSnapshot: (source) => ({
+        source,
+        sourceEnabled: true,
+        authenticated: false,
+        authSurfaceOpen: false,
+        identityKey: `${source}:anonymous`,
+        identityTrust: 'none',
+        sessionEpoch: 0
+      })
+    });
+    const view = await render(
+      <QueryTestWrapper>
+        <ControllerFeed gateway={gateway} />
+      </QueryTestWrapper>
+    );
+    try {
+      await waitFor(() => expect(view.getByText('主题 1')).toBeTruthy());
+      await fireEvent.press(view.getByTestId('feed-source-linuxdo'));
+      await waitFor(() => expect(view.getByText('加载第 2 页')).toBeTruthy());
+
+      requestedPages.length = 0;
+      await fireEvent.press(view.getByText('加载第 2 页'));
+      await waitFor(() => expect(view.getByText('加载第 3 页')).toBeTruthy());
+      expect(requestedPages).toEqual(['1', '2', '3', '4', '5', '6']);
+      expect(view.getByText('主题 1')).toBeTruthy();
+
+      requestedPages.length = 0;
+      const list = view.getByLabelText('列表，支持下拉刷新');
+      await act(async () => list.props.onScrollBeginDrag());
+      await fireEvent.scroll(list, {
+        nativeEvent: {
+          contentOffset: { y: 900 },
+          contentSize: { height: 1800 },
+          layoutMeasurement: { height: 1000 }
+        }
+      });
+      expect(requestedPages).toEqual([]);
+      await fireEvent.press(view.getByText('加载第 3 页'));
+      await waitFor(() => expect(view.getByText('重试加载第 3 页')).toBeTruthy());
+      expect(requestedPages).toEqual(['7']);
+      expect(view.getByText('主题 1')).toBeTruthy();
+
+      requestedPages.length = 0;
+      await fireEvent.press(view.getByText('重试加载第 3 页'));
+      await waitFor(() => expect(view.getByText('主题 31')).toBeTruthy());
+      expect(requestedPages).toEqual(['7']);
+      expect(view.getByText('主题 32')).toBeTruthy();
+      expect(view.getByTestId('feed-end-of-list')).toBeTruthy();
+    } finally {
+      await view.unmount();
+      appQueryClient.clear();
+    }
   });
 });

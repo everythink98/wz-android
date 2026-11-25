@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, within } from '../render';
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Alert, Dimensions, View } from 'react-native';
 import type { LibraryTab } from '@/domain/forum/feed';
 import { createEmptyReaderData, type FollowedUserRecord, type TopicRecord } from '@/domain/reader/readerData';
 import { LibraryScreen } from '@/features/library/LibraryScreen';
+import { allLibraryFilters, resolveLibraryFilters } from '@/features/library/model/libraryFilters';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import type { Category, Topic, UserProfile, UserReference } from '@/domain/forum/models';
 import type { Source } from '@/domain/forum/sourceCatalog';
@@ -202,11 +203,12 @@ const noopTopic = (_topic: Topic) => undefined;
 const noopLibraryTopic = (_topic: Topic, _section: 'favorites' | 'history') => undefined;
 const noopUserReference = (_user: UserReference) => undefined;
 const noopUserProfile = (_user: UserProfile) => undefined;
+const allTestSources: readonly Source[] = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'];
 
 function LibraryHarness({
   active = true,
   loaded = true,
-  enabledSources = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'],
+  enabledSources = allTestSources,
   libraryCategories = categories,
   followedUsers: libraryUsers = followedUsers,
   favoriteRecords = records,
@@ -233,25 +235,29 @@ function LibraryHarness({
   onRemoveUser?: (user: UserProfile) => void;
 } = {}) {
   const [libraryTab, setLibraryTab] = useState<LibraryTab>('favorites');
-  const [sourceFilter, setSourceFilter] = useState<import('@/domain/forum/models').FeedSource>('all');
-  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [filters, setFilters] = useState(allLibraryFilters);
+  const { source, category, categoryItems } = useMemo(
+    () => resolveLibraryFilters(filters, enabledSources, libraryCategories, true),
+    [filters, enabledSources, libraryCategories]
+  );
+  if (source !== filters.source || category !== filters.category) setFilters({ source, category });
 
   return (
     <View>
       <LibraryScreen
         active={active}
         loadingMore={false}
-        sourceFilter={sourceFilter}
-        categoryFilter={categoryFilter}
-        onSourceFilter={setSourceFilter}
-        onCategoryFilter={setCategoryFilter}
+        sourceFilter={source}
+        categoryFilter={category}
+        onSourceFilter={(next) => setFilters({ source: next, category: 'all' })}
+        onCategoryFilter={(next) => setFilters((current) => ({ ...current, category: next }))}
         historyCountToClear={
           historyRecords.some((record) => enabledSources.includes(record.topic.source)) ? historyRecords.length : 0
         }
         error={false}
         onRetry={noop}
         onLoadMore={noop}
-        categories={libraryCategories}
+        categoryItems={categoryItems}
         enabledSources={enabledSources}
         favoriteRecords={favoriteRecords}
         followedUsers={libraryUsers}
@@ -265,7 +271,10 @@ function LibraryHarness({
         onOpenUser={onOpenUser}
         onRemove={onRemove}
         onRemoveUser={onRemoveUser}
-        onTabChange={setLibraryTab}
+        onTabChange={(tab) => {
+          setFilters(allLibraryFilters);
+          setLibraryTab(tab);
+        }}
       />
     </View>
   );

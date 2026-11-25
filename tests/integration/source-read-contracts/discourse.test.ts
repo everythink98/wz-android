@@ -539,7 +539,7 @@ describe('Android local sources', () => {
     expect(topic.title).toBe(displayTitle);
   });
 
-  it('decodes linux.do numeric title entities when unicode_title is missing', async () => {
+  it('keeps plain linux.do title verbatim and decodes numeric entities only on fancy_title fallback', async () => {
     const fetcher = routeFetcher([
       [
         '/t/2438918.json',
@@ -564,6 +564,28 @@ describe('Android local sources', () => {
         })
       ],
       [
+        '/t/2438919.json',
+        jsonResponse({
+          id: 2438919,
+          fancy_title: '&#129765;完辣，&amp;copy; 装机仔下岗',
+          slug: 'topic-fancy',
+          created_at: '2026-06-20T11:15:45.437Z',
+          posts_count: 1,
+          post_stream: {
+            stream: [19367643],
+            posts: [
+              {
+                id: 19367643,
+                post_number: 1,
+                username: 'chancat',
+                cooked: '<p>body</p>',
+                created_at: '2026-06-20T11:15:45.437Z'
+              }
+            ]
+          }
+        })
+      ],
+      [
         /.*/,
         jsonResponse({
           topic_list: {
@@ -575,6 +597,14 @@ describe('Android local sources', () => {
                 created_at: '2026-06-20T11:15:45.437Z',
                 bumped_at: '2026-06-20T11:15:45.437Z',
                 posts_count: 1
+              },
+              {
+                id: 2438919,
+                fancy_title: '&#129765;完辣，&amp;copy; 装机仔下岗',
+                slug: 'topic-fancy',
+                created_at: '2026-06-20T11:15:45.437Z',
+                bumped_at: '2026-06-20T11:15:45.437Z',
+                posts_count: 1
               }
             ]
           },
@@ -583,11 +613,14 @@ describe('Android local sources', () => {
       ]
     ]);
 
-    const feed = await getFeed({ source: 'linuxdo', limit: 1, fetcher });
-    const topic = await getTopic({ source: 'linuxdo', id: '2438918', fetcher });
+    const feed = await getFeed({ source: 'linuxdo', limit: 2, fetcher });
+    const plainTopic = await getTopic({ source: 'linuxdo', id: '2438918', fetcher });
+    const fancyTopic = await getTopic({ source: 'linuxdo', id: '2438919', fetcher });
 
-    expect(feed.items[0].title).toBe('🫥完辣，ai又来抢饭碗啦，装机仔下岗');
-    expect(topic.title).toBe('🫥完辣，ai又来抢饭碗啦，装机仔下岗');
+    expect(feed.items[0].title).toBe('&#129765;完辣，ai又来抢饭碗啦，装机仔下岗');
+    expect(plainTopic.title).toBe('&#129765;完辣，ai又来抢饭碗啦，装机仔下岗');
+    expect(feed.items[1].title).toBe('🫥完辣，&copy; 装机仔下岗');
+    expect(fancyTopic.title).toBe('🫥完辣，&copy; 装机仔下岗');
   });
 
   it('keeps linux.do accepted answers and special reply markers from topic JSON', async () => {
@@ -1774,10 +1807,10 @@ describe('Android local sources', () => {
       likeCount: 1,
       canLike: true,
       canDelete: true,
-      canEdit: true,
-      contentMarkdown: 'reply raw'
+      canEdit: true
     });
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(topic.replies[0]?.contentMarkdown).toBeUndefined();
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   it('marks own linux.do posts unlikable while keeping other posts likable', async () => {

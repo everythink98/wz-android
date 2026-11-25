@@ -19,7 +19,7 @@ import { loadLinuxDoTopicCreationContext } from '@/sources/linuxdo/topicCreation
 import { useTopicComposerController } from '@/features/topic-composer/useTopicComposerController';
 import type { TopicComposerRouteRuntimeValue } from '@/features/topic-composer/TopicComposerRouteRuntime';
 import type { ComposerSnapshot } from '@/domain/forum/structuredComposer';
-import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
+import type { ReadRecovery } from '@/platform/query/readRecovery';
 import type { StructuredReplyComposerHandle } from '@/ui/composer/StructuredReplyComposer';
 import { createTopicProofTransport } from '../../helpers/topicCreationTransport';
 
@@ -236,7 +236,7 @@ afterEach(() => {
 });
 
 describe('topic draft lifecycle', () => {
-  it('keeps an untouched new draft out of SQLite through autosave, flush and discard', async () => {
+  it('keeps an untouched new draft out of SQLite through mode toggle, autosave, flush and discard', async () => {
     const runtime = runtimeFor();
     const hook = await renderHook(() =>
       useTopicComposerController({
@@ -249,11 +249,23 @@ describe('topic draft lifecycle', () => {
     );
     try {
       await waitFor(() => expect(hook.result.current.context?.source).toBe('nodeseek'));
+      expect(hook.result.current.saveStatus).toBe('自动保存到本机');
+      await act(() => {
+        hook.result.current.acceptSnapshot({
+          markdown: '',
+          revision: 0,
+          mode: 'source',
+          isEmpty: true,
+          validationIssues: [],
+          pendingNodeSeekPolls: []
+        });
+      });
       await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 450));
         await hook.result.current.flush();
       });
       expect(await loadTopicDraft('nodeseek', 'nodeseek:123')).toBeNull();
+      expect(mockDatabase?.prepare('SELECT COUNT(*) AS count FROM topic_drafts').get()).toEqual({ count: 0 });
 
       jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {
         buttons?.find((button) => button.text === '丢弃')?.onPress?.();
@@ -261,6 +273,124 @@ describe('topic draft lifecycle', () => {
       await act(async () => hook.result.current.discard());
       await act(async () => new Promise((resolve) => setTimeout(resolve, 450)));
       expect(await loadTopicDraft('nodeseek', 'nodeseek:123')).toBeNull();
+      expect(mockDatabase?.prepare('SELECT COUNT(*) AS count FROM topic_drafts').get()).toEqual({ count: 0 });
+    } finally {
+      await hook.unmount();
+    }
+  });
+
+  it('persists a mode-only switch on a reopened saved new-topic draft while preserving body, polls, attachments and conflict detection', async () => {
+    const saved = storedDraft('draft-mode-only');
+    saved.revision = 3;
+    saved.mode = 'rich';
+    saved.body = '原始 *Markdown* 正文\n\n<!-- wz:nodeseek-poll:poll_keep -->';
+    saved.pendingNodeSeekPolls = [
+      {
+        localId: 'poll_keep',
+        fingerprint: 'fp-keep',
+        title: '保留的投票',
+        multiple: false,
+        isPublic: true,
+        options: ['选项一', '选项二']
+      }
+    ];
+    saved.attachments = [attachment(saved, 'file-keep')];
+
+    const hook = await setup(saved);
+    try {
+      expect(hook.result.current.saveStatus).toBe('已恢复本机草稿');
+      expect(hook.result.current.draft).toMatchObject({
+        id: saved.id,
+        revision: 3,
+        mode: 'rich',
+        body: saved.body,
+        pendingNodeSeekPolls: saved.pendingNodeSeekPolls,
+        attachments: saved.attachments
+      });
+
+      await act(() => {
+        hook.result.current.acceptSnapshot(
+          {
+            markdown: '编辑器归一化后的 **Markdown** 正文',
+            revision: 0,
+            mode: 'source',
+            isEmpty: false,
+            validationIssues: [],
+            pendingNodeSeekPolls: []
+          },
+          saved.id
+        );
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 450));
+      });
+
+      const persisted = await loadTopicDraft('nodeseek', 'nodeseek:123');
+      expect(mockDatabase?.prepare('SELECT COUNT(*) AS count FROM topic_drafts').get()).toEqual({ count: 1 });
+      expect(persisted).toMatchObject({
+        id: saved.id,
+        revision: 4,
+        mode: 'source',
+        body: saved.body,
+        pendingNodeSeekPolls: saved.pendingNodeSeekPolls,
+        attachments: saved.attachments
+      });
+      expect(hook.result.current.saveStatus).toBe('已保存到本机');
+
+      // Reopen and verify persisted mode + intact fields, plus conflict detection against a concurrent writer.
+      const peer = await setup(persisted!);
+      try {
+        expect(peer.result.current.saveStatus).toBe('已恢复本机草稿');
+        expect(peer.result.current.draft).toMatchObject({
+          id: saved.id,
+          revision: 4,
+          mode: 'source',
+          body: saved.body,
+          pendingNodeSeekPolls: saved.pendingNodeSeekPolls,
+          attachments: saved.attachments
+        });
+        await act(() => {
+          peer.result.current.change((draft) => ({ ...draft, title: '另一页更新后的标题' }));
+        });
+        await act(async () => {
+          expect(await peer.result.current.leave()).toBe(true);
+        });
+
+        await act(() => {
+          hook.result.current.acceptSnapshot(
+            {
+              markdown: '不应覆盖正文',
+              revision: 0,
+              mode: 'rich',
+              isEmpty: false,
+              validationIssues: [],
+              pendingNodeSeekPolls: []
+            },
+            saved.id
+          );
+        });
+        const confirmExit = jest
+          .spyOn(Alert, 'alert')
+          .mockImplementation((_title, _message, buttons) =>
+            buttons?.find((button) => button.style === 'cancel')?.onPress?.()
+          );
+        await act(async () => {
+          expect(await hook.result.current.leave()).toBe(false);
+        });
+        expect(confirmExit).toHaveBeenCalledTimes(1);
+        expect(hook.result.current.saveStatus).toContain('其他页面更新');
+        expect(await loadTopicDraft('nodeseek', 'nodeseek:123')).toMatchObject({
+          id: saved.id,
+          revision: 5,
+          title: '另一页更新后的标题',
+          mode: 'source',
+          body: saved.body,
+          pendingNodeSeekPolls: saved.pendingNodeSeekPolls,
+          attachments: saved.attachments
+        });
+      } finally {
+        await peer.unmount();
+      }
     } finally {
       await hook.unmount();
     }
@@ -580,7 +710,7 @@ describe('topic draft lifecycle', () => {
       return transport.fetcher(url, init);
     };
     const openAccount = jest.fn<
-      (_source: TopicCreationSource, _message?: string, _recovery?: LinuxDoReadRecovery) => Promise<boolean>
+      (_source: TopicCreationSource, _message?: string, _recovery?: ReadRecovery) => Promise<boolean>
     >(async () => true);
     const saved = {
       ...emptyTopicDraft('linuxdo', 'linuxdo:123'),
@@ -620,7 +750,7 @@ describe('topic draft lifecycle', () => {
     let blocked = true;
     const runtime = runtimeFor('123', transport.fetcher);
     const openAccount = jest.fn<
-      (_source: TopicCreationSource, _message?: string, _recovery?: LinuxDoReadRecovery) => Promise<boolean>
+      (_source: TopicCreationSource, _message?: string, _recovery?: ReadRecovery) => Promise<boolean>
     >(async () => true);
     const owner = {
       ...runtime,
@@ -669,7 +799,7 @@ describe('topic draft lifecycle', () => {
         return transport.fetcher(url, init);
       };
       const openAccount = jest.fn<
-        (_source: TopicCreationSource, _message?: string, _recovery?: LinuxDoReadRecovery) => Promise<boolean>
+        (_source: TopicCreationSource, _message?: string, _recovery?: ReadRecovery) => Promise<boolean>
       >(async () => true);
       const hook = await setup(
         { ...emptyTopicDraft('linuxdo', 'linuxdo:123'), categoryId: '4' },
@@ -923,6 +1053,245 @@ describe('topic draft lifecycle', () => {
     if (outcome === 'login-404') expect(runtime.requestAccountRecheck).toHaveBeenCalledWith(source, 0);
     else expect(runtime.requestAccountRecheck).not.toHaveBeenCalled();
     expect(mockDeletedFiles).toEqual([]);
+  });
+
+  it.each([
+    ['csrf-403', 'failed', 0],
+    ['post-403', 'failed', 1],
+    ['post-200', 'unknown', 1]
+  ] satisfies [string, TopicDraftAttachment['status'], number][])(
+    'opens linux.do verification on explicit %s attachment challenge, records %s and sends %i upload POST',
+    async (scenario, expectedStatus, expectedPosts) => {
+      const saved = { ...emptyTopicDraft('linuxdo', 'linuxdo:123'), revision: 2, categoryId: '4' };
+      const preUploaded: TopicDraftAttachment = {
+        ...attachment(saved, 'already-done'),
+        name: 'already.pdf',
+        mimeType: 'application/pdf',
+        kind: 'attachment',
+        status: 'uploaded',
+        markup: '[already.pdf|attachment](upload://already.pdf)'
+      };
+      const target: TopicDraftAttachment = {
+        ...attachment(saved, 'target-file'),
+        name: 'target.pdf',
+        mimeType: 'application/pdf',
+        kind: 'attachment',
+        status: 'queued'
+      };
+      const trailing: TopicDraftAttachment = {
+        ...attachment(saved, 'trailing-file'),
+        name: 'trailing.pdf',
+        mimeType: 'application/pdf',
+        kind: 'attachment',
+        status: 'queued'
+      };
+      saved.attachments = [preUploaded, target, trailing];
+
+      const transport = createTopicProofTransport('success');
+      let csrfGets = 0;
+      let uploadPosts = 0;
+      const fetcher: Fetcher = async (url, init) => {
+        prepareRequestToSend(init);
+        if (url.endsWith('/session/csrf')) {
+          csrfGets += 1;
+          if (scenario === 'csrf-403') {
+            return new Response('<html>验证</html>', {
+              status: 403,
+              headers: { 'content-type': 'text/html', 'cf-mitigated': 'challenge' }
+            });
+          }
+          return response('{"csrf":"fixture"}');
+        }
+        if (url.endsWith('/uploads.json') && init?.method === 'POST') {
+          uploadPosts += 1;
+          if (scenario === 'post-403') {
+            return new Response('<html>验证</html>', {
+              status: 403,
+              headers: { 'content-type': 'text/html', 'cf-mitigated': 'challenge' }
+            });
+          }
+          return new Response('<title>Just a moment...</title>', {
+            status: 200,
+            headers: { 'content-type': 'text/html' }
+          });
+        }
+        return transport.fetcher(url, init);
+      };
+      const openAccount = jest.fn<TopicComposerRouteRuntimeValue['openAccount']>();
+      const runtime = { ...runtimeFor('123', fetcher), openAccount };
+      const hook = await setup(saved, runtime);
+      try {
+        await act(async () => {
+          await hook.result.current.uploadFiles(saved.attachments, false);
+        });
+        expect(csrfGets).toBe(1);
+        expect(uploadPosts).toBe(expectedPosts);
+        expect(openAccount).toHaveBeenCalledTimes(1);
+        expect(openAccount).toHaveBeenCalledWith('linuxdo', expect.stringContaining('验证'));
+        expect(openAccount.mock.calls[0]?.[2]).toBeUndefined();
+        if (scenario === 'post-200') expect(hook.result.current.error).toContain('上传结果未知');
+        else expect(hook.result.current.error).toContain('验证');
+
+        const persisted = await loadTopicDraft('linuxdo', saved.identityKey);
+        expect(persisted?.attachments.map((file) => [file.id, file.status])).toEqual([
+          ['already-done', 'uploaded'],
+          ['target-file', expectedStatus],
+          ['trailing-file', 'queued']
+        ]);
+        expect(persisted?.attachments[0]?.markup).toBe(preUploaded.markup);
+        expect(hook.result.current.draft?.attachments).toEqual(persisted?.attachments);
+        expect(runtime.onSessionExpired).not.toHaveBeenCalled();
+        expect(runtime.requestAccountRecheck).not.toHaveBeenCalled();
+        expect(mockDeletedFiles).toEqual([]);
+      } finally {
+        await hook.unmount();
+      }
+    }
+  );
+
+  it.each([
+    ['json-permission', '{"errors":["您没有权限上传此类型附件"]}', 'application/json', '您没有权限上传此类型附件'],
+    ['plain-html', '<html><body>Access Denied</body></html>', 'text/html', 'linux.do 请求失败：HTTP 403']
+  ] satisfies [string, string, string, string][])(
+    'keeps the original error prompt and does not open verification for ordinary linux.do 403 (%s)',
+    async (_kind, body, contentType, expectedMessage) => {
+      const saved = { ...emptyTopicDraft('linuxdo', 'linuxdo:123'), revision: 1, categoryId: '4' };
+      saved.attachments = [
+        {
+          ...attachment(saved, 'denied-file'),
+          name: 'denied.pdf',
+          mimeType: 'application/pdf',
+          kind: 'attachment',
+          status: 'queued'
+        }
+      ];
+      const transport = createTopicProofTransport('success');
+      let uploadPosts = 0;
+      const fetcher: Fetcher = async (url, init) => {
+        prepareRequestToSend(init);
+        if (url.endsWith('/uploads.json') && init?.method === 'POST') {
+          uploadPosts += 1;
+          return new Response(body, { status: 403, headers: { 'content-type': contentType } });
+        }
+        return transport.fetcher(url, init);
+      };
+      const openAccount = jest.fn<TopicComposerRouteRuntimeValue['openAccount']>();
+      const runtime = { ...runtimeFor('123', fetcher), openAccount };
+      const hook = await setup(saved, runtime);
+      try {
+        await act(async () => {
+          await hook.result.current.uploadFiles(saved.attachments, false);
+        });
+        expect(uploadPosts).toBe(1);
+        expect(openAccount).not.toHaveBeenCalled();
+        expect(hook.result.current.error).toBe(expectedMessage);
+        expect((await loadTopicDraft('linuxdo', saved.identityKey))?.attachments[0]).toMatchObject({
+          id: 'denied-file',
+          status: 'failed',
+          error: expectedMessage
+        });
+      } finally {
+        await hook.unmount();
+      }
+    }
+  );
+
+  it.each([
+    'invalidated-draft',
+    'disabled-source',
+    'switched-account',
+    'changed-session-epoch',
+    'expired-ticket',
+    'background-app',
+    'inactive-page',
+    'unmounted-page'
+  ] as const)('does not open verification when a linux.do upload challenge settles after %s', async (invalidation) => {
+    const saved = { ...emptyTopicDraft('linuxdo', 'linuxdo:123'), revision: 2, categoryId: '4' };
+    saved.attachments = [
+      {
+        ...attachment(saved, 'inflight-file'),
+        name: 'inflight.pdf',
+        mimeType: 'application/pdf',
+        kind: 'attachment',
+        status: 'queued'
+      }
+    ];
+    const transport = createTopicProofTransport('success');
+    const uploadResponse = deferred<Response>();
+    let uploadPosts = 0;
+    const fetcher: Fetcher = (url, init) => {
+      prepareRequestToSend(init);
+      if (url.endsWith('/uploads.json') && init?.method === 'POST') {
+        uploadPosts += 1;
+        return uploadResponse.promise;
+      }
+      return transport.fetcher(url, init);
+    };
+    const openAccount = jest.fn<TopicComposerRouteRuntimeValue['openAccount']>();
+    let ticketCurrent = true;
+    const baseRuntime = {
+      ...runtimeFor('123', fetcher),
+      openAccount,
+      isWritableSessionTicketCurrent: () => ticketCurrent
+    };
+    const hook = await setup(saved, baseRuntime);
+    let pending!: Promise<string | undefined>;
+    try {
+      await act(() => {
+        pending = hook.result.current.uploadFiles(saved.attachments, false);
+      });
+      await waitFor(() => expect(uploadPosts).toBe(1));
+
+      if (invalidation === 'invalidated-draft') {
+        const external = { ...saved, revision: saved.revision + 2, title: '其他页面已更新的草稿' };
+        expect(await saveTopicDraft(external, saved.revision + 1)).toBe(true);
+      } else if (invalidation === 'disabled-source') {
+        await hook.rerender({
+          owner: {
+            ...baseRuntime,
+            enabledSources: ['nodeseek', 'yaohuo']
+          }
+        });
+      } else if (invalidation === 'switched-account') {
+        await hook.rerender({ owner: { ...runtimeFor('456', fetcher), openAccount } });
+      } else if (invalidation === 'changed-session-epoch') {
+        await hook.rerender({
+          owner: {
+            ...baseRuntime,
+            sessionEpochs: { ...baseRuntime.sessionEpochs, linuxdo: 1 }
+          }
+        });
+      } else if (invalidation === 'expired-ticket') {
+        ticketCurrent = false;
+      } else if (invalidation === 'background-app') {
+        await hook.rerender({ owner: { ...baseRuntime, appActive: false } });
+      } else if (invalidation === 'inactive-page') {
+        await hook.rerender({ owner: baseRuntime, active: false });
+      } else {
+        await hook.unmount();
+      }
+
+      await act(async () => {
+        uploadResponse.resolve(
+          new Response('<html>验证</html>', {
+            status: 403,
+            headers: { 'content-type': 'text/html', 'cf-mitigated': 'challenge' }
+          })
+        );
+        await pending;
+      });
+
+      expect(uploadPosts).toBe(1);
+      expect(openAccount).not.toHaveBeenCalled();
+      if (invalidation === 'switched-account') {
+        await waitFor(() => expect(hook.result.current.draft?.identityKey).toBe('linuxdo:456'));
+        expect(hook.result.current.error).toBe('');
+        expect((await loadTopicDraft('linuxdo', 'linuxdo:123'))?.attachments[0]?.status).toBe('failed');
+      }
+    } finally {
+      uploadResponse.resolve(response('{"url":"https://img.invalid/cleanup.pdf"}'));
+      if (invalidation !== 'unmounted-page') await hook.unmount();
+    }
   });
 
   it('clears a prior snapshot failure only after a successful flush of the same already-saved revision', async () => {

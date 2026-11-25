@@ -1,4 +1,4 @@
-import { sourceCatalog } from '@/domain/forum/sourceCatalog';
+import { sourceCatalog, type Source } from '@/domain/forum/sourceCatalog';
 import {
   canContainCloudflareChallengePage,
   isCloudflareChallengeResponse,
@@ -11,6 +11,12 @@ export type Fetcher = (input: string, init?: RequestInit) => Promise<Response>;
 const REQUEST_BEFORE_SEND = Symbol.for('wz.requestBeforeSend');
 const REQUEST_DISPATCH_STATE = Symbol.for('wz.requestDispatchState');
 export type RequestDispatchState = { mayHaveSent: boolean };
+const DEFINITIVE_HTTP_REJECTION_STATUSES = [400, 401, 403, 404, 405, 413, 415, 422, 429];
+
+export function isDefinitiveHttpRejection(status: unknown) {
+  return typeof status === 'number' && DEFINITIVE_HTTP_REJECTION_STATUSES.includes(status);
+}
+
 type GuardedRequestInit = RequestInit & {
   [REQUEST_BEFORE_SEND]?: () => void;
   [REQUEST_DISPATCH_STATE]?: readonly RequestDispatchState[];
@@ -56,19 +62,44 @@ export function prepareRequestToSend(init?: RequestInit): RequestInit | undefine
   return beforeSend || dispatchState ? transportInit : init;
 }
 
-export async function isLinuxDoUnauthorizedChallenge(response: Response, signal?: AbortSignal | null) {
+async function isLinuxDoUnauthorizedChallenge(response: Response, signal?: AbortSignal | null) {
   if (isCloudflareChallengeResponse(response)) return true;
   if (!canContainCloudflareChallengePage(response.headers)) return false;
   const bodyText = await withAbortableTimeout(() => response.clone().text(), { signal }).catch(() => undefined);
   return isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText });
 }
 
-export function rejectUnauthorizedResponse(fetcher: Fetcher, recheckLinuxDoSession = false): Fetcher {
+export function isForumResponseOrigin(source: Source, input: string, response: Response) {
+  try {
+    const origin = new URL(sourceCatalog[source].baseUrl).origin;
+    return new URL(input).origin === origin && (!response.url || new URL(response.url).origin === origin);
+  } catch {
+    return false;
+  }
+}
+
+export async function classifyForumUnauthorizedResponse(
+  source: Source,
+  input: string,
+  response: Response,
+  signal?: AbortSignal | null
+): Promise<'http-401' | 'verification-required' | undefined> {
+  if (response.status !== 401 || signal?.aborted || !isForumResponseOrigin(source, input, response)) return;
+  const challenge =
+    source === 'linuxdo'
+      ? await isLinuxDoUnauthorizedChallenge(response, signal)
+      : isCloudflareChallengeResponse(response);
+  if (!signal?.aborted) return challenge ? 'verification-required' : 'http-401';
+}
+
+export function rejectUnauthorizedResponse(source: Source, fetcher: Fetcher): Fetcher {
   return async (input, init) => {
     const response = await fetcher(input, init);
     if (response.status !== 401) return response;
-    if (recheckLinuxDoSession || input.startsWith(`${sourceCatalog.linuxdo.baseUrl}/`)) {
-      if (await isLinuxDoUnauthorizedChallenge(response, init?.signal)) throw new LinuxDoCloudflareError(response);
+    const reason = await classifyForumUnauthorizedResponse(source, input, response, init?.signal);
+    if (reason === 'verification-required' && source === 'linuxdo') throw new LinuxDoCloudflareError(response);
+    if (reason !== 'http-401') return response;
+    if (source === 'linuxdo') {
       throw Object.assign(new Error('linux.do 登录状态暂时无法确认，请稍后重试'), {
         status: 401,
         reason: 'http-401',

@@ -40,6 +40,7 @@ import {
   notificationAccessibilityLabel,
   notificationTitleText,
   notificationActionText,
+  notificationPreviewText,
   notificationTimeText,
   notificationErrorAction
 } from './notificationPresentation';
@@ -146,11 +147,12 @@ const NotificationRow = memo(function NotificationRow({
   onPress: (item: ForumNotification) => void;
 }) {
   const { styles } = useReaderThemeStyles(createNotificationStyles);
-  const title = notificationTitleText(item);
+  const preview = notificationPreviewText(item);
+  const title = notificationTitleText(item, preview);
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={notificationAccessibilityLabel(item)}
+      accessibilityLabel={notificationAccessibilityLabel(item, title)}
       style={[styles.row, styles.rowSurface, item.unread && styles.rowUnread]}
       onPress={() => onPress(item)}
     >
@@ -168,9 +170,9 @@ const NotificationRow = memo(function NotificationRow({
             {title}
           </Text>
         ) : null}
-        {item.preview && item.preview !== title ? (
+        {preview && preview !== title ? (
           <Text style={styles.preview} numberOfLines={2}>
-            {item.preview}
+            {preview}
           </Text>
         ) : null}
         <Text style={styles.meta}>
@@ -590,6 +592,7 @@ export function NotificationSettingsScreen({
   sessions,
   state,
   onOpenSystemSettings,
+  onRequestPermission,
   onToggleGlobal,
   onToggleSource
 }: {
@@ -603,11 +606,14 @@ export function NotificationSettingsScreen({
   sessions: SiteSessionViewModels;
   state: NotificationState;
   onOpenSystemSettings: () => void;
+  onRequestPermission?: () => void;
   onToggleGlobal: (enabled: boolean) => void;
   onToggleSource: (source: NotificationSource, enabled: boolean) => void;
 }) {
   const { styles } = useReaderThemeStyles(createNotificationStyles);
   const onPageLayout = useStartupPageLayout();
+  const canContinuePermissionRequest =
+    state.globalEnabled && !state.androidPermissionRequestStarted && Boolean(onRequestPermission);
   return (
     <ScrollView
       overScrollMode="never"
@@ -618,6 +624,9 @@ export function NotificationSettingsScreen({
       {initializationError ? (
         <View style={styles.permissionBox} accessibilityLiveRegion="polite">
           <Text style={styles.errorText}>{initializationError}</Text>
+          {canContinuePermissionRequest && onRequestPermission && permission === 'unavailable' ? (
+            <AppButton label="继续申请权限" disabled={busy} onPress={onRequestPermission} />
+          ) : null}
           {onRetryInitialization ? <AppButton label="重试通知初始化" onPress={onRetryInitialization} /> : null}
         </View>
       ) : null}
@@ -661,7 +670,21 @@ export function NotificationSettingsScreen({
         <View style={styles.permissionBox} accessibilityLiveRegion="polite">
           <Text style={styles.stateTitle}>系统通知权限未开启</Text>
           <Text style={styles.stateText}>消息中心仍可使用；授权前不会注册后台检查，也不会显示 Android 通知。</Text>
-          <AppButton label="打开系统设置" onPress={onOpenSystemSettings} />
+          {canContinuePermissionRequest && onRequestPermission ? (
+            <AppButton label="继续申请权限" disabled={busy} onPress={onRequestPermission} />
+          ) : (
+            <AppButton label="打开系统设置" onPress={onOpenSystemSettings} />
+          )}
+        </View>
+      ) : null}
+      {state.globalEnabled && permission === 'unavailable' && !initializationError ? (
+        <View style={styles.permissionBox} accessibilityLiveRegion="polite">
+          <Text style={styles.stateTitle}>系统通知权限读取失败</Text>
+          <Text style={styles.stateText}>站内消息仍可使用；权限确认前不会注册后台检查，也不会显示 Android 通知。</Text>
+          {canContinuePermissionRequest && onRequestPermission ? (
+            <AppButton label="继续申请权限" disabled={busy} onPress={onRequestPermission} />
+          ) : null}
+          {onRetryInitialization ? <AppButton label="重试通知初始化" onPress={onRetryInitialization} /> : null}
         </View>
       ) : null}
       {backgroundError ? (

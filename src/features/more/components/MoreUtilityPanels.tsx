@@ -3,7 +3,11 @@ import { Pressable, Text, View } from 'react-native';
 import { Bug, DatabaseBackup, Download, History, RotateCcw, Server, Settings, Star, Users } from 'lucide-react-native';
 import type { LibraryTab } from '@/domain/forum/feed';
 import type { ReaderSettings } from '@/domain/reader/readerData';
-import type { ReaderSettingsUpdate } from '@/domain/reader/readerRecordState';
+import {
+  readerStorageRestartMessage,
+  type ReaderSettingsUpdate,
+  type ReaderStatus
+} from '@/domain/reader/readerRecordState';
 import { AppButton } from '@/ui/controls/ButtonControls';
 import { ExpandablePanel, MenuButton } from '@/ui/controls/ExpandableControls';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
@@ -24,7 +28,7 @@ export type MoreUtilityCapabilities = {
     open: (tab?: LibraryTab) => void;
   };
   backup: {
-    recovery: boolean;
+    readerStatus: ReaderStatus;
     operation: DocumentOperation;
     exportFile: () => void;
     importFile: () => void;
@@ -56,7 +60,7 @@ export function MoreUtilityPanels({
 }) {
   const { styles, theme } = useReaderThemeStyles(createMoreScreenStyles);
   const [backupExpanded, setBackupExpanded] = useState(false);
-  const { operation } = runtime.backup;
+  const { operation, readerStatus } = runtime.backup;
   const backupBusy = operation !== 'idle';
   const updateSettings = runtime.settings.update;
 
@@ -129,7 +133,11 @@ export function MoreUtilityPanels({
             onPress={runtime.diagnostics.exportLog}
           />
         </View>
-        {runtime.backup.recovery ? (
+        {readerStatus === 'restart-required' ? (
+          <Text accessibilityRole="alert" style={styles.meta}>
+            {readerStorageRestartMessage}来源访问已暂停。
+          </Text>
+        ) : readerStatus === 'recovery' ? (
           <Text accessibilityRole="alert" style={styles.meta}>
             本机资料读取失败，来源访问已暂停。请导入备份恢复；原设置、凭据和通知意图会保留。
           </Text>
@@ -150,7 +158,7 @@ export function MoreUtilityPanels({
                 icon={Download}
                 label={operation === 'export' ? '导出中' : '导出备份文件'}
                 loading={operation === 'export'}
-                disabled={backupBusy || runtime.backup.recovery}
+                disabled={backupBusy || readerStatus !== 'ready'}
                 onPress={runtime.backup.exportFile}
               />
               <AppButton
@@ -158,7 +166,7 @@ export function MoreUtilityPanels({
                 icon={RotateCcw}
                 label={operation === 'import' ? '恢复中' : '选择备份文件恢复'}
                 loading={operation === 'import'}
-                disabled={backupBusy}
+                disabled={backupBusy || readerStatus === 'loading' || readerStatus === 'restart-required'}
                 onPress={runtime.backup.importFile}
               />
             </View>

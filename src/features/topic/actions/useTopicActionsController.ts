@@ -3,6 +3,12 @@ import {
   policyRequestBusy,
   type PolicyOperationSnapshot
 } from '@/domain/forum/discoursePolicyOperation';
+import {
+  readDiscoursePolicyWriteBlock,
+  recordDiscoursePolicyReceipt,
+  selectDiscoursePolicyWriteBlock,
+  useDiscoursePolicyState
+} from '@/platform/query/discoursePolicyCache';
 import { resolveLinuxDoUpload as fetchLinuxDoUploadUrl } from '@/sources/linuxdo/uploadUrls';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert } from 'react-native';
@@ -25,7 +31,6 @@ import {
   buildNodeSeekStardustPrepareRequest,
   buildNodeSeekStardustSendRequest,
   buildNodeSeekVoteRequest,
-  nodeSeekCreatedReplyTarget,
   type NodeSeekActionRequest
 } from '@/sources/nodeseek/actionRequest';
 import {
@@ -39,13 +44,14 @@ import {
 } from '@/sources/yaohuo/actionRequest';
 import {
   buildDiscourseActionRequest,
-  discourseCreatedReplyTarget,
   discourseImageUrlFromUploadResponse,
   type DiscourseAction
 } from '@/sources/discourse/actionRequest';
-import { runLinuxDoAction } from '@/sources/linuxdo/actionClient';
+import { discourseReplyReceipt, nodeSeekReplyReceipt, type ReplyWriteReceipt } from '@/sources/replyReceipt';
+import { loadLinuxDoReplyEditSource, runLinuxDoAction } from '@/sources/linuxdo/actionClient';
 import { linuxDoEditedReplyFromAction } from '@/sources/linuxdo/reader';
-import { fetchNodeSeekVoteInfo, runNodeSeekAction } from '@/sources/nodeseek/actionClient';
+import { LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
+import { fetchNodeSeekVoteInfo, isConfirmedNodeSeekAction, runNodeSeekAction } from '@/sources/nodeseek/actionClient';
 import { runYaohuoAction } from '@/sources/yaohuo/actionClient';
 import {
   applyBookmarkToTopic,
@@ -58,7 +64,7 @@ import {
   topicActionStateKey,
   type InteractionType
 } from '@/domain/forum/topicActionState';
-import type { Reply, Source, TopicDetail, TopicPoll } from '@/domain/forum/models';
+import type { Reply, Source, Topic, TopicDetail, TopicPoll } from '@/domain/forum/models';
 import {
   discourseBoostStats,
   discourseReactionPreview,
@@ -68,9 +74,10 @@ import { discoursePostFields } from '@/sources/discourse/model';
 import { linuxDoBoostFromData } from '@/sources/linuxdo/boosts';
 import type { DiscoursePostPolicy } from '@/domain/forum/discoursePolicy';
 import { setLinuxDoPolicyAcceptance } from '@/sources/linuxdo/policy';
-import type { ReplyEditTarget, ReplyRefreshCommand, ReplyRefreshTarget } from '../model/types';
+import type { ReplyEditSnapshot, ReplyEditTarget, ReplyRefreshCommand, ReplyRefreshTarget } from '../model/types';
 import { topicKey } from '@/domain/reader/readerData';
 import {
+  isDefinitiveHttpRejection,
   rejectUnauthorizedResponse,
   withFetchGuard,
   withRequestBeforeSend,
@@ -122,7 +129,12 @@ import {
 import { fetchNodeSeekStardustStatus, nodeSeekStardustReceiverName } from '@/sources/nodeseek/stardust';
 import { fetchLinuxDoTemplates, recordLinuxDoTemplateUse } from '@/sources/linuxdo/templates';
 import { fetchLinuxDoPollCapabilities } from '@/sources/linuxdo/pollCapabilities';
-import { forumMutationKeys, forumQueryKeys, forumReplyWindowKeys } from '@/platform/query/serverState';
+import {
+  forumMutationKeys,
+  forumQueryKeys,
+  forumReplyWindowKeys,
+  forumWriteReceiptKeys
+} from '@/platform/query/serverState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import type { RequestAccountRecheck } from '@/domain/session/sessionContracts';
 import { errorRequiresAccountRecheck } from '@/sources/sourceErrors';
@@ -220,16 +232,13 @@ function observeReplyDelivery(fetcher: Fetcher, delivery?: ReplyDelivery): Fetch
 
 function replyDeliveryIsUnconfirmed(delivery: ReplyDelivery, error: unknown) {
   if (!delivery.dispatchState.mayHaveSent || isRawUnauthorized(error)) return false;
-  if (error instanceof HandledMutationError && error.serverConfirmed) return false;
-  if (delivery.status !== undefined) {
-    if (delivery.status >= 500 || delivery.status === 408 || delivery.status === 409) return true;
-    if ([400, 401, 403, 404, 405, 413, 415, 422, 429].includes(delivery.status)) return false;
-  }
-  return !(error instanceof HandledMutationError && error.serverRejected);
+  if (error instanceof HandledMutationError && (error.serverConfirmed || error.serverRejected)) return false;
+  return !isDefinitiveHttpRejection(delivery.status);
 }
 
 type NodeSeekRequestOptions = {
   beforeSend?: () => void;
+  dispatchState?: RequestDispatchState;
   notifyFailure?: boolean;
   pollCreation?: PendingNodeSeekPollCreation;
   replyDelivery?: ReplyDelivery;
@@ -371,8 +380,19 @@ function replyCursorFor(cache: ReplyCache | undefined, target: ReplyRefreshTarge
     : null;
 }
 
+function sameReplyEditSnapshot(left: ReplyEditSnapshot, right: ReplyEditSnapshot) {
+  return (
+    left.floor === right.floor &&
+    left.author === right.author &&
+    left.authorId === right.authorId &&
+    left.authorUrl === right.authorUrl &&
+    left.contentHtml === right.contentHtml &&
+    left.createdAt === right.createdAt
+  );
+}
+
 function replyEditTargetIsCurrent(
-  target: ReplyEditTarget,
+  target: Omit<ReplyEditTarget, 'contentMarkdown'> & { contentMarkdown: string | undefined },
   ticket: WritableSessionTicket,
   source: Source,
   topicId: string,
@@ -393,17 +413,10 @@ function replyEditTargetIsCurrent(
       if (reply.commentId !== target.commentId) continue;
       if (
         reply.canEdit !== true ||
-        reply.contentMarkdown !== target.contentMarkdown ||
-        reply.replyLocationConflict === 'identity'
-      )
-        return false;
-      if (
-        matchingReply &&
-        (reply.author !== matchingReply.author ||
-          reply.authorId !== matchingReply.authorId ||
-          reply.authorUrl !== matchingReply.authorUrl ||
-          reply.contentHtml !== matchingReply.contentHtml ||
-          reply.createdAt !== matchingReply.createdAt)
+        reply.replyLocationConflict === 'identity' ||
+        (reply.contentMarkdown !== target.contentMarkdown && !(target.cachedReply && !reply.contentMarkdown)) ||
+        (target.cachedReply && !sameReplyEditSnapshot(reply, target.cachedReply)) ||
+        (matchingReply && !sameReplyEditSnapshot(reply, matchingReply))
       )
         return false;
       matchingReply = reply;
@@ -464,6 +477,7 @@ type PollResultApplication = {
   poll: TopicPoll;
   preserveUnknownCounts?: boolean;
 };
+type NodeSeekPollWriteReceipt = 'sending' | 'awaiting-read';
 type TopicPollActionsInput = Pick<TopicActionsRuntime, 'topicDetail' | 'getNodeSeekUserAgent' | 'notify'> &
   TopicActionRequests & {
     selectedTopic: TopicSessionController['state']['selectedTopic'];
@@ -477,6 +491,9 @@ type TopicPollActionsInput = Pick<TopicActionsRuntime, 'topicDetail' | 'getNodeS
 type TopicReplyActionsInput = Pick<
   TopicActionsRuntime,
   | 'active'
+  | 'linuxDoUserAgent'
+  | 'requestAccountRecheck'
+  | 'showLinuxDoVerification'
   | 'sessionEpochs'
   | 'ensureWritableSession'
   | 'isWritableSessionTicketCurrent'
@@ -487,12 +504,13 @@ type TopicReplyActionsInput = Pick<
   | 'topicSession'
 > &
   TopicActionRequests & {
+    authenticatedFetcher: Fetcher;
     executeMutation: TopicActionExecutor;
     decisionFor: TopicActionDecisionFor;
     captureConfirmation(): () => boolean;
     getReplyComposerIntent(): TopicSessionController['state']['replyComposerIntent'];
     assertReplyNotEnded(): void;
-    cacheKeys(topic: TopicDetail, ticket?: WritableSessionTicket): ActionCacheKeys;
+    cacheKeys(topic: Topic, ticket?: WritableSessionTicket): ActionCacheKeys;
     queryClient: ReturnType<typeof useQueryClient>;
     refreshRepliesAfterWrite(
       topic: TopicDetail,
@@ -524,6 +542,101 @@ function useTopicPollActions({
   runLinuxDoRequest,
   runYaohuoRequest
 }: TopicPollActionsInput) {
+  const queryClient = useQueryClient();
+  const writeNodeSeekPoll = useCallback(
+    async ({
+      kind,
+      poll,
+      request,
+      ticket,
+      trace,
+      isCurrent
+    }: {
+      kind: 'vote' | 'lock';
+      poll: TopicPoll;
+      request: NodeSeekActionRequest;
+      ticket: WritableSessionTicket;
+      trace: DiagnosticTrace;
+      isCurrent?: () => boolean;
+    }) => {
+      const pollId = poll.id;
+      if (!pollId) throw new HandledMutationError('投票 id 不正确', 'blocked', 'not_ready');
+      const receiptKey = forumWriteReceiptKeys.nodeSeekPoll({
+        identityKey: ticket.identityKey,
+        sessionEpoch: ticket.sessionEpoch,
+        pollId,
+        kind
+      });
+      const receipt = queryClient.getQueryData<NodeSeekPollWriteReceipt>(receiptKey);
+      if (receipt === 'sending') {
+        const message = '上次投票操作仍在发送，请等待结果';
+        notify(message);
+        throw new HandledMutationError(message, 'blocked', 'busy');
+      }
+      let confirmedWrite = false;
+      if (!receipt) {
+        queryClient.setQueryData<NodeSeekPollWriteReceipt>(receiptKey, 'sending');
+        const awaitRead = () =>
+          queryClient.setQueryData<NodeSeekPollWriteReceipt>(receiptKey, (current) =>
+            current === 'sending' ? 'awaiting-read' : current
+          );
+        const dispatchState: RequestDispatchState = { mayHaveSent: false };
+        try {
+          const result = await runNodeSeekRequest(request, trace, ticket, {
+            beforeSend: () => {
+              if (isCurrent?.() === false) throw new HandledMutationError('操作已取消', 'canceled', 'canceled');
+            },
+            dispatchState,
+            notifyFailure: false
+          });
+          confirmedWrite = isConfirmedNodeSeekAction(result);
+        } catch (error) {
+          if (error instanceof HandledMutationError && error.serverConfirmed) {
+            awaitRead();
+            throw error;
+          }
+          if (
+            !dispatchState.mayHaveSent ||
+            isRawUnauthorized(error) ||
+            (error instanceof HandledMutationError && error.serverRejected)
+          ) {
+            queryClient.removeQueries({ queryKey: receiptKey, exact: true });
+            if (error instanceof HandledMutationError && error.outcome === 'failure') notify(error.message);
+            throw error;
+          }
+        }
+        awaitRead();
+      }
+      try {
+        assertWritableTicket(ticket, confirmedWrite);
+        const confirmedPoll = await fetchNodeSeekVoteInfo({
+          pollId,
+          fetcher: withDiagnosticFetcher(trace, authenticatedFetcher),
+          userAgent: getNodeSeekUserAgent()
+        });
+        assertWritableTicket(ticket, confirmedWrite);
+        if (kind === 'lock' ? confirmedPoll.closed : confirmedPoll.voted) {
+          queryClient.removeQueries({ queryKey: receiptKey, exact: true });
+          return { confirmedPoll, refreshFailed: false };
+        }
+      } catch (error) {
+        if (error instanceof HandledMutationError && error.reason === 'stale') throw error;
+        if (isRawUnauthorized(error) && (!confirmedWrite || kind === 'vote')) throw error;
+      }
+      if (confirmedWrite) {
+        hintDiagnosticOutcome(trace, 'partial', { source: 'nodeseek', reason: 'refresh_failed' });
+        return { confirmedPoll: kind === 'lock' ? { ...poll, closed: true } : undefined, refreshFailed: true };
+      }
+      const message =
+        kind === 'lock'
+          ? '投票锁定结果未知，请刷新原站确认，切勿重复提交。'
+          : '投票结果未知，请刷新原站确认，切勿重复提交。';
+      notify(message);
+      throw new HandledMutationError(message, 'failure', 'unconfirmed');
+    },
+    [assertWritableTicket, authenticatedFetcher, getNodeSeekUserAgent, notify, queryClient, runNodeSeekRequest]
+  );
+
   const votePoll = useCallback(
     async (poll: TopicPoll, optionIds: string[]) => {
       const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
@@ -546,24 +659,14 @@ function useTopicPollActions({
           task: async (ticket) => {
             const result = await (async () => {
               if (isNodeSeekActionTopic(actionTopic)) {
-                await runNodeSeekRequest(buildNodeSeekVoteRequest({ optionIds }), trace, ticket);
-                try {
-                  if (!poll.id) throw new Error('投票 id 不正确');
-                  assertWritableTicket(ticket);
-                  const confirmedPoll = await fetchNodeSeekVoteInfo({
-                    pollId: poll.id,
-                    fetcher: withDiagnosticFetcher(trace, authenticatedFetcher),
-                    userAgent: getNodeSeekUserAgent()
-                  });
-                  return { confirmedPoll, refreshFailed: false };
-                } catch (error) {
-                  if (isRawUnauthorized(error)) throw error;
-                  hintDiagnosticOutcome(trace, 'partial', {
-                    source: 'nodeseek',
-                    reason: 'refresh_failed'
-                  });
-                  return { confirmedPoll: undefined, refreshFailed: true };
-                }
+                return writeNodeSeekPoll({
+                  kind: 'vote',
+                  poll,
+                  request: buildNodeSeekVoteRequest({ optionIds }),
+                  trace,
+                  ticket,
+                  isCurrent
+                });
               }
               if (isDiscourseSource(actionTopic.source)) {
                 if (!poll.postId || !poll.name) {
@@ -627,14 +730,12 @@ function useTopicPollActions({
       applyPollResult,
       executeMutation,
       captureConfirmation,
-      authenticatedFetcher,
-      getNodeSeekUserAgent,
       notify,
       runLinuxDoRequest,
-      runNodeSeekRequest,
       runYaohuoRequest,
       selectedTopic,
-      topicDetail
+      topicDetail,
+      writeNodeSeekPoll
     ]
   );
   const lockNodeSeekPoll = useCallback(
@@ -668,49 +769,14 @@ function useTopicPollActions({
           trace,
           isCurrent,
           task: async (ticket) => {
-            const result = await (async () => {
-              try {
-                await runNodeSeekRequest(buildNodeSeekPollLockRequest({ pollId }), trace, ticket, {
-                  notifyFailure: false
-                });
-              } catch (error) {
-                if (
-                  isRawUnauthorized(error) ||
-                  (error instanceof HandledMutationError && (error.serverConfirmed || error.serverRejected))
-                ) {
-                  if (error instanceof HandledMutationError && error.serverRejected) notify(error.message);
-                  throw error;
-                }
-                try {
-                  assertWritableTicket(ticket);
-                  const reconciledPoll = await fetchNodeSeekVoteInfo({
-                    pollId,
-                    fetcher: withDiagnosticFetcher(trace, authenticatedFetcher),
-                    userAgent: getNodeSeekUserAgent()
-                  });
-                  assertWritableTicket(ticket);
-                  if (reconciledPoll.closed) return { confirmedPoll: reconciledPoll, refreshFailed: false };
-                } catch (reconcileError) {
-                  if (isRawUnauthorized(reconcileError)) throw reconcileError;
-                }
-                notify('投票锁定结果未知，请刷新原站确认，切勿重复提交。');
-                throw error;
-              }
-              try {
-                assertWritableTicket(ticket, true);
-                const confirmedPoll = await fetchNodeSeekVoteInfo({
-                  pollId,
-                  fetcher: withDiagnosticFetcher(trace, authenticatedFetcher),
-                  userAgent: getNodeSeekUserAgent()
-                });
-                assertWritableTicket(ticket, true);
-                return { confirmedPoll, refreshFailed: false };
-              } catch (error) {
-                if (error instanceof HandledMutationError && error.reason === 'stale') throw error;
-                hintDiagnosticOutcome(trace, 'partial', { source: 'nodeseek', reason: 'refresh_failed' });
-                return { confirmedPoll: { ...poll, closed: true }, refreshFailed: true };
-              }
-            })();
+            const result = await writeNodeSeekPoll({
+              kind: 'lock',
+              poll,
+              request: buildNodeSeekPollLockRequest({ pollId }),
+              trace,
+              ticket,
+              isCurrent
+            });
             return {
               applyResult: () => {
                 const lockResult = result;
@@ -736,17 +802,14 @@ function useTopicPollActions({
       );
     },
     [
-      assertWritableTicket,
       applyPollResult,
-      authenticatedFetcher,
       decisionFor,
       executeMutation,
       captureConfirmation,
-      getNodeSeekUserAgent,
       notify,
-      runNodeSeekRequest,
       selectedTopic,
-      topicDetail
+      topicDetail,
+      writeNodeSeekPoll
     ]
   );
   return { votePoll, lockNodeSeekPoll };
@@ -754,6 +817,10 @@ function useTopicPollActions({
 
 function useTopicReplyActions({
   active,
+  authenticatedFetcher,
+  linuxDoUserAgent,
+  requestAccountRecheck,
+  showLinuxDoVerification,
   sessionEpochs,
   ensureWritableSession,
   isWritableSessionTicketCurrent,
@@ -782,10 +849,11 @@ function useTopicReplyActions({
   const detail = currentTopicActionTopic(topicDetail, selectedTopic);
   const editOpenScope =
     detail && isSessionSource(detail.source) ? `${topicKey(detail)}:${sessionEpochs[detail.source]}` : '';
-  const pendingEditOpen = useRef<object | null>(null);
+  const pendingEditOpen = useRef<{ controller: AbortController; commentId: number } | null>(null);
   const uncertainReplies = useRef(new Set<string>());
   useLayoutEffect(
     () => () => {
+      pendingEditOpen.current?.controller.abort();
       pendingEditOpen.current = null;
     },
     [active, editOpenScope]
@@ -800,7 +868,8 @@ function useTopicReplyActions({
         notify('主题尚未加载');
         return;
       }
-      if (!reply.commentId) {
+      const { commentId, floor, contentMarkdown: cachedMarkdown } = reply;
+      if (!commentId) {
         notify('当前回复缺少评论 id，刷新主题后再试。');
         return;
       }
@@ -808,7 +877,7 @@ function useTopicReplyActions({
         notify('当前回复不能编辑');
         return;
       }
-      if (!reply.contentMarkdown) {
+      if (!cachedMarkdown && actionTopic.source !== 'linuxdo') {
         notify('当前回复缺少原文，刷新主题后再试。');
         return;
       }
@@ -816,34 +885,82 @@ function useTopicReplyActions({
         notify('当前来源不支持写操作');
         return;
       }
-      const request = {};
+      if (pendingEditOpen.current?.commentId === commentId) return;
+      pendingEditOpen.current?.controller.abort();
+      const request = { commentId, controller: new AbortController() };
       pendingEditOpen.current = request;
       const revision = topicComposer.getDraftRevision();
-      const ownsRequest = () => pendingEditOpen.current === request && topicComposer.getDraftRevision() === revision;
+      const ownsFocus = cachedMarkdown ? undefined : captureConfirmation();
+      const { author, authorId, authorUrl, contentHtml, createdAt } = reply;
+      const cachedReply = cachedMarkdown ? undefined : { author, authorId, authorUrl, contentHtml, createdAt, floor };
+      const ownsRequest = () =>
+        pendingEditOpen.current === request &&
+        !request.controller.signal.aborted &&
+        ownsFocus?.() !== false &&
+        topicComposer.getDraftRevision() === revision;
+      let ticket: WritableSessionTicket | undefined;
       try {
-        const ticket = await ensureWritableSession(actionTopic.source);
+        const checkedTicket = await ensureWritableSession(actionTopic.source);
+        ticket = checkedTicket;
         if (!ownsRequest()) return;
         if (!isWritableSessionTicketCurrent(ticket)) {
           throw new WritableSessionBlockedError('登录状态已变化，请重试', 'stale');
         }
-        openReplyEditor({
-          commentId: reply.commentId,
-          contentMarkdown: reply.contentMarkdown,
-          floor: reply.floor,
-          topicId: actionTopic.id,
-          ticket
-        });
+        const target = { commentId, floor, topicId: actionTopic.id, ticket: checkedTicket };
+        const currentReplyMatches = (contentMarkdown: string | undefined) =>
+          replyEditTargetIsCurrent(
+            { ...target, contentMarkdown, cachedReply },
+            checkedTicket,
+            actionTopic.source,
+            actionTopic.id,
+            queryClient.getQueryData<ReplyCache>(cacheKeys(actionTopic, checkedTicket).repliesKey)
+          );
+        let contentMarkdown = cachedMarkdown;
+        if (!contentMarkdown) {
+          if (!currentReplyMatches(undefined)) throw new Error(STALE_REPLY_EDIT_MESSAGE);
+          contentMarkdown = await loadLinuxDoReplyEditSource({
+            topicId: actionTopic.id,
+            commentId,
+            floor,
+            signal: request.controller.signal,
+            userAgent: linuxDoUserAgent(),
+            fetcher: withRequestBeforeSend(authenticatedFetcher, () => {
+              if (!ownsRequest() || !isWritableSessionTicketCurrent(checkedTicket))
+                throw new WritableSessionBlockedError('编辑读取已失效', 'stale');
+              if (!currentReplyMatches(undefined)) throw new Error(STALE_REPLY_EDIT_MESSAGE);
+            })
+          });
+        }
+        if (!ownsRequest() || !isWritableSessionTicketCurrent(ticket)) return;
+        if (cachedReply && !currentReplyMatches(contentMarkdown)) throw new Error(STALE_REPLY_EDIT_MESSAGE);
+        openReplyEditor({ ...target, contentMarkdown, ...(cachedReply ? { cachedReply } : {}) });
       } catch (error) {
-        if (ownsRequest()) notify(errorMessage(error));
+        if (!ownsRequest()) return;
+        if (ticket?.source === 'linuxdo' && isWritableSessionTicketCurrent(ticket)) {
+          if (error instanceof LinuxDoCloudflareError || isLoginRequiredError(error)) {
+            showLinuxDoVerification(errorMessage(error));
+            return;
+          }
+          if (isRawUnauthorized(error) || errorRequiresAccountRecheck(error))
+            requestAccountRecheck('linuxdo', ticket.sessionEpoch);
+        }
+        notify(errorMessage(error));
       } finally {
         if (pendingEditOpen.current === request) pendingEditOpen.current = null;
       }
     },
     [
       active,
+      authenticatedFetcher,
+      cacheKeys,
+      captureConfirmation,
+      linuxDoUserAgent,
+      requestAccountRecheck,
+      showLinuxDoVerification,
       ensureWritableSession,
       isWritableSessionTicketCurrent,
       notify,
+      queryClient,
       selectedTopic,
       openReplyEditor,
       topicComposer,
@@ -1160,9 +1277,18 @@ function useTopicReplyActions({
               { beforeSend, replyDelivery }
             );
           };
-          let result: unknown;
+          let receipt: ReplyWriteReceipt;
           try {
-            result = await send();
+            const result = await send();
+            receipt = isNodeSeekActionTopic(actionTopic)
+              ? nodeSeekReplyReceipt(result, actionTopic.id)
+              : discourseReply
+                ? discourseReplyReceipt(result, actionTopic.id)
+                : { kind: 'confirmed' };
+            if (receipt.kind === 'rejected') {
+              throw new HandledMutationError(receipt.message, 'failure', 'invalid_response', false, true);
+            }
+            if (receipt.kind === 'unconfirmed') throw new Error(receipt.message);
             uncertainReplies.current.delete(key);
           } catch (error) {
             if (replyDeliveryIsUnconfirmed(replyDelivery, error)) {
@@ -1175,6 +1301,13 @@ function useTopicReplyActions({
               notify(error.message);
             throw error;
           }
+          if (receipt.kind === 'enqueued') {
+            return {
+              applyResult: ({ ticket }) => settleReply(ticket),
+              successMessage: receipt.message
+            };
+          }
+          const createdTarget = receipt.target;
           return {
             applyResult: async ({ detailKey, replyKeys, ticket }) => {
               if (!discourseReply) await settleReply(ticket);
@@ -1187,11 +1320,7 @@ function useTopicReplyActions({
             afterSuccess: async ({ ticket }) => {
               const refresh = refreshRepliesAfterWrite(actionTopic as TopicDetail, trace, {
                 kind: 'created',
-                createdTarget: isNodeSeekActionTopic(actionTopic)
-                  ? nodeSeekCreatedReplyTarget(result, actionTopic.id)
-                  : discourseReply
-                    ? discourseCreatedReplyTarget(result, actionTopic.id)
-                    : undefined,
+                createdTarget,
                 silent: true
               });
               if (!discourseReply) return refresh;
@@ -1429,7 +1558,12 @@ export function useTopicActionsController({
     (ticket: WritableSessionTicket) => writableTicketCurrentRef.current(ticket),
     [writableTicketCurrentRef]
   );
-  const authenticatedFetcher = useMemo(() => rejectUnauthorizedResponse(fetcher), [fetcher]);
+  const detail = currentTopicActionTopic(topicDetail, selectedTopic);
+  const actionSource = detail?.source;
+  const authenticatedFetcher = useMemo(
+    () => (actionSource ? rejectUnauthorizedResponse(actionSource, fetcher) : fetcher),
+    [actionSource, fetcher]
+  );
   const reportAccountError = useCallback(
     (error: unknown, ticket: WritableSessionTicket | undefined, trace: DiagnosticTrace) => {
       if (!ticket || !activeRef.current || !writableTicketCurrentRef.current(ticket)) return;
@@ -1444,7 +1578,6 @@ export function useTopicActionsController({
   const stardustPayer = siteSessionIdentityKey(siteSessionViewModels.nodeseek);
   const detachReplyEdit = topicComposer.detachEdit;
 
-  const detail = currentTopicActionTopic(topicDetail, selectedTopic);
   const confirmationSource = detail && isSessionSource(detail.source) ? detail.source : undefined;
   const confirmationSession = confirmationSource ? siteSessionViewModels[confirmationSource] : undefined;
   const confirmationIdentity = confirmationSession?.canWrite ? siteSessionIdentityKey(confirmationSession) : undefined;
@@ -1478,15 +1611,31 @@ export function useTopicActionsController({
 
   const policyScope = `${detail?.source}:${detail?.id}:${sessionEpochs.linuxdo}:${siteSessionViewModels.linuxdo.currentUser?.id}`;
   const policyScopeRef = useCommittedRef(policyScope);
-  const [policyState, setPolicyState] = useState<PolicyOperationSnapshot>({ request: null, submissions: {} });
+  const policyIdentityKey = siteSessionIdentityKey(siteSessionViewModels.linuxdo);
+  const policyAccount = useMemo(
+    () => ({ identityKey: policyIdentityKey, sessionEpoch: sessionEpochs.linuxdo }),
+    [policyIdentityKey, sessionEpochs.linuxdo]
+  );
+  const [policyRequest, setPolicyRequest] = useState<PolicyOperationSnapshot>(null);
   const [policies] = useState(() =>
     createDiscoursePolicyOperation({
       isCurrentScope: (scope) => policyScopeRef.current === scope,
-      publish: setPolicyState
+      publish: setPolicyRequest
     })
   );
-  const policyBusy = policyRequestBusy(policyState.request);
-  const policySubmissions = policyState.submissions;
+  const policyBusy = policyRequestBusy(policyRequest);
+  const policyState = useDiscoursePolicyState(detail?.source === 'linuxdo' ? policyAccount : undefined);
+  const policySubmissions = useMemo(
+    () =>
+      Object.fromEntries(
+        [topicDetail?.policy, ...topicReplies.map((reply) => reply.policy)].flatMap((policy) => {
+          if (!policy) return [];
+          const blocker = selectDiscoursePolicyWriteBlock(policyState, policy);
+          return blocker ? [[policy.postId, blocker] as const] : [];
+        })
+      ),
+    [policyState, topicDetail?.policy, topicReplies]
+  );
   const [boostComposer, setBoostComposer] = useState<{ postId: number; content: string } | null>(null);
   const boostDraftsRef = useRef(new Map<number, string>());
   useLayoutEffect(() => {
@@ -1500,9 +1649,6 @@ export function useTopicActionsController({
     policies.cancel();
     return policies.cancel;
   }, [active, policyScope, siteSessionViewModels.linuxdo.canWrite, policies]);
-  useLayoutEffect(() => {
-    policies.observe(policyScope, [topicDetail?.policy, ...topicReplies.map((reply) => reply.policy)]);
-  }, [policyScope, topicDetail, topicReplies, policies]);
   const mutationSource = detail?.source || 'nodeseek';
   const mutationTopicId = detail?.id || 'global';
   const mutationKey = useMemo(
@@ -1523,7 +1669,9 @@ export function useTopicActionsController({
         objectAllowed ??= Boolean(request.reply?.canEdit) || Boolean(actionTopic);
       } else if (request.action === 'edit') {
         objectAllowed ??= request.reply?.canEdit === true;
-        targetPresent ??= Boolean(request.reply?.commentId && request.reply.contentMarkdown);
+        targetPresent ??= Boolean(
+          request.reply?.commentId && (request.reply.contentMarkdown || actionTopic?.source === 'linuxdo')
+        );
       } else if (request.action === 'delete') {
         objectAllowed ??= request.reply?.canDelete === true;
         targetPresent ??= Boolean(request.reply?.commentId || request.reply?.deletePath || request.reply?.floor);
@@ -1736,7 +1884,7 @@ export function useTopicActionsController({
   }, [decisionForRef]);
 
   const cacheKeys = useCallback(
-    (actionTopic: TopicDetail, ticket?: WritableSessionTicket, quotedFloor?: number): ActionCacheKeys => {
+    (actionTopic: Topic, ticket?: WritableSessionTicket, quotedFloor?: number): ActionCacheKeys => {
       const scope = ticket
         ? { ...sessionEpochsRef.current, [ticket.source]: ticket.sessionEpoch }
         : sessionEpochsRef.current;
@@ -1961,7 +2109,7 @@ export function useTopicActionsController({
       request: NodeSeekActionRequest,
       trace: DiagnosticTrace,
       ticket: WritableSessionTicket,
-      { beforeSend, notifyFailure = true, pollCreation, replyDelivery }: NodeSeekRequestOptions = {}
+      { beforeSend, dispatchState, notifyFailure = true, pollCreation, replyDelivery }: NodeSeekRequestOptions = {}
     ) => {
       assertWritableTicket(ticket);
       markDiagnosticStage(trace, 'credential', {
@@ -1979,15 +2127,20 @@ export function useTopicActionsController({
               assertWritableTicket(ticket);
               beforeSend?.();
             },
-            pollCreation?.dispatchState ?? replyDelivery?.dispatchState
+            pollCreation?.dispatchState ?? replyDelivery?.dispatchState ?? dispatchState
           ),
           request,
           userAgent: getNodeSeekUserAgent()
         });
         // The remote object belongs to the captured account even if the UI ticket changed during the request.
         if (pollCreation) await pollCreation.persistResult(result);
-        markDiagnosticStage(trace, 'transport', { source: 'nodeseek', state: 'confirmed', serverConfirmed: true });
-        assertWritableTicket(ticket, true);
+        const serverConfirmed = (!dispatchState && !replyDelivery) || isConfirmedNodeSeekAction(result);
+        markDiagnosticStage(trace, 'transport', {
+          source: 'nodeseek',
+          state: serverConfirmed ? 'confirmed' : 'body-ready',
+          ...(serverConfirmed ? { serverConfirmed: true } : {})
+        });
+        assertWritableTicket(ticket, serverConfirmed);
         return result;
       } catch (error) {
         if (error instanceof HandledMutationError) throw error;
@@ -2143,13 +2296,16 @@ export function useTopicActionsController({
           request: buildDiscourseActionRequest(action),
           userAgent: linuxDoUserAgent()
         });
-        const hasPostResult = ['toggle-reaction', 'set-like', 'create-boost'].includes(action.type);
+        const receipt = action.type === 'reply' ? discourseReplyReceipt(result, String(action.topicId)) : undefined;
+        const serverConfirmed = receipt
+          ? receipt.kind === 'confirmed' || receipt.kind === 'enqueued'
+          : !['toggle-reaction', 'set-like', 'create-boost'].includes(action.type);
         markDiagnosticStage(trace, 'transport', {
           source: 'linuxdo',
-          state: hasPostResult ? 'body-ready' : 'confirmed',
-          ...(hasPostResult ? {} : { serverConfirmed: true })
+          state: serverConfirmed ? 'confirmed' : 'body-ready',
+          ...(serverConfirmed ? { serverConfirmed: true } : {})
         });
-        assertWritableTicket(ticket, true);
+        assertWritableTicket(ticket, receipt ? serverConfirmed : true);
         return result ?? true;
       } catch (error) {
         if (error instanceof HandledMutationError) throw error;
@@ -3098,24 +3254,25 @@ export function useTopicActionsController({
             throw new HandledMutationError('已取消付款', 'canceled', 'canceled');
           }
           beforeSend();
+          const dispatchState: RequestDispatchState = { mayHaveSent: false };
           try {
             const sendResult = await runNodeSeekRequest(sendRequest, trace, ticket, {
               beforeSend,
+              dispatchState,
               notifyFailure: false
             });
-            if (
-              !sendResult ||
-              typeof sendResult !== 'object' ||
-              Array.isArray(sendResult) ||
-              (sendResult as { success?: unknown }).success !== true
-            ) {
+            if (!isConfirmedNodeSeekAction(sendResult)) {
               throw new Error('NodeSeek 返回内容格式不正确');
             }
           } catch (error) {
             if (isRawUnauthorized(error)) throw error;
             if (error instanceof HandledMutationError && error.outcome === 'canceled') throw error;
-            if (error instanceof HandledMutationError && error.serverRejected) {
-              notify(error.message);
+            if (error instanceof HandledMutationError && error.serverConfirmed) {
+              outcome = 'submitted';
+              throw error;
+            }
+            if (!dispatchState.mayHaveSent || (error instanceof HandledMutationError && error.serverRejected)) {
+              if (!(error instanceof HandledMutationError) || error.outcome === 'failure') notify(errorMessage(error));
               throw error;
             }
             outcome = 'unknown';
@@ -3276,8 +3433,7 @@ export function useTopicActionsController({
       if (!activeRef.current || actionTopic?.source !== 'linuxdo' || policies.hasRequest()) return;
       const scope = policyScope;
       if (scope !== policyScopeRef.current) return;
-      const submitted = policies.submitted(scope, policy);
-      if (submitted?.scope === scope && submitted.postId === policy.postId && submitted.version === policy.version) {
+      if (readDiscoursePolicyWriteBlock(queryClient, policyAccount, policy)) {
         notify('操作已提交，请刷新公告核对阅读状态');
         return;
       }
@@ -3290,7 +3446,7 @@ export function useTopicActionsController({
         notify(topicActionDecisionMessage(decision));
         return;
       }
-      const run = policies.claim({ scope, policy, accepted, busyDuringConfirmation: true });
+      const run = policies.claim({ scope, busyDuringConfirmation: true });
       if (!run) return;
       const controller = run.controller;
       const isCurrent = () =>
@@ -3299,6 +3455,9 @@ export function useTopicActionsController({
         if (!isCurrent()) throw new HandledMutationError('操作已取消', 'canceled', 'canceled');
         assertWritableTicket(ticket);
         if (!beforeSend) return;
+        if (readDiscoursePolicyWriteBlock(queryClient, ticket, policy)) {
+          throw new HandledMutationError('操作已提交，请刷新公告核对阅读状态', 'blocked', 'permission_denied');
+        }
         const current = [
           policyContentRef.current.topicDetail?.policy,
           ...policyContentRef.current.topicReplies.map((reply) => reply.policy)
@@ -3357,8 +3516,11 @@ export function useTopicActionsController({
                 notify(message);
                 throw new HandledMutationError(message, 'failure', 'invalid_response');
               }
-              policies.confirmed(run);
-              await result;
+              recordDiscoursePolicyReceipt(queryClient, ticket, {
+                postId: policy.postId,
+                version: policy.version,
+                accepted
+              });
               return {
                 afterSuccess: async () => {
                   if (!isCurrent()) return false;
@@ -3401,9 +3563,11 @@ export function useTopicActionsController({
       executeMutation,
       linuxDoUserAgent,
       notify,
+      policyAccount,
       policyContentRef,
       policyScope,
       policyScopeRef,
+      queryClient,
       refreshWholeTopicRef,
       selectedTopic,
       showLinuxDoVerification,
@@ -3414,6 +3578,10 @@ export function useTopicActionsController({
 
   const { editReply, submitReply, deleteReply } = useTopicReplyActions({
     active,
+    authenticatedFetcher,
+    linuxDoUserAgent,
+    requestAccountRecheck,
+    showLinuxDoVerification,
     sessionEpochs,
     ensureWritableSession,
     isWritableSessionTicketCurrent: currentWritableTicket,

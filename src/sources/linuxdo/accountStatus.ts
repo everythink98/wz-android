@@ -1,4 +1,4 @@
-import { getCurrentUserIdentity } from '@/sources/readGateway';
+import { getCurrentUserIdentity } from '@/sources/sourceRead';
 import type { UserIdentity } from '@/domain/forum/models';
 import { LinuxDoLoggedOutError } from './account';
 import { summarizeLinuxDoCookieHeader } from './session';

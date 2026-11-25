@@ -29,7 +29,6 @@ import {
 } from '@/platform/diagnostics/diagnosticPolicy';
 import type { NotificationAdapter, NotificationAdapterAccess } from './notificationAdapter';
 import { errorRequiresAccountRecheck, sourceErrorFromUnknown } from './sourceErrors';
-import { forumResponseAccountFailure } from './sessionFailure';
 import { notificationAdapters } from './notificationAdapters';
 import type { NormalizedReplyImageAsset } from './imageUpload';
 import { replyImageMarkupForSource } from './imageUpload';
@@ -104,6 +103,17 @@ type NotificationOperation =
   | 'notification-templates'
   | 'notification-template-use';
 
+const notificationReadOperations = new Set<NotificationOperation>([
+  'image-load',
+  'notification-list',
+  'notification-categories',
+  'notification-unread',
+  'notification-detail',
+  'notification-history',
+  'notification-poll-capabilities',
+  'notification-templates'
+]);
+
 const blockedNotificationReasons = {
   'login-required': 'login_required',
   'login-expired': 'login_required',
@@ -125,6 +135,7 @@ export function createNotificationGateway({
   adapters = notificationAdapters,
   onSessionExpired,
   privateAccessAllowed,
+  privateWriteAllowed = privateAccessAllowed,
   readAccess,
   requestAccountRecheck,
   requestSessionEpoch,
@@ -133,6 +144,7 @@ export function createNotificationGateway({
   adapters?: Record<NotificationSource, NotificationAdapter>;
   onSessionExpired?: (source: NotificationSource, requestSessionEpoch: number) => void;
   privateAccessAllowed: NotificationPrivateAccessAllowed;
+  privateWriteAllowed?: NotificationPrivateAccessAllowed;
   readAccess: NotificationAccessReader;
   requestAccountRecheck?: RequestAccountRecheck;
   requestSessionEpoch?: (source: NotificationSource) => number;
@@ -153,11 +165,12 @@ export function createNotificationGateway({
   ) => {
     const trace = beginDiagnosticTrace('source', operation, { source, parentTraceId: parentTrace?.traceId });
     const requestEpoch = expectedSessionEpoch ?? currentEpoch(source);
+    const accessAllowed = notificationReadOperations.has(operation) ? privateAccessAllowed : privateWriteAllowed;
     let identityKey = expectedIdentityKey;
     const assertCurrent = () => {
       assertNotAborted(signal);
       if (!sourceAllowed(source)) throw Object.assign(new Error('内容源已停用'), { reason: 'source-disabled', source });
-      if (currentEpoch(source) !== requestEpoch || (identityKey && !privateAccessAllowed(source, identityKey)))
+      if (currentEpoch(source) !== requestEpoch || (identityKey && !accessAllowed(source, identityKey)))
         throw staleNotificationAccess(source);
     };
     try {
@@ -166,28 +179,26 @@ export function createNotificationGateway({
       if (expectedIdentityKey && access.identityKey !== expectedIdentityKey) throw staleNotificationAccess(source);
       identityKey = access.identityKey;
       assertCurrent();
-      const transport = access.fetcher || fetch;
+      const authenticatedTransport = rejectUnauthorizedResponse(source, access.fetcher || fetch);
       let accountRecheck: Promise<boolean | void> | undefined;
       const linuxDoTransport: Fetcher = async (input, init) => {
-        const response = await transport(input, init);
-        if ((await forumResponseAccountFailure(source, input, response, signal)) !== 'http-401') return response;
-        assertCurrent();
-        accountRecheck ??= Promise.resolve(requestAccountRecheck?.(source, requestEpoch, trace.traceId));
-        if (/^(GET|HEAD)$/i.test(init?.method ?? 'GET') && (await accountRecheck)) {
+        try {
+          return await authenticatedTransport(input, init);
+        } catch (error) {
+          if (sourceErrorFromUnknown(source, error).reason !== 'http-401') throw error;
           assertCurrent();
-          return transport(input, init);
+          accountRecheck ??= Promise.resolve(requestAccountRecheck?.(source, requestEpoch, trace.traceId));
+          if (/^(GET|HEAD)$/i.test(init?.method ?? 'GET') && (await accountRecheck)) {
+            assertCurrent();
+            return authenticatedTransport(input, init);
+          }
+          throw error;
         }
-        return response;
       };
       const fetcher = withFetchGuard(
         withDiagnosticFetcher(
           trace,
-          withRequestBeforeSend(
-            source === 'nodeseek' && operation === 'notification-upload'
-              ? transport
-              : rejectUnauthorizedResponse(source === 'linuxdo' ? linuxDoTransport : transport, source === 'linuxdo'),
-            assertCurrent
-          )
+          withRequestBeforeSend(source === 'linuxdo' ? linuxDoTransport : authenticatedTransport, assertCurrent)
         ),
         assertCurrent
       );
@@ -407,7 +418,8 @@ export function createNotificationGateway({
       policy: DiscoursePostPolicy,
       accepted: boolean,
       expectedIdentityKey: string,
-      signal?: AbortSignal
+      signal?: AbortSignal,
+      assertPolicyCurrent?: () => void
     ) {
       return runWithAccess(
         item.source,
@@ -421,7 +433,12 @@ export function createNotificationGateway({
           ) {
             throw new Error('公告帖子信息不匹配，请重新打开公告');
           }
-          return setLinuxDoPolicyAcceptance({ ...access, policy, accepted });
+          return setLinuxDoPolicyAcceptance({
+            ...access,
+            policy,
+            accepted,
+            fetcher: assertPolicyCurrent ? withRequestBeforeSend(access.fetcher, assertPolicyCurrent) : access.fetcher
+          });
         },
         (result) => ({ isConfirmed: result.confirmed })
       );

@@ -4,6 +4,7 @@ import com.facebook.react.bridge.BridgeReactContext
 import com.facebook.react.internal.featureflags.ReactNativeFeatureFlagsForTests
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ForumPlatformPackageTest {
@@ -12,14 +13,17 @@ class ForumPlatformPackageTest {
     ReactNativeFeatureFlagsForTests.setUp()
     val context = BridgeReactContext(android.content.ContextWrapper(null))
     assertEquals(
-      listOf("WzPreviewRegionImage", "WzComposerKeyboardHost", "WzSearchHistoryIcon"),
+      listOf("WzPreviewRegionImage", "WzComposerKeyboardHost", "WzSearchHistoryIcon", "WzSearchHistoryFrame"),
       ForumPlatformPackage().createViewManagers(context).map { it.getName() },
     )
   }
 
   @Test
   fun exposesEachExistingBridgeOnceWithoutEagerInitialization() {
-    val modules = ForumPlatformPackage().getReactModuleInfoProvider().getReactModuleInfos()
+    ReactNativeFeatureFlagsForTests.setUp()
+    val context = BridgeReactContext(android.content.ContextWrapper(null))
+    val platform = ForumPlatformPackage()
+    val modules = platform.getReactModuleInfoProvider().getReactModuleInfos()
     assertEquals(
       setOf("ApkInstallerModule", "ForumSearchCustomTabModule", "SecureRandomModule", "NotificationDigestModule"),
       modules.keys,
@@ -31,7 +35,14 @@ class ForumPlatformPackageTest {
       assertFalse(info.canOverrideExistingModule)
       assertFalse(info.isCxxModule)
       assertFalse(info.isTurboModule)
+      val module = requireNotNull(platform.getModule(name, context))
+      try {
+        assertEquals(name, module.name)
+        assertEquals(info.className, module.javaClass.name)
+      } finally {
+        module.invalidate()
+      }
     }
-    assertEquals("WzPreviewRegionImage", PreviewRegionImageViewManager().getName())
+    assertNull(platform.getModule("unregistered", context))
   }
 }

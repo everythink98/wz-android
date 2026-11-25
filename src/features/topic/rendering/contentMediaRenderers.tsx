@@ -460,6 +460,7 @@ export function createContentMediaRenderers({
         boundarySpacing={boundarySpacing}
         mediaContext={mediaContext}
         nodeSeekMediaUserAgent={nodeSeekMediaUserAgent}
+        poster={attributes.poster}
         referrerPolicy={referrerPolicy}
         src={src}
         theme={theme}

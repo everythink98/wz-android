@@ -189,4 +189,67 @@ describe('linux.do search', () => {
       expect(fetcher.mock.calls[0]![0]).toBe('https://linux.do/session/csrf.json');
     }
   });
+
+  it('extracts raw search blurb HTML once while keeping already-normalized topic excerpts and plain titles un-decoded', async () => {
+    const fetcher = vi.fn(async (input: string) =>
+      input.endsWith('/session/csrf.json')
+        ? Response.json({ csrf: 'blurb-token' })
+        : Response.json({
+            topics: [
+              {
+                id: 501,
+                slug: 'blurb-topic',
+                title: 'Plain &copy; &amp; &#128; title',
+                created_at: '2026-08-15T00:00:00.000Z',
+                posts_count: 1,
+                excerpt: '<p>ignored fallback</p>'
+              },
+              {
+                id: 502,
+                slug: 'excerpt-fallback-topic',
+                fancy_title: '&#128; &#0; &#x1F600 &Lt; &Gt; &unknownref; &amp;copy;',
+                created_at: '2026-08-15T00:00:00.000Z',
+                posts_count: 1,
+                excerpt: '<p>&amp;copy; &amp;lt;tag&amp;gt; &#128; &#x1F600 &Lt; &Gt; &unknownref;</p>'
+              }
+            ],
+            posts: [
+              {
+                topic_id: 501,
+                blurb: '<span class="search-highlight">&amp;copy;</span> &#128; &#0; &#x1F600 &Lt; &Gt; &unknownref;'
+              }
+            ],
+            users: [],
+            grouped_search_result: { more_full_page_results: false }
+          })
+    );
+
+    const result = await searchLinuxDo('copy', {
+      fetcher,
+      limit: 30,
+      linuxDoAccess: { authenticated: true, userAgent: 'LinuxDo WebView UA' }
+    });
+
+    expect(result.items[0]).toMatchObject({
+      id: '501',
+      title: 'Plain &copy; &amp; &#128; title',
+      excerpt: '&copy; € \uFFFD 😀 ≪ ≫ &unknownref;'
+    });
+    expect(result.items[1]).toMatchObject({
+      id: '502',
+      title: '€ \uFFFD 😀 ≪ ≫ &unknownref; &copy;',
+      excerpt: '&copy; &lt;tag&gt; € 😀 ≪ ≫ &unknownref;'
+    });
+  });
+
+  it('decodes data-preloaded attribute JSON once without double-decoding embedded HTML entity text', async () => {
+    const { linuxDoPreloadedData } = await import('./preloadedData');
+    const encodedPayload = JSON.stringify({
+      topic: JSON.stringify({ title: 'Literal &copy; &amp;copy; title' })
+    })
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;');
+    const parsed = linuxDoPreloadedData(`<div id="data-preloaded" data-preloaded="${encodedPayload}"></div>`);
+    expect(JSON.parse(String(parsed.topic))).toEqual({ title: 'Literal &copy; &amp;copy; title' });
+  });
 });

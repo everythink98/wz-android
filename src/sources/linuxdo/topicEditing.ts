@@ -3,14 +3,14 @@ import { collectForumReadResponses } from '@/sources/forumSourceReadAttempt';
 import {
   type TopicDraft,
   type TopicTag,
+  hasLinuxDoTopicMetadataConflict,
   topicEditChanges,
-  sameTopicField,
   validateTopicEdit,
   type TopicEditContext,
   type TopicEditableFields,
   type TopicEditResult
 } from '@/domain/forum/topicComposer';
-import type { Fetcher } from '@/platform/network/request';
+import { withRequestBeforeSend, type Fetcher, type RequestDispatchState } from '@/platform/network/request';
 import { LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
 import { runLinuxDoAction } from './actionClient';
 import { loadLinuxDoTopicCreationContext } from './topicCreation';
@@ -18,13 +18,7 @@ import { loadLinuxDoTopicCreationContext } from './topicCreation';
 type Options = { fetcher: Fetcher; userAgent: string; signal?: AbortSignal };
 type TopicEditSaveState = {
   confirmed: Partial<TopicEditableFields>;
-} & (
-  | { kind: 'preparing' }
-  | { kind: 'sent' }
-  | { kind: 'checkpointing' }
-  | { kind: 'checkpointed' }
-  | { kind: 'checkpoint-failed' }
-);
+} & ({ kind: 'preparing' } | { kind: 'checkpointing' } | { kind: 'checkpointed' } | { kind: 'checkpoint-failed' });
 function tags(value: unknown): TopicTag[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((tag) =>
@@ -102,25 +96,22 @@ export async function editLinuxDoTopic(
   const { draft, context, checkpoint } = options;
   if (draft.source !== 'linuxdo' || !draft.edit?.postId || context.postId !== draft.edit.postId)
     throw new Error('linux.do 首帖身份不正确');
+  const changes = topicEditChanges(draft);
+  if (hasLinuxDoTopicMetadataConflict(draft, context))
+    return { status: 'conflict', message: '原站分类或标签已变化，请核对最新内容', latest: context.original };
   const errors = validateTopicEdit(draft, context);
   if (Object.keys(errors).length) return { status: 'rejected', message: Object.values(errors).join('；') };
-  const changes = topicEditChanges(draft);
-  if (
-    (['categoryId', 'tags'] as const).some(
-      (field) => changes[field] !== undefined && !sameTopicField(draft.edit!.original[field], context.original[field])
-    )
-  )
-    return { status: 'conflict', message: '原站分类或标签已变化，请核对最新内容', latest: context.original };
   const save: { state: TopicEditSaveState } = { state: { kind: 'preparing', confirmed: {} } };
-  const request = async (path: string, payload: Record<string, unknown>) =>
-    runLinuxDoAction({
+  let dispatch: RequestDispatchState = { mayHaveSent: false };
+  const request = async (path: string, payload: Record<string, unknown>) => {
+    dispatch = { mayHaveSent: false };
+    const sendWithReceipt = withRequestBeforeSend(options.fetcher, () => undefined, dispatch);
+    return runLinuxDoAction({
       ...options,
-      fetcher: (url, init) => {
-        if (init?.method === 'PUT') save.state = { kind: 'sent', confirmed: save.state.confirmed };
-        return options.fetcher(url, init);
-      },
+      fetcher: (url, init) => (init?.method === 'PUT' ? sendWithReceipt : options.fetcher)(url, init),
       request: { path, method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
     });
+  };
   const record = async (fields: Partial<TopicEditableFields>) => {
     const confirmed = { ...save.state.confirmed, ...fields };
     save.state = { kind: 'checkpointing', confirmed };
@@ -172,7 +163,7 @@ export async function editLinuxDoTopic(
     const status = isRecord(error) ? Number(error.status) : 0;
     const { confirmed } = save.state;
     if (error instanceof LinuxDoCloudflareError) {
-      const uncertain = save.state.kind === 'sent' && status !== 403;
+      const uncertain = dispatch.mayHaveSent && status !== 403;
       return {
         status: uncertain ? 'unknown' : Object.keys(confirmed).length ? 'partial' : 'rejected',
         message: uncertain ? `${error.message}；保存结果未知，请到原站核对` : error.message,
@@ -182,7 +173,7 @@ export async function editLinuxDoTopic(
     }
     const known =
       save.state.kind !== 'checkpoint-failed' &&
-      (save.state.kind === 'preparing' || [400, 401, 403, 404, 409, 422, 429].includes(status));
+      (!dispatch.mayHaveSent || [400, 401, 403, 404, 409, 422, 429].includes(status));
     const message = error instanceof Error ? error.message : '保存失败';
     return {
       status: !known ? 'unknown' : Object.keys(confirmed).length ? 'partial' : status === 409 ? 'conflict' : 'rejected',

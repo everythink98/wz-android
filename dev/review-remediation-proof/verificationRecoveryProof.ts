@@ -5,7 +5,8 @@ import * as SecureStore from 'expo-secure-store';
 import type { WebViewMessageEvent } from 'react-native-webview';
 import { useVerificationController } from '@/features/account/useVerificationController';
 import { useLocalIdentityRestore } from '@/features/account/useLocalIdentityRestore';
-import type { AccountReconcileResult, LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
+import type { AccountReconcileResult } from '@/domain/session/sessionContracts';
+import type { ReadRecovery } from '@/platform/query/readRecovery';
 import type { ManagedCookieNativeModule } from '@/platform/network/managedCookies';
 import { check } from '../proofCheck';
 
@@ -93,7 +94,7 @@ export async function verifyRecoveryProof(
   const get = await host.hook(function useValue() {
     return useRecoveryProbe(control);
   });
-  const recovery = (): LinuxDoReadRecovery => ({
+  const recovery = (): ReadRecovery => ({
     queryKey: ['device-proof', mode],
     isCurrent: () => control.active,
     resume: async () => {

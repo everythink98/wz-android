@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { useSearchCandidateQueries } from '@/features/search/DiscourseFilterPickers';
 import { useSearchController } from '@/features/search/useSearchController';
-import type { AccountReconcileResult, LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
+import type { AccountReconcileResult } from '@/domain/session/sessionContracts';
+import type { ReadRecovery } from '@/platform/query/readRecovery';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { DEFAULT_SEARCH_FILTERS, type SearchFilterState } from '@/domain/forum/searchFilters';
 import { createSiteSessionStates } from '@/domain/session/siteSessionState';
@@ -157,7 +158,7 @@ async function reconcileSameIdentity(source: SessionSource): Promise<AccountReco
 function renderSearchController(
   readGateway: ReadGateway,
   notify = jest.fn<(message: string) => void>(),
-  showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
+  showLinuxDoVerification = jest.fn<(message?: string, recovery?: ReadRecovery) => void>(),
   getSessionEpochs: () => ForumSessionEpochs = () => initialForumSessionEpochs,
   sessionViewModels: SiteSessionViewModels = loggedInSessions,
   showNodeSeekVerification = jest.fn<(message?: string) => void>(),
@@ -278,7 +279,7 @@ describe('linux.do AI search controller', () => {
           onOpenExternalSearch,
           reconcileIdentityStatus: reconcileSameIdentity,
           sessionViewModels: projectTestAccountSessions(createSiteSessionStates()),
-          showLinuxDoVerification: jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
+          showLinuxDoVerification: jest.fn<(message?: string, recovery?: ReadRecovery) => void>(),
           showNodeSeekVerification: jest.fn(),
           showYaohuoLogin: jest.fn(),
           readGateway
@@ -496,7 +497,7 @@ describe('linux.do AI search controller', () => {
         nextPage: null
       })
       .mockImplementation(async () => restartedSearch.promise);
-    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: ReadRecovery) => void>();
     const readGateway = createGateway({ searchTopics });
     let sessionViewModels = loggedInSessions;
     appQueryClient.clear();
@@ -524,7 +525,7 @@ describe('linux.do AI search controller', () => {
       await hook.result.current.runSearch({ query: 'codex', source: 'linuxdo' });
     });
     await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
-    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as ReadRecovery;
 
     sessionViewModels = projectTestAccountSessions(
       createSiteSessionStates({
@@ -552,7 +553,7 @@ describe('linux.do AI search controller', () => {
       requestSignal = options.signal;
       return pendingSearch.promise;
     });
-    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: ReadRecovery) => void>();
     const showNodeSeekVerification = jest.fn<(message?: string) => void>();
     const showYaohuoLogin = jest.fn<(message?: string) => void>();
     const readGateway = createGateway({ searchTopics });
@@ -643,7 +644,7 @@ describe('linux.do AI search controller', () => {
           reconcileIdentityStatus: reconcileSameIdentity,
           active: true,
           sessionViewModels: loggedInSessions,
-          showLinuxDoVerification: jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
+          showLinuxDoVerification: jest.fn<(message?: string, recovery?: ReadRecovery) => void>(),
           showNodeSeekVerification: jest.fn<(message?: string) => void>(),
           showYaohuoLogin: jest.fn<(message?: string) => void>(),
           readGateway
@@ -770,7 +771,7 @@ describe('linux.do AI search controller', () => {
     });
 
     await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
-    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as ReadRecovery;
     expect(recovery.queryKey.slice(0, 3)).toEqual(['forum', 'linuxdo', 'search']);
     await act(async () => {
       const filter = hook.result.current.searchFilters.linuxdo;
@@ -799,7 +800,7 @@ describe('linux.do AI search controller', () => {
   });
 
   it('reports an ordinary search recovery failure instead of completed', async () => {
-    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: ReadRecovery) => void>();
     const searchTopics = jest
       .fn<ReadGateway['searchTopics']>()
       .mockResolvedValueOnce({
@@ -864,7 +865,7 @@ describe('linux.do AI search controller', () => {
       title: '第二页结果',
       url: 'https://linux.do/t/2'
     };
-    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: ReadRecovery) => void>();
     const searchTopics = jest
       .fn<ReadGateway['searchTopics']>()
       .mockResolvedValueOnce({
@@ -917,7 +918,7 @@ describe('linux.do AI search controller', () => {
     });
 
     await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
-    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as ReadRecovery;
     expect(recovery).toBeDefined();
 
     expect(hook.result.current.searchGroups[0]).toMatchObject({
@@ -938,7 +939,7 @@ describe('linux.do AI search controller', () => {
   });
 
   it('does not auto-open login or verification panels for aggregated search', async () => {
-    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: ReadRecovery) => void>();
     const showNodeSeekVerification = jest.fn<(message?: string) => void>();
     const showYaohuoLogin = jest.fn<(message?: string) => void>();
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ source }) => {
@@ -2513,7 +2514,9 @@ describe('linux.do AI search controller', () => {
     );
   });
 
-  it('retries a NodeSeek verification failure on the same pagination page', async () => {
+  it.each([false, true])('retries the original NodeSeek page across an auth handoff: %s', async (useAuthHandoff) => {
+    let authSurfaceOpen = false;
+    let foregroundReadDuringHandoff = false;
     const nodeSeekTopic: Topic = {
       ...standardTopic,
       source: 'nodeseek',
@@ -2562,11 +2565,24 @@ describe('linux.do AI search controller', () => {
         hasMore: false,
         nextPage: null
       });
-    const onVerificationRequired = jest.fn<(message: string, recovery: LinuxDoReadRecovery) => void>();
+    const onVerificationRequired = jest.fn<(message: string, recovery: ReadRecovery) => void>();
     const gateway = createGateway({
       searchSemanticTopics: jest.fn<ReadGateway['searchSemanticTopics']>(),
       searchTopics
     });
+    const ordinaryReadPlan = gateway.getReadPlan;
+    gateway.getReadPlan = (source, operation) =>
+      source === 'nodeseek'
+        ? resolveForumReadPlan(source, operation, true, {
+            source,
+            authenticated: true,
+            identityKey: 'nodeseek:test',
+            identityTrust: 'confirmed',
+            sessionEpoch: 0,
+            authSurfaceOpen,
+            ...(foregroundReadDuringHandoff ? { foregroundReadDuringHandoff: true } : {})
+          })
+        : ordinaryReadPlan(source, operation);
     appQueryClient.clear();
     const hook = await renderHook(
       () =>
@@ -2575,7 +2591,6 @@ describe('linux.do AI search controller', () => {
           enabledSearchSources: aggregateSearchSources,
           linuxDoVerificationActive: false,
           notify: jest.fn(),
-          onNodeSeekSearchVerificationRequired: onVerificationRequired,
           reconcileIdentityStatus: reconcileSameIdentity,
           sessionViewModels: projectTestAccountSessions(
             createSiteSessionStates({
@@ -2589,8 +2604,8 @@ describe('linux.do AI search controller', () => {
             })
           ),
           active: true,
-          showLinuxDoVerification: jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
-          showNodeSeekVerification: jest.fn(),
+          showLinuxDoVerification: jest.fn<(message?: string, recovery?: ReadRecovery) => void>(),
+          showNodeSeekVerification: onVerificationRequired,
           showYaohuoLogin: jest.fn(),
           readGateway: gateway
         }),
@@ -2618,13 +2633,28 @@ describe('linux.do AI search controller', () => {
     await waitFor(() => expect(onVerificationRequired).toHaveBeenCalledTimes(1));
 
     const recovery = onVerificationRequired.mock.calls[0]?.[1];
+    if (useAuthHandoff) {
+      authSurfaceOpen = true;
+      await act(async () => hook.rerender(undefined));
+      expect(hook.result.current.searchGroups[0]?.externalSearchUrl).toContain('google.com');
+      foregroundReadDuringHandoff = true;
+    }
     await act(async () => {
       await expect(recovery?.resume()).resolves.toBe('verification-required');
       await expect(recovery?.resume()).resolves.toBe('completed');
     });
+    if (useAuthHandoff) {
+      authSurfaceOpen = false;
+      foregroundReadDuringHandoff = false;
+      await act(async () => hook.rerender(undefined));
+    }
     await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(4));
 
     expect(searchTopics.mock.calls.map(([request]) => request.page)).toEqual([1, 2, 2, 2]);
+    expect(searchTopics.mock.calls.map(([, context]) => context?.plan?.cacheScope)).toEqual(
+      Array(4).fill('authenticated:0')
+    );
+    expect(onVerificationRequired).toHaveBeenCalledTimes(1);
     await waitFor(() =>
       expect(hook.result.current.searchGroups[0]?.items.map((topic) => topic.id)).toEqual(['1', '2'])
     );
@@ -3186,7 +3216,7 @@ describe('linux.do AI search controller', () => {
           onOpenExternalSearch,
           reconcileIdentityStatus: reconcileSameIdentity,
           sessionViewModels,
-          showLinuxDoVerification: jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
+          showLinuxDoVerification: jest.fn<(message?: string, recovery?: ReadRecovery) => void>(),
           showNodeSeekVerification: jest.fn(),
           showYaohuoLogin: jest.fn(),
           readGateway: gateway

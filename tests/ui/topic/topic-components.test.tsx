@@ -1298,7 +1298,7 @@ describe('Topic real child components', () => {
       <VirtualizedReplyRows
         props={{
           ...props,
-          policySubmission: { scope: 'linuxdo:topic-1:0:7', postId: '22', version: '1', accepted: true }
+          policySubmission: { postId: '22', version: '1', accepted: true }
         }}
       />
     );

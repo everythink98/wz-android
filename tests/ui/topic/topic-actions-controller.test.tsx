@@ -53,6 +53,7 @@ jest.mock('@/sources/yaohuo/actionClient', () => ({
 }));
 
 jest.mock('@/sources/linuxdo/actionClient', () => ({
+  ...jest.requireActual<typeof import('@/sources/linuxdo/actionClient')>('@/sources/linuxdo/actionClient'),
   runLinuxDoAction: jest.fn()
 }));
 
@@ -63,6 +64,10 @@ jest.mock('expo-document-picker', () => ({
 jest.mock('@/sources/nodeimage/upload', () => ({
   ...jest.requireActual<typeof import('@/sources/nodeimage/upload')>('@/sources/nodeimage/upload'),
   uploadNodeSeekReplyImageWithApiKey: jest.fn()
+}));
+
+jest.mock('@/platform/media/prepareUploadImage', () => ({
+  prepareUploadImage: async (file: unknown) => ({ file, cleanup: () => undefined })
 }));
 
 jest.mock('@/sources/nodeimage/credentials', () => ({
@@ -81,7 +86,10 @@ import { runYaohuoAction, type YaohuoActionResult } from '@/sources/yaohuo/actio
 import { runLinuxDoAction } from '@/sources/linuxdo/actionClient';
 import { useTopicActionsController } from '@/features/topic/actions/useTopicActionsController';
 import { useTopicSessionController } from '@/features/topic/useTopicSessionController';
-import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
+import { cleanupContentSourceQueries } from '@/app/useContentSourceQueryCleanup';
+import { resetForumSourceQueries } from '@/features/account/sessionQueryOwnership';
+import { appQueryClient, forumQueryKeys, forumWriteReceiptKeys } from '@/platform/query/serverState';
+import { captureDiscoursePolicyRead, recordDiscoursePolicyReceipt } from '@/platform/query/discoursePolicyCache';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { currentNodeImageApiKeyGeneration } from '@/sources/nodeimage/credentials';
 import { uploadNodeSeekReplyImageWithApiKey } from '@/sources/nodeimage/upload';
@@ -173,6 +181,7 @@ const editableReply: Reply = {
   createdAt: '2026-07-20T00:01:00.000Z',
   floor: 2
 };
+const discourseReplyPost = { id: 121, post_number: 21, topic_id: 42 };
 
 type ActionSource = Exclude<Source, 'v2ex'>;
 
@@ -589,52 +598,56 @@ describe('topic action query mutations', () => {
     expect(JSON.stringify(events)).not.toMatch(/合影|bili_057|alice|token/);
   });
 
-  it('preserves an uncertain boost draft and only reads when the user tries again', async () => {
-    const events: DiagnosticEvent[] = [];
-    setDiagnosticWriter((line) => {
-      events.push(JSON.parse(line));
-    });
-    mockRunLinuxDoAction.mockImplementation(runLinuxDoActionActual);
-    const opening = detailFor('linuxdo', { siteExtension: { boosts: [], canBoost: true } });
-    const { detailKey } = seedTopicCache(opening);
-    const fetcher = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      prepareRequestToSend(init);
-      if (String(input).endsWith('/session/csrf')) return new Response('{"csrf":"token"}');
-      throw new Error('response lost');
-    });
-    const hook = await renderActions({ topicDetail: opening, fetcher });
-    await act(async () => hook.result.current.actions.openBoostComposer(opening.commentId!));
-    await act(async () => hook.result.current.actions.changeBoostContent('合影'));
-    await act(async () => {
-      expect(await hook.result.current.actions.submitBoost()).toBe(false);
-    });
-    expect(hook.result.current.actions.boostComposer?.content).toBe('合影');
-    expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.siteExtension?.interactionUnconfirmed).toBe(true);
-    await act(async () => {
-      await hook.result.current.actions.submitBoost();
-    });
-    await hook.unmount();
-    const reopened = await renderActions({ topicDetail: opening, fetcher });
-    await act(async () => reopened.result.current.actions.openBoostComposer(opening.commentId!));
-    await act(async () => reopened.result.current.actions.changeBoostContent('合影'));
-    await act(async () => {
-      await reopened.result.current.actions.submitBoost();
-    });
-    expect(fetcher.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1);
-    expect(events).toContainEqual(
-      expect.objectContaining({
-        phase: 'apply',
-        state: 'unconfirmed',
-        didDispatch: true,
-        serverConfirmed: false,
-        requestType: 'create-boost',
-        reason: 'unconfirmed'
-      })
-    );
-    expect(events).toContainEqual(
-      expect.objectContaining({ operation: 'interaction-reconcile', phase: 'finish', outcome: 'failure' })
-    );
-  });
+  it.each(['lost response', 'HTTP 503'])(
+    'preserves a boost draft after %s and only reads on retry',
+    async (failure) => {
+      const events: DiagnosticEvent[] = [];
+      setDiagnosticWriter((line) => {
+        events.push(JSON.parse(line));
+      });
+      mockRunLinuxDoAction.mockImplementation(runLinuxDoActionActual);
+      const opening = detailFor('linuxdo', { siteExtension: { boosts: [], canBoost: true } });
+      const { detailKey } = seedTopicCache(opening);
+      const fetcher = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        prepareRequestToSend(init);
+        if (String(input).endsWith('/session/csrf')) return new Response('{"csrf":"token"}');
+        if (failure === 'HTTP 503') return new Response('{"errors":["结果未能返回"]}', { status: 503 });
+        throw new Error('response lost');
+      });
+      const hook = await renderActions({ topicDetail: opening, fetcher });
+      await act(async () => hook.result.current.actions.openBoostComposer(opening.commentId!));
+      await act(async () => hook.result.current.actions.changeBoostContent('合影'));
+      await act(async () => {
+        expect(await hook.result.current.actions.submitBoost()).toBe(false);
+      });
+      expect(hook.result.current.actions.boostComposer?.content).toBe('合影');
+      expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.siteExtension?.interactionUnconfirmed).toBe(true);
+      await act(async () => {
+        await hook.result.current.actions.submitBoost();
+      });
+      await hook.unmount();
+      const reopened = await renderActions({ topicDetail: opening, fetcher });
+      await act(async () => reopened.result.current.actions.openBoostComposer(opening.commentId!));
+      await act(async () => reopened.result.current.actions.changeBoostContent('合影'));
+      await act(async () => {
+        await reopened.result.current.actions.submitBoost();
+      });
+      expect(fetcher.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          phase: 'apply',
+          state: 'unconfirmed',
+          didDispatch: true,
+          serverConfirmed: false,
+          requestType: 'create-boost',
+          reason: 'unconfirmed'
+        })
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({ operation: 'interaction-reconcile', phase: 'finish', outcome: 'failure' })
+      );
+    }
+  );
 
   it('links a boost deletion to its authoritative post reconciliation without logging private fields', async () => {
     const events: DiagnosticEvent[] = [];
@@ -1060,7 +1073,18 @@ describe('topic action query mutations', () => {
     });
     expect(fetcher).toHaveBeenCalledTimes(2);
     const refreshed = { ...opening, policy: { ...policy, accepted: true, canAccept: false, canRevoke: true } };
-    read.mockResolvedValue(refreshed);
+    await act(async () => {
+      await hook.rerender({ sessionEpochs: initialForumSessionEpochs, topicDetail: refreshed });
+    });
+    expect(hook.result.current.actions.policySubmissions[policy.postId]).toMatchObject({ accepted: true });
+    read.mockImplementation(async () => {
+      const observe = captureDiscoursePolicyRead(
+        appQueryClient,
+        { identityKey: `linuxdo:${testAccountUser('linuxdo').id}`, sessionEpoch: 0 },
+        opening.id
+      );
+      return observe(refreshed);
+    });
     await act(async () => {
       await observer.refetch();
     });
@@ -1069,6 +1093,26 @@ describe('topic action query mutations', () => {
     });
     expect(hook.result.current.actions.policySubmissions).toEqual({});
     unsubscribe();
+  });
+
+  it('blocks an announcement whose acknowledgement was recorded outside the topic route', async () => {
+    const opening = detailFor('linuxdo', { policy });
+    seedTopicCache(opening);
+    const account = { identityKey: `linuxdo:${testAccountUser('linuxdo').id}`, sessionEpoch: 0 };
+    const fetcher = jest.fn<typeof fetch>();
+    await act(async () => {
+      recordDiscoursePolicyReceipt(appQueryClient, account, {
+        postId: policy.postId,
+        version: policy.version,
+        accepted: true
+      });
+    });
+    const hook = await renderActions({ topicDetail: opening, fetcher });
+    expect(hook.result.current.actions.policySubmissions[policy.postId]).toMatchObject({ accepted: true });
+    await act(async () => {
+      await hook.result.current.actions.setPolicyAcceptance(policy, true);
+    });
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it('rechecks the writable policy ticket after CSRF before sending the PUT', async () => {
@@ -1404,6 +1448,7 @@ describe('topic action query mutations', () => {
     mockRunYaohuoAction.mockReset().mockResolvedValue({ status: 'confirmed', message: '操作已提交' });
     mockRunLinuxDoAction.mockReset().mockImplementation((options) => {
       const path = options.request.path;
+      if (path === '/posts.json' && options.request.method === 'POST') return Promise.resolve(discourseReplyPost);
       return path === '/site.json' || path === '/session/current.json' || path.startsWith('/discourse_templates')
         ? runLinuxDoActionActual(options)
         : Promise.resolve({ success: true });
@@ -1906,7 +1951,7 @@ describe('topic action query mutations', () => {
   });
 
   it('marks write caches stale without a competing refetch', async () => {
-    mockRunLinuxDoAction.mockResolvedValueOnce({ id: 121, post_number: 21, topic_id: 42 });
+    mockRunLinuxDoAction.mockResolvedValueOnce(discourseReplyPost);
     const lines: string[] = [];
     setDiagnosticWriter((line) => {
       lines.push(line);
@@ -2136,7 +2181,7 @@ describe('topic action query mutations', () => {
     const fetcher = jest.fn(async (input: RequestInfo | URL) => {
       const csrf = String(input).endsWith('/session/csrf');
       if (!csrf) ticketCurrent = false;
-      return new Response(JSON.stringify(csrf ? { csrf: 'fixture' } : { success: true }));
+      return Response.json(csrf ? { csrf: 'fixture' } : discourseReplyPost);
     });
     const notify = jest.fn();
     const linuxDetail = detailFor('linuxdo', { canCreatePost: true, polls: [] });
@@ -2298,7 +2343,7 @@ describe('topic action query mutations', () => {
     });
 
     await act(async () => {
-      transport.resolve(true);
+      transport.resolve({ success: true });
       await Promise.resolve();
     });
     await waitFor(() => expect(refreshTopicReplies).toHaveBeenCalledTimes(1));
@@ -2736,6 +2781,140 @@ describe('topic action query mutations', () => {
         dataUpdatedAt: quoteReadAt
       });
       expect(appQueryClient.getQueryData(publicQuoteKey)).toEqual(original);
+    }
+  );
+
+  it.each(['ready', 'changed account', 'changed reply', 'revoked permission', 'verification'] as const)(
+    'reads only the selected linux.do reply before opening its editor: %s',
+    async (outcome) => {
+      const opening = Promise.withResolvers<Response>();
+      const reply = { ...editableReply, contentMarkdown: undefined };
+      const topic = detailFor('linuxdo', { polls: [], replies: [reply] });
+      const fetcher = jest.fn<typeof fetch>(() => opening.promise);
+      const showLinuxDoVerification = jest.fn();
+      seedTopicCache(topic, [reply]);
+      const hook = await renderActions({ topicDetail: topic, topicReplies: [reply], fetcher, showLinuxDoVerification });
+      expect(fetcher).not.toHaveBeenCalled();
+      await act(async () => hook.result.current.topicSession.commands.composer.toggle(false));
+      let editing!: Promise<void>;
+      await act(async () => {
+        editing = hook.result.current.actions.editReply(reply);
+      });
+      await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+      expect(fetcher.mock.calls[0]?.[0]).toBe(`https://linux.do/posts/${reply.commentId}.json`);
+      expect(fetcher.mock.calls[0]?.[1]?.method).toBe('GET');
+      await act(async () => hook.result.current.actions.editReply(reply));
+      if (outcome === 'changed account') {
+        await hook.rerender({ sessionEpochs: { ...initialForumSessionEpochs, linuxdo: 1 } });
+      } else if (outcome === 'changed reply') {
+        seedTopicCache(topic, [{ ...reply, contentHtml: '<p>Changed while loading</p>' }]);
+      } else if (outcome === 'revoked permission') {
+        seedTopicCache(topic, [{ ...reply, canEdit: false }]);
+      }
+      await act(async () => {
+        opening.resolve(
+          outcome === 'verification'
+            ? new Response('<html>verification</html>', { status: 403, headers: { 'cf-mitigated': 'challenge' } })
+            : new Response(
+                JSON.stringify({
+                  id: reply.commentId,
+                  topic_id: Number(topic.id),
+                  post_number: reply.floor,
+                  can_edit: true,
+                  raw: 'selected raw reply'
+                })
+              )
+        );
+        await editing;
+      });
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(showLinuxDoVerification).toHaveBeenCalledTimes(outcome === 'verification' ? 1 : 0);
+      expect(hook.result.current.topicSession.state.replyContent).toBe(outcome === 'ready' ? 'selected raw reply' : '');
+      expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe(
+        outcome === 'ready' ? 'edit' : 'closed'
+      );
+    }
+  );
+
+  it('uploads and submits once after loading the selected reply original on demand', async () => {
+    const reply = { ...editableReply, contentMarkdown: undefined };
+    const opening = detailFor('linuxdo', { polls: [], replies: [reply] });
+    const post = {
+      id: reply.commentId,
+      topic_id: Number(opening.id),
+      post_number: reply.floor,
+      username: reply.author,
+      created_at: reply.createdAt,
+      can_edit: true,
+      raw: 'old'
+    };
+    const fetcher = jest.fn<typeof fetch>(async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/session/csrf') return Response.json({ csrf: 'fixture' });
+      if (path === '/uploads.json') return Response.json({ short_url: 'upload://edit.png' });
+      if (init?.method === 'PUT') return Response.json({ post: { ...post, raw: 'edited', cooked: '<p>edited</p>' } });
+      return Response.json(post);
+    });
+    mockRunLinuxDoAction.mockImplementation(runLinuxDoActionActual);
+    mockGetDocument.mockResolvedValueOnce({
+      canceled: false,
+      assets: [{ uri: 'file:///image.png', name: 'image.png', mimeType: 'image/png', lastModified: 0 }]
+    });
+    seedTopicCache(opening, [reply]);
+    const hook = await renderActions({ topicDetail: opening, topicReplies: [reply], fetcher });
+    expect(fetcher).not.toHaveBeenCalled();
+    await act(async () => hook.result.current.actions.editReply(reply));
+    expect(hook.result.current.topicSession.state.replyContent).toBe('old');
+    await act(async () => hook.result.current.actions.uploadReplyImage());
+    expect(hook.result.current.topicSession.state.replyContent).toContain('upload://edit.png');
+    await act(async () => hook.result.current.actions.submitReply());
+    const requests = fetcher.mock.calls
+      .map(([input, init]) => [init?.method, new URL(String(input)).pathname])
+      .filter(([, path]) => path !== '/session/csrf');
+    expect(requests).toEqual([
+      ['GET', '/posts/101.json'],
+      ['POST', '/uploads.json'],
+      ['PUT', '/posts/101.json']
+    ]);
+  });
+
+  it.each(['revoked permission', 'newer raw'] as const)(
+    'blocks an upload for a lazily loaded edit when the picker outlives %s',
+    async (change) => {
+      const reply = { ...editableReply, contentMarkdown: undefined };
+      const opening = detailFor('linuxdo', { polls: [], replies: [reply] });
+      const fetcher = jest.fn<typeof fetch>(async () =>
+        Response.json({
+          id: reply.commentId,
+          topic_id: Number(opening.id),
+          post_number: reply.floor,
+          can_edit: true,
+          raw: 'old'
+        })
+      );
+      const picker = Promise.withResolvers<Awaited<ReturnType<typeof DocumentPicker.getDocumentAsync>>>();
+      mockGetDocument.mockReturnValueOnce(picker.promise);
+      seedTopicCache(opening, [reply]);
+      const hook = await renderActions({ topicDetail: opening, topicReplies: [reply], fetcher });
+      await act(async () => hook.result.current.actions.editReply(reply));
+      let upload!: Promise<string | undefined>;
+      await act(async () => {
+        upload = hook.result.current.actions.uploadReplyImage();
+      });
+      await waitFor(() => expect(mockGetDocument).toHaveBeenCalledTimes(1));
+      seedTopicCache(opening, [
+        change === 'newer raw' ? { ...reply, contentMarkdown: 'newer raw' } : { ...reply, canEdit: false }
+      ]);
+      await act(async () => {
+        picker.resolve({
+          canceled: false,
+          assets: [{ uri: 'file:///image.png', name: 'image.png', mimeType: 'image/png', lastModified: 0 }]
+        });
+        await upload;
+      });
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(mockRunLinuxDoAction).not.toHaveBeenCalled();
+      expect(hook.result.current.topicSession.state.replyContent).toBe('old');
     }
   );
 
@@ -4120,29 +4299,56 @@ describe('topic action query mutations', () => {
     expect(notify).toHaveBeenCalledWith('NodeImage API Key 不可用，请到账号中心重新获取授权或手动粘贴');
   });
 
-  it('reports a rejected NodeImage key without authorizing or replaying the upload', async () => {
+  it.each([
+    { intent: 'new', status: 401 },
+    { intent: 'new', status: 403 },
+    { intent: 'edit', status: 401 }
+  ])('keeps the NodeSeek session after $intent image upload returns HTTP $status', async ({ intent, status }) => {
     mockCurrentNodeImageGeneration.mockReturnValue(5);
-    mockUploadNodeSeekReplyImage.mockRejectedValueOnce(
-      Object.assign(new Error('API Key 无效'), { nodeImageApiKeyExpired: true })
+    mockUploadNodeSeekReplyImage.mockImplementationOnce(
+      jest.requireActual<typeof import('@/sources/nodeimage/upload')>('@/sources/nodeimage/upload')
+        .uploadNodeSeekReplyImageWithApiKey
     );
     mockGetDocument.mockResolvedValueOnce({
       canceled: false,
       assets: [{ uri: 'file:///cache/test.png', name: 'test.png', mimeType: 'image/png', lastModified: 0 }]
     });
+    const fetcher = jest.fn<typeof fetch>(async () => new Response('{"message":"Invalid API Key"}', { status }));
     const ensureNodeImageApiKey = jest.fn(async () => 'old-key');
     const notify = jest.fn();
-    seedTopicCache();
-    const hook = await renderActions({ ensureNodeImageApiKey, notify });
+    const onSessionExpired = jest.fn();
+    const requestAccountRecheck = jest.fn();
+    const topicReplies = [editableReply];
+    const topicDetail = detailFor('nodeseek', { replies: topicReplies });
+    seedTopicCache(topicDetail, topicReplies);
+    const hook = await renderActions({
+      ensureNodeImageApiKey,
+      fetcher,
+      notify,
+      onSessionExpired,
+      requestAccountRecheck,
+      topicDetail,
+      topicReplies
+    });
+    if (intent === 'edit') await act(async () => hook.result.current.actions.editReply(editableReply));
+    expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe(intent);
     await act(async () => {
       hook.result.current.topicSession.commands.composer.changeContent('existing draft');
     });
 
     await act(async () => {
-      await hook.result.current.actions.uploadReplyImage();
+      await expect(hook.result.current.actions.uploadReplyImageMarkup()).resolves.toBeUndefined();
     });
 
-    expect(mockUploadNodeSeekReplyImage).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://api.nodeimage.com/api/upload',
+      expect.objectContaining({ method: 'POST' })
+    );
+    expect(mockGetDocument).toHaveBeenCalledTimes(1);
     expect(ensureNodeImageApiKey).toHaveBeenCalledTimes(1);
+    expect(onSessionExpired).not.toHaveBeenCalled();
+    expect(requestAccountRecheck).not.toHaveBeenCalled();
     expect(hook.result.current.topicSession.state.replyContent).toBe('existing draft');
     expect(notify).toHaveBeenCalledWith('NodeImage API Key 不可用，请到账号中心重新获取授权或手动粘贴');
     expect(notify).not.toHaveBeenCalledWith('图片已插入');
@@ -4461,26 +4667,130 @@ describe('topic action query mutations', () => {
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.polls?.[0]?.closed).toBe(true);
   });
 
-  it('reconciles an ambiguous lock with one GET and never resends the POST', async () => {
-    const topic = detailFor('nodeseek', { polls: [ownedNodeSeekPoll] });
-    mockRunNodeSeekAction.mockRejectedValueOnce(new Error('timeout'));
-    mockFetchNodeSeekVoteInfo.mockResolvedValueOnce({ ...ownedNodeSeekPoll, closed: true });
+  function toggleNodeSeekSource() {
+    const enabled = { enabledSources: ['nodeseek', 'linuxdo'] as const, enabledSourcesKey: 'nodeseek|linuxdo' };
+    const disabled = { enabledSources: ['linuxdo'] as const, enabledSourcesKey: 'linuxdo' };
+    cleanupContentSourceQueries(appQueryClient, enabled, disabled);
+    cleanupContentSourceQueries(appQueryClient, disabled, enabled);
+  }
+
+  it.each(['lost response', 'HTTP 409'] as const)(
+    'reconciles an ambiguous lock after %s and re-enabling NodeSeek',
+    async (failure) => {
+      const topic = detailFor('nodeseek', { polls: [ownedNodeSeekPoll] });
+      mockRunNodeSeekAction.mockImplementation(runNodeSeekActionActual);
+      const fetcher = jest.fn<typeof fetch>(async (url, init) => {
+        expect(String(url)).toMatch(/\/api\/vote\/lock\/81$/);
+        expect(prepareRequestToSend(init)?.method).toBe('POST');
+        if (failure === 'lost response') throw new Error('response lost');
+        return new Response('', { status: 409 });
+      });
+      mockFetchNodeSeekVoteInfo
+        .mockResolvedValueOnce({ ...ownedNodeSeekPoll, closed: false })
+        .mockResolvedValueOnce({ ...ownedNodeSeekPoll, closed: true });
+      jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {
+        buttons?.find((button) => button.text === '锁定')?.onPress?.();
+      });
+      const { detailKey } = seedTopicCache(topic);
+      const hook = await renderActions({
+        fetcher,
+        siteSessionViewModels: nodeSeekLoggedInViewModels(),
+        topicDetail: topic
+      });
+
+      await act(async () => {
+        await hook.result.current.actions.lockNodeSeekPoll(ownedNodeSeekPoll);
+      });
+      expect(mockFetchNodeSeekVoteInfo).toHaveBeenCalledTimes(1);
+      expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.polls?.[0]?.closed).not.toBe(true);
+      await hook.unmount();
+      toggleNodeSeekSource();
+      seedTopicCache(topic);
+      const reopened = await renderActions({
+        fetcher,
+        siteSessionViewModels: nodeSeekLoggedInViewModels(),
+        topicDetail: topic
+      });
+      await act(async () => {
+        await reopened.result.current.actions.lockNodeSeekPoll(ownedNodeSeekPoll);
+      });
+      await waitFor(() => expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.polls?.[0]?.closed).toBe(true));
+
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(mockFetchNodeSeekVoteInfo).toHaveBeenCalledTimes(2);
+    }
+  );
+
+  it('reconciles an unconfirmed NodeSeek vote after re-enabling the source instead of resending different options', async () => {
+    const topic = detailFor('nodeseek', { polls: [poll] });
+    mockRunNodeSeekAction.mockImplementation(runNodeSeekActionActual);
+    const fetcher = jest.fn<typeof fetch>(async (url, init) => {
+      expect(String(url)).toMatch(/\/api\/vote\/voteforitem$/);
+      expect(prepareRequestToSend(init)?.method).toBe('POST');
+      return new Response('', { status: 408 });
+    });
+    mockFetchNodeSeekVoteInfo.mockResolvedValueOnce({ ...poll, voted: false }).mockResolvedValueOnce({
+      ...poll,
+      voted: true,
+      options: [{ ...poll.options[0]!, selected: true }, poll.options[1]!]
+    });
     jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {
-      buttons?.find((button) => button.text === '锁定')?.onPress?.();
+      buttons?.find((button) => button.text === '提交')?.onPress?.();
     });
     const { detailKey } = seedTopicCache(topic);
+    const hook = await renderActions({ fetcher, topicDetail: topic });
+    await act(async () => hook.result.current.actions.votePoll(poll, ['1']));
+    expect(mockFetchNodeSeekVoteInfo).toHaveBeenCalledTimes(1);
+    await hook.unmount();
+    toggleNodeSeekSource();
+    seedTopicCache(topic);
+    const reopened = await renderActions({ fetcher, topicDetail: topic });
+    await act(async () => reopened.result.current.actions.votePoll(poll, ['2']));
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(mockFetchNodeSeekVoteInfo).toHaveBeenCalledTimes(2);
+    expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.polls?.[0]?.options[0]?.selected).toBe(true);
+  });
+
+  it('does not restore a NodeSeek poll receipt when the original POST resolves after a session reset', async () => {
+    const topic = detailFor('nodeseek', { polls: [poll] });
+    let epoch = initialForumSessionEpochs.nodeseek;
+    const response = Promise.withResolvers<Response>();
+    const fetcher = jest.fn<typeof fetch>(async (url, init) => {
+      expect(String(url)).toMatch(/\/api\/vote\/voteforitem$/);
+      expect(prepareRequestToSend(init)?.method).toBe('POST');
+      return response.promise;
+    });
+    mockRunNodeSeekAction.mockImplementation(runNodeSeekActionActual);
+    jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {
+      buttons?.find((button) => button.text === '提交')?.onPress?.();
+    });
+    seedTopicCache(topic);
     const hook = await renderActions({
-      siteSessionViewModels: nodeSeekLoggedInViewModels(),
+      fetcher,
+      isWritableSessionTicketCurrent: (ticket) => ticket.sessionEpoch === epoch,
       topicDetail: topic
     });
-
+    const receipts = { queryKey: forumWriteReceiptKeys.source('nodeseek') };
+    let pending!: Promise<void>;
     await act(async () => {
-      await hook.result.current.actions.lockNodeSeekPoll(ownedNodeSeekPoll);
+      pending = hook.result.current.actions.votePoll(poll, ['1']);
     });
-    await waitFor(() => expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.polls?.[0]?.closed).toBe(true));
-
-    expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(1);
-    expect(mockFetchNodeSeekVoteInfo).toHaveBeenCalledTimes(1);
+    try {
+      await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+      expect(appQueryClient.getQueriesData(receipts)).toHaveLength(1);
+      await act(async () => {
+        resetForumSourceQueries('nodeseek', appQueryClient);
+        epoch += 1;
+        await hook.rerender({ sessionEpochs: { ...initialForumSessionEpochs, nodeseek: epoch } });
+      });
+    } finally {
+      await act(async () => {
+        response.resolve(Response.json({ success: true }));
+        await pending;
+      });
+    }
+    expect(appQueryClient.getQueriesData(receipts)).toEqual([]);
+    expect(mockFetchNodeSeekVoteInfo).not.toHaveBeenCalled();
   });
 
   it('keeps NodeSeek voting at exactly one POST followed by one result GET', async () => {
@@ -5085,7 +5395,9 @@ describe('topic action query mutations', () => {
           if (first === 'gateway-failure') return Response.json({ errors: ['gateway unavailable'] }, { status: 503 });
           return Response.json({ success: false, errors: ['rate limited'] }, { status: 429 });
         }
-        return source === 'yaohuo' ? new Response('评论成功') : Response.json({ success: true });
+        return source === 'yaohuo'
+          ? new Response('评论成功')
+          : Response.json(source === 'linuxdo' ? discourseReplyPost : { success: true });
       });
       const snapshot = {
         ...snapshotWithNodeSeekPoll('reply_recovery'),
@@ -5149,6 +5461,85 @@ describe('topic action query mutations', () => {
       expect(fetcher).toHaveBeenCalledTimes(2);
     }
   );
+
+  it.each([
+    { source: 'nodeseek', body: '{}', outcome: 'unconfirmed' },
+    { source: 'linuxdo', body: '{}', outcome: 'unconfirmed' },
+    { source: 'linuxdo', body: '{"success":true}', outcome: 'unconfirmed' },
+    { source: 'linuxdo', body: '{"success":false,"errors":["回复被原站拒绝"]}', outcome: 'rejected' },
+    { source: 'linuxdo', body: '{"action":"enqueued","success":true}', outcome: 'enqueued' }
+  ] as const)('settles the $source reply draft using the $outcome receipt', async ({ source, body, outcome }) => {
+    mockRunNodeSeekAction.mockImplementation(runNodeSeekActionActual);
+    mockRunLinuxDoAction.mockImplementation(runLinuxDoActionActual);
+    const topic = detailFor(source, { polls: [], canCreatePost: true });
+    seedTopicCache(topic);
+    const post = jest.fn();
+    const fetcher = jest.fn<typeof fetch>(async (input, init) => {
+      if (String(input) === 'https://linux.do/session/csrf') return new Response('{"csrf":"fixture"}');
+      expect(prepareRequestToSend(init)?.method).toBe('POST');
+      post();
+      return new Response(body);
+    });
+    const notify = jest.fn();
+    const refreshTopicReplies = jest.fn(async () => 'completed');
+    const hook = await renderActions({ topicDetail: topic, fetcher, notify, refreshTopicReplies });
+    await act(async () => hook.result.current.topicSession.commands.composer.changeContent('待提交的回复'));
+    await act(async () => hook.result.current.actions.submitReply());
+
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(refreshTopicReplies).not.toHaveBeenCalled();
+    expect(hook.result.current.topicSession.state.replyContent).toBe(outcome === 'enqueued' ? '' : '待提交的回复');
+    expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe(
+      outcome === 'enqueued' ? 'closed' : 'new'
+    );
+    expect(notify).toHaveBeenCalledWith(
+      outcome === 'enqueued'
+        ? '回复已提交，正在等待审核'
+        : outcome === 'rejected'
+          ? '回复被原站拒绝'
+          : expect.stringContaining('回复可能已发送')
+    );
+  });
+
+  it.each([
+    { failure: 'HTTP 408', respond: () => new Response('', { status: 408 }) },
+    { failure: 'HTTP 409', respond: () => new Response('', { status: 409 }) },
+    { failure: 'HTTP 503', respond: () => new Response('', { status: 503 }) },
+    {
+      failure: 'a lost response',
+      respond: () => {
+        throw new Error('response lost');
+      }
+    },
+    { failure: 'a success status without a receipt', respond: () => Response.json({}) }
+  ])('never sends Stardust twice after $failure', async ({ respond }) => {
+    mockRunNodeSeekAction.mockImplementation(runNodeSeekActionActual);
+    const send = jest.fn();
+    const fetcher = jest.fn<typeof fetch>(async (input, init) => {
+      expect(prepareRequestToSend(init)?.method).toBe('POST');
+      if (String(input).endsWith('/api/stardust/payment-prepare')) {
+        return Response.json({ success: true, allowedOrigin: true, receiver_name: '测试收款人' });
+      }
+      expect(String(input)).toMatch(/\/api\/stardust\/send$/);
+      send();
+      return respond();
+    });
+    jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {
+      buttons?.find((button) => button.text === '确认付款')?.onPress?.();
+    });
+    const notify = jest.fn();
+    const hook = await renderActions({ fetcher, notify, siteSessionViewModels: nodeSeekLoggedInViewModels() });
+    const pay = () => {
+      const actions = hook.result.current.actions;
+      return actions.stardustPayments.pay('fixture-receive', false, () =>
+        actions.payNodeSeekStardust({ receiverMemberId: '42', amount: 3, refId: 100, description: '', oneTime: false })
+      );
+    };
+    await act(async () => expect(await pay()).toBe('unknown'));
+    await act(async () => expect(await pay()).toBeUndefined());
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('付款结果未知'));
+  });
 
   it('sends once without status preflight and trusts an explicit success', async () => {
     const fetcher = jest.fn(async () => {
@@ -5239,47 +5630,6 @@ describe('topic action query mutations', () => {
       );
     }
   );
-
-  it.each([
-    ['transport failure', new Error('timeout')],
-    ['malformed success', {}]
-  ])('reports %s as ambiguous without retrying it', async (_case, sendResult) => {
-    const notify = jest.fn();
-    const fetcher = jest.fn(async () => stardustStatusResponse());
-    mockRunNodeSeekAction.mockResolvedValueOnce({
-      success: true,
-      allowedOrigin: true,
-      receiver_name: '真实收款人'
-    });
-    if (sendResult instanceof Error) mockRunNodeSeekAction.mockRejectedValueOnce(sendResult);
-    else mockRunNodeSeekAction.mockResolvedValueOnce(sendResult);
-    jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {
-      buttons?.find((button) => button.text === '确认付款')?.onPress?.();
-    });
-    const hook = await renderActions({
-      fetcher,
-      notify,
-      siteSessionViewModels: nodeSeekLoggedInViewModels()
-    });
-    let result: Awaited<ReturnType<typeof hook.result.current.actions.payNodeSeekStardust>> | undefined;
-
-    await act(async () => {
-      result = await hook.result.current.actions.payNodeSeekStardust({
-        receiverMemberId: '42',
-        amount: 3,
-        refId: 100,
-        description: 'test',
-        oneTime: false
-      });
-    });
-
-    expect(result).toBe('unknown');
-    expect(
-      mockRunNodeSeekAction.mock.calls.filter(([call]) => call.request.path === '/api/stardust/send')
-    ).toHaveLength(1);
-    expect(fetcher).not.toHaveBeenCalled();
-    expect(notify).toHaveBeenCalledWith(expect.stringContaining('结果未知'));
-  });
 
   it('rejects a legacy Stardust Ref before every remote request', async () => {
     const fetcher = jest.fn(async () => stardustStatusResponse());

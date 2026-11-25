@@ -184,18 +184,6 @@ export async function forumMediaPlayerSourceFromUrl(
   };
 }
 
-export function dataImageFileFromUrl(url: unknown): { base64: string; extension: string } | null {
-  const clean = typeof url === 'string' ? url.trim() : '';
-  const match = clean.match(/^data:image\/(png|jpe?g|gif|webp|avif);base64,([\s\S]+)$/i);
-  if (!match) {
-    return null;
-  }
-  const type = match[1].toLowerCase();
-  const extension = type === 'jpeg' ? 'jpg' : type.split('+')[0];
-  const base64 = match[2].trim();
-  return base64 ? { base64, extension } : null;
-}
-
 function defaultAcceptLanguage() {
   try {
     const locale = Intl.DateTimeFormat().resolvedOptions().locale.trim().replace(/_/g, '-');

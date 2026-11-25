@@ -1081,7 +1081,11 @@ function TopicFilterHarness({
       view: {
         changeCommentQuery: setCommentQuery,
         changeReplyFilter: setReplyFilter,
-        changeReplyOrder: setReplyOrder
+        changeReplyOrder: setReplyOrder,
+        clearReplyFilters() {
+          setCommentQuery('');
+          setReplyFilter('all');
+        }
       }
     }
   } as unknown as TopicSessionController;
@@ -5536,6 +5540,7 @@ describe('Topic reply filters', () => {
     const acceptedReply: Reply = {
       ...sourceReplies[1],
       acceptedAnswer: true,
+      commentId: 202,
       contentHtml: '<p>被筛选隐藏的采纳答案</p>'
     };
     const topicReplies = [sourceReplies[0], acceptedReply, sourceReplies[2]];
@@ -5548,10 +5553,19 @@ describe('Topic reply filters', () => {
       source: 'linuxdo'
     };
     mockScrollToIndex.mockClear();
+    const onLocateReply = jest.fn(async () => 'completed');
     const view = await render(
-      <TopicFilterHarness selectedTopic={solvedTopic} topicDetail={solvedTopic} topicReplies={topicReplies} />
+      <TopicFilterHarness
+        onLocateReply={onLocateReply}
+        selectedTopic={solvedTopic}
+        topicDetail={solvedTopic}
+        topicReplies={topicReplies}
+      />
     );
 
+    await fireEvent.press(view.getByLabelText('回复排序，当前正序'));
+    await fireEvent.press(view.getByText('倒序'));
+    mockScrollToIndex.mockClear();
     await fireEvent.press(view.getByLabelText('只看楼主'));
     await fireEvent.changeText(view.getByLabelText('评论内查找'), '不会命中答案');
     expect(view.getByTestId('active-filter').props.children).toBe('author');
@@ -5561,14 +5575,33 @@ describe('Topic reply filters', () => {
 
     await waitFor(() => expect(view.getByTestId('active-filter').props.children).toBe('all'));
     await waitFor(() => expect(view.getByLabelText('评论内查找').props.value).toBe(''));
+    expect(view.getByTestId('active-order').props.children).toBe('newest');
+    expect(onLocateReply).toHaveBeenCalledWith({ commentId: 202, floor: 2 });
     await waitFor(() => {
       const acceptedReplyIndex = lastReplyListIndex(2);
       expect(acceptedReplyIndex).toBeGreaterThan(-1);
       expect(mockScrollToIndex).toHaveBeenCalledWith({
         animated: true,
-        index: acceptedReplyIndex
+        index: acceptedReplyIndex,
+        viewPosition: 0,
+        viewOffset: 0
       });
     });
+  });
+
+  it('does not scroll on a later search change after sorting produced no matching replies', async () => {
+    const view = await render(<TopicFilterHarness />);
+    await fireEvent.changeText(view.getByLabelText('评论内查找'), '无匹配的查找词');
+    await waitFor(() => expect(view.queryByTestId('reply-floor-2')).toBeNull());
+    mockScrollToIndex.mockClear();
+    await fireEvent.press(view.getByLabelText('回复排序，当前正序'));
+    await fireEvent.press(view.getByLabelText('倒序'));
+    expect(view.getByTestId('active-order').props.children).toBe('newest');
+    expect(mockScrollToIndex).not.toHaveBeenCalled();
+
+    await fireEvent.changeText(view.getByLabelText('评论内查找'), 'needle');
+    await waitFor(() => expect(view.getByTestId('reply-floor-2')).toBeTruthy());
+    expect(mockScrollToIndex).not.toHaveBeenCalled();
   });
 
   it('retries the emoji catalog after a same-topic refresh', async () => {

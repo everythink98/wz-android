@@ -280,4 +280,57 @@ describe('NodeSeek reader', () => {
     expect(topic.contentHtml).toContain(`<code>${codeMarker}</code>`);
     expect(topic.contentHtml).toContain('普通链接');
   });
+
+  it('preserves verbatim entities and tags in plain text and Markdown NodeSeek summaries', async () => {
+    const [{ embeddedTopics }, { parseNodeSeekUserReplies, parseNodeSeekUserTopics }, { normalizePostData }] =
+      await Promise.all([import('./feedParser'), import('./userParser'), import('./topicParser')]);
+
+    const feed = embeddedTopics({
+      posts: [
+        {
+          postId: 701,
+          title: 'Markdown summary',
+          markdown: 'How to type &copy; &amp; &#128; and <tag> in Markdown'
+        },
+        {
+          postId: 702,
+          title: 'Plain content summary',
+          content: 'Literal &copy; &amp;copy; &#x1F600 in content'
+        }
+      ]
+    });
+    expect(feed[0]?.excerpt).toBe('How to type &copy; &amp; &#128; and <tag> in Markdown');
+    expect(feed[1]?.excerpt).toBe('Literal &copy; &amp;copy; &#x1F600 in content');
+
+    const profile = {
+      source: 'nodeseek' as const,
+      id: '7',
+      username: 'alice',
+      displayName: 'alice',
+      url: 'https://www.nodeseek.com/space/7'
+    };
+    const userTopics = parseNodeSeekUserTopics(
+      profile,
+      [{ post_id: 701, title: 'Topic', text: 'Literal &copy; &amp; &#128; summary' }],
+      1
+    );
+    const userReplies = parseNodeSeekUserReplies(
+      profile,
+      [{ post_id: 701, title: 'Topic', floor_id: 2, text: 'Reply &copy; &amp; &#128; <raw>' }],
+      1
+    );
+    expect(userTopics.topics[0]?.excerpt).toBe('Literal &copy; &amp; &#128; summary');
+    expect(userReplies.replies?.[0]?.excerpt).toBe('Reply &copy; &amp; &#128; <raw>');
+
+    const embeddedDetail = normalizePostData(
+      {
+        postId: 703,
+        title: 'Embedded detail',
+        comments: [{ commentId: 1, markdown: 'How to type &copy; and &#128; in Markdown' }]
+      },
+      '703',
+      'https://www.nodeseek.com/post-703-1'
+    );
+    expect(embeddedDetail.excerpt).toBe('How to type &copy; and &#128; in Markdown');
+  });
 });

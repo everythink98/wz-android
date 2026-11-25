@@ -1,9 +1,50 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createTopicEditTransport } from '../../../tests/helpers/topicEditingTransport';
 import { draftFromTopicEdit } from '@/domain/forum/topicComposer';
+import { withRequestBeforeSend } from '@/platform/network/request';
 import { editLinuxDoTopic, loadLinuxDoTopicEditContext } from './topicEditing';
 
 describe('linux.do own opening edits', () => {
+  it.each([false, true])('classifies transport rejection before the PUT with saved metadata = %s', async (metadata) => {
+    const transport = createTopicEditTransport('linuxdo');
+    const options = { ...transport, userAgent: 'test', topicId: '123', identityKey: 'linuxdo:42' };
+    const context = await loadLinuxDoTopicEditContext(options);
+    const draft = { ...draftFromTopicEdit(context), ...(metadata ? { title: '新标题' } : {}), body: '新正文' };
+    const fetcher: typeof transport.fetcher = (url, init) => {
+      if (url.endsWith('/posts/789.json') && init?.method === 'PUT') {
+        let ready = true;
+        return withRequestBeforeSend(
+          (input, request) => {
+            ready = false;
+            return transport.fetcher(input, request);
+          },
+          () => {
+            if (!ready) throw new Error('账号已切换');
+          }
+        )(url, init);
+      }
+      return transport.fetcher(url, init);
+    };
+    const result = await editLinuxDoTopic({ ...options, fetcher, context, draft, checkpoint: async () => {} });
+    expect(transport.writes()).toHaveLength(metadata ? 1 : 0);
+    expect(result).toMatchObject({ status: metadata ? 'partial' : 'rejected' });
+  });
+
+  it.each([{ categoryId: '5' }, { tags: [{ name: '旧格式' }, { id: 12, name: '技术' }] }])(
+    'reports concurrent removal of a legacy tag before validation when changing %j',
+    async (change) => {
+      const transport = createTopicEditTransport('linuxdo');
+      const options = { ...transport, userAgent: 'test', topicId: '123', identityKey: 'linuxdo:42' };
+      const base = await loadLinuxDoTopicEditContext(options);
+      const draft = {
+        ...draftFromTopicEdit({ ...base, original: { ...base.original, tags: [{ name: '旧格式' }] } }),
+        ...change
+      };
+      const result = await editLinuxDoTopic({ ...options, context: base, draft, checkpoint: async () => {} });
+      expect(result).toMatchObject({ status: 'conflict', latest: { tags: base.original.tags } });
+      expect(transport.writes()).toHaveLength(0);
+    }
+  );
   it('matches the author username from the account identity, even when a different account has that numeric ID', async () => {
     const transport = createTopicEditTransport('linuxdo');
     const fetcher: typeof transport.fetcher = async (url, init) => {

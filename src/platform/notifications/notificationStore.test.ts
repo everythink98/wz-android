@@ -17,9 +17,12 @@ import {
   confirmDisabledNotificationDismissal,
   defaultNotificationState,
   loadNotificationState,
+  markAndroidNotificationPermissionRequestStarted,
   normalizeNotificationState,
+  readNotificationDeliveryScope,
   recordNotificationDelivery,
   recordNotificationSnapshot,
+  resetNotificationSourceIdentity,
   saveNotificationState,
   setGlobalNotificationIntent,
   setSourceNotificationIntent
@@ -28,6 +31,7 @@ import { notificationSources } from '@/domain/forum/sourceCatalog';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 
 beforeEach(() => storage.clear());
+const legacyNodeSeekScope = { identityKey: 'nodeseek:7', deliveryGeneration: 0 };
 
 describe('notification delivery state', () => {
   it('rejects invalid stored JSON and blocks writes without exposing the saved value', async () => {
@@ -160,6 +164,48 @@ describe('notification delivery state', () => {
     );
   });
 
+  it('advances a persisted source generation only for a new notification delivery scope', async () => {
+    const state = defaultNotificationState();
+    state.globalEnabled = true;
+    state.hasOptedIn = true;
+    state.sources.nodeseek = {
+      intentEnabled: true,
+      identityKey: 'nodeseek:7',
+      baselineReady: true,
+      deliveredIds: ['old']
+    };
+    await saveNotificationState(state);
+    const writes = vi.mocked(AsyncStorage.setItem).mock.calls.length;
+
+    expect(await setGlobalNotificationIntent(true)).toEqual(state);
+    expect(await setSourceNotificationIntent('nodeseek', true)).toEqual(state);
+    expect(AsyncStorage.setItem).toHaveBeenCalledTimes(writes);
+
+    const disabled = await setSourceNotificationIntent('nodeseek', false);
+    expect(disabled.sources.nodeseek.deliveryGeneration).toBe(1);
+    expect(await setSourceNotificationIntent('nodeseek', false)).toEqual(disabled);
+    const reenabled = await setSourceNotificationIntent('nodeseek', true);
+    expect(readNotificationDeliveryScope(reenabled, 'nodeseek')).toEqual({
+      ...legacyNodeSeekScope,
+      deliveryGeneration: 2
+    });
+    expect(reenabled.sources.linuxdo).toEqual(state.sources.linuxdo);
+
+    await setGlobalNotificationIntent(false);
+    const globallyReenabled = await setGlobalNotificationIntent(true);
+    expect(globallyReenabled.sources.nodeseek.deliveryGeneration).toBe(4);
+    expect(globallyReenabled.sources.linuxdo.deliveryGeneration).toBe(2);
+    expect((await clearNotificationSourceForContentDisable('nodeseek')).sources.nodeseek.deliveryGeneration).toBe(5);
+    expect((await resetNotificationSourceIdentity('nodeseek', 'nodeseek:8')).sources.nodeseek.deliveryGeneration).toBe(
+      6
+    );
+    await resetNotificationSourceIdentity('nodeseek', 'nodeseek:7');
+    expect(readNotificationDeliveryScope(await loadNotificationState(), 'nodeseek')).toEqual({
+      ...legacyNodeSeekScope,
+      deliveryGeneration: 7
+    });
+  });
+
   it('clears delivery state for a disabled content source without changing its notification intent or identity', async () => {
     const state = defaultNotificationState();
     state.globalEnabled = true;
@@ -179,6 +225,7 @@ describe('notification delivery state', () => {
     expect(disabled.sources.nodeseek).toEqual({
       intentEnabled: true,
       identityKey: 'nodeseek:7',
+      deliveryGeneration: 1,
       baselineReady: false,
       deliveredIds: []
     });
@@ -201,7 +248,7 @@ describe('notification delivery state', () => {
       await saveNotificationState(state);
       const delivered = await recordNotificationDelivery(
         'nodeseek',
-        'nodeseek:7',
+        legacyNodeSeekScope,
         ['new'],
         { lastSuccessAt: '2026-11-20T00:00:00Z' },
         { expectedNewIds: ['new'], previousIdentifier: 'old-id', notificationIdentifier: 'staged-id' }
@@ -226,6 +273,50 @@ describe('notification delivery state', () => {
       });
     }
   );
+
+  it('rejects an old baseline, matching digest plan, and rollback after a replacement baseline reuses its slot', async () => {
+    const state = defaultNotificationState();
+    state.globalEnabled = true;
+    state.hasOptedIn = true;
+    state.sources.nodeseek = {
+      intentEnabled: true,
+      identityKey: 'nodeseek:7',
+      baselineReady: true,
+      deliveredIds: ['old'],
+      notificationIdentifier: 'previous-id'
+    };
+    await saveNotificationState(state);
+    const fields = { lastSuccessAt: '2026-11-20T00:00:00Z' };
+    const old = await recordNotificationDelivery('nodeseek', legacyNodeSeekScope, ['old-scan'], fields, {
+      expectedNewIds: ['old-scan'],
+      previousIdentifier: 'previous-id',
+      notificationIdentifier: 'same-slot'
+    });
+    expect(old.committed).toBe(true);
+    await setSourceNotificationIntent('nodeseek', false);
+    const reenabled = await setSourceNotificationIntent('nodeseek', true);
+    const currentScope = readNotificationDeliveryScope(reenabled, 'nodeseek')!;
+    expect(await recordNotificationDelivery('nodeseek', legacyNodeSeekScope, ['old-scan'], fields)).toMatchObject({
+      committed: false
+    });
+    expect(await recordNotificationDelivery('nodeseek', currentScope, ['new-baseline'], fields)).toMatchObject({
+      committed: true,
+      newIds: []
+    });
+    expect(
+      await recordNotificationDelivery('nodeseek', legacyNodeSeekScope, ['old-scan'], fields, {
+        expectedNewIds: ['old-scan'],
+        previousIdentifier: 'same-slot',
+        notificationIdentifier: 'stale-id'
+      })
+    ).toMatchObject({ committed: false });
+    await old.rollback();
+    expect((await loadNotificationState()).sources.nodeseek).toMatchObject({
+      baselineReady: true,
+      deliveredIds: ['new-baseline'],
+      notificationIdentifier: 'same-slot'
+    });
+  });
 
   it.each(['current', 'identity changed', 'slot changed'] as const)(
     'clears a disabled digest only for the matching persisted owner: %s',
@@ -258,7 +349,7 @@ describe('notification delivery state', () => {
     };
     await saveNotificationState(state);
 
-    const result = await recordNotificationDelivery('nodeseek', 'nodeseek:7', ['new'], {
+    const result = await recordNotificationDelivery('nodeseek', legacyNodeSeekScope, ['new'], {
       lastSuccessAt: '2026-08-03T00:00:00Z'
     });
 
@@ -280,7 +371,7 @@ describe('notification delivery state', () => {
 
     const first = await recordNotificationDelivery(
       'nodeseek',
-      'nodeseek:7',
+      legacyNodeSeekScope,
       ['new'],
       { lastSuccessAt: '2026-08-03T00:00:00Z' },
       { expectedNewIds: ['new'], previousIdentifier: undefined, notificationIdentifier: 'staged-id' }
@@ -288,7 +379,7 @@ describe('notification delivery state', () => {
     await first.rollback();
     const retried = await recordNotificationDelivery(
       'nodeseek',
-      'nodeseek:7',
+      legacyNodeSeekScope,
       ['new'],
       { lastSuccessAt: '2026-08-03T00:01:00Z' },
       { expectedNewIds: ['new'], previousIdentifier: undefined, notificationIdentifier: 'staged-id' }
@@ -315,7 +406,7 @@ describe('notification delivery state', () => {
 
     const committed = await recordNotificationDelivery(
       'nodeseek',
-      'nodeseek:7',
+      legacyNodeSeekScope,
       ['new'],
       { lastSuccessAt: '2026-08-03T00:01:00Z' },
       {
@@ -358,7 +449,7 @@ describe('notification delivery state', () => {
 
       const committed = await recordNotificationDelivery(
         'nodeseek',
-        'nodeseek:7',
+        legacyNodeSeekScope,
         ['new'],
         { lastSuccessAt: '2026-08-03T00:00:00Z' },
         { expectedNewIds: ['new'], previousIdentifier: undefined, notificationIdentifier: 'stale-id' }
@@ -385,14 +476,14 @@ describe('notification delivery state', () => {
 
     const first = await recordNotificationDelivery(
       'nodeseek',
-      'nodeseek:7',
+      legacyNodeSeekScope,
       ['one'],
       { lastSuccessAt: '2026-08-03T00:00:00Z' },
       { expectedNewIds: ['one'], previousIdentifier: 'old-id', notificationIdentifier: 'staged-a' }
     );
     const second = await recordNotificationDelivery(
       'nodeseek',
-      'nodeseek:7',
+      legacyNodeSeekScope,
       ['two', 'one'],
       { lastSuccessAt: '2026-08-03T00:01:00Z' },
       { expectedNewIds: ['two'], previousIdentifier: 'staged-a', notificationIdentifier: 'staged-b' }
@@ -424,7 +515,7 @@ describe('notification delivery state', () => {
 
       const declined = await recordNotificationDelivery(
         'nodeseek',
-        'nodeseek:7',
+        legacyNodeSeekScope,
         ['new', 'old'],
         { lastSuccessAt: '2026-08-03T00:01:00Z' },
         {
@@ -460,7 +551,7 @@ describe('notification delivery state', () => {
     await saveNotificationState(state);
     const first = await recordNotificationDelivery(
       'nodeseek',
-      'nodeseek:7',
+      legacyNodeSeekScope,
       ['one'],
       { lastSuccessAt: '2026-08-03T00:00:00Z' },
       { expectedNewIds: ['one'], previousIdentifier: 'same-id', notificationIdentifier: 'same-id' }
@@ -468,7 +559,7 @@ describe('notification delivery state', () => {
     await first.rollback();
     const second = await recordNotificationDelivery(
       'nodeseek',
-      'nodeseek:7',
+      legacyNodeSeekScope,
       ['two'],
       { lastSuccessAt: '2026-08-03T00:01:00Z' },
       { expectedNewIds: ['two'], previousIdentifier: 'same-id', notificationIdentifier: 'same-id' }
@@ -485,13 +576,19 @@ describe('notification delivery state', () => {
     });
   });
 
-  it('commits a silent baseline without creating a compensation operation', async () => {
-    const state = defaultNotificationState();
-    state.globalEnabled = true;
-    state.sources.nodeseek = { ...state.sources.nodeseek, intentEnabled: true, identityKey: 'nodeseek:7' };
-    await saveNotificationState(state);
-
-    const recorded = await recordNotificationDelivery('nodeseek', 'nodeseek:7', ['baseline'], {
+  it('uses generation zero for a raw legacy v1 Store and commits its first silent baseline', async () => {
+    storage.set(
+      'wz.notifications.v1',
+      JSON.stringify({
+        version: 1,
+        globalEnabled: true,
+        hasOptedIn: true,
+        sources: { nodeseek: { intentEnabled: true, identityKey: 'nodeseek:7' } }
+      })
+    );
+    const scope = readNotificationDeliveryScope(await loadNotificationState(), 'nodeseek');
+    expect(scope).toEqual(legacyNodeSeekScope);
+    const recorded = await recordNotificationDelivery('nodeseek', scope!, ['baseline'], {
       lastSuccessAt: '2026-08-03T00:00:00Z'
     });
     const writes = vi.mocked(AsyncStorage.setItem).mock.calls.length;
@@ -519,7 +616,7 @@ describe('notification delivery state', () => {
     const record = () =>
       recordNotificationDelivery(
         'nodeseek',
-        'nodeseek:7',
+        legacyNodeSeekScope,
         ['new'],
         { lastSuccessAt: '2026-08-03T00:00:00Z' },
         { expectedNewIds: ['new'], previousIdentifier: undefined, notificationIdentifier: 'staged-id' }
@@ -547,7 +644,7 @@ describe('notification delivery state', () => {
 
     const committed = await recordNotificationDelivery(
       'nodeseek',
-      'nodeseek:7',
+      legacyNodeSeekScope,
       ['new', ...previousIds],
       { lastSuccessAt: '2026-08-03T00:01:00Z' },
       { expectedNewIds: ['new'], previousIdentifier: 'old-id', notificationIdentifier: 'staged-id' }
@@ -555,5 +652,119 @@ describe('notification delivery state', () => {
     await committed.rollback();
 
     expect((await loadNotificationState()).sources.nodeseek.deliveredIds).toEqual(previousIds);
+  });
+
+  it('defaults androidPermissionRequestStarted to false for new records and migrates missing v1 records from hasOptedIn', async () => {
+    expect(defaultNotificationState()).toMatchObject({
+      version: 1,
+      globalEnabled: false,
+      hasOptedIn: false,
+      androidPermissionRequestStarted: false
+    });
+    expect(await loadNotificationState()).toMatchObject({
+      version: 1,
+      globalEnabled: false,
+      hasOptedIn: false,
+      androidPermissionRequestStarted: false
+    });
+
+    // Legacy v1 record with hasOptedIn=true and no androidPermissionRequestStarted migrates to true
+    // while preserving per-site toggles and delivery records.
+    storage.set(
+      'wz.notifications.v1',
+      JSON.stringify({
+        version: 1,
+        globalEnabled: true,
+        hasOptedIn: true,
+        sources: {
+          nodeseek: {
+            intentEnabled: true,
+            identityKey: 'nodeseek:7',
+            baselineReady: true,
+            deliveredIds: ['reply:1', 'reply:2'],
+            lastSuccessAt: '2026-10-01T00:00:00.000Z',
+            unreadCount: 4,
+            notificationIdentifier: 'wz-message-nodeseek-nodeseek%3A7-a'
+          },
+          linuxdo: {
+            intentEnabled: false,
+            identityKey: 'linuxdo:8',
+            baselineReady: true,
+            deliveredIds: ['ld:1']
+          }
+        }
+      })
+    );
+    const migratedOptedIn = await loadNotificationState();
+    expect(migratedOptedIn).toMatchObject({
+      version: 1,
+      globalEnabled: true,
+      hasOptedIn: true,
+      androidPermissionRequestStarted: true,
+      sources: {
+        nodeseek: {
+          intentEnabled: true,
+          identityKey: 'nodeseek:7',
+          baselineReady: true,
+          deliveredIds: ['reply:1', 'reply:2'],
+          lastSuccessAt: '2026-10-01T00:00:00.000Z',
+          unreadCount: 4,
+          notificationIdentifier: 'wz-message-nodeseek-nodeseek%3A7-a'
+        },
+        linuxdo: {
+          intentEnabled: false,
+          identityKey: 'linuxdo:8',
+          baselineReady: true,
+          deliveredIds: ['ld:1']
+        }
+      }
+    });
+
+    // Legacy v1 record with hasOptedIn=false migrates to false.
+    expect(
+      normalizeNotificationState({ version: 1, globalEnabled: false, hasOptedIn: false, sources: {} })
+    ).toMatchObject({
+      version: 1,
+      globalEnabled: false,
+      hasOptedIn: false,
+      androidPermissionRequestStarted: false
+    });
+
+    // Explicit androidPermissionRequestStarted=false is preserved even when hasOptedIn=true.
+    expect(
+      normalizeNotificationState({
+        version: 1,
+        globalEnabled: true,
+        hasOptedIn: true,
+        androidPermissionRequestStarted: false,
+        sources: {}
+      })
+    ).toMatchObject({
+      version: 1,
+      globalEnabled: true,
+      hasOptedIn: true,
+      androidPermissionRequestStarted: false
+    });
+
+    // Persisting global intent does not prematurely mark androidPermissionRequestStarted=true.
+    storage.clear();
+    const optedIn = await setGlobalNotificationIntent(true);
+    expect(optedIn).toMatchObject({
+      globalEnabled: true,
+      hasOptedIn: true,
+      androidPermissionRequestStarted: false
+    });
+
+    // Recording OS permission request started flips only that flag and is idempotent on repeat calls.
+    const started = await markAndroidNotificationPermissionRequestStarted();
+    expect(started).toMatchObject({
+      globalEnabled: true,
+      hasOptedIn: true,
+      androidPermissionRequestStarted: true
+    });
+    const writesAfterStarted = vi.mocked(AsyncStorage.setItem).mock.calls.length;
+    const repeated = await markAndroidNotificationPermissionRequestStarted();
+    expect(repeated.androidPermissionRequestStarted).toBe(true);
+    expect(AsyncStorage.setItem).toHaveBeenCalledTimes(writesAfterStarted);
   });
 });

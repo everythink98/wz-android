@@ -41,6 +41,62 @@ function renderedContentRows(compilation: Pick<CompiledForumContent, 'rows'>) {
   return compilation.rows.filter((row): row is Extract<CompiledForumContentRow, { html: string }> => 'html' in row);
 }
 
+it.each([
+  ['script end tag', '<script>var x = 1;</script/><p>visible</p>'],
+  ['style end tag', '<style>.example{color:red}</style unused><p>visible</p>'],
+  ['nested script text', '<script><!-- <script>var x = 1;</script>var y = 2;</script><p>visible</p>'],
+  ['Word declarations', '<![if !supportLists]><p>visible</p><![endif]>']
+])('retains body and selection after a noncanonical %s', (_name, html) => {
+  const prepared = prepareSanitizedForumContent(html, {
+    baseUrl: 'https://example.invalid/',
+    role: 'opening',
+    source: 'v2ex'
+  });
+
+  expect(prepared.contentHtml).toBe('<p>visible</p>');
+  expect(prepared.contentPlan.rows.flatMap((row) => selectionToken(row).owners.map((owner) => owner.text))).toEqual([
+    'visible'
+  ]);
+});
+
+it('keeps uncommon valued link attributes and comparisons in prepared body content', () => {
+  const prepared = prepareSanitizedForumContent(
+    '<p>x<y &lt; z <a !flag="boards" +flag="boards" href="/guides/boards">boards</a></p>',
+    { baseUrl: 'https://example.invalid/', role: 'opening', source: 'v2ex' }
+  );
+
+  const root = parseHtml(prepared.contentHtml);
+  expect(root.querySelector('a')?.getAttribute('href')).toBe('https://example.invalid/guides/boards');
+  expect(root.querySelector('a')?.textContent).toBe('boards');
+  expect(prepared.contentPlan.rows.flatMap((row) => selectionToken(row).owners.map((owner) => owner.text))).toEqual([
+    'x<y < z boards'
+  ]);
+});
+
+it('keeps a trailing slash belonging to an unquoted image URL in the prepared body', () => {
+  const prepared = prepareSanitizedForumContent('<p><img src=https://img.example/path/></p>', {
+    baseUrl: 'https://example.invalid/',
+    role: 'opening',
+    source: 'v2ex'
+  });
+
+  expect(prepared.contentPlan.previewImages.map((image) => image.source)).toEqual(['https://img.example/path/']);
+});
+
+it('preserves literal unknown entities in the prepared body and Android selection', () => {
+  const prepared = prepareSanitizedForumContent('<p>&notanentity; &ampfoo; &copycat;</p>', {
+    baseUrl: 'https://example.invalid/',
+    role: 'opening',
+    source: 'v2ex'
+  });
+
+  const expected = '&notanentity; &ampfoo; &copycat;';
+  expect(parseHtml(prepared.contentHtml).textContent).toBe(expected);
+  expect(prepared.contentPlan.rows.flatMap((row) => selectionToken(row).owners.map((owner) => owner.text))).toEqual([
+    expected
+  ]);
+});
+
 it.each(['opening', 'reply', 'quoted-reply', 'accepted-answer', 'signature'] as const)(
   'keeps a Discourse carousel together in %s content with every original in preview order',
   (role) => {

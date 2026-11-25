@@ -110,6 +110,35 @@ describe('Account center cached reads', () => {
     focusManager.setFocused(undefined);
   });
 
+  it('retries only the attendance dashboard and shares concurrent retries', async () => {
+    const { getUserDetails, getOverview, getBoard, render } = setup();
+    getBoard.mockRejectedValueOnce(new Error('attendance temporarily unavailable'));
+    const hook = await render();
+    await waitFor(() => expect(hook.result.current.boardError).toBeInstanceOf(Error));
+    await waitFor(() => expect(hook.result.current.profile?.id).toBe('42'));
+    const initialProfileReads = getUserDetails.mock.calls.length;
+    const pending = Promise.withResolvers<Awaited<ReturnType<AccountOverviewGateway['getNodeSeekAttendanceBoard']>>>();
+    getBoard.mockReturnValueOnce(pending.promise);
+    let retries: Promise<void>[] = [];
+    try {
+      await act(async () => {
+        retries = [hook.result.current.retryAttendance(), hook.result.current.retryAttendance()];
+      });
+      expect(getBoard).toHaveBeenCalledTimes(2);
+      expect(getOverview).toHaveBeenCalledTimes(1);
+      expect(getUserDetails).toHaveBeenCalledTimes(initialProfileReads);
+      const board = { source: 'nodeseek', userId: '42', list: [], record: null, order: null, total: 0 } as const;
+      await act(async () => {
+        pending.resolve({ ...board, list: [] });
+        await Promise.all(retries);
+      });
+      await waitFor(() => expect(hook.result.current.board).toMatchObject({ userId: '42', record: null }));
+      expect(hook.result.current.boardError).toBeNull();
+    } finally {
+      await hook.unmount();
+    }
+  });
+
   it('retains private data after a long unmounted visit and honors explicit write invalidation', async () => {
     const { client, getUserDetails, getOverview, getBoard, render } = setup();
     const hook = await render();

@@ -6,23 +6,36 @@ import { createReadGateway } from '@/sources/readGateway';
 import { appQueryClient } from '@/platform/query/serverState';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { useUserController } from '@/features/user/useUserController';
-import { UserRoute, UserRouteRuntimeProvider, type UserRouteRuntimeValue } from '@/features/user/UserRoute';
+import { useAccountOverview } from '@/features/more/useAccountOverview';
+import { UserRoute } from '@/features/user/UserRoute';
+import { UserRouteRuntimeProvider, type UserRouteRuntimeValue } from '@/features/user/UserRouteRuntime';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
-import type { Source } from '@/domain/forum/models';
+import type { Source, UserReference } from '@/domain/forum/models';
+import type { ReadRecovery } from '@/platform/query/readRecovery';
+import { createSiteSessionStates } from '@/domain/session/siteSessionState';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { fireEvent, render } from '../render';
+import { projectTestAccountSessions } from '../../helpers/accountSessions';
 
 import { createUserActivityResponse, laneFor } from '../../fixtures/userActivityEvidence';
 
-function setup(source: Source, empty = false, activityResponse?: (url: string) => Response | undefined) {
+type Handoff = 'settled' | 'open' | 'resuming';
+
+function setup(
+  source: Source,
+  empty = false,
+  activityResponse?: (url: string, handoff: Handoff) => Response | Promise<Response> | undefined
+) {
   let failure: 'topics' | 'replies' | undefined;
+  let handoff: Handoff = 'settled';
   const responseFor = createUserActivityResponse(source, empty);
   const urls: string[] = [];
+  const showNodeSeekVerification = jest.fn<(message?: string, recovery?: ReadRecovery) => void>();
   const fetcher = async (url: string) => {
     urls.push(url);
-    return activityResponse?.(url) ?? responseFor(url, failure);
+    return activityResponse?.(url, handoff) ?? responseFor(url, failure);
   };
   const gateway = createReadGateway({
     fetcher,
@@ -32,7 +45,8 @@ function setup(source: Source, empty = false, activityResponse?: (url: string) =
     readSessionRuntimeSnapshot: (site) => ({
       source: site,
       authenticated: true,
-      authSurfaceOpen: false,
+      authSurfaceOpen: handoff !== 'settled',
+      ...(handoff === 'resuming' ? { foregroundReadDuringHandoff: true } : {}),
       identityKey: `${site}:7`,
       identityTrust: 'confirmed',
       sessionEpoch: 0,
@@ -42,10 +56,14 @@ function setup(source: Source, empty = false, activityResponse?: (url: string) =
   return {
     gateway,
     urls,
+    showNodeSeekVerification,
+    setHandoff: (next: Handoff) => {
+      handoff = next;
+    },
     fail: (lane: typeof failure) => {
       failure = lane;
     },
-    mount: () =>
+    mount: (user: UserReference = { source, id: '7', username: 'alice', url: 'https://example.com/user-fixture' }) =>
       renderHook(
         () =>
           useUserController({
@@ -54,9 +72,9 @@ function setup(source: Source, empty = false, activityResponse?: (url: string) =
             readerData: createEmptyReaderData(),
             readGateway: gateway,
             showLinuxDoVerification: jest.fn(() => undefined),
-            showNodeSeekVerification: jest.fn(),
+            showNodeSeekVerification,
             showYaohuoLogin: jest.fn(),
-            user: { source, id: '7', username: 'alice', url: 'https://example.com/user-fixture' }
+            user
           }),
         { wrapper: QueryTestWrapper }
       )
@@ -65,11 +83,177 @@ function setup(source: Source, empty = false, activityResponse?: (url: string) =
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
+it('keeps a User activity error out of the shared Account profile status', async () => {
+  appQueryClient.clear();
+  const fixture = setup('linuxdo');
+  const user = { source: 'linuxdo' as const, id: 'alice', username: 'alice', url: 'https://linux.do/u/alice' };
+  const session = projectTestAccountSessions(
+    createSiteSessionStates({
+      linuxdo: { site: 'linuxdo', status: 'logged-in', cookieSummary: [], isVerifying: false, currentUser: user }
+    })
+  ).linuxdo;
+  const userPage = await fixture.mount(user);
+  try {
+    await waitFor(() => expect(userPage.result.current.userProfile?.replies).toHaveLength(1));
+    fixture.fail('replies');
+    await act(async () => {
+      await expect(userPage.result.current.refreshUser()).resolves.toBe('failed');
+    });
+    await waitFor(() => expect(userPage.result.current.userRepliesError).not.toBeNull());
+    expect(userPage.result.current.userError).toBeNull();
+  } finally {
+    await userPage.unmount();
+  }
+  const account = await renderHook(
+    () =>
+      useAccountOverview({
+        active: true,
+        gateway: fixture.gateway,
+        session,
+        sessionEpochs: initialForumSessionEpochs,
+        site: 'linuxdo'
+      }),
+    { wrapper: QueryTestWrapper }
+  );
+  try {
+    await waitFor(() => expect(account.result.current.profile?.id).toBe('alice'));
+    expect(account.result.current.error).toBeNull();
+  } finally {
+    await account.unmount();
+    appQueryClient.clear();
+  }
+});
+
 describe('NodeSeek profile error recovery', () => {
   beforeEach(() => appQueryClient.clear());
 
   const lookup = '/api/account/find/alice';
   const profilePath = '/api/account/getInfo/7';
+
+  it.each(['profile', 'username', 'topic page'] as const)(
+    'restores the original NodeSeek %s across the same account handoff',
+    async (target) => {
+      const path =
+        target === 'username' ? lookup : target === 'profile' ? profilePath : '/api/content/list-discussions';
+      const requests: Handoff[] = [];
+      const fixture = setup('nodeseek', false, (url, handoff) => {
+        const request = new URL(url);
+        if (target === 'topic page') {
+          if (request.pathname === profilePath) {
+            return Response.json({ success: true, detail: { member_id: 7, member_name: 'alice', nPost: 16 } });
+          }
+          if (request.searchParams.get('page') !== '2') return;
+        }
+        if (request.pathname !== path) return;
+        requests.push(handoff);
+        if (handoff === 'settled') {
+          throw Object.assign(new Error('需要验证'), { source: 'nodeseek', reason: 'cloudflare' });
+        }
+        if (target === 'username') {
+          return Response.json({ success: true, memberList: [{ member_id: 7, member_name: 'alice' }] });
+        }
+        if (target === 'topic page') {
+          return Response.json({ success: true, discussions: [{ post_id: 202, title: '下一页' }] });
+        }
+      });
+      const hook = await fixture.mount({
+        source: 'nodeseek',
+        id: target === 'username' ? 'alice' : '7',
+        username: 'alice',
+        url: 'https://www.nodeseek.com/member?t=alice'
+      });
+      try {
+        if (target === 'topic page') {
+          await waitFor(() => expect(hook.result.current.userProfile?.nextTopicsCursor).toBe('2'));
+          await act(async () => {
+            await hook.result.current.loadMoreUserTopics();
+          });
+        }
+        await waitFor(() => expect(fixture.showNodeSeekVerification).toHaveBeenCalledTimes(1));
+        const recovery = fixture.showNodeSeekVerification.mock.calls[0]?.[1];
+        expect(recovery?.isCurrent?.()).toBe(true);
+        fixture.setHandoff('open');
+        await act(async () => hook.rerender(undefined));
+        expect(recovery?.isCurrent?.()).toBe(true);
+        fixture.setHandoff('resuming');
+        await act(async () => {
+          await expect(recovery?.resume()).resolves.toBe('completed');
+        });
+        expect(requests.filter((handoff) => handoff === 'resuming')).toHaveLength(1);
+        expect(fixture.showNodeSeekVerification).toHaveBeenCalledTimes(1);
+        if (target === 'topic page') {
+          await act(async () => hook.rerender(undefined));
+          await waitFor(() =>
+            expect(hook.result.current.userProfile?.topics?.map(({ id }) => id)).toEqual(['101', '202'])
+          );
+        }
+      } finally {
+        await hook.unmount();
+      }
+    }
+  );
+
+  it('keeps the whole profile and both activity cursors until a refresh succeeds', async () => {
+    let refreshing = false;
+    const repliesResponse = Promise.withResolvers<Response>();
+    const fixture = setup('nodeseek', false, (url) => {
+      const lane = laneFor(url);
+      if (lane === 'details') {
+        return Response.json({
+          success: true,
+          detail: { member_id: 7, member_name: 'alice', nPost: 16, nComment: 16 }
+        });
+      }
+      if (lane !== 'topics' && lane !== 'replies') return;
+      if (refreshing && lane === 'replies') return repliesResponse.promise;
+      const page = Number(new URL(url).searchParams.get('page'));
+      const row = { post_id: refreshing ? 101 : page, title: '主题样本', floor_id: 2, text: '回复样本' };
+      return Response.json({ success: true, [lane === 'topics' ? 'discussions' : 'comments']: [row] });
+    });
+    const hook = await fixture.mount();
+    try {
+      await waitFor(() => expect(hook.result.current.userProfile?.replies).toHaveLength(1));
+      await act(async () => {
+        await hook.result.current.loadMoreUserTopics();
+        await hook.result.current.loadMoreUserReplies();
+      });
+      await waitFor(() => {
+        expect(hook.result.current.userProfile?.topics).toHaveLength(2);
+        expect(hook.result.current.userProfile?.replies).toHaveLength(2);
+      });
+      const previous = hook.result.current.userProfile;
+      refreshing = true;
+      let refresh!: ReturnType<typeof hook.result.current.refreshUser>;
+      await act(async () => {
+        refresh = hook.result.current.refreshUser();
+      });
+      await waitFor(() => expect(fixture.urls.map(laneFor).slice(-2)).toEqual(['topics', 'replies']));
+      const beforeDuplicate = fixture.urls.length;
+      const whileRefreshing = {
+        headerBusy: hook.result.current.userBusy,
+        results: hook.result.current.userProfile
+      };
+      await act(async () => {
+        void hook.result.current.refreshUser();
+        await Promise.resolve();
+      });
+      const afterDuplicate = fixture.urls.length;
+      await act(async () => {
+        repliesResponse.resolve(new Response('activity unavailable', { status: 503 }));
+        await expect(refresh).resolves.toBe('failed');
+      });
+      expect(whileRefreshing).toEqual({ headerBusy: true, results: previous });
+      expect(afterDuplicate).toBe(beforeDuplicate);
+      expect(hook.result.current.userProfile).toBe(previous);
+      await waitFor(() => {
+        expect(hook.result.current.userBusy).toBe(false);
+        expect(hook.result.current.userRepliesError).not.toBeNull();
+      });
+    } finally {
+      repliesResponse.resolve(new Response('activity unavailable', { status: 503 }));
+      await hook.unmount();
+    }
+  });
 
   it.each(['topics', 'replies'] as const)(
     'retries a failed first-page %s refresh without reading cached later pages',

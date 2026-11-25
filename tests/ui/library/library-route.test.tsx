@@ -8,6 +8,7 @@ import { LibraryRoute } from '@/features/library/LibraryRoute';
 import { LibraryRouteRuntimeProvider } from '@/features/library/LibraryRouteRuntime';
 import type { LibraryScreen } from '@/features/library/LibraryScreen';
 import { queryReaderCategories, queryReaderPage } from '@/platform/storage/readerDataStore';
+import { readerLibraryQueryKeys } from '@/platform/query/serverState';
 import type { ReaderPage } from '@/platform/storage/readerDatabase';
 import { createEmptyReaderState } from '@/domain/reader/readerRecordState';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
@@ -18,6 +19,7 @@ let mockScreen: ComponentProps<typeof LibraryScreen>;
 let mockFocused = true;
 let mockInitialTab: LibraryTab | undefined;
 const mockListFrames: { testID?: string; data: unknown[]; onEndReached?: () => void }[] = [];
+const mockCategoryFrames: { options: string[]; selected: string }[] = [];
 const mockNavigation = { dispatch: jest.fn(), isFocused: () => mockFocused };
 jest.mock('react-native-gesture-handler', () => ({
   ...jest.requireActual<typeof import('react-native-gesture-handler')>('react-native-gesture-handler'),
@@ -53,6 +55,10 @@ jest.mock('@shopify/flash-list', () => {
 jest.mock('@/features/library/LibraryScreen', () => ({
   LibraryScreen: (props: typeof mockScreen) => {
     mockScreen = props;
+    mockCategoryFrames.push({
+      options: props.categoryItems.map(({ value }) => value),
+      selected: props.categoryFilter
+    });
     const Actual = jest.requireActual<typeof import('@/features/library/LibraryScreen')>(
       '@/features/library/LibraryScreen'
     ).LibraryScreen;
@@ -122,6 +128,7 @@ beforeEach(() => {
   mockFocused = true;
   mockInitialTab = undefined;
   mockListFrames.length = 0;
+  mockCategoryFrames.length = 0;
   mockNavigation.dispatch.mockClear();
 });
 afterEach(() => {
@@ -228,6 +235,34 @@ describe('Library route database query lifecycle', () => {
       await waitFor(() => expect(view.getByLabelText('分类：日常')).toBeTruthy());
       expect(mockScreen.categoryFilter).toBe('nodeseek:daily');
       expect(categoryQuery).toHaveBeenCalledTimes(3);
+    } finally {
+      await view.unmount();
+      view.client.clear();
+    }
+  });
+
+  it('drops a deleted category before publishing the new local category catalog to the screen', async () => {
+    query.mockImplementation(async ({ category }) => page(category === 'all' ? 'all-page' : 'selected-page'));
+    const view = await mount(['nodeseek', 'v2ex']);
+    try {
+      await waitFor(() => expect(view.getByTestId('library-category-menu-button')).toBeEnabled());
+      await fireEvent.press(view.getByTestId('library-category-menu-button'));
+      await fireEvent.press(view.getByRole('menuitem', { name: '日常' }));
+      await waitFor(() => expect(view.getByLabelText('分类：日常')).toBeTruthy());
+      await waitFor(() => expect(mockScreen.favoriteRecords[0]?.topic.id).toBe('selected-page'));
+
+      mockCategoryFrames.length = 0;
+      categoryQuery.mockResolvedValue(localCategories.filter(({ source }) => source === 'v2ex'));
+      await act(async () => {
+        await view.client.invalidateQueries({
+          queryKey: readerLibraryQueryKeys.categories('favorites', ['nodeseek', 'v2ex'])
+        });
+      });
+      await waitFor(() => expect(view.getByLabelText('分类：全部')).toBeTruthy());
+      const updated = mockCategoryFrames.filter(({ options }) => !options.includes('nodeseek:daily'));
+      expect(updated.length).toBeGreaterThan(0);
+      expect(updated.every(({ selected }) => selected === 'all')).toBe(true);
+      await waitFor(() => expect(mockScreen.favoriteRecords[0]?.topic.id).toBe('all-page'));
     } finally {
       await view.unmount();
       view.client.clear();
@@ -468,7 +503,7 @@ describe('Library route database query lifecycle', () => {
       await waitFor(() => expect(mockScreen.followedUsers).toHaveLength(1));
       await fireEvent.press(view.getByTestId('library-tab-favorites'));
       await waitFor(() => expect(mockScreen.libraryTab).toBe('favorites'));
-      await waitFor(() => expect(mockScreen.categoriesReady).toBe(true));
+      await waitFor(() => expect(mockScreen.categoryItems.some(({ value }) => value === 'nodeseek:daily')).toBe(true));
       const datasets = [mockScreen.favoriteRecords, mockScreen.historyRecords, mockScreen.followedUsers];
       const requestCount = query.mock.calls.length;
       mockListFrames.length = 0;

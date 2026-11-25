@@ -13,11 +13,8 @@ import { finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnosti
 import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import { forumQueryKeys } from '@/platform/query/serverState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import type {
-  LinuxDoReadRecovery,
-  LinuxDoReadResumeOutcome,
-  AccountReconcileResult
-} from '@/domain/session/sessionContracts';
+import type { LinuxDoReadResumeOutcome, AccountReconcileResult } from '@/domain/session/sessionContracts';
+import type { ReadRecovery } from '@/platform/query/readRecovery';
 import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 import { createLoginPanelDiagnostics, type LoginTransportState } from './loginPanelDiagnostics';
 
@@ -29,7 +26,7 @@ type AccountSource = 'nodeseek' | 'yaohuo';
 
 type LinuxDoLevelRequest =
   | { kind: 'command'; epoch: number; resolve: (completed: boolean) => void }
-  | { kind: 'verification'; epoch: number; recovery: LinuxDoReadRecovery };
+  | { kind: 'verification'; epoch: number; recovery: ReadRecovery };
 
 export function useAccountController({
   checkingRequestIdRef,
@@ -37,6 +34,7 @@ export function useAccountController({
   clearNodeSeekLoginState,
   clearYaohuoLoginState,
   commitNodeSeekWebViewUserAgent,
+  isAccountCenterFocused,
   sessionEpochs,
   nodeSeekLoginPanelRequestRef,
   notify,
@@ -61,6 +59,7 @@ export function useAccountController({
   clearNodeSeekLoginState: () => Promise<boolean>;
   clearYaohuoLoginState: () => Promise<boolean>;
   commitNodeSeekWebViewUserAgent: (userAgent: string) => void;
+  isAccountCenterFocused?: () => boolean;
   sessionEpochs: ForumSessionEpochs;
   nodeSeekLoginPanelRequestRef: Ref<number>;
   notify: (message: string) => void;
@@ -75,10 +74,7 @@ export function useAccountController({
   ) => Promise<AccountReconcileResult>;
   setChecking: Dispatch<SetStateAction<boolean>>;
   screen: Screen;
-  showLinuxDoVerification: (
-    message?: string,
-    recovery?: LinuxDoReadRecovery
-  ) => void | boolean | Promise<void | boolean>;
+  showLinuxDoVerification: (message?: string, recovery?: ReadRecovery) => void | boolean | Promise<void | boolean>;
   readGateway: Pick<ReadGateway, 'getLinuxDoLevelProfile'>;
   showLoginPanel: boolean;
   showYaohuoLoginPanel: boolean;
@@ -121,9 +117,7 @@ export function useAccountController({
     const request = linuxDoLevelRequestRef.current;
     finishLinuxDoLevelRequest();
     if (request?.kind === 'command') request.resolve(false);
-    void queryClient.cancelQueries({
-      predicate: ({ queryKey }) => queryKey[0] === 'forum' && queryKey[1] === 'linuxdo' && queryKey[2] === 'level'
-    });
+    void queryClient.cancelQueries({ queryKey: forumQueryKeys.levelProfilePrefix('linuxdo') });
   }, [finishLinuxDoLevelRequest, queryClient]);
 
   useEffect(() => () => cancelLinuxDoLevelRequest(), [cancelLinuxDoLevelRequest]);
@@ -163,29 +157,23 @@ export function useAccountController({
       return;
     }
     command.resolve(false);
-    if (!isLinuxDoCloudflareError(linuxDoLevelQuery.error)) {
+    if (!isLinuxDoCloudflareError(linuxDoLevelQuery.error) || isAccountCenterFocused?.() === false) {
       finishLinuxDoLevelRequest();
       return;
     }
 
-    const recovery: LinuxDoReadRecovery = {
+    const isCurrent = () =>
+      linuxDoLevelRequestRef.current?.kind === 'verification' &&
+      linuxDoLevelRequestRef.current.recovery === recovery &&
+      linuxDoLevelScreenRef.current === 'more' &&
+      isAccountCenterFocused?.() !== false;
+    const recovery: ReadRecovery = {
       queryKey: linuxDoLevelQueryKey,
-      resume: async (): Promise<LinuxDoReadResumeOutcome> => {
-        if (
-          linuxDoLevelRequestRef.current?.kind !== 'verification' ||
-          linuxDoLevelRequestRef.current.recovery !== recovery ||
-          linuxDoLevelScreenRef.current !== 'more'
-        ) {
-          return 'stale';
-        }
+      isCurrent,
+      resume: async (signal): Promise<LinuxDoReadResumeOutcome> => {
+        if (signal?.aborted || !isCurrent()) return 'stale';
         const result = await linuxDoLevelQuery.refetch({ cancelRefetch: false });
-        if (
-          linuxDoLevelRequestRef.current?.kind !== 'verification' ||
-          linuxDoLevelRequestRef.current.recovery !== recovery ||
-          linuxDoLevelScreenRef.current !== 'more'
-        ) {
-          return 'stale';
-        }
+        if (signal?.aborted || !isCurrent()) return 'stale';
         if (result.error) {
           if (isLinuxDoCloudflareError(result.error)) {
             return 'verification-required';
@@ -227,6 +215,7 @@ export function useAccountController({
   }, [
     cancelLinuxDoLevelRequest,
     finishLinuxDoLevelRequest,
+    isAccountCenterFocused,
     linuxDoLevelQuery.data,
     linuxDoLevelQuery.error,
     linuxDoLevelQuery.isFetching,
@@ -314,12 +303,12 @@ export function useAccountController({
   );
 
   const checkAccount = useCallback(
-    async (source: AccountSource, allowAnonymous = false) => {
+    async (source: AccountSource, recoveringRead = false) => {
       const trace = currentLoginTrace(source, 'manual');
       const requestId = ++checkingRequestIdRef.current;
       setChecking(true);
       try {
-        const result = await (allowAnonymous
+        const result = await (recoveringRead
           ? reconcileAccountStatus(source, { publishAnonymous: true })
           : reconcileAccountStatus(source));
         if (requestId !== checkingRequestIdRef.current || result.status === 'stale') {
@@ -332,12 +321,12 @@ export function useAccountController({
           return result;
         }
         if (result.status === 'anonymous') {
-          if (!allowAnonymous) notify(`${source === 'nodeseek' ? 'NodeSeek' : '妖火'}当前未登录。`);
+          if (!recoveringRead) notify(`${source === 'nodeseek' ? 'NodeSeek' : '妖火'}当前未登录。`);
           finishLoginTrace(
             source,
             trace,
-            allowAnonymous ? 'success' : 'blocked',
-            allowAnonymous ? {} : { reason: 'login_required' }
+            recoveringRead ? 'success' : 'blocked',
+            recoveringRead ? {} : { reason: 'login_required' }
           );
           return result;
         }
@@ -367,7 +356,7 @@ export function useAccountController({
   );
 
   const checkNodeSeekAccount = useCallback(
-    (allowAnonymous = false) => checkAccount('nodeseek', allowAnonymous),
+    (recoveringRead = false) => checkAccount('nodeseek', recoveringRead),
     [checkAccount]
   );
   const checkYaohuoCookie = useCallback(async () => {
@@ -413,7 +402,12 @@ export function useAccountController({
   }, [clearLinuxDoLoginState, notify, resetLinuxDoLevelState, resetLinuxDoWebView]);
 
   const refreshLinuxDoLevel = useCallback(() => {
-    if (linuxDoIdentityPending || linuxDoLevelScreenRef.current !== 'more' || linuxDoLevelRequestRef.current) {
+    if (
+      linuxDoIdentityPending ||
+      linuxDoLevelScreenRef.current !== 'more' ||
+      linuxDoLevelRequestRef.current ||
+      isAccountCenterFocused?.() === false
+    ) {
       return Promise.resolve(false);
     }
     void queryClient.invalidateQueries({
@@ -426,7 +420,7 @@ export function useAccountController({
       linuxDoLevelRequestRef.current = request;
       setLinuxDoLevelRequest(request);
     });
-  }, [linuxDoIdentityPending, linuxDoLevelQueryKey, queryClient, sessionEpochs.linuxdo]);
+  }, [isAccountCenterFocused, linuxDoIdentityPending, linuxDoLevelQueryKey, queryClient, sessionEpochs.linuxdo]);
 
   return {
     checkNodeSeekAccount,

@@ -1,8 +1,9 @@
 import { nodeSeekActionErrorMessage, type NodeSeekActionRequest } from './actionRequest';
 import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { NODESEEK_VOTE_API_HEADERS, normalizeNodeSeekVoteInfo } from './polls';
-import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
+import { fetchWithTimeout, isDefinitiveHttpRejection, type Fetcher } from '@/platform/network/request';
 import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
+import { isRecord } from '@/domain/forum/html';
 import { NODESEEK_BASE_URL } from './protocol';
 
 export const NODESEEK_ACTION_HEADERS = {
@@ -17,6 +18,10 @@ export const NODESEEK_ACTION_HEADERS = {
   'x-csrf-challenge': 'simple-token',
   'x-requested-with': 'XMLHttpRequest'
 };
+
+export function isConfirmedNodeSeekAction(data: unknown): data is Record<string, unknown> & { success: true } {
+  return isRecord(data) && data.success === true;
+}
 
 function isFailedActionPayload(data: unknown) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
@@ -153,27 +158,17 @@ export async function runNodeSeekAction({
   }
 
   if (!response.ok) {
-    let confirmedRejection: boolean | undefined;
     const attendanceRequest = /^\/api\/attendance\?random=(?:true|false)$/.test(request.path);
-    if (
-      request.method === 'POST' &&
-      ([
-        '/api/vote/info',
-        '/api/content/edit-discussion',
-        '/api/content/new-discussion',
-        '/api/notification/message/send'
-      ].includes(request.path) ||
-        attendanceRequest) &&
-      ([408, 409].includes(response.status) || (attendanceRequest && response.status >= 500))
-    ) {
-      const payload =
-        data && typeof data === 'object' && !Array.isArray(data) ? (data as Record<string, unknown>) : null;
-      confirmedRejection = Boolean(
-        payload?.success === false ||
-        (typeof payload?.error === 'string' && payload.error.trim()) ||
-        (Array.isArray(payload?.errors) && payload.errors.some((error) => typeof error === 'string' && error.trim()))
-      );
-    }
+    const requiresBusinessEvidence =
+      [408, 409].includes(response.status) || (attendanceRequest && response.status >= 500);
+    const payload = data && typeof data === 'object' && !Array.isArray(data) ? (data as Record<string, unknown>) : null;
+    const explicitlyRejected =
+      payload?.success === false ||
+      (typeof payload?.error === 'string' && Boolean(payload.error.trim())) ||
+      (Array.isArray(payload?.errors) && payload.errors.some((error) => typeof error === 'string' && error.trim()));
+    const confirmedRejection = requiresBusinessEvidence
+      ? explicitlyRejected
+      : isDefinitiveHttpRejection(response.status);
     throw nodeSeekActionError(data, response.status, request.fallbackErrorMessage, confirmedRejection);
   }
   if (!parsedJson) {
@@ -190,7 +185,7 @@ function nodeSeekActionError(
   data: unknown,
   status: number,
   fallbackErrorMessage?: string,
-  confirmedRejection = status >= 400 && status < 500
+  confirmedRejection = isDefinitiveHttpRejection(status)
 ) {
   const message = nodeSeekActionErrorMessage(data, status, fallbackErrorMessage);
   const error = new Error(message);

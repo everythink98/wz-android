@@ -9,24 +9,30 @@ import com.facebook.react.uimanager.ViewManager
 import com.wz.reader.composer.ComposerKeyboardHostManager
 
 class ForumPlatformPackage : BaseReactPackage() {
+  private class Bridge(
+    val type: Class<out NativeModule>,
+    val create: (ReactApplicationContext) -> NativeModule,
+  )
+
+  private val bridges = mapOf(
+    "ApkInstallerModule" to Bridge(ApkInstallerModule::class.java, ::ApkInstallerModule),
+    "ForumSearchCustomTabModule" to Bridge(ForumSearchCustomTabModule::class.java, ::ForumSearchCustomTabModule),
+    "SecureRandomModule" to Bridge(SecureRandomModule::class.java, ::SecureRandomModule),
+    "NotificationDigestModule" to Bridge(NotificationDigestModule::class.java, ::NotificationDigestModule),
+  )
+
   override fun getModule(name: String, reactContext: ReactApplicationContext): NativeModule? =
-    when (name) {
-      "ApkInstallerModule" -> ApkInstallerModule(reactContext)
-      "ForumSearchCustomTabModule" -> ForumSearchCustomTabModule(reactContext)
-      "SecureRandomModule" -> SecureRandomModule(reactContext)
-      "NotificationDigestModule" -> NotificationDigestModule(reactContext)
-      else -> null
-    }
+    bridges[name]?.create?.invoke(reactContext)
 
   override fun getReactModuleInfoProvider(): ReactModuleInfoProvider = ReactModuleInfoProvider {
-    mapOf(
-      "ApkInstallerModule" to ApkInstallerModule::class.java,
-      "ForumSearchCustomTabModule" to ForumSearchCustomTabModule::class.java,
-      "SecureRandomModule" to SecureRandomModule::class.java,
-      "NotificationDigestModule" to NotificationDigestModule::class.java,
-    ).mapValues { (name, module) -> ReactModuleInfo(name, module.name, false, false, false, false) }
+    bridges.mapValues { (name, bridge) -> ReactModuleInfo(name, bridge.type.name, false, false, false, false) }
   }
 
   override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> =
-    listOf(PreviewRegionImageViewManager(), ComposerKeyboardHostManager(), SearchHistoryIconViewManager())
+    listOf(
+      PreviewRegionImageViewManager(),
+      ComposerKeyboardHostManager(),
+      SearchHistoryIconViewManager(),
+      SearchHistoryFrameViewManager(),
+    )
 }

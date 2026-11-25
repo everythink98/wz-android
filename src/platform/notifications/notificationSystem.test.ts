@@ -70,6 +70,33 @@ describe('Android notification system', () => {
     await expect(requestNotificationPermission()).resolves.toBe(false);
     expect(mocks.setChannel).toHaveBeenCalledBefore(vi.mocked(requestPermissionsAsync));
   });
+
+  it('shares a single in-flight OS permission request across concurrent callers and resets after settlement', async () => {
+    const firstPending = Promise.withResolvers<{ granted: boolean }>();
+    vi.mocked(requestPermissionsAsync).mockReturnValueOnce(firstPending.promise as never);
+
+    const callerA = requestNotificationPermission();
+    const callerB = requestNotificationPermission();
+    await vi.waitFor(() => expect(requestPermissionsAsync).toHaveBeenCalledTimes(1));
+    expect(requestPermissionsAsync).toHaveBeenCalledTimes(1);
+
+    firstPending.resolve({ granted: true });
+    await expect(Promise.all([callerA, callerB])).resolves.toEqual([true, true]);
+    expect(requestPermissionsAsync).toHaveBeenCalledTimes(1);
+
+    // After settlement, a subsequent failure is also shared single-flight and resets cleanly.
+    const secondPending = Promise.withResolvers<{ granted: boolean }>();
+    vi.mocked(requestPermissionsAsync).mockReturnValueOnce(secondPending.promise as never);
+    const callerC = requestNotificationPermission();
+    const callerD = requestNotificationPermission();
+    await vi.waitFor(() => expect(requestPermissionsAsync).toHaveBeenCalledTimes(2));
+
+    const bridgeError = new Error('permission bridge failed');
+    secondPending.reject(bridgeError);
+    await expect(callerC).rejects.toBe(bridgeError);
+    await expect(callerD).rejects.toBe(bridgeError);
+    expect(requestPermissionsAsync).toHaveBeenCalledTimes(2);
+  });
   it('records a failed registration and a later successful registration without exposing the failure text', async () => {
     const state = defaultNotificationState();
     state.globalEnabled = true;
@@ -276,7 +303,8 @@ describe('Android notification system', () => {
     await presentSourceNotification(
       'nodeseek',
       { title: 'NodeSeek', body: '张三回复了你的主题', data: { source: 'nodeseek' } },
-      `${identityIdentifier}-a`
+      `${identityIdentifier}-a`,
+      async () => undefined
     );
 
     expect(mocks.setChannel).toHaveBeenCalledWith(
@@ -330,7 +358,8 @@ describe('Android notification system', () => {
     const presentation = presentSourceNotification(
       'nodeseek',
       { title: 'NodeSeek', body: '张三回复了你的主题', data: { source: 'nodeseek' } },
-      'wz-message-nodeseek-nodeseek%3A7-a'
+      'wz-message-nodeseek-nodeseek%3A7-a',
+      async () => undefined
     ).finally(() => {
       settled = true;
     });

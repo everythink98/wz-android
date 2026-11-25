@@ -1,4 +1,7 @@
+import { decodeHTMLAttribute } from 'entities';
+import { DecodingMode, EntityDecoder, htmlDecodeTree } from 'entities/decode';
 import { parse, HTMLElement, TextNode, type Node } from 'node-html-parser';
+import { htmlTagAttribute, transformHtmlSegments } from './htmlSegments';
 
 export const FORUM_AUDIO_TAG = 'forum-audio';
 
@@ -27,23 +30,6 @@ export function recordText(record: Record<string, unknown>, ...keys: string[]) {
   }
   return '';
 }
-
-function htmlEntityCodePoint(entity: string, codePoint: number) {
-  try {
-    return String.fromCodePoint(codePoint);
-  } catch {
-    return entity;
-  }
-}
-
-const NAMED_HTML_ENTITIES: Record<string, string> = {
-  nbsp: ' ',
-  amp: '&',
-  lt: '<',
-  gt: '>',
-  quot: '"',
-  apos: "'"
-};
 
 export function absoluteUrl(value: unknown, baseUrl: string) {
   const text = String(value || '').trim();
@@ -79,17 +65,135 @@ export function toIsoString(value: unknown, defaultTimezone = '') {
   return Number.isNaN(date.getTime()) ? '' : date.toISOString();
 }
 
+export function decodeHtmlAttribute(value: unknown) {
+  const text = String(value || '');
+  if (!text.includes('&')) return text;
+  return decodeHTMLAttribute(text);
+}
+
 export function decodeHtml(value: unknown) {
-  return String(value || '').replace(/&(#x[0-9a-f]+|#\d+|nbsp|amp|lt|gt|quot|apos);/gi, (entity, name) => {
-    const key = String(name).toLowerCase();
-    if (key.startsWith('#x')) {
-      return htmlEntityCodePoint(entity, Number.parseInt(key.slice(2), 16));
+  return decodeHtmlAttribute(value);
+}
+
+export type HtmlTextSegmentKind = 'text' | 'decoded-reference' | 'literal-reference';
+
+export function visitDecodedHtmlText(
+  source: string,
+  visit: (text: string, start: number, end: number, kind: HtmlTextSegmentKind) => void
+) {
+  let amp = source.indexOf('&');
+  let literalStart = 0;
+  if (amp >= 0) {
+    const completeName = /[A-Za-z][A-Za-z0-9]*;/y;
+    let decodedReference = '';
+    const decoder = new EntityDecoder(htmlDecodeTree, (codePoint) => {
+      decodedReference += String.fromCodePoint(codePoint);
+    });
+    while (amp >= 0) {
+      completeName.lastIndex = amp + 1;
+      const named = completeName.test(source);
+      decodedReference = '';
+      // A complete name must match in full, while legacy semicolonless references remain valid.
+      decoder.startEntity(named ? DecodingMode.Strict : DecodingMode.Legacy);
+      const consumed = decoder.write(source, amp + 1);
+      const referenceEnd = consumed < 0 ? amp + decoder.end() : amp + consumed;
+      if (referenceEnd > amp || named) {
+        if (literalStart < amp) visit(source.slice(literalStart, amp), literalStart, amp, 'text');
+        if (referenceEnd > amp) {
+          visit(decodedReference, amp, referenceEnd, 'decoded-reference');
+          literalStart = referenceEnd;
+        } else {
+          literalStart = completeName.lastIndex;
+          visit(source.slice(amp, literalStart), amp, literalStart, 'literal-reference');
+        }
+        amp = source.indexOf('&', literalStart);
+      } else {
+        amp = source.indexOf('&', amp + 1);
+      }
     }
-    if (key.startsWith('#')) {
-      return htmlEntityCodePoint(entity, Number.parseInt(key.slice(1), 10));
-    }
-    return NAMED_HTML_ENTITIES[key] || entity;
+  }
+  if (literalStart < source.length) visit(source.slice(literalStart), literalStart, source.length, 'text');
+}
+
+export function decodeHtmlEntities(value: unknown) {
+  const text = String(value || '');
+  if (!text.includes('&')) return text;
+  let decoded = '';
+  visitDecodedHtmlText(text, (part) => {
+    decoded += part;
   });
+  return decoded;
+}
+
+export interface HtmlAttributeReadableNode {
+  attributes?: Record<string, string | undefined>;
+  rawAttributes?: Record<string, string | null | undefined>;
+  getAttribute?: (name: string) => string | undefined;
+}
+
+export interface HtmlAttributeWritableNode extends HtmlAttributeReadableNode {
+  setAttribute?: (name: string, value: string) => void;
+}
+
+export function htmlElementAttribute(
+  node: HtmlAttributeReadableNode | null | undefined,
+  name: string
+): string | undefined {
+  if (!node) return undefined;
+  const target = name.toLowerCase();
+  if (node.rawAttributes) {
+    for (const [key, rawValue] of Object.entries(node.rawAttributes)) {
+      if (key.toLowerCase() === target) {
+        return rawValue === null || rawValue === undefined ? '' : decodeHtmlAttribute(rawValue);
+      }
+    }
+    return undefined;
+  }
+  if (node.attributes) {
+    if (Object.prototype.hasOwnProperty.call(node.attributes, name)) {
+      const value = node.attributes[name];
+      return value === undefined ? undefined : String(value);
+    }
+    for (const [key, value] of Object.entries(node.attributes)) {
+      if (key.toLowerCase() === target) {
+        return value === undefined ? undefined : String(value);
+      }
+    }
+  }
+  return node.getAttribute?.(name);
+}
+
+export function htmlElementAttributes(
+  node: HtmlAttributeReadableNode | null | undefined
+): Record<string, string | undefined> {
+  if (!node) return {};
+  if (node.rawAttributes) {
+    const result: Record<string, string | undefined> = {};
+    for (const [key, rawValue] of Object.entries(node.rawAttributes)) {
+      const lower = key.toLowerCase();
+      if (!(lower in result)) {
+        result[lower] = rawValue === null || rawValue === undefined ? '' : decodeHtmlAttribute(rawValue);
+      }
+    }
+    return result;
+  }
+  return node.attributes ? { ...node.attributes } : {};
+}
+
+export function setHtmlElementAttribute(
+  node: HtmlAttributeWritableNode | null | undefined,
+  name: string,
+  value: string
+) {
+  if (!node) return;
+  const stringValue = String(value);
+  if (typeof node.setAttribute === 'function') {
+    node.setAttribute(name, node.rawAttributes ? escapeHtmlAttribute(stringValue) : stringValue);
+    return;
+  }
+  if (node.attributes) {
+    node.attributes[name] = stringValue;
+  }
 }
 
 export function escapeHtmlText(value: unknown) {
@@ -107,47 +211,77 @@ export function escapeHtmlFully(value: unknown) {
   return escapeHtmlAttribute(value).replace(/'/g, '&#39;');
 }
 
-export function escapeQuotedHtmlTagDelimiters(value: unknown) {
-  let inTag = false;
-  let quote = '';
-  let result = '';
-  const html = String(value || '');
-  for (let index = 0; index < html.length; index++) {
-    const char = html.charAt(index);
-    if (!inTag) {
-      inTag =
-        char === '<' &&
-        (/[a-z!?]/i.test(html.charAt(index + 1)) ||
-          (html.charAt(index + 1) === '/' && /[a-z]/i.test(html.charAt(index + 2))));
-      result += char === '<' && !inTag ? '&lt;' : char;
-      continue;
-    }
-    if (quote) {
-      if (char === quote) {
-        quote = '';
-        result += char;
-      } else {
-        result += char === '>' ? '&gt;' : char;
-      }
-      continue;
-    }
-    if (char === '"' || char === "'") {
-      quote = char;
-    } else if (char === '>') {
-      inTag = false;
-    }
-    result += char;
-  }
-  return result;
+function escapeLiteralHtmlLessThan(text: string) {
+  return text.replace(/</g, '&lt;');
 }
 
-export function textContentFromHtml(value: unknown) {
-  return decodeHtml(
-    escapeQuotedHtmlTagDelimiters(value)
-      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-      .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<[^>]*>/g, ' ')
+function preserveForumHtmlText(text: string) {
+  if (!text.includes('&')) return escapeLiteralHtmlLessThan(text);
+  let html = '';
+  visitDecodedHtmlText(text, (part, start, end, kind) => {
+    if (kind === 'literal-reference') html += escapeHtmlText(part);
+    else if (kind === 'decoded-reference') html += text.slice(start, end);
+    else html += escapeLiteralHtmlLessThan(part);
+  });
+  return html;
+}
+
+function preserveHtmlTagAttributes(tag: string, trailingUnquotedValueStart?: number) {
+  if (trailingUnquotedValueStart !== undefined) {
+    // The DOM parser treats the last slash as a self-closing delimiter even inside an unquoted value.
+    const opening = tag.slice(0, trailingUnquotedValueStart).replace(/>/g, '&gt;');
+    return `${opening}"${tag.slice(trailingUnquotedValueStart, -1)}">`;
+  }
+  if (tag.startsWith('<!--') || tag.startsWith('</') || tag.indexOf('>') === tag.length - 1) return tag;
+  return `${tag.slice(0, -1).replace(/>/g, '&gt;')}>`;
+}
+
+export function escapeQuotedHtmlTagDelimiters(value: unknown) {
+  return transformHtmlSegments(
+    String(value || ''),
+    preserveForumHtmlText,
+    preserveHtmlTagAttributes,
+    escapeLiteralHtmlLessThan
+  );
+}
+
+export function normalizeForumMarkupForSanitization(value: unknown) {
+  return transformHtmlSegments(
+    String(value || ''),
+    preserveForumHtmlText,
+    (tag, trailingUnquotedValueStart) =>
+      tag.startsWith('<![') || /^<\/?(?:script|style)(?=[\s/>])/i.test(tag)
+        ? ''
+        : preserveHtmlTagAttributes(tag, trailingUnquotedValueStart),
+    () => ''
+  );
+}
+
+const HTML_TEXT_BLOCK_BOUNDARY =
+  /^(?:address|article|aside|blockquote|br|caption|dd|details|dialog|div|dl|dt|fieldset|figcaption|figure|footer|form|h[1-6]|header|hgroup|hr|li|main|nav|ol|p|pre|section|summary|table|tbody|td|tfoot|th|thead|tr|ul)$/;
+
+export function textContentFromHtml(
+  value: unknown,
+  options?: { includeImageAlt?: boolean; preserveInlineText?: boolean }
+) {
+  const includeImageAlt = options?.includeImageAlt === true;
+  const preserveInlineText = options?.preserveInlineText === true;
+  const inlineSeparator = preserveInlineText ? '' : ' ';
+  return transformHtmlSegments(
+    String(value || ''),
+    (segment) => decodeHtmlEntities(segment),
+    (tag) => {
+      const tagMatch = tag.match(/^<(\/?)([A-Za-z][A-Za-z0-9:-]*)/);
+      if (!tagMatch) return inlineSeparator;
+      const closing = tagMatch[1] === '/';
+      const name = tagMatch[2].toLowerCase();
+      if (includeImageAlt && !closing && name === 'img') {
+        const alt = htmlTagAttribute(tag, 'alt');
+        return alt !== undefined ? decodeHtmlAttribute(alt) : inlineSeparator;
+      }
+      return preserveInlineText && !HTML_TEXT_BLOCK_BOUNDARY.test(name) ? '' : ' ';
+    },
+    () => ''
   )
     .replace(/\s+/g, ' ')
     .trim();
@@ -253,8 +387,16 @@ export function hasRenderableHtmlContent(value: unknown, parsedRoot?: ReturnType
   }
 }
 
+export function parseDataImageUrl(value: unknown): { base64: string; extension: string } | null {
+  const match =
+    typeof value === 'string' && /^data:image\/(png|jpe?g|gif|webp|avif);base64,([\s\S]+)$/i.exec(value.trim());
+  if (!match) return null;
+  const type = match[1].toLowerCase();
+  return { base64: match[2].trim(), extension: type === 'jpeg' ? 'jpg' : type };
+}
+
 export function isAllowedDataImageUrl(value: unknown) {
-  return /^data:image\/(?:png|jpe?g|gif|webp|avif);base64,[\s\S]+$/i.test(String(value || '').trim());
+  return parseDataImageUrl(value) !== null;
 }
 
 export function parsePositiveInteger(value: unknown) {

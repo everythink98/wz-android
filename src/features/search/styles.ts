@@ -426,6 +426,15 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
       borderBottomRightRadius: readerRadii.surface,
       borderBottomWidth: StyleSheet.hairlineWidth
     },
+    recentSearchUnclipped: { overflow: 'visible' },
+    // On Android the native decoration paints the frame. Keep its insets in the row layout.
+    recentSearchNativeFrame: {
+      paddingHorizontal: StyleSheet.hairlineWidth,
+      paddingTop: StyleSheet.hairlineWidth
+    },
+    recentSearchNativeFrameLast: {
+      paddingBottom: StyleSheet.hairlineWidth
+    },
     removableChip: {
       alignItems: 'center',
       flex: 1,

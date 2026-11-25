@@ -2,6 +2,7 @@ import { hashKey, QueryClient, type InfiniteData, type QueryKey } from '@tanstac
 import type { SourceSearchFilter } from '@/domain/forum/searchFilters';
 import { isSessionSource, type DiscourseSource, type NotificationSource } from '@/domain/forum/sourceCatalog';
 import type { FeedSource, ReplyOrder, Source } from '@/domain/forum/models';
+import type { ReaderPageRequest } from '@/domain/reader/readerRecordState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from './sessionEpochs';
 
 function sessionEpochKey(source: FeedSource, epochs: ForumSessionEpochs) {
@@ -11,9 +12,46 @@ function sessionEpochKey(source: FeedSource, epochs: ForumSessionEpochs) {
   return isSessionSource(source) ? epochs[source] : 0;
 }
 
+const libraryQueryRoot = ['reader-library'] as const;
+const libraryCollectionKey = (collection: ReaderPageRequest['collection']) =>
+  [...libraryQueryRoot, collection] as const;
+const librarySourceSetKey = (sources: readonly Source[]) => sources.slice().sort().join('|');
+
+export const readerLibraryQueryKeys = {
+  all: libraryQueryRoot,
+  collection: libraryCollectionKey,
+  categories: (collection: ReaderPageRequest['collection'], sources: readonly Source[]) =>
+    [...libraryCollectionKey(collection), 'categories', librarySourceSetKey(sources)] as const,
+  page: ({ collection, sources, source, category }: Omit<ReaderPageRequest, 'after'>) =>
+    [...libraryCollectionKey(collection), librarySourceSetKey(sources), source, category] as const
+};
+
 export const accountQueryKeys = {
   all: ['account'] as const,
   snapshot: (source: Source) => ['account', source, 'snapshot'] as const
+};
+
+type AccountDataSource = import('@/domain/session/siteSessionState').SessionSite;
+type AccountDataKind = 'overview' | 'attendance' | 'credits' | 'stardust-credits' | 'ldc-account' | 'ldc-transactions';
+
+const accountDataPrefix = (source: AccountDataSource, kind: AccountDataKind) =>
+  ['forum', source, 'account-data', kind] as const;
+const levelProfilePrefix = (source: Source) => ['forum', source, 'level'] as const;
+
+// Pending writes must survive the cleanup of site read caches.
+const writeReceiptRootKey = ['forum-write-receipts'] as const;
+const writeReceiptSourceKey = (source: Source) => [...writeReceiptRootKey, source] as const;
+
+export const forumWriteReceiptKeys = {
+  source: writeReceiptSourceKey,
+  nodeSeekPoll: (scope: { identityKey: string; sessionEpoch: number; pollId: string; kind: 'vote' | 'lock' }) =>
+    [...writeReceiptSourceKey('nodeseek'), 'poll', scope] as const,
+  discoursePolicy: (account?: { identityKey: string; sessionEpoch: number }) =>
+    [
+      ...writeReceiptSourceKey('linuxdo'),
+      'policy',
+      account ? { identityKey: account.identityKey, sessionEpoch: account.sessionEpoch } : null
+    ] as const
 };
 
 export const forumQueryKeys = {
@@ -22,6 +60,7 @@ export const forumQueryKeys = {
   v2exNodeDirectory: ['forum', 'v2ex', 'node-directory'] as const,
   searchAuthorLabels: (sessionEpoch: number, readPlanScope: string) =>
     ['forum', 'linuxdo', 'search-author-labels', { sessionEpoch, readPlanScope }] as const,
+  accountDataPrefix,
   accountData: ({
     source,
     kind,
@@ -29,12 +68,12 @@ export const forumQueryKeys = {
     sessionEpoch,
     readPlanScope
   }: {
-    source: import('@/domain/session/siteSessionState').SessionSite;
-    kind: 'overview' | 'attendance' | 'credits' | 'stardust-credits' | 'ldc-account' | 'ldc-transactions';
+    source: AccountDataSource;
+    kind: AccountDataKind;
     userId: string;
     sessionEpoch: number;
     readPlanScope: string;
-  }) => ['forum', source, 'account-data', kind, { userId, sessionEpoch, readPlanScope }] as const,
+  }) => [...accountDataPrefix(source, kind), { userId, sessionEpoch, readPlanScope }] as const,
   categories: (
     source: FeedSource,
     scope: ForumSessionEpochs = initialForumSessionEpochs,
@@ -295,8 +334,9 @@ export const forumQueryKeys = {
     source: NotificationSource;
   }) => ['forum', source, 'notifications', 'snapshot', { identityKey, sessionEpoch }] as const,
   level: (source: Source) => ['forum', source, 'level'] as const,
+  levelProfilePrefix,
   levelProfile: ({ sessionEpochs, source }: { sessionEpochs: ForumSessionEpochs; source: Source }) =>
-    ['forum', source, 'level', { sessionEpoch: sessionEpochKey(source, sessionEpochs) }] as const
+    [...levelProfilePrefix(source), { sessionEpoch: sessionEpochKey(source, sessionEpochs) }] as const
 };
 
 export const forumMutationKeys = {
@@ -328,7 +368,7 @@ export function forumReplyWindowKeys(queryClient: QueryClient, topicKey: QueryKe
 }
 
 export function createAppQueryClient() {
-  return new QueryClient({
+  const client = new QueryClient({
     defaultOptions: {
       queries: {
         refetchOnMount: false,
@@ -342,6 +382,8 @@ export function createAppQueryClient() {
       }
     }
   });
+  client.setQueryDefaults(writeReceiptRootKey, { gcTime: Infinity });
+  return client;
 }
 
 export const appQueryClient = createAppQueryClient();

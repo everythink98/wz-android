@@ -1,7 +1,7 @@
 module.exports = {
   preset: 'jest-expo/android',
   transformIgnorePatterns: require('jest-expo/jest-preset').transformIgnorePatterns.map((pattern) =>
-    pattern.replace('/node_modules/(?!', '/node_modules/(?!@shopify/flash-list|')
+    pattern.replace('/node_modules/(?!', '/node_modules/(?!@shopify/flash-list|entities|')
   ),
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',

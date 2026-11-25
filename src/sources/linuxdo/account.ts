@@ -13,12 +13,12 @@ import type {
   UserReplyActivity
 } from '@/domain/forum/models';
 import {
-  decodeHtml,
   isRecord,
   parsePositiveInteger,
   recordText,
   sortTopicsByCreatedAt,
-  textExcerpt,
+  textContentFromHtml,
+  textExcerptFromPlainText,
   toIsoString
 } from '@/domain/forum/html';
 import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
@@ -52,7 +52,9 @@ function normalizeUserActionReply(
     return null;
   }
   const topicId = normalizeTopicId(raw.topic_id || raw.topicId);
-  const topicTitle = decodeHtml(raw.title || raw.topic_title || raw.unicode_title || '');
+  const topicTitle =
+    recordText(raw, 'unicode_title', 'title', 'topic_title') ||
+    textContentFromHtml(recordText(raw, 'fancy_title'), { includeImageAlt: true, preserveInlineText: true });
   if (!topicId || !topicTitle) {
     return null;
   }
@@ -61,6 +63,10 @@ function normalizeUserActionReply(
   const slug = String(raw.slug || topicId);
   const category = raw.category_id ? categoryMap.get(String(raw.category_id)) : undefined;
   const url = `${BASE_URL}/t/${slug}/${topicId}${floor ? `/${floor}` : ''}`;
+  const rawHtmlExcerpt = recordText(raw, 'excerpt', 'content');
+  const excerpt = rawHtmlExcerpt
+    ? textExcerptFromPlainText(stripDiscourseCalloutMarkersFromExcerpt(textContentFromHtml(rawHtmlExcerpt)))
+    : textExcerptFromPlainText(stripDiscourseCalloutMarkersFromExcerpt(raw.markdown || ''));
   return {
     source: 'linuxdo',
     id: postId || `${topicId}:${floor || 0}`,
@@ -76,7 +82,7 @@ function normalizeUserActionReply(
     category: category?.name,
     createdAt: toIsoString(raw.created_at || raw.createdAt) || undefined,
     ...(floor ? { floor } : {}),
-    excerpt: textExcerpt(stripDiscourseCalloutMarkersFromExcerpt(raw.excerpt || raw.content || raw.markdown || ''))
+    excerpt
   };
 }
 

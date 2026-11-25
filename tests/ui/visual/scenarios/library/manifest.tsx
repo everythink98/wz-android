@@ -4,6 +4,7 @@ import type { Source } from '@/domain/forum/sourceCatalog';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { createEmptyReaderData, type FollowedUserRecord, type TopicRecord } from '@/domain/reader/readerData';
 import { LibraryScreen } from '@/features/library/LibraryScreen';
+import { allLibraryFilters, resolveLibraryFilters } from '@/features/library/model/libraryFilters';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import type { VisualScenarioDefinition } from '../../types';
 
@@ -110,7 +111,7 @@ function LibraryScenario({
       error={false}
       onRetry={noop}
       onLoadMore={noop}
-      categories={createCategories()}
+      categoryItems={resolveLibraryFilters(allLibraryFilters, sources, createCategories(), true).categoryItems}
       enabledSources={sources}
       favoriteRecords={records}
       followedUsers={empty ? [] : createFollowedUsers()}

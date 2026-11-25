@@ -56,14 +56,15 @@ import {
   isExternalForumSearchSource,
   type ExternalForumSearchSource
 } from '@/domain/forum/externalSearch';
-import type {
-  AccountReconcileResult,
-  LinuxDoReadRecovery,
-  LinuxDoReadResumeOutcome
-} from '@/domain/session/sessionContracts';
+import type { AccountReconcileResult, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
+import type { ReadRecovery } from '@/platform/query/readRecovery';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { forumQueryKeys } from '@/platform/query/serverState';
-import { useFirstPageInfiniteQuery } from '@/platform/query/useFirstPageInfiniteQuery';
+import {
+  resumeInfiniteQueryPage,
+  useFirstPageInfiniteQuery,
+  type FirstPageInfiniteQueryOptions
+} from '@/platform/query/useFirstPageInfiniteQuery';
 import { RequestCanceledError } from '@/platform/network/request';
 import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 
@@ -188,7 +189,6 @@ export function useSearchController({
   linuxDoVerificationActive,
   notify,
   onOpenExternalSearch,
-  onNodeSeekSearchVerificationRequired,
   reconcileIdentityStatus,
   sessionViewModels,
   showLinuxDoVerification,
@@ -203,14 +203,10 @@ export function useSearchController({
   linuxDoVerificationActive: boolean;
   notify: (message: string) => void;
   onOpenExternalSearch?: (url: string) => void | Promise<void>;
-  onNodeSeekSearchVerificationRequired?: (message: string, recovery: LinuxDoReadRecovery) => void;
   reconcileIdentityStatus: (source: SessionSource) => Promise<AccountReconcileResult>;
   sessionViewModels: SiteSessionViewModels;
-  showLinuxDoVerification: (
-    message?: string,
-    recovery?: LinuxDoReadRecovery
-  ) => void | boolean | Promise<void | boolean>;
-  showNodeSeekVerification: (message?: string) => void;
+  showLinuxDoVerification: (message?: string, recovery?: ReadRecovery) => void | boolean | Promise<void | boolean>;
+  showNodeSeekVerification: (message: string, recovery: ReadRecovery) => void;
   showYaohuoLogin: (message?: string) => void;
   readGateway: ReadGateway;
 }) {
@@ -623,7 +619,7 @@ export function useSearchController({
     ]
   );
 
-  const [singleSearchQuery, refreshSearchFirstPage] = useFirstPageInfiniteQuery<RemoteSearchSourceResult, number>({
+  const singleSearchOptions: FirstPageInfiniteQueryOptions<RemoteSearchSourceResult, number> = {
     queryKey: singleSearchKey,
     enabled: Boolean(
       searchActive &&
@@ -651,7 +647,8 @@ export function useSearchController({
       const group = groupFromRemoteSearchResult(lastPage);
       return nextSearchPage(group, lastPageParam);
     }
-  });
+  };
+  const [singleSearchQuery, refreshSearchFirstPage] = useFirstPageInfiniteQuery(singleSearchOptions);
 
   const aggregateGroups = useMemo(
     () =>
@@ -864,17 +861,6 @@ export function useSearchController({
     [baseSearchGroups, linuxDoAiQuery.data?.items, linuxDoAiState.enabled]
   );
 
-  const requireNodeSeekSearchVerification = useCallback(
-    (message: string, recovery: LinuxDoReadRecovery) => {
-      if (onNodeSeekSearchVerificationRequired) {
-        onNodeSeekSearchVerificationRequired(message, recovery);
-      } else {
-        showNodeSeekVerification(message);
-      }
-    },
-    [onNodeSeekSearchVerificationRequired, showNodeSeekVerification]
-  );
-
   const retrySearchSource = useCallback(
     (source: Source) => {
       if (!searchReadIsCurrent() || !enabledSearchSourcesRef.current.includes(source)) return;
@@ -958,7 +944,15 @@ export function useSearchController({
     submittedSearchSourceIncluded &&
     submittedSearch.source !== 'all' &&
     searchQuery.trim() === submittedSearch.query
-      ? JSON.stringify(singleSearchKey)
+      ? hashKey([
+          submittedSearch.source,
+          submittedSearch.query,
+          submittedFilter,
+          submittedSort,
+          isSessionSource(submittedSource)
+            ? [sessionEpochs[submittedSource], sessionViewModels[submittedSource].currentUser?.id]
+            : null
+        ])
       : null;
   useLayoutEffect(() => {
     searchRecovery.observe(recoveryScope);
@@ -973,90 +967,63 @@ export function useSearchController({
       searchQuery.trim() !== submittedSearch.query
     )
       return;
-    const results = [
-      singleSearchQuery.error instanceof SearchPageError
-        ? singleSearchQuery.error.result
-        : singleSearchQuery.data?.pages.at(-1)
-    ];
-    results.forEach((result) => {
-      if (result?.kind === 'success' && submittedSearch.source === 'yaohuo') {
-        yaohuoLoginHandledRef.current = false;
-        return;
+    const error = singleSearchQuery.error;
+    const result = error instanceof SearchPageError ? error.result : singleSearchQuery.data?.pages.at(-1);
+    if (result?.kind === 'success' && submittedSearch.source === 'yaohuo') {
+      yaohuoLoginHandledRef.current = false;
+      return;
+    }
+    if (result?.kind !== 'action-required' || !searchRecovery.accept(result)) return;
+    const { type, message } = result.action;
+    if (type === 'yaohuo-login') {
+      if (yaohuoLoginHandledRef.current) return;
+      yaohuoLoginHandledRef.current = true;
+      showYaohuoLogin(message);
+      return;
+    }
+    const source = type === 'linuxdo-verification' ? 'linuxdo' : 'nodeseek';
+    if (source !== submittedSearch.source || !(error instanceof SearchPageError)) return;
+    const recoveryTicket = searchRecovery.capture();
+    const isCurrent = () => searchRecovery.current(recoveryTicket) && enabledSearchSourcesRef.current.includes(source);
+    const ownsRead = () =>
+      isCurrent() && readGateway.getReadPlan(source, 'search').cacheScope === singleSearchPlan.cacheScope;
+    const page =
+      singleSearchQuery.isFetchNextPageError && error.page > 1
+        ? ({ kind: 'next', pageParam: error.page } as const)
+        : ({ kind: 'first' } as const);
+    const recovery: ReadRecovery = {
+      queryKey: singleSearchKey,
+      isCurrent,
+      resume: async (signal) => {
+        const resumed = await resumeInfiniteQueryPage(queryClient, singleSearchOptions, page, ownsRead, signal);
+        if (resumed.kind === 'stale') return 'stale';
+        if (resumed.kind === 'success') return 'completed';
+        if (
+          resumed.error instanceof SearchPageError &&
+          resumed.error.result.kind === 'action-required' &&
+          resumed.error.result.action.type === type
+        ) {
+          searchRecovery.remember(resumed.error.result);
+          return 'verification-required';
+        }
+        return sourceReadRecoveryOutcome(source, resumed.error);
       }
-      if (!result || result.kind !== 'action-required') return;
-      if (!searchRecovery.accept(result)) return;
-      const recoveryTicket = searchRecovery.capture();
-      if (result.action.type === 'linuxdo-verification') {
-        if (submittedSearch?.source !== 'linuxdo') return;
-        const loadMore = singleSearchQuery.isFetchNextPageError;
-        const recovery: LinuxDoReadRecovery = {
-          queryKey: singleSearchKey,
-          resume: async () => {
-            if (!searchRecovery.current(recoveryTicket) || !enabledSearchSourcesRef.current.includes('linuxdo'))
-              return 'stale';
-            const resumed = loadMore
-              ? await singleSearchQuery.fetchNextPage({ cancelRefetch: false })
-              : await refreshSearchFirstPage();
-            if (!searchRecovery.current(recoveryTicket)) return 'stale';
-            if (resumed.isError) {
-              if (
-                resumed.error instanceof SearchPageError &&
-                resumed.error.result.kind === 'action-required' &&
-                resumed.error.result.action.type === 'linuxdo-verification'
-              ) {
-                searchRecovery.remember(resumed.error.result);
-                return 'verification-required';
-              }
-              return sourceReadRecoveryOutcome('linuxdo', resumed.error);
-            }
-            const resumedResult = loadMore ? resumed.data?.pages.at(-1) : resumed.data?.pages[0];
-            return resumedResult?.kind === 'success' ? 'completed' : 'failed';
-          }
-        };
-        void showLinuxDoVerification(result.action.message, recovery);
-      } else if (result.action.type === 'nodeseek-verification') {
-        const loadMore = singleSearchQuery.isFetchNextPageError;
-        requireNodeSeekSearchVerification(result.action.message, {
-          queryKey: singleSearchKey,
-          resume: async () => {
-            if (!searchRecovery.current(recoveryTicket) || !enabledSearchSourcesRef.current.includes('nodeseek'))
-              return 'stale';
-            const resumed = loadMore
-              ? await singleSearchQuery.fetchNextPage({ cancelRefetch: false })
-              : await refreshSearchFirstPage();
-            if (!searchRecovery.current(recoveryTicket)) return 'stale';
-            if (resumed.isError) {
-              if (
-                resumed.error instanceof SearchPageError &&
-                resumed.error.result.kind === 'action-required' &&
-                resumed.error.result.action.type === 'nodeseek-verification'
-              ) {
-                searchRecovery.remember(resumed.error.result);
-                return 'verification-required';
-              }
-              return sourceReadRecoveryOutcome('nodeseek', resumed.error);
-            }
-            const resumedResult = loadMore ? resumed.data?.pages.at(-1) : resumed.data?.pages[0];
-            return resumedResult?.kind === 'success' ? 'completed' : 'failed';
-          }
-        });
-      } else if (submittedSearch?.source !== 'all') {
-        if (yaohuoLoginHandledRef.current) return;
-        yaohuoLoginHandledRef.current = true;
-        showYaohuoLogin(result.action.message);
-      }
-    });
+    };
+    if (source === 'linuxdo') void showLinuxDoVerification(message, recovery);
+    else showNodeSeekVerification(message, recovery);
   }, [
-    requireNodeSeekSearchVerification,
+    queryClient,
+    readGateway,
     showLinuxDoVerification,
+    showNodeSeekVerification,
     showYaohuoLogin,
     singleSearchKey,
+    singleSearchOptions,
+    singleSearchPlan.cacheScope,
     singleSearchQuery.data?.pages,
     singleSearchQuery.error,
     singleSearchQuery.errorUpdatedAt,
-    singleSearchQuery.fetchNextPage,
     singleSearchQuery.isFetchNextPageError,
-    refreshSearchFirstPage,
     searchQuery,
     searchActive,
     submittedSearch,

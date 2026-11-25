@@ -147,6 +147,7 @@ export const StructuredReplyComposer = forwardRef<
     content: string;
     disabledReason?: string;
     discourseEmojiUrls?: EmojiUrlMap;
+    replacementDocument?: { onReady(): void };
     error?: string;
     focusSignal?: number;
     footerActions?: ReactNode;
@@ -183,6 +184,7 @@ export const StructuredReplyComposer = forwardRef<
       content,
       disabledReason,
       discourseEmojiUrls = EMPTY_EMOJI_URLS,
+      replacementDocument,
       error,
       focusSignal = 0,
       footerActions,
@@ -304,6 +306,7 @@ export const StructuredReplyComposer = forwardRef<
     const lastContentPropRef = useRef(content);
     const lastRevisionRef = useRef(0);
     const documentEpochRef = useRef(initialMode ? 0 : -1);
+    const initializedReplacement = useRef(initialMode ? replacementDocument : undefined);
     const [webViewKey, setWebViewKey] = useState(0);
     const activeWebViewKey = useRef(0);
     const reloadDraft = useRef<{ intentKey: string; content: string; draft: EditorDraft } | null>(null);
@@ -494,6 +497,7 @@ export const StructuredReplyComposer = forwardRef<
     const sendInit = useCallback(() => {
       if (!modeLoaded) return;
       documentEpochRef.current++;
+      initializedReplacement.current = replacementDocument;
       setToolbarState(null);
       writes.cancelSubmission();
       cancelUploadCommand();
@@ -535,6 +539,7 @@ export const StructuredReplyComposer = forwardRef<
       initPayload,
       intentKey,
       modeLoaded,
+      replacementDocument,
       rejectSnapshots,
       send,
       transitionDocument,
@@ -578,6 +583,11 @@ export const StructuredReplyComposer = forwardRef<
     }, [intentKey, ready, sendInit]);
 
     useEffect(() => {
+      // A replacement can update fields outside the editor while keeping the same Markdown.
+      if (ready && replacementDocument && initializedReplacement.current !== replacementDocument) sendInit();
+    }, [ready, replacementDocument, sendInit]);
+
+    useEffect(() => {
       if (ready && !documentLifecycle.initializing) syncNodeSeekMember();
     }, [documentLifecycle, ready, syncNodeSeekMember]);
 
@@ -586,10 +596,6 @@ export const StructuredReplyComposer = forwardRef<
       sentThemeRef.current = editorTheme;
       send({ type: 'SET_THEME', payload: editorTheme });
     }, [editorTheme, ready, send]);
-
-    useEffect(() => {
-      if (ready) send({ type: 'SET_READ_ONLY', payload: { readOnly } });
-    }, [readOnly, ready, send]);
 
     useEffect(() => {
       if (!ready || intent.site !== 'linuxdo' || sentDiscourseEmojiRef.current === discourseEmoji) return;
@@ -610,6 +616,11 @@ export const StructuredReplyComposer = forwardRef<
       const markdown = content.startsWith(confirmed) ? content.slice(confirmed.length) : content;
       send({ type: 'COMMAND', payload: { name: 'insert-markdown', markdown } });
     }, [content, intent.kind, ready, send, sendInit]);
+
+    useEffect(() => {
+      if (ready && (!replacementDocument || initializedReplacement.current === replacementDocument))
+        send({ type: 'SET_READ_ONLY', payload: { readOnly } });
+    }, [readOnly, ready, replacementDocument, send]);
 
     const requestSnapshot = useCallback(
       (submission?: { documentEpoch: number; revision: number }) => {
@@ -886,6 +897,8 @@ export const StructuredReplyComposer = forwardRef<
           initializationTraceRef.current = null;
           clearReadyTimer();
           setLocalError('');
+          if (replacementDocument && initializedReplacement.current === replacementDocument)
+            replacementDocument.onReady();
           return;
         }
         if (message.type === 'STATE_CHANGED') {
@@ -1111,6 +1124,7 @@ export const StructuredReplyComposer = forwardRef<
         onTogglePreview,
         onPanelChange,
         onReturnToEditor,
+        replacementDocument,
         onPresentationChange,
         presentation,
         actionBusy,

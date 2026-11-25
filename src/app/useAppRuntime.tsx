@@ -21,6 +21,7 @@ import { useNotificationsRuntime } from '@/features/notifications/useNotificatio
 import type { NotificationRouteRuntimeValue } from '@/features/notifications/NotificationRouteRuntime';
 import { moreBadgeState as notificationMoreBadgeState } from '@/ui/navigation/moreBadge';
 import {
+  isAccountCenterFocused,
   openLibraryRoute,
   openNodeSeekCreditsRoute,
   openLinuxDoCreditRoute,
@@ -92,6 +93,7 @@ export function useAppRuntime() {
     contentSourcesReady: settingsTrusted,
     enabledSources,
     fetcher: networkProxyFetcher,
+    isAccountCenterFocused,
     loginNavigation: lifecycle.loginNavigation,
     notify,
     nodeSeekRecoveryThreshold: readerData.settings.nodeSeekRecoveryThreshold,
@@ -381,12 +383,14 @@ export function useAppRuntime() {
     ]
   );
 
+  const showNodeSeekPanel = accountRuntime.hosts.surfaces.nodeseek;
   const feedRouteRuntime = useMemo<FeedRouteRuntimeValue>(
     () => ({
       enabledSources,
       enabledSourcesKey,
       account: {
         linuxDoVerificationVisible: showLinuxDoPanel,
+        nodeSeekVerificationVisible: showNodeSeekPanel,
         readGateway,
         requestNodeSeekVerification,
         sessionEpochs: forumSessionEpochs,
@@ -414,6 +418,7 @@ export function useAppRuntime() {
       readerDataLoaded,
       requestNodeSeekVerification,
       showLinuxDoPanel,
+      showNodeSeekPanel,
       showLinuxDoVerification,
       showYaohuoLogin,
       topicStateIndex

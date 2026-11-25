@@ -80,6 +80,26 @@ describe('topic draft validation and category changes', () => {
     expect(validateTopicEdit({ ...draft, title: '只修改帖子标题' }, context)).toEqual({});
   });
 
+  it('lets the server conflict check run when a restored draft carries a remotely removed legacy tag', () => {
+    const current: TopicEditContext = {
+      source: 'linuxdo',
+      identityKey: 'user:1',
+      topicId: '123',
+      postId: 789,
+      original: { title: '原有主帖标题', body: '原始正文', categoryId: '5', tags: [] },
+      permissions: { title: true, body: true, categoryId: true, tags: true, rank: false, additionalReward: false },
+      rules: { ...ld, canCreateTag: false }
+    };
+    const restored = {
+      ...draftFromTopicEdit({ ...current, original: { ...current.original, tags: [{ name: '旧标签' }] } }),
+      categoryId: '4'
+    };
+    expect(validateTopicEdit(restored, current)).toEqual({});
+    expect(
+      validateTopicEdit(restored, { ...current, permissions: { ...current.permissions, categoryId: false } })
+    ).toHaveProperty('categoryId', '原站不允许修改此字段');
+  });
+
   it('validates an existing topic category without applying creation-only voting rules', () => {
     const context: TopicEditContext = {
       source: 'linuxdo',

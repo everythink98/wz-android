@@ -6,12 +6,17 @@ import { createRoot } from 'test-renderer';
 
 jest.mock('@react-native-async-storage/async-storage', () => require('@react-native-async-storage/async-storage/jest'));
 
-jest.mock('@/sources/readGateway', () => ({
-  checkYaohuoLogin: jest.fn(),
+jest.mock('@/sources/sourceRead', () => ({
+  ...jest.requireActual<typeof import('@/sources/sourceRead')>('@/sources/sourceRead'),
   getCurrentUserIdentity: jest.fn()
 }));
+jest.mock('@/sources/yaohuo/reader', () => ({
+  ...jest.requireActual<typeof import('@/sources/yaohuo/reader')>('@/sources/yaohuo/reader'),
+  checkYaohuoLoginDirect: jest.fn()
+}));
 
-import { checkYaohuoLogin, getCurrentUserIdentity } from '@/sources/readGateway';
+import { getCurrentUserIdentity } from '@/sources/sourceRead';
+import { checkYaohuoLoginDirect } from '@/sources/yaohuo/reader';
 import { useAccountStatusController } from '@/features/account/useAccountStatusController';
 import { accountQueryKeys, appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import * as accountSessionStore from '@/platform/storage/accountSessionStore';
@@ -36,7 +41,7 @@ import {
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 
-const mockCheckYaohuoLogin = jest.mocked(checkYaohuoLogin);
+const mockCheckYaohuoLogin = jest.mocked(checkYaohuoLoginDirect);
 const mockGetCurrentUser = jest.mocked(getCurrentUserIdentity);
 const mockReadLinuxDoCookieHeader = jest.fn<() => Promise<string | undefined>>();
 const mockReadYaohuoCookieHeader = jest.fn<() => Promise<string | undefined>>();

@@ -3,6 +3,7 @@ import { AppState } from 'react-native';
 import type { WebView, WebViewMessageEvent } from 'react-native-webview';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import type { LoginWebViewDiagnosticState } from '../useAccountController';
+import { useWebViewLoadDeadline } from './useWebViewLoadDeadline';
 
 type AutomaticCheckPhase = 'available' | 'consumed' | 'failed' | 'failed-consumed';
 
@@ -70,9 +71,11 @@ export function useLoginWebViewLifecycle({
     });
     return () => subscription.remove();
   }, [visible]);
-  useEffect(() => {
-    if (!visible || !loading || webViewBlockMessage) return;
-    const timeout = setTimeout(() => {
+  const updateDeadline = useWebViewLoadDeadline({
+    enabled: visible && !webViewBlockMessage && page.stage !== 'remount-required',
+    loading,
+    webViewKey: page.key,
+    onTimeout: () => {
       documentStateRef.current.phase = AUTOMATIC_CHECK_TRANSITIONS[documentStateRef.current.phase].fail;
       setPage((current) => ({
         ...current,
@@ -82,9 +85,8 @@ export function useLoginWebViewLifecycle({
       }));
       onWebViewState('timeout', credentialAttempt);
       onSetLoading(false);
-    }, 12000);
-    return () => clearTimeout(timeout);
-  }, [credentialAttempt, messagePrefix, loading, onSetLoading, onWebViewState, visible, webViewBlockMessage]);
+    }
+  });
   return {
     error: page.error,
     key: page.key,
@@ -144,6 +146,8 @@ export function useLoginWebViewLifecycle({
     },
     refresh: () => {
       if (!isCurrent() || checking) return;
+      updateDeadline(page.key, false);
+      if (page.stage !== 'remount-required') updateDeadline(page.key, true);
       documentStateRef.current.phase = 'consumed';
       documentStateRef.current.url = '';
       setPage((current) => ({
@@ -156,6 +160,7 @@ export function useLoginWebViewLifecycle({
     },
     start: (url = '', loading = true) => {
       if (!isCurrent()) return;
+      updateDeadline(page.key, loading);
       if (url !== documentStateRef.current.url || loading)
         documentStateRef.current.phase = AUTOMATIC_CHECK_TRANSITIONS[documentStateRef.current.phase].clearFailure;
       documentStateRef.current.url = url;
@@ -163,21 +168,21 @@ export function useLoginWebViewLifecycle({
       setPage((current) => ({ ...current, error: '', stage: 'unsettled' }));
       onSetLoading(loading);
     },
-    loadEnd: (failed: boolean, preserveDocumentFailure = false) => {
+    loadEnd: (failed: boolean) => {
       if (!isCurrent()) return;
-      const phase = documentStateRef.current.phase;
-      const loadFailed = failed || (preserveDocumentFailure && (phase === 'failed' || phase === 'failed-consumed'));
+      updateDeadline(page.key, false);
       onSetLoading(false);
       setPage((current) => ({
         ...current,
         stage: current.stage === 'remount-required' ? 'remount-required' : 'settled',
-        error: loadFailed ? current.error : ''
+        error: failed ? current.error : ''
       }));
-      if (loadFailed) return;
+      if (failed) return;
       onWebViewState('ready', credentialAttempt);
     },
     fail: (description: string) => {
       if (!isCurrent()) return;
+      updateDeadline(page.key, false);
       documentStateRef.current.phase = AUTOMATIC_CHECK_TRANSITIONS[documentStateRef.current.phase].fail;
       onWebViewState('error', credentialAttempt);
       onSetLoading(false);
@@ -189,6 +194,7 @@ export function useLoginWebViewLifecycle({
     },
     rendererGone: () => {
       if (!isCurrent()) return;
+      updateDeadline(page.key, false);
       documentStateRef.current.phase = AUTOMATIC_CHECK_TRANSITIONS[documentStateRef.current.phase].fail;
       onWebViewState('renderer-gone', credentialAttempt);
       onSetLoading(false);

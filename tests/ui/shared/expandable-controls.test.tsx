@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Dimensions, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { ReduceMotion } from 'react-native-reanimated';
 import { ChevronDown } from 'lucide-react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { DisclosureChevron, ExpandableContent, ExpandablePanel, MenuButton } from '@/ui/controls/ExpandableControls';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 import { resolveReaderStyleSettings, createTheme } from '@/ui/theme/tokens';
-import { fireEvent, render } from '../render';
+import { act, fireEvent, render } from '../render';
 
 let mockProgress = 0.5;
 let mockNativeAnimation = false;
@@ -109,6 +109,87 @@ describe('MenuButton', () => {
 
     expect(view.getByText(value)).toBeTruthy();
     expect(view.getByRole('button').queryAll((node) => node.type === 'Text')).toHaveLength(2);
+  });
+
+  it('wraps and unwraps setting summaries immediately when system font scale crosses 1.25 without parent or sibling rerenders', async () => {
+    const original = Dimensions.get('window');
+    const settings = { ...createEmptyReaderData().settings, uiFontFamily: 'system' as const };
+    const theme = createTheme(settings);
+    let parentRenders = 0;
+    let siblingRenders = 0;
+    function Sibling() {
+      siblingRenders += 1;
+      return <Text>独立兄弟节点</Text>;
+    }
+    function SettingsHost({ uiFontScale }: { uiFontScale: number }) {
+      parentRenders += 1;
+      return (
+        <ReaderStyleProvider value={{ theme, settings: resolveReaderStyleSettings({ ...settings, uiFontScale }) }}>
+          <Sibling />
+          <MenuButton icon={ChevronDown} label="服务器代理" value="未启用" onPress={() => undefined} />
+          <ExpandablePanel title="外观" meta="浅色" expanded={false} onExpandedChange={() => undefined}>
+            <Text>设置内容</Text>
+          </ExpandablePanel>
+        </ReaderStyleProvider>
+      );
+    }
+
+    try {
+      await act(async () => Dimensions.set({ window: { ...original, fontScale: 1.25 } }));
+      const view = await render(<SettingsHost uiFontScale={1} />);
+      const expectInline = () => {
+        for (const [label, summary] of [
+          ['服务器代理', '未启用'],
+          ['外观', '浅色']
+        ]) {
+          const titleNode = view.getByText(label);
+          const summaryNode = view.getByText(summary);
+          expect(summaryNode.parent === titleNode.parent).toBe(false);
+          expect(StyleSheet.flatten(summaryNode.props.style).textAlign).toBe('right');
+        }
+      };
+      const expectWrapped = () => {
+        for (const [label, summary] of [
+          ['服务器代理', '未启用'],
+          ['外观', '浅色']
+        ]) {
+          const titleNode = view.getByText(label);
+          const summaryNode = view.getByText(summary);
+          expect(summaryNode.parent === titleNode.parent).toBe(true);
+          expect(StyleSheet.flatten(summaryNode.props.style).textAlign).toBe('left');
+        }
+      };
+
+      expectInline();
+      const settledParentRenders = parentRenders;
+      const settledSiblingRenders = siblingRenders;
+
+      await act(async () => Dimensions.set({ window: { ...original, fontScale: 1.26 } }));
+
+      expect(parentRenders).toBe(settledParentRenders);
+      expect(siblingRenders).toBe(settledSiblingRenders);
+      expectWrapped();
+
+      await act(async () => Dimensions.set({ window: { ...original, fontScale: 1.25 } }));
+
+      expect(parentRenders).toBe(settledParentRenders);
+      expect(siblingRenders).toBe(settledSiblingRenders);
+      expectInline();
+
+      await view.rerender(<SettingsHost uiFontScale={1.1} />);
+      await act(async () => Dimensions.set({ window: { ...original, fontScale: 1.1 } }));
+      expectInline();
+      const scaledParentRenders = parentRenders;
+      const scaledSiblingRenders = siblingRenders;
+
+      await act(async () => Dimensions.set({ window: { ...original, fontScale: 1.15 } }));
+
+      expect(parentRenders).toBe(scaledParentRenders);
+      expect(siblingRenders).toBe(scaledSiblingRenders);
+      expectWrapped();
+    } finally {
+      await act(async () => Dimensions.set({ window: original }));
+    }
   });
 });
 

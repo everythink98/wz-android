@@ -258,8 +258,13 @@ private fun canonicalSvg(svgBase64: String): CanonicalSvg {
   } catch (error: IllegalArgumentException) {
     throw SvgPosterException("svg_invalid_input", "SVG Base64 输入无效。", error)
   }
+  val rootAttributes = validatedSvgRootAttributes(decodeSvgText(bytes))
+  return CanonicalSvg(bytes, Base64.encodeToString(bytes, Base64.NO_WRAP), rootAttributes)
+}
+
+private fun decodeSvgText(bytes: ByteArray): String {
   validateDecodedSvgSize(bytes)
-  val text = try {
+  return try {
     Charsets.UTF_8
       .newDecoder()
       .onMalformedInput(CodingErrorAction.REPORT)
@@ -269,8 +274,6 @@ private fun canonicalSvg(svgBase64: String): CanonicalSvg {
   } catch (error: Exception) {
     throw SvgPosterException("svg_invalid_input", "SVG 不是有效的 UTF-8 文本。", error)
   }
-  val rootAttributes = validatedSvgRootAttributes(text)
-  return CanonicalSvg(bytes, Base64.encodeToString(bytes, Base64.NO_WRAP), rootAttributes)
 }
 
 private fun validatedSvgRootAttributes(svg: String): SvgRootAttributes {
@@ -301,6 +304,13 @@ private fun validatedSvgRootAttributes(svg: String): SvgRootAttributes {
 
 internal fun validateSvgDocument(svg: String) {
   validatedSvgRootAttributes(svg)
+}
+
+internal fun isValidSvgDocument(bytes: ByteArray): Boolean = try {
+  validateSvgDocument(decodeSvgText(bytes))
+  true
+} catch (_: SvgPosterException) {
+  false
 }
 
 private fun positiveFinite(value: Double?): Double? =
@@ -580,7 +590,7 @@ internal fun boundedSvgBytes(source: BufferedSource): ByteArray? {
   return null
 }
 
-private fun isSvgResponseContentType(value: String?): Boolean {
+internal fun isSvgResponseContentType(value: String?): Boolean {
   val mime = value?.substringBefore(';')?.trim()?.lowercase(Locale.US)
   return mime == "image/svg+xml" || mime == "application/svg+xml"
 }

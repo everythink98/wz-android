@@ -1,6 +1,6 @@
 import { useTopicReplyOrder } from '../useTopicReplyOrder';
 import { useTopicAcceptedAnswer } from '../useTopicAcceptedAnswer';
-import { useTopicLocationCommand, useTopicFloorPositioning, useTopicAcceptedScroll } from '../useTopicListPosition';
+import { useTopicLocationCommand, useTopicFloorPositioning } from '../useTopicListPosition';
 import { useTopicReplyEdgeLoad } from '../useTopicReplyEdgeLoad';
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import { topicLocationForReply } from '@/domain/forum/topicLocation';
@@ -650,6 +650,7 @@ export const TopicContentList = memo(function TopicContentList({
   const unreadReplyCount = read.unreadReplyCount;
   const onCommentQueryChange = commands.view.changeCommentQuery;
   const onReplyFilterChange = commands.view.changeReplyFilter;
+  const clearReplyFilters = commands.view.clearReplyFilters;
   const onReplyOrderChange = commands.view.changeReplyOrder;
   const onLoadMoreReplies = read.loadMoreReplies;
   const onLoadPreviousReplies = read.loadPreviousReplies;
@@ -664,10 +665,6 @@ export const TopicContentList = memo(function TopicContentList({
   const onInteract = actions.interact;
   const onLockPoll = actions.lockNodeSeekPoll;
   const onVotePoll = actions.votePoll;
-  const clearReplyFilters = useCallback(() => {
-    onCommentQueryChange('');
-    onReplyFilterChange('all');
-  }, [onCommentQueryChange, onReplyFilterChange]);
   const { settings, styles, theme } = useReaderThemeStyles(createTopicStyles);
   const forumHtmlFonts = useForumHtmlFonts(settings.fontFamily);
   const htmlCustomElementModels = useMemo(
@@ -1233,7 +1230,14 @@ export const TopicContentList = memo(function TopicContentList({
     list: topicScrollRef,
     recordScroll: recordScrollCommand
   });
-  useLayoutEffect(cancelOrderScroll, [active, detailTopicStateKey, mediaSessionIdentity, cancelOrderScroll]);
+  useLayoutEffect(cancelOrderScroll, [
+    active,
+    detailTopicStateKey,
+    mediaSessionIdentity,
+    replyFilter,
+    commentQuery,
+    cancelOrderScroll
+  ]);
   useLayoutEffect(() => {
     if (targetReplyCommandKey) cancelOrderScroll();
   }, [targetReplyCommandKey, cancelOrderScroll]);
@@ -1399,19 +1403,14 @@ export const TopicContentList = memo(function TopicContentList({
     },
     [confirmTargetPosition, detailTopicStateKey, revealCommentSearch]
   );
-  const acceptedAnswerListIndex = useMemo(() => {
-    if (!acceptedAnswerReply) {
-      return -1;
-    }
-    return topicListItems.findIndex(
-      (listItem) =>
-        (listItem.type === 'reply' || listItem.type === 'replyStart') &&
-        listItem.reply.floor === acceptedAnswerReply.floor
-    );
-  }, [acceptedAnswerReply, topicListItems]);
-  const acceptedAnswerIsInSourceReplies = Boolean(
-    acceptedAnswer && sourceReplies.some((reply) => reply.floor === acceptedAnswer.floor)
-  );
+  const loadedAcceptedReplyTarget = useMemo<ReplyLocationTarget | undefined>(() => {
+    if (!acceptedAnswerReply || !acceptedAnswer) return;
+    const target = {
+      floor: acceptedAnswer.floor,
+      ...(acceptedAnswerReply.commentId ? { commentId: acceptedAnswerReply.commentId } : {})
+    };
+    return findReplyLocation(sourceReplies, target) ? target : undefined;
+  }, [acceptedAnswer, acceptedAnswerReply, sourceReplies]);
   const readingSessionRef = useRef<ReadingSession | null>(null);
   const readingVisibleRef = useRef<{ index?: number | null; item: TopicListItem }[]>([]);
   const readingDisplayedRows = useRef<ReadonlySet<string>>(new Set());
@@ -1620,18 +1619,12 @@ export const TopicContentList = memo(function TopicContentList({
     },
     [beginEdgeScroll, cancelOrderScroll, cancelTargetPosition, onCancelReplyLocation]
   );
-  const stopForAcceptedAnswer = useCallback(() => {
+  const scrollToAcceptedAnswer = useCallback(() => {
+    if (!loadedAcceptedReplyTarget) return;
     cancelOrderScroll();
     stopReplyScroll();
-  }, [cancelOrderScroll, stopReplyScroll]);
-  const scrollToAcceptedAnswer = useTopicAcceptedScroll({
-    topicKey: String(item?.source) + ':' + String(item?.id),
-    acceptedIndex: acceptedAnswerListIndex,
-    list: topicScrollRef,
-    stop: stopForAcceptedAnswer,
-    clearFilters: clearReplyFilters,
-    recordScroll: recordScrollCommand
-  });
+    requestReplyLocation(loadedAcceptedReplyTarget);
+  }, [cancelOrderScroll, loadedAcceptedReplyTarget, requestReplyLocation, stopReplyScroll]);
   const requestWindowStartLoad = useCallback(() => {
     stopReplyScroll();
     void onLoadPreviousReplies();
@@ -1799,6 +1792,7 @@ export const TopicContentList = memo(function TopicContentList({
               boundarySpacing={contentBoundarySpacing}
               mediaContext={mediaContext}
               nodeSeekMediaUserAgent={nodeSeekMediaUserAgent}
+              poster={contentItem.row.poster}
               referrerPolicy={contentItem.row.referrerPolicy}
               src={contentItem.row.src}
               theme={theme}
@@ -1866,10 +1860,8 @@ export const TopicContentList = memo(function TopicContentList({
                 <DiscoursePolicyPanel
                   policy={policy}
                   busy={actionBusy}
-                  disabled={!decisionFor({ action: 'policy' }).allowed || policySubmission?.version === policy.version}
-                  status={
-                    policySubmission?.version === policy.version ? '操作已提交，请刷新公告核对阅读状态' : undefined
-                  }
+                  disabled={!decisionFor({ action: 'policy' }).allowed || Boolean(policySubmission)}
+                  status={policySubmission ? '请刷新公告核对阅读状态' : undefined}
                   onSetAcceptance={(accepted) => void onSetPolicyAcceptance(policy, accepted)}
                 />
               </View>,
@@ -2279,7 +2271,7 @@ export const TopicContentList = memo(function TopicContentList({
               theme={theme}
               onExpandedChange={changeAcceptedAnswerExpanded}
               onLoad={loadAcceptedAnswer}
-              onReadMore={acceptedAnswerReply && acceptedAnswerIsInSourceReplies ? scrollToAcceptedAnswer : undefined}
+              onReadMore={loadedAcceptedReplyTarget ? scrollToAcceptedAnswer : undefined}
               onRevealFull={revealAcceptedAnswerFull}
             >
               {listItem.content.length ? (
@@ -2534,7 +2526,6 @@ export const TopicContentList = memo(function TopicContentList({
       acceptedAnswer,
       acceptedAnswerExpanded,
       acceptedAnswerFullVisible,
-      acceptedAnswerIsInSourceReplies,
       acceptedAnswerLoading,
       acceptedAnswerReply,
       changeAcceptedAnswerExpanded,
@@ -2557,6 +2548,7 @@ export const TopicContentList = memo(function TopicContentList({
       item?.id,
       item?.url,
       loadedQuotedReplies,
+      loadedAcceptedReplyTarget,
       loadingPreviousReplies,
       loadingQuotedFloors,
       loadAcceptedAnswer,

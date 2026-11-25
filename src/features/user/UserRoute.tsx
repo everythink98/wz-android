@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import { useIsFocused } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { Topic } from '@/domain/forum/models';
-import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
+import type { ReadRecovery } from '@/platform/query/readRecovery';
 
 import { userKey } from '@/domain/reader/readerData';
 
@@ -14,8 +14,6 @@ import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { UserScreen } from './UserScreen';
 import { useUserController } from './useUserController';
 import { useUserRouteRuntime, type UserRouteRuntimeValue } from './UserRouteRuntime';
-
-export { UserRouteRuntimeProvider, type UserRouteRuntimeValue } from './UserRouteRuntime';
 
 type UserRouteProps = NativeStackScreenProps<RootStackParamList, 'User'>;
 
@@ -33,7 +31,7 @@ function EnabledUserRoute({ navigation, route, runtime }: UserRouteProps & { run
   const active = useIsFocused();
   const requestNodeSeekVerification = runtime.account.requestNodeSeekVerification;
   const showNodeSeekVerification = useCallback(
-    (message?: string, recovery?: LinuxDoReadRecovery) =>
+    (message?: string, recovery?: ReadRecovery) =>
       requestNodeSeekVerification(message || 'NodeSeek 需要完成 Cloudflare 验证', recovery),
     [requestNodeSeekVerification]
   );

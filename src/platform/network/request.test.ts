@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   cancelRequestTimeoutForFallback,
   fetchWithTimeout,
+  isDefinitiveHttpRejection,
   prepareRequestToSend,
   rejectUnauthorizedResponse,
   withAbortableTimeout,
@@ -66,26 +67,32 @@ describe('Android request helpers', () => {
     expect(dispatch.mayHaveSent).toBe(true);
   });
 
-  it('rejects a raw HTTP 401 before adapter parsing but preserves other responses', async () => {
+  it('rejects a raw HTTP 401 only for the request forum origin', async () => {
+    const forumUrl = 'https://www.nodeseek.com/api/issue-42';
     const unauthorized = rejectUnauthorizedResponse(
+      'nodeseek',
       vi.fn(async () => new Response('<html>login</html>', { status: 401 }))
     );
 
-    await expect(unauthorized('https://example.com/private')).rejects.toMatchObject({
+    await expect(unauthorized(forumUrl)).rejects.toMatchObject({
       status: 401,
       reason: 'http-401'
     });
 
-    for (const status of [403, 429]) {
-      const response = new Response('<html>challenge</html>', { status });
-      await expect(
-        rejectUnauthorizedResponse(vi.fn(async () => response))('https://example.com/private')
-      ).resolves.toBe(response);
+    for (const [url, status] of [
+      ['https://api.nodeimage.com/api/upload', 401],
+      ['https://www.nodeseek.com.example.test/api', 401],
+      [forumUrl, 403],
+      [forumUrl, 429]
+    ] as const) {
+      const response = new Response('', { status });
+      await expect(rejectUnauthorizedResponse('nodeseek', async () => response)(url)).resolves.toBe(response);
     }
   });
 
   it('retains a body-only LINUX DO verification response on a forum write', async () => {
     const fetcher = rejectUnauthorizedResponse(
+      'linuxdo',
       async () =>
         new Response('<title>Just a moment...</title>', { status: 401, headers: { 'content-type': 'text/html' } })
     );
@@ -93,6 +100,17 @@ describe('Android request helpers', () => {
       verificationRequired: true,
       status: 401
     });
+  });
+
+  it.each([
+    [401, true],
+    [429, true],
+    [408, false],
+    [409, false],
+    [503, false],
+    [undefined, false]
+  ])('classifies definitive HTTP rejection for status %s as %s', (status, expected) => {
+    expect(isDefinitiveHttpRejection(status)).toBe(expected);
   });
 
   it('always enables the native read-only cookie jar without changing the request', async () => {

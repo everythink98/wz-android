@@ -158,7 +158,7 @@ private object MediaRequestCookieContext {
 }
 
 internal class ForumMediaRequestInterceptor(
-  private val sourceForUri: (URI) -> String? = ::managedCookieSource,
+  private val sourceForUrl: (HttpUrl) -> String? = ::managedCookieSource,
   private val defaultUserAgent: () -> String = { NetworkProxyRuntime.readDefaultMediaUserAgent() }
 ) : Interceptor {
   override fun intercept(chain: Interceptor.Chain): okhttp3.Response {
@@ -176,7 +176,7 @@ internal class ForumMediaRequestInterceptor(
           .build()
       )
     val kind = request.header(FORUM_MEDIA_KIND_HEADER)?.takeIf { value -> value == "video" }
-    val firstTargetSource = sourceForUri(request.url.toUri())
+    val firstTargetSource = sourceForUrl(request.url)
     val policy = MediaRequestCookiePolicy(source.takeIf { it == firstTargetSource })
     val sanitized = request.newBuilder()
       .removeHeader(FORUM_MEDIA_SOURCE_HEADER)
@@ -208,15 +208,17 @@ internal data class ForumMediaRequestTag(
   val kind: String? = null
 )
 
-private class ImageRuntimeGuardInterceptor(private val generation: Long) : Interceptor {
+private class ImageRuntimeGuardInterceptor(private val runtime: ReadNetworkRuntimeGeneration) : Interceptor {
   override fun intercept(chain: Interceptor.Chain): Response {
-    if (chain.request().tag(ImageDiagnosticTag::class.java) != null &&
-      generation != NetworkProxyRuntime.currentReadNetworkGeneration()) {
+    val request = chain.request()
+    val source = forumMediaRequestSource(request)
+    if (request.tag(ImageDiagnosticTag::class.java) != null && runtime.retirementSource != null &&
+      (runtime.cancelsOnRetirement(request) || source == null || source == "anonymous")) {
       // A non-recoverable failure must reach the consumer. Call.cancel() would make Fresco
       // treat this as an unmounted image and suppress its failure callback.
       throw java.net.ProtocolException("Image runtime retired")
     }
-    return chain.proceed(chain.request())
+    return chain.proceed(request)
   }
 }
 
@@ -233,10 +235,10 @@ internal class ForumReadClearancePolicy(source: String?, origin: HttpUrl) {
   private var access: Access = Access.Bound(source, origin)
   val allowsCookies: Boolean get() = access is Access.Bound
 
-  fun observe(request: Request, sourceForUri: (URI) -> String?) {
+  fun observe(request: Request, sourceForUrl: (HttpUrl) -> String?) {
     val current = access
     val url = request.url
-    if (current.source == null || sourceForUri(url.toUri()) != current.source ||
+    if (current.source == null || sourceForUrl(url) != current.source ||
       url.scheme != current.origin.scheme || url.host != current.origin.host || url.port != current.origin.port ||
       (request.method != "GET" && request.method != "HEAD")) {
       access = Access.Downgraded(current.source, current.origin)
@@ -278,7 +280,7 @@ internal class ForumReadRequestInterceptor : Interceptor {
 
 // Runs after OkHttp's cookie jar on every redirect, including RN credentials: omit.
 internal class ForumReadClearanceInterceptor(
-  private val sourceForUri: (URI) -> String? = ::managedCookieSource,
+  private val sourceForUrl: (HttpUrl) -> String? = ::managedCookieSource,
   private val cookieReader: (String) -> String? = { CookieManager.getInstance().getCookie(it) },
   private val responses: ManagedCookieResponses = LinuxDoCookieResponses.store
 ) : Interceptor {
@@ -286,7 +288,7 @@ internal class ForumReadClearanceInterceptor(
     val request = chain.request()
     val policy = request.tag(ForumReadClearancePolicy::class.java) ?: return chain.proceed(request)
     val url = request.url
-    policy.observe(request, sourceForUri)
+    policy.observe(request, sourceForUrl)
     val sanitized = request.newBuilder().removeHeader("Cookie")
     if (policy.allowsCookies) {
       cfClearanceValue(cookieReader(url.toString()))?.let { sanitized.header("Cookie", "cf_clearance=$it") }
@@ -800,6 +802,13 @@ private fun managedCookieSource(uri: URI): String? =
     null
   }
 
+internal fun managedCookieSource(url: HttpUrl): String? =
+  if (url.isHttps && url.encodedUsername.isEmpty() && url.encodedPassword.isEmpty()) {
+    managedCookieSourceForHost(url.host)
+  } else {
+    null
+  }
+
 private fun isManagedCookieUrl(url: String): Boolean = try {
   managedCookieSource(URI(url)) != null
 } catch (_: Exception) {
@@ -890,15 +899,16 @@ internal fun requireReadNetworkGeneration(value: Double): Long {
   return value.toLong()
 }
 
-internal fun isForumReadChannelRequest(source: String, request: okhttp3.Request): Boolean {
+private fun forumMediaRequestSource(request: Request): String? =
+  request.header(FORUM_MEDIA_SOURCE_HEADER) ?: request.tag(ForumMediaRequestTag::class.java)?.source
+
+internal fun isForumReadChannelRequest(source: String, request: Request): Boolean {
   val readTag = request.tag(ForumReadRequestTag::class.java)
   val readSource = request.header(FORUM_READ_SOURCE_HEADER) ?: readTag?.source
   val readCancelClass = request.header(FORUM_READ_CANCEL_CLASS_HEADER) ?: readTag?.cancelClass
-  val mediaSource = request.header(FORUM_MEDIA_SOURCE_HEADER)
-    ?: request.tag(ForumMediaRequestTag::class.java)?.source
   val explicitlyOwned =
     (readSource == source && readCancelClass == "content") ||
-      (readSource == null && mediaSource == source)
+      (readSource == null && forumMediaRequestSource(request) == source)
   return (request.method == "GET" || request.method == "HEAD") &&
     explicitlyOwned
 }
@@ -1524,6 +1534,10 @@ private class ReadNetworkRuntimeGeneration(
     retirementDiagnosticsEnabled = diagnosticsEnabled
   }
 
+  fun cancelsOnRetirement(request: Request): Boolean = retirementSource?.let { source ->
+    isForumReadChannelRequest(source, request) && !isRetainedVideoReadRequest(request)
+  } == true
+
   fun sealRetirement() = synchronized(cronetLock) {
     transportCache = TransportCache.Sealed(transportCache.handle)
   }
@@ -1618,7 +1632,7 @@ private class ReadNetworkRuntimeGeneration(
     builder.addNetworkInterceptor(ForumReadClearanceInterceptor())
     builder.addNetworkInterceptor(CookieResponseInterceptor(LinuxDoCookieResponses.store))
     builder.networkInterceptors().removeAll { it is ImageRuntimeGuardInterceptor }
-    if (lane == "media") builder.addNetworkInterceptor(ImageRuntimeGuardInterceptor(generation))
+    if (lane == "media") builder.addNetworkInterceptor(ImageRuntimeGuardInterceptor(this))
     return builder
   }
 }
@@ -1999,14 +2013,10 @@ object NetworkProxyRuntime {
         ).apply { putAll(runtimeIdentityDiagnosticFields(next)) }
       )
       val queued = previous.dispatcher.queuedCalls()
-        .filter { call ->
-          isForumReadChannelRequest(source, call.request()) && !isRetainedVideoReadRequest(call.request())
-        }
+        .filter { previous.cancelsOnRetirement(it.request()) }
       val registered = synchronized(lock) { imageCalls.filterValues { it === previous }.keys.toList() }
       val running = (previous.dispatcher.runningCalls() + registered).distinct().filterNot { it in queued }
-        .filter { call ->
-          isForumReadChannelRequest(source, call.request()) && !isRetainedVideoReadRequest(call.request())
-        }
+        .filter { previous.cancelsOnRetirement(it.request()) }
       queued.forEach { call -> call.cancel() }
       running.forEach { call -> call.cancel() }
       Log.i(

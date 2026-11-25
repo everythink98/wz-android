@@ -44,7 +44,7 @@ type ScopedAttendanceState = {
   serverDayId: number | null;
 };
 type AttendanceOperation = {
-  phase: 'authorizing' | 'reading' | 'mutating';
+  phase: 'authorizing' | 'mutating';
   ticket: WritableSessionTicket | null;
   cancellation: AbortController;
 };
@@ -141,7 +141,7 @@ export function useNodeSeekCheckInController({
   notify: (message: string) => void;
   onConfirmed?: (ticket: WritableSessionTicket, current?: number) => void;
   onSessionExpired: (source: 'nodeseek', requestSessionEpoch: number) => void;
-  readAttendance: (ticket: WritableSessionTicket) => Promise<NodeSeekAttendanceBoard>;
+  readAttendance: (ticket: WritableSessionTicket, signal: AbortSignal) => Promise<NodeSeekAttendanceBoard>;
 }) {
   const sessionTicketRef = useCommittedRef(currentSessionTicket);
   const mountedRef = useRef(true);
@@ -193,9 +193,9 @@ export function useNodeSeekCheckInController({
     [isWritableSessionTicketCurrent]
   );
   const readBoard = useCallback(
-    async (ticket: WritableSessionTicket, signal?: AbortSignal) => {
+    async (ticket: WritableSessionTicket, signal: AbortSignal) => {
       assertCurrent(ticket, false, signal);
-      const board = await readAttendance(ticket);
+      const board = await readAttendance(ticket, signal);
       assertCurrent(ticket, false, signal);
       if (`nodeseek:${board.userId}` !== ticket.identityKey) {
         throw new AttendanceError('签到状态与当前账号不一致', 'stale');
@@ -246,7 +246,7 @@ export function useNodeSeekCheckInController({
       reason
     };
   };
-  const authenticatedFetcher = rejectUnauthorizedResponse(fetcher);
+  const authenticatedFetcher = rejectUnauthorizedResponse('nodeseek', fetcher);
   const mutation = useMutation<AttendanceResult, unknown, AttendanceVariables>({
     mutationKey: forumMutationKeys.topic('nodeseek', 'global'),
     mutationFn: async ({ random, ticket, trace, signal }) => {
@@ -348,22 +348,19 @@ export function useNodeSeekCheckInController({
     },
     [isWritableSessionTicketCurrent]
   );
-  const beginOperation = useCallback(
-    (phase: 'authorizing' | 'reading') => {
-      if (operationRef.current.phase !== 'idle' && isCurrentOperation(operationRef.current)) return null;
-      const previous = operationRef.current;
-      if (previous.phase !== 'idle') previous.cancellation.abort();
-      const operation: AttendanceOperation = {
-        phase,
-        ticket: sessionTicketRef.current,
-        cancellation: new AbortController()
-      };
-      operationRef.current = operation;
-      setBusyOperation(operation);
-      return operation;
-    },
-    [isCurrentOperation]
-  );
+  const beginOperation = useCallback(() => {
+    if (operationRef.current.phase !== 'idle' && isCurrentOperation(operationRef.current)) return null;
+    const previous = operationRef.current;
+    if (previous.phase !== 'idle') previous.cancellation.abort();
+    const operation: AttendanceOperation = {
+      phase: 'authorizing',
+      ticket: sessionTicketRef.current,
+      cancellation: new AbortController()
+    };
+    operationRef.current = operation;
+    setBusyOperation(operation);
+    return operation;
+  }, [isCurrentOperation]);
   const finishOperation = useCallback((operation: AttendanceOperation) => {
     if (operationRef.current !== operation) return;
     operationRef.current = { phase: 'idle' };
@@ -374,7 +371,7 @@ export function useNodeSeekCheckInController({
     async (random = false) => {
       const previous = scopedStateRef.current;
       if (previous && previous.state.kind !== 'idle' && isWritableSessionTicketCurrent(previous.ticket)) return;
-      const operation = beginOperation('authorizing');
+      const operation = beginOperation();
       if (!operation) return;
       const trace = beginDiagnosticTrace('session', 'attendance', { source: 'nodeseek' });
       try {
@@ -429,32 +426,6 @@ export function useNodeSeekCheckInController({
     },
     [commit, isWritableSessionTicketCurrent]
   );
-  const refresh = useCallback(
-    async (ticket: WritableSessionTicket) => {
-      if (!isWritableSessionTicketCurrent(ticket)) return;
-      const operation = beginOperation('reading');
-      if (!operation) return;
-      operation.ticket = ticket;
-      setBusyOperation({ ...operation });
-      try {
-        observeBoard(await readBoard(ticket, operation.cancellation.signal), ticket);
-      } catch (error) {
-        expireIfUnauthorized(error, ticket);
-        if (isWritableSessionTicketCurrent(ticket)) notify(errorMessage(error));
-      } finally {
-        finishOperation(operation);
-      }
-    },
-    [
-      beginOperation,
-      finishOperation,
-      observeBoard,
-      isWritableSessionTicketCurrent,
-      readBoard,
-      expireIfUnauthorized,
-      notify
-    ]
-  );
   const state =
     scopedState &&
     currentSessionTicket &&
@@ -463,5 +434,5 @@ export function useNodeSeekCheckInController({
       ? scopedState.state
       : IDLE;
   const busy = busyOperation ? isCurrentOperation(busyOperation, currentSessionTicket) : false;
-  return { busy, checkIn, state, refresh, observeBoard };
+  return { busy, checkIn, state, observeBoard };
 }

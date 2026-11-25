@@ -35,8 +35,9 @@ import {
   installReaderFont,
   localReaderFontCatalog,
   localReaderFontRegistration,
-  readerFontProgress,
-  rememberInstalledReaderFont
+  readerFontDownload,
+  rememberInstalledReaderFont,
+  type ReaderFontTarget
 } from '@/ui/theme/useReaderFonts';
 import { createTheme, type ReaderTheme } from '@/ui/theme/tokens';
 import { AppSwitch } from '@/ui/controls/InputControls';
@@ -55,10 +56,9 @@ type AppearanceSettings = Pick<
 >;
 
 type Option<Value extends string> = { value: Value; label: string };
-type FontTarget = 'interface' | 'reading';
 type FontOption = Option<ReaderFontFamily> & { edition?: string; download?: DownloadableReaderFont };
 type FontAnchor = { x: number; y: number; width: number; height: number };
-type FontFailure = { target: FontTarget; family?: LocalReaderFontFamily; message: string };
+type FontFailure = { family?: LocalReaderFontFamily; message: string };
 
 const themeOptions = [
   { value: 'light', label: '浅色', preview: createTheme({ theme: 'light' }) },
@@ -116,14 +116,15 @@ function SettingsPanel({
   theme: ReaderTheme;
   onUpdateSettings: (patch: Partial<ReaderSettings>) => void;
 }) {
-  const [menu, setMenu] = useState<{ target: FontTarget; anchor: FontAnchor } | null>(null);
-  const [fontBusy, setFontBusy] = useState<{ target: FontTarget; family?: LocalReaderFontFamily } | null>(null);
-  const [fontError, setFontError] = useState<FontFailure | null>(null);
+  const [menu, setMenu] = useState<{ target: ReaderFontTarget; anchor: FontAnchor } | null>(null);
+  const [selectionTarget, setSelectionTarget] = useState<ReaderFontTarget | null>(null);
+  const [fontError, setFontError] = useState<{ target: ReaderFontTarget; message: string } | null>(null);
   const pending = useRef(false);
   const selectionOwner = useRef<AbortController | null>(null);
   const navigation = useContext(NavigationContext);
   const client = useQueryClient();
   const { data: importedFonts = [] } = useQuery({ ...localReaderFontCatalog, enabled: active });
+  const { data: downloadState } = useQuery(readerFontDownload);
   const localFamilies = new Set(importedFonts.map((font) => font.family));
   const officialFamilies = new Set(downloadableReaderFonts.map((font) => font.family));
   const fontOptions: FontOption[] = [
@@ -171,11 +172,14 @@ function SettingsPanel({
   const update = (patch: Partial<ReaderSettings>) => {
     if (selectionOwner.current) onUpdateSettings(patch);
   };
-  const setFont = (target: FontTarget, family: ReaderFontFamily) => {
+  const setFont = (target: ReaderFontTarget, family: ReaderFontFamily) => {
     setFontError((error) => (error?.target === target ? null : error));
+    if (downloadState?.status === 'failed' && downloadState.target === target) {
+      client.setQueryData(readerFontDownload.queryKey, (current) => (current === downloadState ? null : current));
+    }
     update(target === 'interface' ? { uiFontFamily: family } : { fontFamily: family });
   };
-  const openFontMenu = (target: FontTarget, trigger: View) => {
+  const openFontMenu = (target: ReaderFontTarget, trigger: View) => {
     const cycle = selectionOwner.current?.signal;
     if (!cycle || cycle.aborted) return;
     trigger.measureInWindow((x, y, width, height) => {
@@ -184,18 +188,20 @@ function SettingsPanel({
       }
     });
   };
-  const applyLocalFont = async (target: FontTarget, choice?: LocalReaderFontFamily | DownloadableReaderFont) => {
+  const applyLocalFont = async (target: ReaderFontTarget, choice?: LocalReaderFontFamily | DownloadableReaderFont) => {
     const cycle = selectionOwner.current?.signal;
     if (!cycle || cycle.aborted || pending.current) return;
     const existing = typeof choice === 'string' ? choice : undefined;
     const download = typeof choice === 'object' ? choice : undefined;
     pending.current = true;
-    setFontBusy({ target, family: download?.family });
+    setSelectionTarget(target);
     setFontError(null);
     try {
       let imported: LocalReaderFont | null = null;
       if (download) {
-        imported = await installReaderFont(client, download);
+        const installed = await installReaderFont(client, download, target);
+        if (installed && !cycle.aborted) setFont(target, installed.family);
+        return;
       } else if (!existing) {
         imported = await pickLocalReaderFont();
       }
@@ -216,18 +222,23 @@ function SettingsPanel({
       }
       if (!cycle.aborted) setFont(target, family);
     } catch (error) {
-      if (selectionOwner.current) setFontError({ target, family: download?.family, message: errorMessage(error) });
+      if (selectionOwner.current) setFontError({ target, message: errorMessage(error) });
     } finally {
       pending.current = false;
-      setFontBusy(null);
+      setSelectionTarget(null);
     }
   };
-  const renderFontControl = (target: FontTarget) => {
+  const renderFontControl = (target: ReaderFontTarget) => {
     const interfaceFont = target === 'interface';
     const anchor = active && menu?.target === target ? menu.anchor : undefined;
-    const busy = fontBusy?.target === target;
-    const downloadFamily = busy ? fontBusy.family : undefined;
-    const failure = fontError?.target === target ? fontError : undefined;
+    const selecting = selectionTarget === target;
+    const download = downloadState?.status === 'running' && downloadState.target === target ? downloadState : undefined;
+    const downloadFailed =
+      downloadState?.status === 'failed' && downloadState.target === target && !localFamilies.has(downloadState.family)
+        ? downloadState
+        : undefined;
+    const localFailure = fontError?.target === target ? fontError : undefined;
+    const failure = localFailure ?? downloadFailed;
     return (
       <>
         <FontDropdown
@@ -237,10 +248,11 @@ function SettingsPanel({
           items={fontOptions}
           value={interfaceFont ? settings.uiFontFamily : settings.fontFamily}
           anchor={anchor}
-          busy={busy}
-          downloadFamily={downloadFamily}
+          selecting={selecting}
+          download={download}
+          downloadInFlight={downloadState?.status === 'running'}
           failure={failure}
-          disabled={fontBusy !== null && !downloadFamily}
+          disabled={selectionTarget !== null && !download}
           styles={styles}
           theme={theme}
           onOpen={(trigger) => openFontMenu(target, trigger)}
@@ -254,7 +266,7 @@ function SettingsPanel({
             else setFont(target, option.value);
           }}
         />
-        {failure && (!anchor || !failure.family) ? (
+        {failure && (!anchor || localFailure) ? (
           <Text accessibilityRole="alert" style={styles.appearanceError}>
             {failure.message}
           </Text>
@@ -444,8 +456,9 @@ function SegmentedSetting<Value extends string>({
 function FontDropdown({
   active,
   anchor,
-  busy,
-  downloadFamily,
+  selecting,
+  download,
+  downloadInFlight,
   failure,
   disabled,
   items,
@@ -461,8 +474,9 @@ function FontDropdown({
 }: {
   active: boolean;
   anchor?: FontAnchor;
-  busy: boolean;
-  downloadFamily?: LocalReaderFontFamily;
+  selecting: boolean;
+  download?: { family: LocalReaderFontFamily; progress: ReaderFontDownloadProgress };
+  downloadInFlight: boolean;
   failure?: FontFailure;
   disabled: boolean;
   items: readonly FontOption[];
@@ -478,10 +492,10 @@ function FontDropdown({
 }) {
   const trigger = useRef<View>(null);
   const insets = useSafeAreaInsets();
-  const { data: progress = { phase: 'connecting' } } = useQuery(readerFontProgress(downloadFamily ?? null));
+  const busy = selecting || Boolean(download);
   const selected = items.find((item) => item.value === value && !item.download);
   const selectedLabel = selected?.label ?? `${BUILT_IN_READER_FONT_NAME}（所选字体不可用）`;
-  const current = busy && !anchor ? (downloadFamily ? fontProgressLabel(progress) : '正在载入字体…') : selectedLabel;
+  const current = busy && !anchor ? (download ? fontProgressLabel(download.progress) : '正在载入字体…') : selectedLabel;
   return (
     <View style={[styles.appearanceChoiceRow, styles.appearanceFontSetting]}>
       <Text importantForAccessibility="no" style={styles.appearanceSettingLabel}>
@@ -528,8 +542,8 @@ function FontDropdown({
                 key={item.value}
                 item={item}
                 selected={item === selected}
-                disabled={busy}
-                progress={downloadFamily === item.value ? progress : undefined}
+                disabled={selecting || (downloadInFlight && Boolean(item.download))}
+                progress={download?.family === item.value ? download.progress : undefined}
                 error={failure?.family === item.value ? failure.message : undefined}
                 styles={styles}
                 theme={theme}
@@ -544,11 +558,11 @@ function FontDropdown({
               testID="menu-item"
               accessibilityRole="menuitem"
               accessibilityLabel="新增字体"
-              disabled={busy}
+              disabled={selecting}
               style={[
                 styles.appearanceDropdownItem,
                 styles.appearanceFontOptionLine,
-                busy && styles.appearanceFontFieldDisabled
+                selecting && styles.appearanceFontFieldDisabled
               ]}
               onPress={() => {
                 onClose();
@@ -731,6 +745,7 @@ function FontScaleSetting({
           thumbTintColor={theme.primaryStrong}
           value={draftValue}
           onSlidingComplete={commit}
+          onTouchCancel={() => setDraftValue(value)}
           onValueChange={(nextValue) => {
             if (active) setDraftValue(normalizeFontScale(nextValue));
           }}

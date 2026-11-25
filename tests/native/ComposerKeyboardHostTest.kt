@@ -161,6 +161,19 @@ class ComposerKeyboardHostTest {
     assertSame(input, host.findFocus())
   }
 
+  @Test fun dismissOnDisableOnlyReleasesThisPanelsFocusedInput() {
+    ComposerKeyboardHostManager().updateProperties(host, ReactStylesDiffMap(JavaOnlyMap.of("dismissOnDisable", true)))
+    host.setHostEnabled(false)
+    assertEquals(1, host.ime.ordinaryHides)
+    assertFalse(input.hasFocus())
+
+    host.setHostEnabled(true)
+    assertTrue(other.requestFocus())
+    host.setHostEnabled(false)
+    assertSame(other, container.findFocus())
+    assertEquals(1, host.ime.ordinaryHides)
+  }
+
   @Test fun commandPreservesInputFocusAndAcknowledgesOnlyItsCompletedHide() {
     host.hideKeyboard(7.0)
     assertEquals(1, host.ime.requests.size)

@@ -3,7 +3,7 @@ import type { Fetcher } from '@/platform/network/request';
 import type { SessionSite } from '@/domain/session/siteSessionState';
 import type { RequestAccountRecheck } from '@/domain/session/sessionContracts';
 import type { Source } from '@/domain/forum/sourceCatalog';
-import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
+import type { ForumReadSession } from '@/domain/forum/readPlan';
 import { createReadGateway } from '@/sources/readGateway';
 import type { DiscourseReadingRuntime } from '@/platform/query/discourseReadingRuntime';
 
@@ -28,7 +28,7 @@ export function useSessionReadGateway({
   getNodeSeekUserAgent: () => string;
   onSessionExpired: (source: SessionSite, requestSessionEpoch: number) => void;
   requestAccountRecheck: RequestAccountRecheck;
-  readSessionRuntimeSnapshot: (source: SessionSite) => SessionRuntimeSnapshot;
+  readSessionRuntimeSnapshot: (source: SessionSite) => ForumReadSession;
 }) {
   return useMemo(
     () =>

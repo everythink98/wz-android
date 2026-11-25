@@ -60,6 +60,7 @@ import {
   type LinuxDoPollDraft
 } from '@/domain/forum/linuxDoPoll';
 import { NODESEEK_STICKER_CATEGORIES, nodeSeekStickerForCode } from '@/domain/forum/nodeSeekStickers';
+import { maskMarkdownCode } from '@/domain/forum/markdownCode';
 import { useCommittedRef, useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 import {
   composerHostMessageSchema,
@@ -1348,30 +1349,6 @@ export function sanitizePastedHtml(html: string) {
     ],
     ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'data-type', 'data-checked']
   });
-}
-
-const markdownCodeParser = markdownLanguage().language.parser;
-const markdownCodeNodes = new Set(['InlineCode', 'FencedCode', 'CodeBlock']);
-
-function maskMarkdownCode(markdown: string) {
-  if (!/[`~\t]| {4}/.test(markdown)) return markdown;
-  const ranges: { from: number; to: number }[] = [];
-  markdownCodeParser.parse(markdown).iterate({
-    enter(node) {
-      if (!markdownCodeNodes.has(node.name)) return;
-      ranges.push({ from: node.from, to: node.to });
-      return false;
-    }
-  });
-  if (!ranges.length) return markdown;
-  let cursor = 0;
-  let masked = '';
-  ranges.forEach(({ from, to }) => {
-    masked += markdown.slice(cursor, from);
-    masked += ' '.repeat(to - from);
-    cursor = to;
-  });
-  return masked + markdown.slice(cursor);
 }
 
 function validateMarkdown(

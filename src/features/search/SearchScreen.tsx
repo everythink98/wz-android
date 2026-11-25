@@ -22,6 +22,7 @@ import {
   Keyboard,
   Platform,
   Pressable,
+  StyleSheet,
   Text,
   View,
   requireNativeComponent,
@@ -43,7 +44,7 @@ import {
 import type { LinuxDoAiSearchState } from './aiSearch';
 import { type SourceSearchFilter } from '@/domain/forum/searchFilters';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
-import { type ReaderTheme } from '@/ui/theme/tokens';
+import { readerRadii, type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { AuthNoticeBox, EmptyText, LoadingState, RecoverableEmptyState } from '@/ui/controls/FeedbackStates';
 import { PillRail } from '@/ui/controls/SelectionControls';
@@ -72,6 +73,16 @@ const SEARCH_PAGINATION_VIEWABILITY_CONFIG = {
 const NativeRecentIcon = requireNativeComponent<ViewProps & { icon: 'history' | 'close'; color: ColorValue }>(
   'WzSearchHistoryIcon'
 );
+const NativeRecentFrame = requireNativeComponent<
+  ViewProps & {
+    surfaceColor: ColorValue;
+    lineColor: ColorValue;
+    lineWidth: number;
+    cornerRadius: number;
+    roundTop: boolean;
+    roundBottom: boolean;
+  }
+>('WzSearchHistoryFrame');
 
 function SearchInputField({
   busy,
@@ -524,16 +535,34 @@ export const SearchScreen = memo(function SearchScreen({
       if (item.type === 'recentSearch') {
         const first = index === 1;
         const last = index === recentSearches.length;
+        const android = Platform.OS === 'android';
+        const nativeFrame = android && (first || last);
         return (
           <View
             style={[
-              styles.recentSearchItem,
-              first && styles.recentSearchItemFirst,
-              !first && styles.recentSearchItemJoined,
-              last && styles.recentSearchItemLast,
+              nativeFrame
+                ? [styles.recentSearchNativeFrame, last && styles.recentSearchNativeFrameLast]
+                : [
+                    styles.recentSearchItem,
+                    first ? styles.recentSearchItemFirst : styles.recentSearchItemJoined,
+                    last && styles.recentSearchItemLast,
+                    android && styles.recentSearchUnclipped
+                  ],
               styles.removableChipShell
             ]}
           >
+            {nativeFrame ? (
+              <NativeRecentFrame
+                accessible={false}
+                style={StyleSheet.absoluteFill}
+                surfaceColor={theme.surface}
+                lineColor={theme.line}
+                lineWidth={StyleSheet.hairlineWidth}
+                cornerRadius={readerRadii.surface}
+                roundTop={first}
+                roundBottom={last}
+              />
+            ) : null}
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={`搜索最近记录 ${item.query}`}
@@ -542,7 +571,7 @@ export const SearchScreen = memo(function SearchScreen({
               style={[styles.removableChip, busy && styles.buttonDisabled]}
               onPress={() => submitSearch(item.query)}
             >
-              {Platform.OS === 'android' ? (
+              {android ? (
                 <NativeRecentIcon
                   icon="history"
                   color={theme.muted}
@@ -564,7 +593,7 @@ export const SearchScreen = memo(function SearchScreen({
                 if (isRouteFocused?.() !== false) onRemoveRecentSearch(item.query);
               }}
             >
-              {Platform.OS === 'android' ? (
+              {android ? (
                 <NativeRecentIcon
                   icon="close"
                   color={theme.muted}

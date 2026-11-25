@@ -6,6 +6,9 @@ import { LOGIN_FORM_ADAPTERS } from '@/domain/session/loginFormAdapters';
 import { LINUXDO_WEBVIEW_PROBE_SCRIPT } from '@/platform/network/loginWebViewScripts';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import type { LinuxDoForumDocumentEvent, LinuxDoVerificationPageEvent } from '../useVerificationController';
+import type { LoginFormMessageHandler } from '../credentialFillSession';
+import { useLoginFormProbe } from './useLoginFormProbe';
+import { useWebViewLoadDeadline } from './useWebViewLoadDeadline';
 import {
   createLinuxDoVerificationDocument,
   LINUXDO_CHALLENGE_URL as CHALLENGE_URL
@@ -40,7 +43,8 @@ export type LinuxDoVerificationPageProps = {
   showLinuxDoPanel: boolean;
   handleLinuxDoNavigation: (request: LoginNavigationRequest) => boolean;
   onHandleLinuxDoMessage: (event: WebViewMessageEvent, webViewKey?: number) => void;
-  onLoginFormMessage: (event: WebViewMessageEvent) => boolean;
+  onLoginFormMessage: LoginFormMessageHandler;
+  onLoginFormDocumentRetired?: (attempt: number) => void;
   onResetLinuxDoWebView: () => void;
   onRetryRecovery?: () => void;
   onSetLinuxDoWebViewError: (value: string, webViewKey?: number, credentialAttempt?: number) => void;
@@ -63,6 +67,7 @@ export function useLinuxDoVerificationPage({
   handleLinuxDoNavigation,
   onHandleLinuxDoMessage,
   onLoginFormMessage,
+  onLoginFormDocumentRetired,
   onResetLinuxDoWebView,
   onRetryRecovery,
   onSetLinuxDoWebViewError,
@@ -78,6 +83,13 @@ export function useLinuxDoVerificationPage({
   const current = useCommittedRef({ key, visible, web });
   const isCurrent = () =>
     current.current.key === key && current.current.visible && current.current.web && !document.snapshot.needsRemount;
+  const form = useLoginFormProbe({
+    adapter: LOGIN_FORM_ADAPTERS.linuxdo,
+    enabled: visible && mounted && web && !needsRemount && loginFormMode,
+    webViewKey: key,
+    webViewRef: linuxDoWebViewRef,
+    onRetired: onLoginFormDocumentRetired
+  });
   const record = useCallback(
     (
       action: LinuxDoVerificationPageEvent['verificationAction'],
@@ -101,32 +113,26 @@ export function useLinuxDoVerificationPage({
     publishPage();
   }, [document, key, publishPage, visible]);
 
-  useEffect(() => {
-    if (!visible || !web || !mounted || needsRemount || !loadingLinuxDoPage) return;
-    const timer = setTimeout(() => {
+  const updateDeadline = useWebViewLoadDeadline({
+    enabled: visible && web && mounted && !needsRemount,
+    loading: loadingLinuxDoPage,
+    webViewKey: key,
+    onTimeout: () => {
       record('load-timeout', document.documentUrl, { reason: 'timeout', hasLoadError: true });
       document.requireRemount();
       publishPage();
       onSetLoadingLinuxDoPage(false, key);
       onSetLinuxDoWebViewError('页面打开超时，请检查网络后重新打开。', key, credentialAttempt);
-    }, 12_000);
-    return () => clearTimeout(timer);
-  }, [
-    credentialAttempt,
-    document,
-    key,
-    loadingLinuxDoPage,
-    mounted,
-    needsRemount,
-    onSetLinuxDoWebViewError,
-    onSetLoadingLinuxDoPage,
-    publishPage,
-    record,
-    visible,
-    web
-  ]);
+    }
+  });
+  const setLoading = (value: boolean) => {
+    updateDeadline(key, value);
+    onSetLoadingLinuxDoPage(value, key);
+  };
 
   const openChallenge = () => {
+    updateDeadline(key, false);
+    form.retire();
     record('alternate-manual', CHALLENGE_URL);
     document.showChallenge();
     publishPage();
@@ -134,6 +140,8 @@ export function useLinuxDoVerificationPage({
     else onRetryRecovery?.();
   };
   const refresh = () => {
+    updateDeadline(key, false);
+    form.retire();
     if (stage !== 'account') {
       document.showChallenge();
       publishPage();
@@ -148,13 +156,17 @@ export function useLinuxDoVerificationPage({
       if (!isCurrent()) return false;
       const allowed = handleLinuxDoNavigation(request);
       if (allowed && request.isTopFrame !== false) {
+        form.retire();
         onDocumentNavigation?.(key);
         if (isForumDocument(request.url)) onForumDocument?.(key, 'navigation');
       }
       return allowed;
     },
+    onMainFrameLoadStart: () => {
+      if (isCurrent()) form.retire();
+    },
     onLoadProgress: (event) => {
-      if (isCurrent() && event.nativeEvent.progress >= 0.8) onSetLoadingLinuxDoPage(false, key);
+      if (isCurrent() && event.nativeEvent.progress >= 0.8) setLoading(false);
     },
     onLoadStart: (event) => {
       if (!isCurrent()) return;
@@ -165,20 +177,19 @@ export function useLinuxDoVerificationPage({
       record('load-start', url);
       publishPage();
       if (started.clearError) onSetLinuxDoWebViewError('', key, credentialAttempt);
-      onSetLoadingLinuxDoPage(event?.nativeEvent.loading !== false, key);
+      setLoading(event?.nativeEvent.loading !== false);
     },
     onLoadEnd: (event) => {
       if (!isCurrent()) return;
       const url = event.nativeEvent.url || document.documentUrl;
       const hasLoadError = document.finished(url, 'code' in event.nativeEvent);
       record('load-end', url, { hasLoadError });
-      onSetLoadingLinuxDoPage(false, key);
+      setLoading(false);
       if (!hasLoadError) onSetLinuxDoWebViewError('', key, credentialAttempt);
       // CDK relies on native success-only injection, not Android's synthetic error finish.
       if (stage === 'challenge') return;
       linuxDoWebViewRef.current?.injectJavaScript(LINUXDO_WEBVIEW_PROBE_SCRIPT);
-      if (loginFormMode)
-        linuxDoWebViewRef.current?.injectJavaScript(LOGIN_FORM_ADAPTERS.linuxdo.probeScript(credentialAttempt));
+      if (!hasLoadError) form.probe(url, credentialAttempt);
     },
     onMessage: (event) => {
       if (!isCurrent()) return;
@@ -191,15 +202,16 @@ export function useLinuxDoVerificationPage({
         record('return-to-forum', CHALLENGE_URL + 'login');
         onForumDocument?.(key, 'challenge-return');
         publishPage();
-        onSetLoadingLinuxDoPage(true, key);
+        setLoading(true);
         return;
       }
       if (result === 'ignored-first') record('message-ignored', url);
       if (result !== 'unrelated') return;
-      if (!onLoginFormMessage(event)) onHandleLinuxDoMessage(event, key);
+      if (!onLoginFormMessage(event, form.currentDocument())) onHandleLinuxDoMessage(event, key);
     },
     onError: (event) => {
       if (!isCurrent()) return;
+      form.retire();
       const url = event.nativeEvent.url || document.documentUrl;
       document.failed(url);
       const description = event.nativeEvent.description ?? '';
@@ -211,7 +223,7 @@ export function useLinuxDoVerificationPage({
       record('load-error', url, { reason, hasLoadError: true });
       document.requireRemount();
       publishPage();
-      onSetLoadingLinuxDoPage(false, key);
+      setLoading(false);
       const closed = /\bERR_CONNECTION_(?:CLOSED|RESET)\b/.test(description);
       onSetLinuxDoWebViewError(
         closed
@@ -231,16 +243,17 @@ export function useLinuxDoVerificationPage({
       });
       document.failed(url);
       if (document.documentUrl && document.documentUrl !== url) return;
-      onSetLoadingLinuxDoPage(false, key);
+      setLoading(false);
       // A 403 may be the interactive challenge itself; keep the site's page usable.
       if (statusCode !== 403) onSetLinuxDoWebViewError(`页面返回 HTTP ${statusCode}，可以重新打开后再试。`, key);
     },
     onRenderProcessGone: () => {
       if (!isCurrent()) return;
+      form.retire();
       record('renderer-gone', document.documentUrl, { reason: 'renderer_gone', hasLoadError: true });
       document.requireRemount();
       publishPage();
-      onSetLoadingLinuxDoPage(false, key);
+      setLoading(false);
       onSetLinuxDoWebViewError('验证页面已停止，请重新打开。', key, credentialAttempt);
     }
   };

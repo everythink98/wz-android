@@ -1,6 +1,12 @@
 import type { AccountCredentialFillAttempt } from '@/domain/session/accountCenter';
 import type { CredentialSite } from '@/domain/session/sessionContracts';
+import type { WebView, WebViewMessageEvent } from 'react-native-webview';
 import type { CredentialFillTraceState } from './credentialDiagnostics';
+
+export type LoginFormMessageHandler = (
+  event: WebViewMessageEvent,
+  readDocument: () => Pick<WebView, 'injectJavaScript'> | null
+) => boolean;
 
 type Fill = Readonly<CredentialFillTraceState & { owner: AbortSignal }>;
 type Trace = { kind: 'settled' } | { kind: 'active'; fill: Fill; adopt: (owner: AbortSignal) => void };

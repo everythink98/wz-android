@@ -445,6 +445,61 @@ describe('Topic and More controls', () => {
     }
   });
 
+  it.each(['success', 'failure'] as const)(
+    'observes the same font download after reading settings is removed and reopened (%s)',
+    async (outcome) => {
+      const measurement = jest.spyOn(View.prototype, 'measureInWindow').mockImplementation((callback) => {
+        callback(180, 160, 164, 48);
+      });
+      const font = downloadableReaderFonts.find((entry) => entry.name === 'Inter')!;
+      const result = Promise.withResolvers<{ family: typeof font.family; name: string }>();
+      const subscription = Promise.withResolvers<(event: ReaderFontDownloadProgress) => void>();
+      const download = jest.mocked(downloadReaderFont).mockImplementationOnce((_font, progress) => {
+        subscription.resolve(progress);
+        return result.promise;
+      });
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const onUpdateSettings = jest.fn();
+      const page = <ReadingSettingsScreen settings={readerData.settings} onUpdateSettings={onUpdateSettings} />;
+      const view = await render(page, { wrapper: createQueryTestWrapper(client) });
+      try {
+        await fireEvent.press(view.getByLabelText('阅读字体，思源黑体'));
+        await fireEvent.press(await view.findByRole('menuitem', { name: 'Inter，安装' }));
+        const progress = await subscription.promise;
+        await act(async () => progress({ phase: 'downloading', percent: 35 }));
+        expect(await view.findByRole('menuitem', { name: 'Inter，下载中 35%', busy: true })).toBeOnTheScreen();
+
+        await view.rerender(<View />);
+        await view.rerender(page);
+        await fireEvent.press(view.getByLabelText('阅读字体，下载中 35%'));
+        expect(await view.findByRole('menuitem', { name: 'Inter，下载中 35%', busy: true })).toBeOnTheScreen();
+
+        const installed = { family: font.family, name: font.name };
+        if (outcome === 'failure') {
+          await act(async () => result.reject(new Error('字体下载失败，请重试。')));
+          const retry = await view.findByRole('menuitem', { name: 'Inter，重试' });
+          expect(retry).toBeEnabled();
+          expect(onUpdateSettings).not.toHaveBeenCalled();
+          download.mockResolvedValueOnce(installed);
+          await fireEvent.press(retry);
+          await waitFor(() => expect(onUpdateSettings).toHaveBeenCalledWith({ fontFamily: font.family }));
+          expect(download).toHaveBeenCalledTimes(2);
+        } else {
+          await act(async () => result.resolve(installed));
+          await waitFor(() => expect(view.getByRole('menuitem', { name: 'Inter' })).toBeEnabled());
+          expect(onUpdateSettings).not.toHaveBeenCalled();
+          expect(download).toHaveBeenCalledTimes(1);
+        }
+      } finally {
+        result.resolve({ family: font.family, name: font.name });
+        await view.unmount();
+        client.clear();
+        measurement.mockRestore();
+        download.mockReset();
+      }
+    }
+  );
+
   it('keeps the chosen font after a failed download and allows another tap to retry', async () => {
     const measurement = jest.spyOn(View.prototype, 'measureInWindow').mockImplementation((callback) => {
       callback(20, 160, 225, 225);
@@ -477,6 +532,48 @@ describe('Topic and More controls', () => {
     } finally {
       measurement.mockRestore();
       download.mockReset();
+    }
+  });
+
+  it('offers an installed font without the download error after importing it from the other group', async () => {
+    const measurement = jest.spyOn(View.prototype, 'measureInWindow').mockImplementation((callback) => {
+      callback(180, 160, 164, 48);
+    });
+    const font = downloadableReaderFonts.find((entry) => entry.name === 'Inter')!;
+    const download = jest.mocked(downloadReaderFont).mockRejectedValueOnce(new Error('字体下载失败，请重试。'));
+    const picker = jest.mocked(pickLocalReaderFont).mockResolvedValueOnce({ family: font.family, name: font.name });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const onUpdateSettings = jest.fn();
+    const view = await render(
+      <AppearancePanel
+        settings={readerData.settings}
+        showSettingsPanel
+        styles={styles}
+        theme={theme}
+        onUpdateSettings={onUpdateSettings}
+      />,
+      { wrapper: createQueryTestWrapper(client) }
+    );
+    try {
+      await fireEvent.press(view.getByLabelText('阅读字体，思源黑体'));
+      await fireEvent.press(await view.findByRole('menuitem', { name: 'Inter，安装' }));
+      expect(await view.findByRole('menuitem', { name: 'Inter，重试' })).toBeEnabled();
+      await fireEvent.press(view.getByRole('button', { name: '关闭阅读字体选择' }));
+      await fireEvent.press(view.getByLabelText('界面字体，思源黑体'));
+      await fireEvent.press(await view.findByRole('menuitem', { name: '新增字体' }));
+      await waitFor(() => expect(onUpdateSettings).toHaveBeenCalledWith({ uiFontFamily: font.family }));
+
+      await fireEvent.press(view.getByLabelText('阅读字体，思源黑体'));
+      expect(view.queryByRole('menuitem', { name: 'Inter，重试' })).toBeNull();
+      await fireEvent.press(view.getByRole('menuitem', { name: 'Inter' }));
+      await waitFor(() => expect(onUpdateSettings).toHaveBeenCalledWith({ fontFamily: font.family }));
+      expect(download).toHaveBeenCalledTimes(1);
+    } finally {
+      await view.unmount();
+      client.clear();
+      measurement.mockRestore();
+      download.mockReset();
+      picker.mockReset();
     }
   });
 
@@ -546,5 +643,34 @@ describe('Topic and More controls', () => {
     await act(async () => view.getByTestId('appearance-interface-font-scale-slider').props.onSlidingComplete(0.85));
     expect(onUpdateSettings).toHaveBeenLastCalledWith({ uiFontScale: 0.85 });
     expect(view.getByLabelText('阅读字号').props.accessibilityValue.now).toBe(110);
+  });
+
+  it.each<['interface' | 'reading', string, 'uiFontScale' | 'fontScale']>([
+    ['interface', '界面字号', 'uiFontScale'],
+    ['reading', '阅读字号', 'fontScale']
+  ])('restores the applied %s font scale when Android cancels dragging', async (kind, label, setting) => {
+    const onUpdateSettings = jest.fn();
+    const view = await render(
+      <AppearancePanel
+        settings={{ ...readerData.settings, [setting]: 1.05 }}
+        showSettingsPanel
+        styles={styles}
+        theme={theme}
+        onUpdateSettings={onUpdateSettings}
+      />,
+      { wrapper: QueryTestWrapper }
+    );
+
+    const slider = () => view.getByTestId(`appearance-${kind}-font-scale-slider`);
+    await act(async () => slider().props.onValueChange(1.15));
+    expect(slider().props.accessibilityValue.now).toBe(115);
+
+    await fireEvent(slider(), 'touchCancel');
+    expect(onUpdateSettings).not.toHaveBeenCalled();
+    expect(slider().props.accessibilityValue.now).toBe(105);
+
+    await fireEvent.press(view.getByLabelText(`减小${label}`));
+    expect(onUpdateSettings).toHaveBeenCalledTimes(1);
+    expect(onUpdateSettings).toHaveBeenLastCalledWith({ [setting]: 1 });
   });
 });

@@ -364,8 +364,10 @@ export interface UserProfile extends UserDetails, UserTopicsPage, UserRepliesPag
 
 export interface FeedResponse {
   items: Topic[];
+  topicUpdates?: Topic[];
   errors: SourceErrors;
   hasMore?: boolean;
+  manualContinuation?: true;
   nextPage?: number | null;
   nextCursor?: string | null;
 }

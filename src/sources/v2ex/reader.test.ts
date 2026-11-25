@@ -440,4 +440,86 @@ describe('V2EX feed continuation', () => {
     });
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
+
+  it('preserves verbatim plain text and Markdown summaries in V2EX API and search while extracting HTML content_rendered once', async () => {
+    const [{ getV2exTopic }, { searchV2ex }] = await Promise.all([import('./reader'), import('./search')]);
+
+    const topicFetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/topics/show.json?id=801')) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: 801,
+              title: 'Plain V2EX topic',
+              member: { username: 'alice' },
+              node: { name: 'qna', title: '问与答' },
+              created: 1780000000,
+              replies: 0,
+              content: 'How to type &copy; &amp; &#128; in Markdown',
+              content_rendered: '<p>How to type &amp;copy; &amp;amp; &amp;#128; in Markdown</p>'
+            }
+          ])
+        );
+      }
+      if (input.includes('/api/topics/show.json?id=802')) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: 802,
+              title: 'Rendered-only V2EX topic',
+              member: { username: 'bob' },
+              node: { name: 'qna', title: '问与答' },
+              created: 1780000000,
+              replies: 0,
+              content: '',
+              content_rendered: '<p>&amp;copy; &#128; &#0; &#x1F600 &Lt; &Gt; &unknownref;</p>'
+            }
+          ])
+        );
+      }
+      if (input.includes('/api/replies/show.json')) {
+        return new Response(JSON.stringify([]));
+      }
+      return new Response('<html><body></body></html>');
+    });
+    const plainTopic = await getV2exTopic('801', { fetcher: topicFetcher });
+    const renderedTopic = await getV2exTopic('802', { fetcher: topicFetcher });
+    expect(plainTopic.excerpt).toBe('How to type &copy; &amp; &#128; in Markdown');
+    expect(renderedTopic.excerpt).toBe('&copy; € \uFFFD 😀 ≪ ≫ &unknownref;');
+
+    const searchFetcher = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            total: 2,
+            hits: [
+              {
+                _source: {
+                  id: 803,
+                  title: 'V2EX search plain content',
+                  member: 'alice',
+                  created: '2026-08-15T00:00:00',
+                  replies: 1,
+                  content: 'How to type &copy; &amp; &#128; in V2EX'
+                }
+              },
+              {
+                _source: {
+                  id: 804,
+                  title: 'V2EX search highlighted content',
+                  member: 'bob',
+                  created: '2026-08-15T00:00:00',
+                  replies: 1,
+                  content: 'fallback'
+                },
+                highlight: { content: ['How to type <em>&copy;</em> and &#128; in V2EX'] }
+              }
+            ]
+          })
+        )
+    );
+    const search = await searchV2ex('copy', { fetcher: searchFetcher });
+    expect(search.items[0]?.excerpt).toBe('How to type &copy; &amp; &#128; in V2EX');
+    expect(search.items[1]?.excerpt).toBe('How to type &copy; and &#128; in V2EX');
+  });
 });

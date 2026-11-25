@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@/platform/storage/credentialVault', () => ({
+  CredentialDeletionIncompleteError: class CredentialDeletionIncompleteError extends Error {},
   CredentialVaultError: class CredentialVaultError extends Error {},
   credentialVault: mocks,
   emptyCredentialSummaries: {
@@ -35,13 +36,10 @@ function createController(overrides: Partial<Parameters<typeof useAccountCredent
     changeLinuxDoPanel: vi.fn(() => true),
     changeNodeSeekLoginPanel: vi.fn(),
     changeYaohuoLoginPanel: vi.fn(),
-    linuxDoWebViewRef: { current: null },
     notify,
     refreshAccountStatus: vi.fn(async () => undefined),
     setYaohuoLoginPrompt: vi.fn(),
-    webViewRef: { current: null },
     webViewBlockMessage: '',
-    yaohuoWebViewRef: { current: null },
     ...overrides
   });
   return { controller, notify };
@@ -98,18 +96,21 @@ describe('account credential controller ownership', () => {
     controller.openAccountLogin('nodeseek', true);
 
     controller.finishCredentialFillForLoginFailure('nodeseek', 1, 'timeout');
-    const handled = controller.handleCredentialLoginFormMessage({
-      nativeEvent: {
-        data: JSON.stringify({
-          type: 'login-form-probe',
-          site: 'nodeseek',
-          attempt: 1,
-          ok: true,
+    const handled = controller.handleCredentialLoginFormMessage(
+      {
+        nativeEvent: {
+          data: JSON.stringify({
+            type: 'login-form-probe',
+            site: 'nodeseek',
+            attempt: 1,
+            ok: true,
+            url: LOGIN_FORM_ADAPTERS.nodeseek.loginUrl
+          }),
           url: LOGIN_FORM_ADAPTERS.nodeseek.loginUrl
-        }),
-        url: LOGIN_FORM_ADAPTERS.nodeseek.loginUrl
-      }
-    } as never);
+        }
+      } as never,
+      () => ({ injectJavaScript: vi.fn() })
+    );
     await Promise.resolve();
 
     expect(handled).toBe(true);
@@ -144,18 +145,21 @@ describe('account credential controller ownership', () => {
     controller.openAccountLogin('nodeseek', true);
     controller.openAccountLogin('nodeseek', true);
 
-    controller.handleCredentialLoginFormMessage({
-      nativeEvent: {
-        data: JSON.stringify({
-          type: 'login-form-probe',
-          site: 'nodeseek',
-          attempt: 1,
-          ok: true,
+    controller.handleCredentialLoginFormMessage(
+      {
+        nativeEvent: {
+          data: JSON.stringify({
+            type: 'login-form-probe',
+            site: 'nodeseek',
+            attempt: 1,
+            ok: true,
+            url: LOGIN_FORM_ADAPTERS.nodeseek.loginUrl
+          }),
           url: LOGIN_FORM_ADAPTERS.nodeseek.loginUrl
-        }),
-        url: LOGIN_FORM_ADAPTERS.nodeseek.loginUrl
-      }
-    } as never);
+        }
+      } as never,
+      () => ({ injectJavaScript: vi.fn() })
+    );
     await Promise.resolve();
 
     expect(mocks.readForFill).not.toHaveBeenCalled();

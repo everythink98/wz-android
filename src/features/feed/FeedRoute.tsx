@@ -5,7 +5,7 @@ import type { FlashListRef } from '@shopify/flash-list';
 import type { Category, Topic } from '@/domain/forum/models';
 import type { TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import type { ReaderView } from '@/domain/reader/readerRecordState';
-import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
+import type { ReadRecovery } from '@/platform/query/readRecovery';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import type { ReadGateway } from '@/sources/readGateway';
 import { dispatchFocusedRoute, manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
@@ -17,13 +17,11 @@ export type FeedRouteRuntimeValue = {
   enabledSourcesKey: string;
   account: {
     linuxDoVerificationVisible: boolean;
+    nodeSeekVerificationVisible: boolean;
     readGateway: ReadGateway;
-    requestNodeSeekVerification: (message: string, recovery?: LinuxDoReadRecovery) => void;
+    requestNodeSeekVerification: (message: string, recovery?: ReadRecovery) => void;
     sessionEpochs: ForumSessionEpochs;
-    showLinuxDoVerification: (
-      message?: string,
-      recovery?: LinuxDoReadRecovery
-    ) => void | boolean | Promise<void | boolean>;
+    showLinuxDoVerification: (message?: string, recovery?: ReadRecovery) => void | boolean | Promise<void | boolean>;
     showYaohuoLogin: (message?: string) => void;
   };
   catalogCategories: Category[];
@@ -63,12 +61,12 @@ export function FeedRoute() {
     catalogCategories: runtime.catalogCategories,
     sessionEpochs: runtime.account.sessionEpochs,
     linuxDoVerificationActive: runtime.account.linuxDoVerificationVisible,
+    nodeSeekVerificationActive: runtime.account.nodeSeekVerificationVisible,
     notify: runtime.notify,
     readerData: runtime.reader.data,
     readerDataLoaded: runtime.reader.loaded,
     showLinuxDoVerification: runtime.account.showLinuxDoVerification,
-    showNodeSeekVerification: (message) =>
-      runtime.account.requestNodeSeekVerification(message || 'NodeSeek 需要完成 Cloudflare 验证'),
+    showNodeSeekVerification: runtime.account.requestNodeSeekVerification,
     showYaohuoLogin: runtime.account.showYaohuoLogin,
     readGateway: runtime.account.readGateway
   });
@@ -105,6 +103,7 @@ export function FeedRoute() {
       categories={controller.feedCategories}
       categoryFilter={controller.categoryFilter}
       feedHasMore={controller.activeFeedState.hasMore && controller.feedAllowsRemotePagination}
+      feedManualContinuation={controller.activeFeedState.manualContinuation}
       feedItems={controller.shownFeedItems}
       feedOutcomeKind={active ? controller.feedOutcomeKind : undefined}
       feedPage={controller.activeFeedState.page}

@@ -116,7 +116,7 @@ describe('Android local HTML helpers', () => {
     expect(result).toContain(shallow);
     expect(textContentFromHtml(result)).toBe('before & <literal> 😀 unsafe link safe link after');
     expect(result).toContain('SRC="https://example.com/proof.png"');
-    expect(result).toContain('href="https://example.com/safe?q=1&x=2"');
+    expect(result).toContain('href="https://example.com/safe?q=1&amp;x=2"');
     expect(result).toContain('data-label="&quot; &amp; &lt; &gt;"');
     expect(result).not.toMatch(/onclick|onerror|javascript:|<script|comment sentinel/i);
     expect(result).not.toMatch(/<\/(?:BR|IMG)>/i);
@@ -394,7 +394,9 @@ three &lt; four</code></pre>
     );
 
     expect(result).toContain('<iframe');
-    expect(result).toContain('src="https://player.bilibili.com/player.html?isOutside=true&bvid=BV1GUdgBdESz&p=1"');
+    expect(result).toContain(
+      'src="https://player.bilibili.com/player.html?isOutside=true&amp;bvid=BV1GUdgBdESz&amp;p=1"'
+    );
     expect(result).not.toContain('onload=');
     expect(result).not.toContain('style=');
   });
@@ -431,7 +433,7 @@ three &lt; four</code></pre>
     );
 
     expect(result).toContain('<iframe');
-    expect(result).toContain('src="https://player.bilibili.com/player.html?bvid=BV1GUdgBdESz&p=2"');
+    expect(result).toContain('src="https://player.bilibili.com/player.html?bvid=BV1GUdgBdESz&amp;p=2"');
     expect(result).not.toContain('<img');
   });
 

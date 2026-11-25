@@ -47,12 +47,40 @@ export async function ensureMessageNotificationChannel() {
   });
 }
 
-async function checkNotificationPermission(mode: 'silent' | 'manual') {
-  const trace = beginDiagnosticTrace('app', 'notification-permission', { mode });
+let pendingAndroidPermissionRequest: Promise<boolean> | null = null;
+
+function requestOsNotificationPermissionSingleFlight(): Promise<boolean> {
+  if (pendingAndroidPermissionRequest) return pendingAndroidPermissionRequest;
+  const trace = beginDiagnosticTrace('app', 'notification-permission', { mode: 'manual' });
+  let osCall: Promise<Notifications.NotificationPermissionsStatus>;
   try {
-    if (mode === 'manual') await ensureMessageNotificationChannel();
-    const permissions =
-      mode === 'manual' ? await Notifications.requestPermissionsAsync() : await Notifications.getPermissionsAsync();
+    osCall = Notifications.requestPermissionsAsync();
+  } catch (error) {
+    osCall = Promise.reject(error);
+  }
+  const request = osCall
+    .then((permissions) => {
+      finishDiagnosticTrace(trace, permissions.granted ? 'success' : 'blocked', {
+        isGranted: permissions.granted,
+        ...(!permissions.granted ? { reason: 'permission_denied' } : {})
+      });
+      return permissions.granted;
+    })
+    .catch((error) => {
+      finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
+      throw error;
+    })
+    .finally(() => {
+      if (pendingAndroidPermissionRequest === request) pendingAndroidPermissionRequest = null;
+    });
+  pendingAndroidPermissionRequest = request;
+  return request;
+}
+
+export async function notificationPermissionGranted() {
+  const trace = beginDiagnosticTrace('app', 'notification-permission', { mode: 'silent' });
+  try {
+    const permissions = await Notifications.getPermissionsAsync();
     finishDiagnosticTrace(trace, permissions.granted ? 'success' : 'blocked', {
       isGranted: permissions.granted,
       ...(!permissions.granted ? { reason: 'permission_denied' } : {})
@@ -64,12 +92,11 @@ async function checkNotificationPermission(mode: 'silent' | 'manual') {
   }
 }
 
-export function notificationPermissionGranted() {
-  return checkNotificationPermission('silent');
-}
-
-export function requestNotificationPermission() {
-  return checkNotificationPermission('manual');
+export async function requestNotificationPermission(options?: { prepareChannel?: boolean }) {
+  if (options?.prepareChannel !== false) {
+    await ensureMessageNotificationChannel();
+  }
+  return requestOsNotificationPermissionSingleFlight();
 }
 
 export function openNotificationSystemSettings() {
@@ -111,9 +138,11 @@ export function syncNotificationBackgroundRegistration(
 export async function presentSourceNotification(
   source: NotificationSource,
   digest: { title: string; body: string; data: { source: NotificationSource } },
-  identifier: string
+  identifier: string,
+  assertCurrent: () => Promise<void>
 ) {
   await ensureMessageNotificationChannel();
+  await assertCurrent();
   return notificationDigestNativeModule().present(identifier, digest.title, digest.body, source);
 }
 

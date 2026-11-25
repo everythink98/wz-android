@@ -1,3 +1,4 @@
+import { decodeHTMLAttribute } from 'entities';
 import { HTMLElement, TextNode, type Node } from 'node-html-parser';
 import { sanitizeContentHtmlWithRoot } from './contentSanitizer';
 import {
@@ -12,6 +13,7 @@ import {
   FORUM_VIDEO_TAG,
   escapeHtmlAttribute,
   forumNodeText,
+  htmlElementAttribute,
   parseForumContentHtml
 } from './html';
 import {
@@ -445,9 +447,7 @@ type PlannedCompileSegment =
   | { type: 'quote'; quote: QuotedPostMetadata };
 
 function rawNodeAttribute(node: PlanningNode | null | undefined, name: string) {
-  if (!node) return '';
-  if (node.getAttribute) return String(node.getAttribute(name) || '');
-  return String(node.attributes?.[name] || '');
+  return htmlElementAttribute(node, name) ?? '';
 }
 
 function nodeAttribute(node: PlanningNode | null | undefined, name: string) {
@@ -455,9 +455,7 @@ function nodeAttribute(node: PlanningNode | null | undefined, name: string) {
 }
 
 function nodeHasAttribute(node: PlanningNode | null | undefined, name: string) {
-  if (!node) return false;
-  if (node.getAttribute) return node.getAttribute(name) !== undefined;
-  return Boolean(node.attributes && Object.prototype.hasOwnProperty.call(node.attributes, name));
+  return htmlElementAttribute(node, name) !== undefined;
 }
 
 function tableColumnCount(node: PlanningNode) {
@@ -1014,7 +1012,8 @@ const FALLBACK_MEDIA_TAG_PATTERN = new RegExp(
 
 function rawFallbackAttribute(tag: string, name: string) {
   const match = tag.match(new RegExp(`\\b${name}\\s*=\\s*(?:(["'])(.*?)\\1|([^\\s>]+))`, 'i'));
-  return match?.[2] || match?.[3] || '';
+  const raw = match?.[2] ?? match?.[3] ?? '';
+  return raw.includes('&') ? decodeHTMLAttribute(raw) : raw;
 }
 
 function fallbackAttribute(tag: string, name: string) {

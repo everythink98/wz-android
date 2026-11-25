@@ -21,7 +21,7 @@ function BackupScenario() {
       open: noop
     },
     backup: {
-      recovery: false,
+      readerStatus: 'ready',
       operation: 'idle',
       exportFile: noop,
       importFile: noop

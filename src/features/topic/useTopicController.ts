@@ -7,8 +7,13 @@ import {
   useQuery,
   useQueryClient,
   type InfiniteData,
+  type QueryClient,
+  type QueryFunction,
+  type QueryFunctionContext,
+  type QueryKey,
   type UseQueryResult
 } from '@tanstack/react-query';
+import { captureDiscoursePolicyRead } from '@/platform/query/discoursePolicyCache';
 import type { ReadGateway } from '@/sources/readGateway';
 import { topicKey } from '@/domain/reader/readerData';
 import type { ReaderCommand, ReaderView } from '@/domain/reader/readerRecordState';
@@ -72,11 +77,13 @@ import {
   normalizeDiagnosticReason,
   type DiagnosticTrace
 } from '@/platform/diagnostics/diagnosticPolicy';
-import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
+import type { LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
+import type { ReadRecovery } from '@/platform/query/readRecovery';
 import { isDiscourseSource, isSessionSource, type SessionSource } from '@/domain/forum/sourceCatalog';
 import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { forumQueryKeys, forumReplyWindowKeys } from '@/platform/query/serverState';
+import { resumeExactQuery, resumeInfiniteQueryPage } from '@/platform/query/useFirstPageInfiniteQuery';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { prepareReplyContent } from '@/domain/forum/topicContentSplit';
 import { useTopicReadingEntry } from './useTopicReadingEntry';
@@ -86,7 +93,8 @@ import {
   useTopicReplyWindow,
   type ReplyWindowRun,
   type ReplyRetryMode,
-  type ReplyFailure
+  type ReplyFailure,
+  type ReplyWindowErrorSlot
 } from './useTopicReplyWindow';
 import { findReadingResumeReply } from '@/domain/forum/discourseReading';
 
@@ -94,6 +102,28 @@ type QuoteQueryProjection = Pick<
   UseQueryResult<Reply>,
   'data' | 'error' | 'errorUpdatedAt' | 'isFetching' | 'isPending'
 >;
+
+type ResumedTopicRead = Readonly<{ isCurrent: () => boolean; signal: AbortSignal | undefined }>;
+type TopicReadRun = ReplyWindowRun | ResumedTopicRead;
+type TopicReadIntent = {
+  resume: (read: ResumedTopicRead) => Promise<LinuxDoReadResumeOutcome>;
+  isCurrent?: () => boolean;
+  ownsIntent?: () => boolean;
+  cancel?: () => void;
+};
+
+async function resumeTopicQuery<T>(
+  client: QueryClient,
+  options: { queryKey: QueryKey; queryFn: QueryFunction<T> },
+  read: ResumedTopicRead
+) {
+  const outcome = await resumeExactQuery(client, options, read.isCurrent, read.signal);
+  if (outcome.kind === 'failed') throw outcome.error;
+  if (outcome.kind === 'stale') throw new RequestCanceledError();
+  const data = client.getQueryData<T>(options.queryKey);
+  if (data === undefined) throw new RequestCanceledError();
+  return data;
+}
 
 function combineQuoteQueryResults(results: QuoteQueryProjection[]): QuoteQueryProjection[] {
   return results.map(({ data, error, errorUpdatedAt, isFetching, isPending }) => ({
@@ -115,6 +145,10 @@ function replyFailure(
   return { error: retryMode === 'none' ? { ...sourceError, retryable: false } : sourceError, position, retryMode };
 }
 
+function matchesReplyCursor(position: ReplyWindowPosition | undefined, cursor: ReplyCursorPosition) {
+  return position?.kind === 'cursor' && position.page === cursor.page && position.offset === cursor.offset;
+}
+
 function replyLocationTarget(reply: Reply | undefined, pageHint?: number): ReplyLocationTarget | undefined {
   if (!reply?.commentId && !reply?.floor) return undefined;
   return {
@@ -132,6 +166,7 @@ export function useTopicController({
   appActive,
   commitReaderData,
   sessionEpochs = initialForumSessionEpochs,
+  linuxDoIdentityKey,
   notify,
   onRetryIdentityStatus,
   onNodeSeekTopicVerificationRequired,
@@ -151,16 +186,14 @@ export function useTopicController({
   appActive: boolean;
   commitReaderData: (command: ReaderCommand) => void;
   sessionEpochs?: ForumSessionEpochs;
+  linuxDoIdentityKey?: string;
   notify: (message: string) => void;
   onRetryIdentityStatus?: (source: SessionSource) => Promise<unknown> | unknown;
-  onNodeSeekTopicVerificationRequired: (message: string, recovery: LinuxDoReadRecovery) => void;
+  onNodeSeekTopicVerificationRequired: (message: string, recovery: ReadRecovery) => void;
   onOpenTopic: (topic: Topic) => void;
   onReplyLocationResolved?: (location: TopicLocationTarget) => void;
   readerData: ReaderView;
-  showLinuxDoVerification: (
-    message?: string,
-    recovery?: LinuxDoReadRecovery
-  ) => void | boolean | Promise<void | boolean>;
+  showLinuxDoVerification: (message?: string, recovery?: ReadRecovery) => void | boolean | Promise<void | boolean>;
   showYaohuoLogin: (message?: string) => void;
   readGateway: ReadGateway;
   location?: TopicLocationTarget;
@@ -186,7 +219,7 @@ export function useTopicController({
   const baselineKey = topicKey(topic);
   const recordedTopicUpdateRef = useRef<{ topicKey: string; updateKey: string } | null>(null);
   const handledTopicErrorRef = useRef(0);
-  const handledRepliesErrorRef = useRef(0);
+  const handledRepliesErrorRef = useRef<{ queryIdentity: string; error: Error; count: number } | null>(null);
   const handledQuoteErrorsRef = useRef<Record<string, number>>({});
   const selectedSource = selectedTopic.source;
   const selectedTopicId = selectedTopic.id;
@@ -194,6 +227,10 @@ export function useTopicController({
   const lastPromptedYaohuoTopicKeyRef = useRef<string | null>(null);
   const topicReadPlan = readGateway.getReadPlan(selectedSource, 'topic');
   const repliesReadPlan = readGateway.getReadPlan(selectedSource, 'replies');
+  const policyAccount = useMemo(
+    () => (linuxDoIdentityKey ? { identityKey: linuxDoIdentityKey, sessionEpoch: sessionEpochs.linuxdo } : undefined),
+    [linuxDoIdentityKey, sessionEpochs.linuxdo]
+  );
   const topicReadBlocked = topicReadPlan.state === 'blocked';
   const repliesReadBlocked = repliesReadPlan.state === 'blocked';
   const selectedReadBlocked = topicReadBlocked || repliesReadBlocked;
@@ -280,6 +317,52 @@ export function useTopicController({
     () => interactionActiveRef.current && activeRepliesQueryIdentityRef.current === repliesQueryIdentity,
     [activeRepliesQueryIdentityRef, interactionActiveRef, repliesQueryIdentity]
   );
+  const nodeSeekIntentKey =
+    selectedSource === 'nodeseek'
+      ? JSON.stringify([selectedTopicKey, sessionEpochs.nodeseek, replyOrder, locationRequestId, location])
+      : '';
+  const activeNodeSeekIntentKey = useCommittedRef(active ? nodeSeekIntentKey : '');
+  const requestNodeSeekReadVerification = useCallback(
+    (message: string, queryKey: ReadRecovery['queryKey'], intent: TopicReadIntent) => {
+      const isCurrent = () => {
+        if (
+          !nodeSeekIntentKey ||
+          activeNodeSeekIntentKey.current !== nodeSeekIntentKey ||
+          (intent.ownsIntent && !intent.ownsIntent())
+        )
+          return false;
+        const plan = readGateway.getReadPlan('nodeseek', 'topic');
+        return plan.state !== 'blocked' || plan.reason !== 'source-disabled';
+      };
+      onNodeSeekTopicVerificationRequired(message, {
+        queryKey,
+        isCurrent,
+        cancel: intent.cancel,
+        resume: async (signal) => {
+          const ownsRead = () => {
+            if (signal?.aborted || !isCurrent()) return false;
+            const topicPlan = readGateway.getReadPlan('nodeseek', 'topic');
+            const replyPlan = readGateway.getReadPlan('nodeseek', 'replies');
+            return (
+              topicPlan.state === 'ready' &&
+              replyPlan.state === 'ready' &&
+              topicPlan.cacheScope === topicReadPlan.cacheScope &&
+              replyPlan.cacheScope === repliesReadPlan.cacheScope
+            );
+          };
+          return ownsRead() ? intent.resume({ isCurrent: ownsRead, signal }) : 'stale';
+        }
+      });
+    },
+    [
+      activeNodeSeekIntentKey,
+      nodeSeekIntentKey,
+      onNodeSeekTopicVerificationRequired,
+      readGateway,
+      repliesReadPlan.cacheScope,
+      topicReadPlan.cacheScope
+    ]
+  );
   const targetReplyQueryRoot = useMemo(
     () => [...scopedRepliesQueryKey, 'target-floor'] as const,
     [scopedRepliesQueryKey]
@@ -320,18 +403,21 @@ export function useTopicController({
   useEffect(
     () => () => {
       activeRepliesQueryIdentityRef.current = '';
+      activeNodeSeekIntentKey.current = '';
       replyWindows.releaseRouteQueries((queryKey) => queryClient.removeQueries({ queryKey }));
     },
-    [activeRepliesQueryIdentityRef, queryClient, replyWindows]
+    [activeNodeSeekIntentKey, activeRepliesQueryIdentityRef, queryClient, replyWindows]
   );
 
-  const detailCacheStatus = queryClient.getQueryState(topicQueryKey)?.status ?? 'pending';
-  const detailQuery = useQuery({
-    queryKey: topicQueryKey,
-    enabled: enabled && (!ordinaryLinuxDoTopic || !entryVisit.settled || detailCacheStatus === 'pending'),
-    subscribed: focused,
-    queryFn: async ({ signal }) => {
+  const readTopic = useCallback(
+    async ({ signal }: QueryFunctionContext) => {
       const topic = selectedTopic;
+      const observePolicy =
+        topic.source === 'linuxdo' &&
+        policyAccount &&
+        topicReadPlan.cacheScope === `authenticated:${policyAccount.sessionEpoch}`
+          ? captureDiscoursePolicyRead(queryClient, policyAccount, topic.id)
+          : undefined;
       const trackVisit = ordinaryLinuxDoTopic && entryVisit.claimVisit(signal);
       const trace = beginDiagnosticTrace('topic', 'open', {
         source: topic.source,
@@ -362,7 +448,9 @@ export function useTopicController({
           hasContent: Boolean(detail.contentHtml?.trim())
         });
         entryVisit.settleRequest(signal);
-        return detail;
+        return !signal.aborted && observePolicy
+          ? { ...observePolicy(detail), replies: detail.replies.map(observePolicy) }
+          : detail;
       } catch (error) {
         if (!isCanceledRequest(error)) entryVisit.settleRequest(signal);
         finishDiagnosticTrace(trace, signal.aborted ? 'canceled' : 'failure', {
@@ -371,8 +459,31 @@ export function useTopicController({
         });
         throw error;
       }
-    }
+    },
+    [entryVisit, ordinaryLinuxDoTopic, policyAccount, queryClient, readGateway, selectedTopic, topicReadPlan]
+  );
+  const detailCacheStatus = queryClient.getQueryState(topicQueryKey)?.status ?? 'pending';
+  const detailQuery = useQuery({
+    queryKey: topicQueryKey,
+    enabled: enabled && (!ordinaryLinuxDoTopic || !entryVisit.settled || detailCacheStatus === 'pending'),
+    subscribed: focused,
+    queryFn: readTopic
   });
+  const reloadTopic = useCallback(
+    async (windowRun: TopicReadRun) => {
+      if ('signal' in windowRun)
+        return resumeTopicQuery(queryClient, { queryKey: topicQueryKey, queryFn: readTopic }, windowRun);
+      const result = await detailQuery.refetch();
+      if (!windowRun.isCurrent()) throw new RequestCanceledError();
+      if (result.error) {
+        handledTopicErrorRef.current = result.errorUpdatedAt;
+        throw result.error;
+      }
+      if (!result.data) throw new Error('主题刷新未返回数据');
+      return result.data;
+    },
+    [detailQuery.refetch, queryClient, readTopic, topicQueryKey]
+  );
 
   const topicDetail = detailQuery.data || null;
   const replyAccessDenied = useMemo(() => Boolean(topicDetail && isTopicAccessNotice(topicDetail)), [topicDetail]);
@@ -414,7 +525,15 @@ export function useTopicController({
   );
   const replyCache = queryClient.getQueryState<InfiniteData<ReplyPage, ReplyPageParam>>(repliesQueryKey);
   const cachedReplyPages = replyCache?.data;
-  const readingEntry = useTopicReadingEntry({
+  const targetSessionEpoch = selectedSource === 'v2ex' ? 0 : sessionEpochs[selectedSource];
+  const routeLocationKey =
+    location?.kind === 'reply'
+      ? JSON.stringify([selectedTopicKey, targetSessionEpoch, locationRequestId, location.target])
+      : '';
+  const routeLocationKeyRef = useCommittedRef(routeLocationKey);
+  const [consumedRouteLocation, setConsumedRouteLocation] = useState('');
+  const routeLocationConsumed = routeLocationKey !== '' && consumedRouteLocation === routeLocationKey;
+  const requestedReadingEntry = useTopicReadingEntry({
     active,
     focused,
     topic: selectedTopic,
@@ -428,9 +547,11 @@ export function useTopicController({
     gateway: readGateway,
     commit: commitReaderData
   });
-  const resolvedLocation = resolveTopicLocation(topicDetail, readingEntry.location);
+  const readingEntry = routeLocationConsumed
+    ? { ...requestedReadingEntry, location: undefined }
+    : requestedReadingEntry;
+  const resolvedLocation = resolveTopicLocation(topicDetail, requestedReadingEntry.location);
   const targetReply = resolvedLocation?.kind === 'reply' ? resolvedLocation.target : undefined;
-  const targetSessionEpoch = selectedSource === 'v2ex' ? 0 : sessionEpochs[selectedSource];
   const routeTargetKey = targetReply
     ? `${selectedTopicKey}:${targetSessionEpoch}:${targetReply.commentId ?? ''}:${targetReply.floor ?? ''}:${targetReply.pageHint ?? ''}:${targetReply.expectedAuthorUsername ?? ''}:request:${locationRequestId ?? ''}`
     : '';
@@ -460,6 +581,12 @@ export function useTopicController({
       trace: ReturnType<typeof beginDiagnosticTrace>
     ): Promise<ReplyPage> => {
       if (!canReadReplyWindow() || isTopicAccessNotice(detail)) throw new RequestCanceledError();
+      const observePolicy =
+        detail.source === 'linuxdo' &&
+        policyAccount &&
+        repliesReadPlan.cacheScope === `authenticated:${policyAccount.sessionEpoch}`
+          ? captureDiscoursePolicyRead(queryClient, policyAccount, detail.id)
+          : undefined;
       const loaded = await readGateway.getReplies(
         {
           source: detail.source,
@@ -498,9 +625,9 @@ export function useTopicController({
       if (loaded.previousPage && !previousReplyPage(page)) {
         throw new Error('原站返回了重复的上一回复游标');
       }
-      return page;
+      return !signal?.aborted && observePolicy ? { ...page, items: page.items.map(observePolicy) } : page;
     },
-    [canReadReplyWindow, readGateway, selectedSource, repliesReadPlan.cacheScope]
+    [canReadReplyWindow, policyAccount, queryClient, readGateway, selectedSource, repliesReadPlan.cacheScope]
   );
   const replyEntry = useRef({ key: repliesQueryIdentity, settled: false });
   if (replyEntry.current.key !== repliesQueryIdentity)
@@ -521,6 +648,37 @@ export function useTopicController({
     queryClient.setQueryData<InfiniteData<ReplyPage, ReplyPageParam>>(repliesQueryKey, { pages: [], pageParams: [] });
     void queryClient.invalidateQueries({ queryKey: repliesQueryKey, exact: true, refetchType: 'none' });
   }, [needsOpeningWindow, queryClient, repliesQueryKey]);
+  const readReplyForQuery = useCallback(
+    async ({ pageParam, signal }: QueryFunctionContext<QueryKey, ReplyPageParam>, ownsRead?: () => boolean) => {
+      const detail = topicDetail!;
+      const trace = beginDiagnosticTrace('reply', pageParam.kind === 'start' ? 'refresh' : 'load-more', {
+        source: detail.source,
+        topicRef: diagnosticRef('topic', `${detail.source}:${detail.id}`),
+        replyOrder,
+        positionKind: pageParam.kind,
+        ...(pageParam.kind === 'cursor' ? { page: pageParam.page } : {})
+      });
+      try {
+        const page = await loadReplyPage(detail, replyOrder, pageParam, signal, trace);
+        if (!signal.aborted && (!ownsRead || ownsRead())) commitReplySnapshot(page.totalCount, page.replyWatermark);
+        finishDiagnosticTrace(trace, 'success', {
+          itemCount: page.items.length,
+          hasMore: Boolean(nextReplyPage(page)),
+          replyOrder,
+          positionKind: pageParam.kind,
+          resolvedPage: page.currentPage!
+        });
+        return page;
+      } catch (error) {
+        finishDiagnosticTrace(trace, signal.aborted ? 'canceled' : 'failure', {
+          source: detail.source,
+          reason: signal.aborted ? 'canceled' : normalizeDiagnosticReason(error)
+        });
+        throw error;
+      }
+    },
+    [commitReplySnapshot, loadReplyPage, replyOrder, topicDetail]
+  );
   const repliesQuery = useInfiniteQuery({
     queryKey: repliesQueryKey,
     subscribed: focused,
@@ -538,36 +696,9 @@ export function useTopicController({
     initialData: initialReplies,
     initialDataUpdatedAt: initialReplies ? detailQuery.dataUpdatedAt || undefined : undefined,
     refetchOnMount: true,
-    queryFn: async ({ pageParam, signal }) => {
-      const detail = topicDetail!;
-      const trace = beginDiagnosticTrace('reply', pageParam.kind === 'start' ? 'refresh' : 'load-more', {
-        source: detail.source,
-        topicRef: diagnosticRef('topic', `${detail.source}:${detail.id}`),
-        replyOrder,
-        positionKind: pageParam.kind,
-        ...(pageParam.kind === 'cursor' ? { page: pageParam.page } : {})
-      });
-      try {
-        const page = await loadReplyPage(detail, replyOrder, pageParam, signal, trace);
-        if (!signal.aborted) commitReplySnapshot(page.totalCount, page.replyWatermark);
-        finishDiagnosticTrace(trace, 'success', {
-          itemCount: page.items.length,
-          hasMore: Boolean(nextReplyPage(page)),
-          replyOrder,
-          positionKind: pageParam.kind,
-          resolvedPage: page.currentPage!
-        });
-        return page;
-      } catch (error) {
-        finishDiagnosticTrace(trace, signal.aborted ? 'canceled' : 'failure', {
-          source: detail.source,
-          reason: signal.aborted ? 'canceled' : normalizeDiagnosticReason(error)
-        });
-        throw error;
-      }
-    },
-    getNextPageParam: (lastPage, allPages) => nextReplyPage(lastPage, allPages),
-    getPreviousPageParam: (firstPage, allPages) => previousReplyPage(firstPage, allPages),
+    queryFn: readReplyForQuery,
+    getNextPageParam: nextReplyPage,
+    getPreviousPageParam: previousReplyPage,
     retry: false
   });
   useEffect(() => {
@@ -617,7 +748,7 @@ export function useTopicController({
       (!replyData && topicDetail?.replies.length && topicDetail.replyCompleteness !== 'complete'))
   );
   const rebuildReplyWindow = useCallback(
-    async (detail: TopicDetail, windowRun: ReplyWindowRun, refresh: 'topic' | 'replies') => {
+    async (detail: TopicDetail, windowRun: TopicReadRun, refresh: 'topic' | 'replies') => {
       const ownsWindow = windowRun.isCurrent;
       if (isTopicAccessNotice(detail)) return ownsWindow();
       const wholeTopic = refresh === 'topic';
@@ -627,7 +758,10 @@ export function useTopicController({
 
       let rebuilt = wholeTopic ? firstReplyData(detail, replyOrder) : undefined;
       if (!rebuilt) {
-        const queryKey = [...rebuildRepliesQueryRoot, refresh] as const;
+        const resumed = 'signal' in windowRun;
+        const queryKey = resumed
+          ? [...rebuildRepliesQueryRoot, refresh, 'verification']
+          : [...rebuildRepliesQueryRoot, refresh];
         replyWindows.trackRouteQueries(scopedRepliesQueryKey);
         const trace = beginDiagnosticTrace('reply', 'refresh', {
           source: detail.source,
@@ -636,12 +770,16 @@ export function useTopicController({
           positionKind: 'start'
         });
         try {
-          const page = await queryClient.query({
+          const queryOptions = {
             queryKey,
             staleTime: 0,
-            queryFn: ({ signal }) => loadReplyPage(detail, replyOrder, { kind: 'start' }, signal, trace),
-            retry: false
-          });
+            queryFn: ({ signal }: QueryFunctionContext) =>
+              loadReplyPage(detail, replyOrder, { kind: 'start' }, signal, trace),
+            retry: false as const
+          };
+          const page = resumed
+            ? await resumeTopicQuery(queryClient, queryOptions, windowRun)
+            : await queryClient.query(queryOptions);
           if (!ownsWindow()) {
             finishDiagnosticTrace(trace, 'stale', { reason: 'stale' });
             return false;
@@ -702,23 +840,21 @@ export function useTopicController({
     [interactionActiveRef, selectedTopicKey, showYaohuoLogin, topicCommands]
   );
   const handleReadError = useCallback(
-    (
-      source: Source,
-      error: unknown,
-      recovery: LinuxDoReadRecovery,
-      nodeSeekFallback?: (recovery: LinuxDoReadRecovery) => void
-    ): SourceErrorInfo => {
+    (source: Source, error: unknown, queryKey: ReadRecovery['queryKey'], intent: TopicReadIntent): SourceErrorInfo => {
       const sourceError = sourceErrorFromUnknown(source, error);
-      const isCurrent = () => interactionActiveRef.current && (recovery.isCurrent || isReadRecoveryCurrent)();
-      const currentRecovery: LinuxDoReadRecovery = {
-        ...recovery,
-        isCurrent,
-        resume: () => (isCurrent() ? recovery.resume() : Promise.resolve('stale'))
-      };
       if (source === 'linuxdo' && sourceError.kind === 'verification-required') {
-        void showLinuxDoVerification(sourceError.message, currentRecovery);
+        const isCurrent = () => interactionActiveRef.current && (intent.isCurrent ?? isReadRecoveryCurrent)();
+        void showLinuxDoVerification(sourceError.message, {
+          queryKey,
+          isCurrent,
+          cancel: intent.cancel,
+          resume: async (signal) => {
+            const ownsRead = () => !signal?.aborted && isCurrent();
+            return ownsRead() ? intent.resume({ isCurrent: ownsRead, signal }) : 'stale';
+          }
+        });
       } else if (source === 'nodeseek' && sourceError.kind === 'verification-required') {
-        nodeSeekFallback?.(currentRecovery);
+        requestNodeSeekReadVerification(sourceError.message, queryKey, intent);
       } else if (source === 'yaohuo' && yaohuoErrorRequiresLoginPanel(sourceError)) {
         showYaohuoLoginForRead(sourceError);
       } else if (!isCanceledRequest(error)) {
@@ -726,7 +862,14 @@ export function useTopicController({
       }
       return sourceError;
     },
-    [interactionActiveRef, isReadRecoveryCurrent, notify, showLinuxDoVerification, showYaohuoLoginForRead]
+    [
+      interactionActiveRef,
+      isReadRecoveryCurrent,
+      notify,
+      requestNodeSeekReadVerification,
+      showLinuxDoVerification,
+      showYaohuoLoginForRead
+    ]
   );
   const replyRefreshFailure = replyAccessDenied ? null : replyWindowFailures.refresh;
   useEffect(() => {
@@ -765,31 +908,26 @@ export function useTopicController({
     if (!detailQuery.error || handledTopicErrorRef.current === detailQuery.errorUpdatedAt) return;
     handledTopicErrorRef.current = detailQuery.errorUpdatedAt;
     const topic = selectedTopic;
-    handleReadError(
-      topic.source,
-      detailQuery.error,
-      {
-        queryKey: topicQueryKey,
-        resume: async () => {
-          if (topicCommands.getCurrentKey() !== topicKey(topic)) return 'stale';
-          const result = await detailQuery.refetch();
-          handledTopicErrorRef.current = result.errorUpdatedAt;
-          return result.error ? readOutcome(topic.source, result.error) : 'completed';
+    handleReadError(topic.source, detailQuery.error, topicQueryKey, {
+      resume: async (read) => {
+        try {
+          await reloadTopic(read);
+          return 'completed';
+        } catch (error) {
+          if (!read.isCurrent()) return 'stale';
+          handledTopicErrorRef.current = queryClient.getQueryState(topicQueryKey)?.errorUpdatedAt ?? 0;
+          return readOutcome(topic.source, error);
         }
-      },
-      (recovery) =>
-        onNodeSeekTopicVerificationRequired(sourceErrorFromUnknown(topic.source, detailQuery.error).message, recovery)
-    );
+      }
+    });
   }, [
     detailQuery.error,
     detailQuery.errorUpdatedAt,
-    detailQuery.refetch,
     handleReadError,
-    onNodeSeekTopicVerificationRequired,
+    reloadTopic,
     selectedTopic,
     queryClient,
-    topicQueryKey,
-    topicCommands
+    topicQueryKey
   ]);
 
   const showsQuoteAuthors = topicDetail?.source === 'linuxdo' && !replyAccessDenied;
@@ -801,7 +939,7 @@ export function useTopicController({
   useEffect(() => {
     setAuthorRequests((current) => (current.scope === authorScope ? current : { scope: authorScope, requests: {} }));
   }, [authorScope]);
-  const activeQuoteRequests = useMemo(() => {
+  const quoteInstances = useMemo(() => {
     if (replyAccessDenied) return {};
     const active = {
       ...(authorScope && authorScope === authorRequests.scope ? authorRequests.requests : {}),
@@ -818,38 +956,45 @@ export function useTopicController({
     });
     return active;
   }, [authorRequests, authorScope, expandedQuotes, quoteRequests, replyAccessDenied, selectedTopic, topicReplies]);
-  const { quoteReferences, interactiveQuoteReferenceKeys, authorOnlyQuotedReferences } = useMemo(() => {
-    const unique = new Map<string, QuotedPostReference>();
-    const interactive = new Set<string>();
-    const authors = new Set<string>();
-    for (const { reference, prefetch } of Object.values(activeQuoteRequests)) {
-      const key = quotedPostReferenceKey(reference);
-      if (prefetch === 'author') {
-        if (!unique.has(key)) authors.add(key);
-      } else {
-        authors.delete(key);
-        if (!prefetch) interactive.add(key);
+  const { quoteReferences, requestedQuoteReferenceKeys, interactiveQuoteReferenceKeys, authorOnlyQuotedReferences } =
+    useMemo(() => {
+      const unique = new Map<string, QuotedPostReference>();
+      const requested = new Set<string>();
+      const interactive = new Set<string>();
+      const authors = new Set<string>();
+      for (const [instanceKey, { reference, prefetch }] of Object.entries(quoteInstances)) {
+        const key = quotedPostReferenceKey(reference);
+        const expanded = Boolean(expandedQuotes[instanceKey]);
+        if (prefetch || expanded) requested.add(key);
+        if (prefetch === 'author') {
+          if (!unique.has(key)) authors.add(key);
+        } else {
+          authors.delete(key);
+          if (!prefetch && expanded) interactive.add(key);
+        }
+        unique.set(key, reference);
       }
-      unique.set(key, reference);
-    }
-    return {
-      quoteReferences: [...unique.values()],
-      interactiveQuoteReferenceKeys: interactive,
-      authorOnlyQuotedReferences: authors.size ? authors : undefined
-    };
-  }, [activeQuoteRequests]);
+      return {
+        quoteReferences: [...unique.values()],
+        requestedQuoteReferenceKeys: requested,
+        interactiveQuoteReferenceKeys: interactive,
+        authorOnlyQuotedReferences: authors.size ? authors : undefined
+      };
+    }, [expandedQuotes, quoteInstances]);
+  const currentInteractiveQuoteKeys = useCommittedRef(interactiveQuoteReferenceKeys);
   const quoteQueries = useQueries({
     subscribed: focused,
     queries: quoteReferences.map((reference) => {
       const readPlan = readGateway.getReadPlan(reference.source, 'reply');
+      const referenceKey = quotedPostReferenceKey(reference);
       return {
         queryKey: quotedReplyQueryKey(reference, readPlan),
-        enabled: enabled && isDiscourseSource(reference.source),
+        enabled: enabled && isDiscourseSource(reference.source) && requestedQuoteReferenceKeys.has(referenceKey),
         queryFn: async ({ signal }: { signal: AbortSignal }) => {
           if (!canReadReplyWindow()) throw new RequestCanceledError();
           const trace = beginDiagnosticTrace(
             'reply',
-            interactiveQuoteReferenceKeys.has(quotedPostReferenceKey(reference)) ? 'toggle-quote' : 'prefetch-post',
+            interactiveQuoteReferenceKeys.has(referenceKey) ? 'toggle-quote' : 'prefetch-post',
             {
               source: reference.source,
               topicRef: diagnosticRef('topic', `${reference.source}:${reference.topicId}`)
@@ -897,14 +1042,16 @@ export function useTopicController({
   }, [quoteQueries, quoteReferences]);
   const loadingQuotedFloors = useMemo<Record<string, boolean>>(() => {
     const loading: Record<string, boolean> = {};
-    Object.entries(activeQuoteRequests).forEach(([instanceKey, { reference }]) => {
+    Object.entries(quoteInstances).forEach(([instanceKey, { reference, prefetch }]) => {
+      if (!prefetch && !expandedQuotes[instanceKey]) return;
       const result = quoteResults.get(quotedPostReferenceKey(reference));
       if (result?.isPending || result?.isFetching) loading[instanceKey] = true;
     });
     return loading;
-  }, [activeQuoteRequests, quoteResults]);
+  }, [expandedQuotes, quoteInstances, quoteResults]);
 
   useEffect(() => {
+    if (!active || !isReadRecoveryCurrent()) return;
     quoteReferences.forEach((reference, index) => {
       const result = quoteQueries[index];
       const referenceKey = quotedPostReferenceKey(reference);
@@ -912,11 +1059,12 @@ export function useTopicController({
       if (!result?.error || handledQuoteErrorsRef.current[referenceKey] === result.errorUpdatedAt) return;
       handledQuoteErrorsRef.current[referenceKey] = result.errorUpdatedAt;
       const queryKey = quotedReplyQueryKey(reference);
-      handleReadError(reference.source, result.error, {
-        queryKey,
-        resume: async () => {
+      handleReadError(reference.source, result.error, queryKey, {
+        isCurrent: () => isReadRecoveryCurrent() && currentInteractiveQuoteKeys.current.has(referenceKey),
+        resume: async (read) => {
           if (!canReadReplyWindow() || topicCommands.getCurrentKey() !== selectedTopicKey) return 'stale';
           await queryClient.refetchQueries({ queryKey, exact: true });
+          if (!read.isCurrent()) return 'stale';
           const state = queryClient.getQueryState(queryKey);
           handledQuoteErrorsRef.current[referenceKey] = state?.errorUpdatedAt || 0;
           const error = state?.error;
@@ -925,9 +1073,12 @@ export function useTopicController({
       });
     });
   }, [
+    active,
     canReadReplyWindow,
+    currentInteractiveQuoteKeys,
     handleReadError,
     interactiveQuoteReferenceKeys,
+    isReadRecoveryCurrent,
     queryClient,
     quoteQueries,
     quoteReferences,
@@ -981,107 +1132,136 @@ export function useTopicController({
     readingEntry.failed();
   }, [readingEntry.failed, readingEntry.positionReady]);
 
-  const refreshWholeTopic = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
-    if (!interactionActiveRef.current) return 'stale';
-    if (selectedTopic.source === 'yaohuo') lastPromptedYaohuoTopicKeyRef.current = null;
-    if (selectedReadBlocked) {
-      const blockedPlan = topicReadBlocked ? topicReadPlan : repliesReadPlan;
-      if (
-        blockedPlan.state === 'blocked' &&
-        (blockedPlan.reason === 'identity-pending' || blockedPlan.reason === 'identity-unavailable') &&
-        isSessionSource(selectedTopic.source)
-      ) {
-        await onRetryIdentityStatus?.(selectedTopic.source);
-      } else if (
-        blockedPlan.state === 'blocked' &&
-        blockedPlan.reason === 'login-required' &&
-        selectedTopic.source === 'yaohuo'
-      ) {
-        showYaohuoLoginForRead();
-      }
-      return 'stale';
-    }
-    releaseEntryForManualRefresh();
-    const runAttempt = async (notifySuccess: boolean): Promise<LinuxDoReadResumeOutcome> => {
-      const windowRun = replyWindows.beginRead(repliesQueryIdentity);
+  const runWholeTopicRefresh = useCallback(
+    async function refresh(notifySuccess: boolean, resumedRead?: ResumedTopicRead): Promise<LinuxDoReadResumeOutcome> {
+      const windowRun = resumedRead ?? replyWindows.beginRead(repliesQueryIdentity);
       const ownsWindow = windowRun.isCurrent;
       try {
-        const detailResult = await detailQuery.refetch();
-        if (!ownsWindow()) return 'stale';
-        if (detailResult.error) {
-          handledTopicErrorRef.current = detailResult.errorUpdatedAt;
-          throw detailResult.error;
-        }
-        if (!detailResult.data) throw new Error('主题刷新未返回数据');
-        if (!(await rebuildReplyWindow(detailResult.data, windowRun, 'topic'))) {
-          return 'stale';
-        }
+        const detail = await reloadTopic(windowRun);
+        if (!ownsWindow() || !(await rebuildReplyWindow(detail, windowRun, 'topic'))) return 'stale';
         setWholeTopicRevision((revision) => revision + 1);
         if (notifySuccess) notify('主题已更新');
         return 'completed';
       } catch (error) {
         if (!ownsWindow()) return 'stale';
-        const recovery: LinuxDoReadRecovery = {
-          queryKey: [...repliesQueryKey, 'whole-refresh'],
-          isCurrent: ownsWindow,
-          resume: () => runAttempt(false)
-        };
-        const sourceError = sourceErrorFromUnknown(selectedTopic.source, error);
+        const outcome = readOutcome(selectedTopic.source, error);
         recordReplyWindowFailure('refresh', replyFailure(selectedTopic.source, error, { kind: 'start' }, 'whole'));
-        handleReadError(selectedTopic.source, error, recovery, (candidate) =>
-          onNodeSeekTopicVerificationRequired(sourceError.message, candidate)
-        );
-        return readOutcome(selectedTopic.source, error);
+        if ('ownsIntent' in windowRun) {
+          handleReadError(selectedTopic.source, error, [...repliesQueryKey, 'whole-refresh'], {
+            isCurrent: ownsWindow,
+            ownsIntent: windowRun.ownsIntent,
+            resume: (read) => refresh(false, read)
+          });
+        }
+        return outcome;
       }
-    };
-    return runAttempt(true);
+    },
+    [
+      handleReadError,
+      notify,
+      rebuildReplyWindow,
+      recordReplyWindowFailure,
+      reloadTopic,
+      repliesQueryIdentity,
+      repliesQueryKey,
+      replyWindows,
+      selectedTopic.source
+    ]
+  );
+  const refreshWholeTopic = useCallback(
+    async (signal?: AbortSignal): Promise<LinuxDoReadResumeOutcome> => {
+      if (signal?.aborted || !interactionActiveRef.current) return 'stale';
+      if (selectedTopic.source === 'yaohuo') lastPromptedYaohuoTopicKeyRef.current = null;
+      if (selectedReadBlocked) {
+        const blockedPlan = topicReadBlocked ? topicReadPlan : repliesReadPlan;
+        if (
+          blockedPlan.state === 'blocked' &&
+          (blockedPlan.reason === 'identity-pending' || blockedPlan.reason === 'identity-unavailable') &&
+          isSessionSource(selectedTopic.source)
+        ) {
+          await onRetryIdentityStatus?.(selectedTopic.source);
+        } else if (
+          blockedPlan.state === 'blocked' &&
+          blockedPlan.reason === 'login-required' &&
+          selectedTopic.source === 'yaohuo'
+        ) {
+          showYaohuoLoginForRead();
+        }
+        return 'stale';
+      }
+      releaseEntryForManualRefresh();
+      if (!signal) return runWholeTopicRefresh(true);
+      const window = replyWindows.beginRead(repliesQueryIdentity);
+      return runWholeTopicRefresh(true, { isCurrent: () => !signal.aborted && window.isCurrent(), signal });
+    },
+    [
+      interactionActiveRef,
+      onRetryIdentityStatus,
+      releaseEntryForManualRefresh,
+      repliesQueryIdentity,
+      repliesReadPlan,
+      replyWindows,
+      runWholeTopicRefresh,
+      selectedReadBlocked,
+      selectedTopic,
+      showYaohuoLoginForRead,
+      topicReadBlocked,
+      topicReadPlan
+    ]
+  );
+  const verifyNodeSeek = useCallback(() => {
+    if (selectedSource !== 'nodeseek' || !interactionActiveRef.current) return;
+    const run = replyWindows.beginRead(repliesQueryIdentity);
+    const message = detailQuery.error
+      ? sourceErrorFromUnknown(selectedSource, detailQuery.error).message
+      : 'NodeSeek 需要完成 Cloudflare 验证';
+    requestNodeSeekReadVerification(message, topicQueryKey, {
+      ownsIntent: run.ownsIntent,
+      resume: (read) => runWholeTopicRefresh(false, read)
+    });
   }, [
-    replyWindows,
-    handleReadError,
+    detailQuery.error,
     interactionActiveRef,
-    notify,
-    onRetryIdentityStatus,
-    onNodeSeekTopicVerificationRequired,
-    rebuildReplyWindow,
-    releaseEntryForManualRefresh,
-    repliesQueryKey,
-    repliesReadPlan,
-    selectedReadBlocked,
-    selectedTopic,
-    recordReplyWindowFailure,
-    showYaohuoLoginForRead,
-    detailQuery.refetch,
-    topicReadBlocked,
-    topicReadPlan,
-    repliesQueryIdentity
+    repliesQueryIdentity,
+    replyWindows,
+    requestNodeSeekReadVerification,
+    runWholeTopicRefresh,
+    selectedSource,
+    topicQueryKey
   ]);
 
-  const refreshTopicReplies = useCallback(
+  const runReplyRefresh = useCallback(
     async function refreshReplies(
       command: ReplyRefreshCommand = { kind: 'manual' },
-      diagnosticTrace?: DiagnosticTrace
+      diagnosticTrace?: DiagnosticTrace,
+      resumedRead?: ResumedTopicRead
     ): Promise<LinuxDoReadResumeOutcome> {
-      if (!topicDetail || !canReadReplyWindow() || !activeRepliesQueryIdentityRef.current) return 'stale';
+      if (
+        !topicDetail ||
+        !canReadReplyWindow() ||
+        (resumedRead ? !resumedRead.isCurrent() : !activeRepliesQueryIdentityRef.current)
+      )
+        return 'stale';
       if (selectedTopic.source === 'yaohuo' && command.kind === 'manual' && !command.silent) {
         lastPromptedYaohuoTopicKeyRef.current = null;
-        handledRepliesErrorRef.current = 0;
+        handledRepliesErrorRef.current = null;
       }
 
-      const windowRun = replyWindows.beginRead(repliesQueryIdentity);
+      const windowRun = resumedRead ?? replyWindows.beginRead(repliesQueryIdentity);
       let createdTarget: ReplyLocationTarget | undefined;
       const targetedCreatedCommand =
         command.kind === 'created' && (selectedTopic.source === 'nodeseek' || isDiscourseSource(selectedTopic.source))
           ? command
           : null;
       const ownsWindow = windowRun.isCurrent;
-      const recoveryFor = (queryKey: LinuxDoReadRecovery['queryKey']): LinuxDoReadRecovery => ({
-        queryKey,
-        isCurrent: ownsWindow,
-        resume: () =>
-          activeRepliesQueryIdentityRef.current === repliesQueryIdentity
-            ? refreshReplies(command)
-            : Promise.resolve('stale')
-      });
+      const offerRecovery = (error: unknown, queryKey: ReadRecovery['queryKey']) => {
+        if (!('ownsIntent' in windowRun)) return;
+        handleReadError(selectedTopic.source, error, queryKey, {
+          isCurrent: ownsWindow,
+          ownsIntent: windowRun.ownsIntent,
+          resume: (read) => refreshReplies(command, undefined, read)
+        });
+      };
       if (command.kind === 'manual') {
         releaseEntryForManualRefresh();
         try {
@@ -1091,13 +1271,7 @@ export function useTopicController({
         } catch (error) {
           if (!ownsWindow()) return 'stale';
           recordReplyWindowFailure('refresh', replyFailure(selectedTopic.source, error, { kind: 'start' }, 'query'));
-          const sourceError = sourceErrorFromUnknown(selectedTopic.source, error);
-          handleReadError(
-            selectedTopic.source,
-            error,
-            recoveryFor([...rebuildRepliesQueryRoot, 'replies']),
-            (recovery) => onNodeSeekTopicVerificationRequired(sourceError.message, recovery)
-          );
+          offerRecovery(error, [...rebuildRepliesQueryRoot, 'replies']);
           return readOutcome(selectedTopic.source, error);
         }
       }
@@ -1112,7 +1286,7 @@ export function useTopicController({
       const capturedPosition = command.kind === 'edited' || command.kind === 'deleted' ? command.position : undefined;
       if (target && !capturedPosition && !targetPage) {
         void queryClient.invalidateQueries({ queryKey: otherRepliesQueryKey, exact: true, refetchType: 'none' });
-        return refreshReplies({ kind: 'manual', silent: command.silent });
+        return refreshReplies({ kind: 'manual', silent: command.silent }, undefined, resumedRead);
       }
 
       const pageNumber = capturedPosition?.page || targetPage?.currentPage || targetPage?.requestedPage || 1;
@@ -1120,14 +1294,8 @@ export function useTopicController({
       let refreshedDetail = topicDetail;
       try {
         if (command.kind !== 'edited' && !targetedCreatedCommand) {
-          const result = await detailQuery.refetch();
+          refreshedDetail = await reloadTopic(windowRun);
           if (!ownsWindow()) return 'stale';
-          if (result.error) {
-            handledTopicErrorRef.current = result.errorUpdatedAt;
-            throw result.error;
-          }
-          if (!result.data) throw new Error('主题刷新未返回数据');
-          refreshedDetail = result.data;
           if (isTopicAccessNotice(refreshedDetail)) return 'stale';
           if (
             (refreshedDetail.replyCount !== undefined &&
@@ -1162,7 +1330,8 @@ export function useTopicController({
             refreshPosition.kind === 'cursor' ? refreshPosition.offset : pageOffset,
             REPLY_PAGE_SIZE
           ),
-          command.kind
+          command.kind,
+          ...(resumedRead ? ['verification'] : [])
         ] as const;
         const trace =
           diagnosticTrace ||
@@ -1175,10 +1344,10 @@ export function useTopicController({
         const ownsTrace = !diagnosticTrace;
         try {
           replyWindows.trackRouteQueries(scopedRepliesQueryKey);
-          const page = await queryClient.query({
+          const queryOptions = {
             queryKey: refreshKey,
             staleTime: 0,
-            queryFn: async ({ signal }) => {
+            queryFn: async ({ signal }: QueryFunctionContext) => {
               if (targetedCreatedCommand) {
                 const target = targetedCreatedCommand.createdTarget;
                 markDiagnosticStage(trace, 'apply', {
@@ -1235,7 +1404,10 @@ export function useTopicController({
               }
               return loaded;
             }
-          });
+          };
+          const page = resumedRead
+            ? await resumeTopicQuery(queryClient, queryOptions, resumedRead)
+            : await queryClient.query(queryOptions);
           if (!ownsWindow()) {
             if (ownsTrace) finishDiagnosticTrace(trace, 'stale', { reason: 'stale' });
             return 'stale';
@@ -1346,25 +1518,19 @@ export function useTopicController({
               state: 'refresh-unconfirmed',
               reason: normalizeDiagnosticReason(error)
             });
-          const sourceError = sourceErrorFromUnknown(selectedTopic.source, error);
           recordReplyWindowFailure('refresh', replyFailure(selectedTopic.source, error, refreshPosition, command));
-          handleReadError(selectedTopic.source, error, recoveryFor(refreshKey), (recovery) =>
-            onNodeSeekTopicVerificationRequired(sourceError.message, recovery)
-          );
+          offerRecovery(error, refreshKey);
           return readOutcome(selectedTopic.source, error);
         } finally {
           queryClient.removeQueries({ queryKey: refreshKey, exact: true });
         }
       } catch (error) {
         if (!ownsWindow()) return 'stale';
-        const sourceError = sourceErrorFromUnknown(selectedTopic.source, error);
         recordReplyWindowFailure(
           'refresh',
           replyFailure(selectedTopic.source, error, capturedPosition || { kind: 'start' }, command)
         );
-        handleReadError(selectedTopic.source, error, recoveryFor(repliesQueryKey), (recovery) =>
-          onNodeSeekTopicVerificationRequired(sourceError.message, recovery)
-        );
+        offerRecovery(error, repliesQueryKey);
         return readOutcome(selectedTopic.source, error);
       }
     },
@@ -1372,12 +1538,10 @@ export function useTopicController({
       activateCenteredReplyWindow,
       replyWindows,
       activeRepliesQueryIdentityRef,
-      detailQuery.refetch,
       handleReadError,
       commitReplySnapshot,
       loadReplyPage,
       notify,
-      onNodeSeekTopicVerificationRequired,
       onReplyLocationResolved,
       otherRepliesQueryKey,
       queryClient,
@@ -1394,108 +1558,199 @@ export function useTopicController({
       canReadReplyWindow,
       selectedTopic,
       recordReplyWindowFailure,
+      reloadTopic,
       topicDetail,
       topicQueryKey,
       clearAllReplyWindowErrors
     ]
   );
-  const retryFailedReplies = useCallback(
-    async function retryReplyWindow(edge?: ReplyWindowEdge): Promise<LinuxDoReadResumeOutcome> {
-      if (
-        !canReadReplyWindow() ||
-        activeRepliesQueryIdentityRef.current !== repliesQueryIdentity ||
-        isReplyWindowFetching()
-      ) {
-        return 'stale';
-      }
-      const slot = edge || 'refresh';
-      const failure = replyWindowFailures[slot];
-      if (!failure || failure.retryMode === 'none') return failure ? 'failed' : 'completed';
-      if (selectedTopic.source === 'yaohuo' && failure.retryMode !== 'whole') {
-        lastPromptedYaohuoTopicKeyRef.current = null;
-        handledRepliesErrorRef.current = 0;
-      }
-      if (failure.retryMode === 'whole') return refreshWholeTopic();
-      if (typeof failure.retryMode === 'object') return refreshTopicReplies(failure.retryMode);
-      if (slot !== 'refresh') {
-        const result = slot === 'start' ? await repliesQuery.fetchPreviousPage() : await repliesQuery.fetchNextPage();
-        recordReplyWindowFailure(
-          slot,
-          result.error ? replyFailure(selectedTopic.source, result.error, failure.position, 'query') : null
+  const refreshTopicReplies = useCallback(
+    (command?: ReplyRefreshCommand, diagnosticTrace?: DiagnosticTrace) => runReplyRefresh(command, diagnosticTrace),
+    [runReplyRefresh]
+  );
+  const loadReplyEdge = useCallback(
+    async (
+      edge: ReplyWindowEdge,
+      {
+        silent = false,
+        expectedCursor,
+        resumedRead
+      }: { silent?: boolean; expectedCursor?: ReplyCursorPosition; resumedRead?: ResumedTopicRead } = {}
+    ): Promise<LinuxDoReadResumeOutcome> => {
+      if (!canReadReplyWindow() || !(resumedRead?.isCurrent ?? isReadRecoveryCurrent)()) return 'stale';
+      if (isReplyWindowFetching()) return resumedRead ? 'stale' : 'completed';
+      const before = queryClient.getQueryState<InfiniteData<ReplyPage, ReplyPageParam>>(repliesQueryKey);
+      const cursor = replyEdgePosition(before?.data, edge);
+      if (expectedCursor && !matchesReplyCursor(cursor, expectedCursor)) return 'stale';
+      if (cursor.kind !== 'cursor') return 'completed';
+
+      const run = replyWindows.beginRead(repliesQueryIdentity);
+      const ownsRead = resumedRead ? () => resumedRead.isCurrent() && run.ownsIntent() : run.isCurrent;
+      if (resumedRead) {
+        const outcome = await resumeInfiniteQueryPage<ReplyPage, ReplyPageParam>(
+          queryClient,
+          {
+            queryKey: repliesQueryKey,
+            enabled: false,
+            structuralSharing: false,
+            queryFn: (context) => readReplyForQuery(context, ownsRead),
+            initialPageParam: { kind: 'start' },
+            getNextPageParam: nextReplyPage,
+            getPreviousPageParam: previousReplyPage
+          },
+          { kind: edge === 'start' ? 'previous' : 'next', pageParam: cursor },
+          ownsRead,
+          resumedRead.signal
         );
-        return result.error ? readOutcome(selectedTopic.source, result.error) : 'completed';
+        if (outcome.kind === 'stale') return 'stale';
+        if (outcome.kind === 'failed') return readOutcome(selectedTopic.source, outcome.error);
+      } else if (edge === 'start') await repliesQuery.fetchPreviousPage();
+      else await repliesQuery.fetchNextPage();
+      if (!ownsRead() || !canReadReplyWindow()) return 'stale';
+
+      const after = queryClient.getQueryState<InfiniteData<ReplyPage, ReplyPageParam>>(repliesQueryKey);
+      if (after?.error && after.errorUpdateCount !== before?.errorUpdateCount) {
+        return readOutcome(selectedTopic.source, after.error);
       }
-      return refreshTopicReplies({ kind: 'manual', silent: true });
+      if (!after?.data || after.data.pages.length <= (before?.data?.pages.length ?? 0)) return 'stale';
+      const index = edge === 'start' ? 0 : -1;
+      const loaded = after.data.pages.at(index);
+      if (!loaded || !matchesReplyCursor(after.data.pageParams.at(index), cursor)) return 'stale';
+
+      recordReplyWindowFailure(edge, null);
+      if (!silent && isReadRecoveryCurrent()) {
+        const direction = edge === 'end' ? '' : replyOrder === 'newest' ? '更新' : '更早';
+        notify(`已加载 ${loaded.items.length} 条${direction}回复`);
+      }
+      return 'completed';
     },
     [
-      activeRepliesQueryIdentityRef,
+      canReadReplyWindow,
+      isReadRecoveryCurrent,
       isReplyWindowFetching,
-      refreshTopicReplies,
-      refreshWholeTopic,
+      notify,
+      queryClient,
+      readReplyForQuery,
+      recordReplyWindowFailure,
       repliesQuery.fetchNextPage,
       repliesQuery.fetchPreviousPage,
       repliesQueryIdentity,
       repliesQueryKey,
-      replyWindowFailures,
-      canReadReplyWindow,
-      selectedTopic,
-      recordReplyWindowFailure
+      replyOrder,
+      replyWindows,
+      selectedTopic.source
     ]
+  );
+  const retryReplyRead = useCallback(
+    async (
+      slot: ReplyWindowErrorSlot,
+      failure: ReplyFailure | null,
+      resumedRead?: ResumedTopicRead
+    ): Promise<LinuxDoReadResumeOutcome> => {
+      if (!canReadReplyWindow() || !(resumedRead?.isCurrent ?? isReadRecoveryCurrent)() || isReplyWindowFetching())
+        return 'stale';
+      if (!failure || failure.retryMode === 'none') return failure ? 'failed' : 'completed';
+      if (selectedTopic.source === 'yaohuo' && failure.retryMode !== 'whole') {
+        lastPromptedYaohuoTopicKeyRef.current = null;
+        handledRepliesErrorRef.current = null;
+      }
+      if (failure.retryMode === 'whole')
+        return resumedRead ? runWholeTopicRefresh(false, resumedRead) : refreshWholeTopic();
+      if (typeof failure.retryMode === 'object') return runReplyRefresh(failure.retryMode, undefined, resumedRead);
+      if (slot !== 'refresh') {
+        if (failure.position.kind !== 'cursor') return 'stale';
+        return loadReplyEdge(slot, { silent: true, expectedCursor: failure.position, resumedRead });
+      }
+      return runReplyRefresh({ kind: 'manual', silent: true }, undefined, resumedRead);
+    },
+    [
+      isReadRecoveryCurrent,
+      isReplyWindowFetching,
+      loadReplyEdge,
+      refreshWholeTopic,
+      runReplyRefresh,
+      runWholeTopicRefresh,
+      canReadReplyWindow,
+      selectedTopic.source
+    ]
+  );
+  const retryFailedReplies = useCallback(
+    (edge?: ReplyWindowEdge) => {
+      const slot = edge ?? 'refresh';
+      return retryReplyRead(slot, replyWindowFailures[slot]);
+    },
+    [replyWindowFailures, retryReplyRead]
   );
 
   useEffect(() => {
-    if (replyAccessDenied || !repliesQuery.error || handledRepliesErrorRef.current === repliesQuery.errorUpdatedAt)
+    const { error, errorUpdateCount } = repliesQuery;
+    if (!active || replyAccessDenied || !error) return;
+    const handled = handledRepliesErrorRef.current;
+    if (
+      handled?.queryIdentity === repliesQueryIdentity &&
+      handled.count === errorUpdateCount &&
+      handled.error === error
+    )
       return;
-    handledRepliesErrorRef.current = repliesQuery.errorUpdatedAt;
+    handledRepliesErrorRef.current = { queryIdentity: repliesQueryIdentity, count: errorUpdateCount, error };
     const failedEdge = repliesQuery.isFetchPreviousPageError
       ? ('start' as const)
       : repliesQuery.isFetchNextPageError
         ? ('end' as const)
         : undefined;
     const slot = failedEdge || 'refresh';
-    const sourceError = sourceErrorFromUnknown(selectedTopic.source, repliesQuery.error);
-    recordReplyWindowFailure(
-      slot,
-      replyFailure(
-        selectedTopic.source,
-        repliesQuery.error,
-        failedEdge ? replyEdgePosition(repliesQuery.data, failedEdge) : { kind: 'start' },
-        'query'
-      )
-    );
-    handleReadError(
+    const failure = replyFailure(
       selectedTopic.source,
-      repliesQuery.error,
-      {
-        queryKey: repliesQueryKey,
-        resume: async () =>
-          topicCommands.getCurrentKey() === topicKey(selectedTopic) ? retryFailedReplies(failedEdge) : 'stale'
-      },
-      (recovery) => onNodeSeekTopicVerificationRequired(sourceError.message, recovery)
+      error,
+      failedEdge ? replyEdgePosition(repliesQuery.data, failedEdge) : { kind: 'start' },
+      'query'
     );
+    recordReplyWindowFailure(slot, failure);
+    handleReadError(selectedTopic.source, error, repliesQueryKey, {
+      resume: (read) => retryReplyRead(slot, failure, read)
+    });
   }, [
+    active,
     handleReadError,
-    onNodeSeekTopicVerificationRequired,
     replyAccessDenied,
     repliesQuery.data,
     repliesQuery.error,
-    repliesQuery.errorUpdatedAt,
+    repliesQuery.errorUpdateCount,
     repliesQuery.isFetchNextPageError,
     repliesQuery.isFetchPreviousPageError,
+    repliesQueryIdentity,
     repliesQueryKey,
-    retryFailedReplies,
+    retryReplyRead,
     selectedTopic,
-    recordReplyWindowFailure,
-    topicCommands
+    recordReplyWindowFailure
   ]);
 
+  const failRouteLocation = useCallback(() => {
+    if (routeLocationKeyRef.current !== routeLocationKey) return;
+    if (routeLocationKey) setConsumedRouteLocation(routeLocationKey);
+    replyEntry.current.settled = true;
+    readingEntry.failed();
+  }, [readingEntry.failed, routeLocationKey, routeLocationKeyRef]);
+
   const cancelReplyLocation = useCallback(() => {
+    if (routeLocationKeyRef.current !== routeLocationKey) return;
     const queryKey = replyWindows.cancelLocation();
-    if (queryKey) void queryClient.cancelQueries({ queryKey });
-  }, [queryClient, replyWindows]);
+    if (!queryKey) return;
+    if (routeLocationKey && targetReply) failRouteLocation();
+    void queryClient.cancelQueries({ queryKey });
+  }, [failRouteLocation, queryClient, replyWindows, routeLocationKey, routeLocationKeyRef, targetReply]);
 
   const locateReply = useCallback(
-    async (target: ReplyLocationTarget, { silent = false }: { silent?: boolean } = {}) => {
+    async (
+      target: ReplyLocationTarget,
+      {
+        silent = false,
+        onRecoverySettled
+      }: {
+        silent?: boolean;
+        onRecoverySettled?: (outcome: LinuxDoReadResumeOutcome) => void;
+      } = {}
+    ) => {
       if (!active || !topicDetail || !canReadReplyWindow()) return 'stale';
       if (topicLocationForReply(selectedTopic.source, target, topicDetail).kind === 'opening') {
         replyWindows.invalidate();
@@ -1540,8 +1795,10 @@ export function useTopicController({
       ] as const;
       const windowRun = replyWindows.beginLocation(repliesQueryIdentity, targetReplyQueryRoot);
       const ownsTargetWindow = windowRun.isCurrent;
-      const loadTargetWindow = async () => {
-        if (!ownsTargetWindow()) {
+      const loadTargetWindow = async (resumedRead?: ResumedTopicRead) => {
+        const ownsWindow = resumedRead?.isCurrent ?? ownsTargetWindow;
+        const queryKey = resumedRead ? [...targetQueryKey, 'verification'] : targetQueryKey;
+        if (!ownsWindow()) {
           return 'stale' as const;
         }
         await queryClient.cancelQueries({
@@ -1549,7 +1806,7 @@ export function useTopicController({
           exact: true,
           predicate: (query) => query.getObserversCount() <= 1
         });
-        if (!ownsTargetWindow()) {
+        if (!ownsWindow()) {
           return 'stale' as const;
         }
         const cachedReplies = mergedReplyPages(
@@ -1568,7 +1825,7 @@ export function useTopicController({
           positionKind: 'target'
         });
         const discardStaleTarget = () => {
-          queryClient.removeQueries({ queryKey: targetQueryKey, exact: true });
+          queryClient.removeQueries({ queryKey, exact: true });
           finishDiagnosticTrace(trace, 'stale', {
             source: selectedTopic.source,
             reason: 'stale',
@@ -1580,11 +1837,15 @@ export function useTopicController({
         try {
           const position = { kind: 'target', target: normalizedTarget } satisfies ReplyPageParam;
           replyWindows.trackRouteQueries(scopedRepliesQueryKey);
-          const page = await queryClient.query({
-            queryKey: targetQueryKey,
-            queryFn: ({ signal }) => loadReplyPage(currentDetail, replyOrder, position, signal, trace)
-          });
-          if (!ownsTargetWindow()) return discardStaleTarget();
+          const queryOptions = {
+            queryKey,
+            queryFn: ({ signal }: QueryFunctionContext) =>
+              loadReplyPage(currentDetail, replyOrder, position, signal, trace)
+          };
+          const page = resumedRead
+            ? await resumeTopicQuery(queryClient, queryOptions, resumedRead)
+            : await queryClient.query(queryOptions);
+          if (!ownsWindow()) return discardStaleTarget();
           const resolvedPage = page.currentPage!;
           const resolvedReply =
             findReplyLocation(page.items, normalizedTarget) ||
@@ -1610,7 +1871,7 @@ export function useTopicController({
               (page.replyWatermark !== undefined && page.replyWatermark !== currentDetail.replyWatermark);
             activateCenteredReplyWindow(openingMayBeStale);
           }
-          queryClient.removeQueries({ queryKey: targetQueryKey, exact: true });
+          queryClient.removeQueries({ queryKey, exact: true });
           finishDiagnosticTrace(trace, 'success', {
             itemCount: page.items.length,
             hasMore: Boolean(nextReplyPage(page)),
@@ -1620,33 +1881,39 @@ export function useTopicController({
           });
           return 'completed' as const;
         } catch (error) {
-          if (!ownsTargetWindow()) return discardStaleTarget();
+          if (!ownsWindow()) return discardStaleTarget();
           finishDiagnosticTrace(trace, isCanceledRequest(error) ? 'canceled' : 'failure', {
             source: selectedTopic.source,
             reason: isCanceledRequest(error) ? 'canceled' : normalizeDiagnosticReason(error)
           });
           throw error;
+        } finally {
+          if (resumedRead) queryClient.removeQueries({ queryKey, exact: true });
         }
       };
       try {
         return await loadTargetWindow();
       } catch (error) {
-        const recovery: LinuxDoReadRecovery = {
-          queryKey: targetQueryKey,
-          isCurrent: ownsTargetWindow,
-          resume: async () => {
-            queryClient.removeQueries({ queryKey: targetQueryKey, exact: true });
-            try {
-              return await loadTargetWindow();
-            } catch (retryError) {
-              return readOutcome(selectedTopic.source, retryError);
-            }
+        const cancel = onRecoverySettled ? () => onRecoverySettled('failed') : undefined;
+        const resume = async (resumedRead: ResumedTopicRead) => {
+          queryClient.removeQueries({ queryKey: targetQueryKey, exact: true });
+          try {
+            const outcome = await loadTargetWindow(resumedRead);
+            if (!resumedRead.signal?.aborted) onRecoverySettled?.(outcome);
+            return outcome;
+          } catch (retryError) {
+            if (resumedRead.signal?.aborted) return 'stale';
+            const outcome = readOutcome(selectedTopic.source, retryError);
+            onRecoverySettled?.(outcome);
+            return outcome;
           }
         };
-        const sourceError = sourceErrorFromUnknown(selectedTopic.source, error);
-        handleReadError(selectedTopic.source, error, recovery, (candidate) =>
-          onNodeSeekTopicVerificationRequired(sourceError.message, candidate)
-        );
+        handleReadError(selectedTopic.source, error, targetQueryKey, {
+          isCurrent: ownsTargetWindow,
+          ownsIntent: windowRun.ownsIntent,
+          resume,
+          cancel
+        });
         return readOutcome(selectedTopic.source, error);
       }
     },
@@ -1661,7 +1928,6 @@ export function useTopicController({
       readGateway.reading,
       loadReplyPage,
       notify,
-      onNodeSeekTopicVerificationRequired,
       ordinaryLinuxDoTopic,
       queryClient,
       repliesQueryKey,
@@ -1682,18 +1948,19 @@ export function useTopicController({
   }, [resolvedLocation?.kind, locationRequestId, replyWindows]);
 
   useEffect(() => {
-    if (!active || !targetReply || !topicDetail || !canReadReplyWindow()) return;
+    if (routeLocationConsumed || !active || !targetReply || !topicDetail || !canReadReplyWindow()) return;
     if (replyWindows.hasRoute(routeTargetKey)) return;
     const request = replyWindows.beginRoute(routeTargetKey, replyOrderScope);
-    void locateReply(targetReply, { silent: true }).then((outcome) => {
+    const settle = (outcome: LinuxDoReadResumeOutcome) => {
+      if (outcome === 'verification-required') return;
       if (!replyWindows.settleRoute(request)) return;
       if (outcome === 'completed') {
         if (!readingEntry.windowReady) readingEntry.windowLoaded();
       } else if (outcome !== 'stale') {
-        replyEntry.current.settled = true;
-        readingEntry.failed();
+        failRouteLocation();
       }
-    });
+    };
+    void locateReply(targetReply, { silent: true, onRecoverySettled: settle }).then(settle);
   }, [
     locateReply,
     canReadReplyWindow,
@@ -1701,6 +1968,8 @@ export function useTopicController({
     repliesQueryIdentity,
     replyOrderScope,
     routeTargetKey,
+    routeLocationConsumed,
+    failRouteLocation,
     replyWindows,
     targetReply,
     locationRequestId,
@@ -1710,64 +1979,13 @@ export function useTopicController({
   ]);
 
   const loadPreviousReplies = useCallback(
-    async ({ silent = false }: { silent?: boolean } = {}): Promise<LinuxDoReadResumeOutcome> => {
-      if (!canReadReplyWindow()) return 'stale';
-      if (!repliesQuery.hasPreviousPage || isReplyWindowFetching()) {
-        return 'completed';
-      }
-      const result = await repliesQuery.fetchPreviousPage();
-      if (result.error) {
-        recordReplyWindowFailure(
-          'start',
-          replyFailure(selectedTopic.source, result.error, replyEdgePosition(result.data, 'start'), 'query')
-        );
-        return readOutcome(selectedTopic.source, result.error);
-      }
-      recordReplyWindowFailure('start', null);
-      const loaded = result.data?.pages[0]?.items.length || 0;
-      if (!silent) notify(`已加载 ${loaded} 条${replyOrder === 'newest' ? '更新' : '更早'}回复`);
-      return 'completed';
-    },
-    [
-      notify,
-      isReplyWindowFetching,
-      repliesQuery.fetchPreviousPage,
-      repliesQuery.hasPreviousPage,
-      replyOrder,
-      canReadReplyWindow,
-      selectedTopic,
-      recordReplyWindowFailure
-    ]
+    (options?: { silent?: boolean }) => loadReplyEdge('start', options),
+    [loadReplyEdge]
   );
 
   const loadMoreReplies = useCallback(
-    async ({ silent = false }: { silent?: boolean } = {}): Promise<LinuxDoReadResumeOutcome> => {
-      if (!canReadReplyWindow()) return 'stale';
-      if (!repliesQuery.hasNextPage || isReplyWindowFetching()) {
-        return 'completed';
-      }
-      const result = await repliesQuery.fetchNextPage();
-      if (result.error) {
-        recordReplyWindowFailure(
-          'end',
-          replyFailure(selectedTopic.source, result.error, replyEdgePosition(result.data, 'end'), 'query')
-        );
-        return readOutcome(selectedTopic.source, result.error);
-      }
-      recordReplyWindowFailure('end', null);
-      const loaded = result.data?.pages.at(-1)?.items.length || 0;
-      if (!silent) notify(`已加载 ${loaded} 条回复`);
-      return 'completed';
-    },
-    [
-      notify,
-      isReplyWindowFetching,
-      repliesQuery.fetchNextPage,
-      repliesQuery.hasNextPage,
-      canReadReplyWindow,
-      selectedTopic,
-      recordReplyWindowFailure
-    ]
+    (options?: { silent?: boolean }) => loadReplyEdge('end', options),
+    [loadReplyEdge]
   );
 
   const toggleLoadedQuotedPost = useCallback(
@@ -1906,6 +2124,7 @@ export function useTopicController({
     openTopic,
     refreshTopicReplies,
     refreshWholeTopic,
+    verifyNodeSeek,
     wholeTopicRevision,
     isReadRecoveryCurrent,
     repliesError: replyAccessDenied

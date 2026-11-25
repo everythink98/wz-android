@@ -7,13 +7,15 @@ import type { Topic, UserReference } from '@/domain/forum/models';
 import { compileForumContent } from '@/domain/forum/topicContentSplit';
 import type { ForumNotification } from '@/domain/notifications/models';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { MoreRoute, MoreRouteRuntimeProvider, type MoreRouteRuntimeValue } from '@/features/more/MoreRoute';
+import { MoreRoute } from '@/features/more/MoreRoute';
+import { MoreRouteRuntimeProvider, type MoreRouteRuntimeValue } from '@/features/more/MoreRouteRuntime';
+import { NotificationDetailRoute } from '@/features/notifications/NotificationRoute';
 import {
-  NotificationDetailRoute,
   NotificationRouteRuntimeProvider,
   type NotificationRouteRuntimeValue
-} from '@/features/notifications/NotificationRoute';
-import { TopicRoute, TopicRouteRuntimeProvider, type TopicRouteRuntimeValue } from '@/features/topic/TopicRoute';
+} from '@/features/notifications/NotificationRouteRuntime';
+import { TopicRoute } from '@/features/topic/TopicRoute';
+import { TopicRouteRuntimeProvider, type TopicRouteRuntimeValue } from '@/features/topic/TopicRouteRuntime';
 import { useTopicController } from '@/features/topic/useTopicController';
 import { useTopicSessionController } from '@/features/topic/useTopicSessionController';
 import { useTopicActionsController } from '@/features/topic/actions/useTopicActionsController';
@@ -22,7 +24,8 @@ import { useImagePreviewController } from '@/features/topic/media/useImagePrevie
 import { TopicContentBlock } from '@/features/topic/components/TopicContentBlock';
 import { HTML_ALLOWED_INLINE_STYLES } from '@/ui/content/forumHtmlStyles';
 import { createHtmlCustomElementModels } from '@/features/topic/rendering/htmlElementModels';
-import { UserRoute, UserRouteRuntimeProvider, type UserRouteRuntimeValue } from '@/features/user/UserRoute';
+import { UserRoute } from '@/features/user/UserRoute';
+import { UserRouteRuntimeProvider, type UserRouteRuntimeValue } from '@/features/user/UserRouteRuntime';
 import { useUserController } from '@/features/user/useUserController';
 import { ForumSessionEpochProvider } from '@/platform/media/mediaSessionEpoch';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
@@ -370,14 +373,12 @@ describe('disabled content source route gates', () => {
       source: 'nodeseek',
       url: 'https://www.nodeseek.com/post-42-1'
     };
+    const clearReplyFilters = jest.fn();
     jest.mocked(useTopicSessionController).mockReturnValue({
       state: { replyComposerIntent: { kind: 'closed' }, selectedTopic: enabledTopic },
       commands: {
         composer: { toggle: jest.fn() },
-        view: {
-          changeCommentQuery: jest.fn(),
-          changeReplyFilter: jest.fn()
-        }
+        view: { clearReplyFilters }
       }
     } as never);
     const locateReply = jest.fn();
@@ -513,6 +514,7 @@ describe('disabled content source route gates', () => {
       location: { kind: 'reply', target: { commentId: 12187538, floor: 16, pageHint: 2 } },
       locationRequestId: 10
     });
+    expect(clearReplyFilters).toHaveBeenCalledTimes(3);
     expect(locateReply).not.toHaveBeenCalled();
   });
 });

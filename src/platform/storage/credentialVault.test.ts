@@ -445,6 +445,17 @@ describe('credential vault', () => {
     expect(secureStore.__store.has('site-login-credential.nodeseek.value')).toBe(false);
   });
 
+  it('reports the credential as unavailable if metadata deletion fails after removing its value', async () => {
+    await credentialVault.save('nodeseek', { account: 'fixture-user', password: 'fixture-value' });
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+      if (key.endsWith('.summary')) throw new Error('metadata removal failed');
+      secureStore.__store.delete(key);
+    });
+    await expect(credentialVault.delete('nodeseek')).rejects.toThrow('metadata removal failed');
+    expect(secureStore.__store.has('site-login-credential.nodeseek.value.0')).toBe(false);
+    await expect(credentialVault.getSummary('nodeseek')).resolves.toMatchObject({ hasCredential: false });
+  });
+
   it('keeps metadata and reports failure when an orphan cannot be deleted', async () => {
     await credentialVault.save('nodeseek', { account: 'alice', password: 'secret' });
     vi.mocked(SecureStore.getItemAsync)

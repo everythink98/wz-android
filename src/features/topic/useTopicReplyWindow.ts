@@ -8,7 +8,7 @@ export type ReplyRetryMode = 'query' | 'whole' | 'none' | ReplyRefreshCommand;
 export type ReplyFailure = { error: SourceErrorInfo; position: ReplyWindowPosition; retryMode: ReplyRetryMode };
 type ReplyWindowFailures = Record<ReplyWindowErrorSlot, ReplyFailure | null>;
 const EMPTY_FAILURES: ReplyWindowFailures = { start: null, end: null, refresh: null };
-export type ReplyWindowRun = Readonly<{ isCurrent: () => boolean }>;
+export type ReplyWindowRun = Readonly<{ isCurrent: () => boolean; ownsIntent: () => boolean }>;
 type RouteRequest = Readonly<{ key: string; queryIdentity: string }>;
 type RouteTarget =
   { phase: 'empty' } | { phase: 'pending'; request: RouteRequest } | { phase: 'settled'; request: RouteRequest };
@@ -19,7 +19,10 @@ function createWindowLifecycle(activeScope: () => string) {
   let route: RouteTarget = { phase: 'empty' };
   const ownedCaches = new Map<string, readonly unknown[]>();
   const beginRead = (scope: string) => {
-    const run: ReplyWindowRun = { isCurrent: () => currentRun === run && activeScope() === scope };
+    const run: ReplyWindowRun = {
+      isCurrent: () => run.ownsIntent() && activeScope() === scope,
+      ownsIntent: () => currentRun === run
+    };
     currentRun = run;
     return run;
   };

@@ -129,6 +129,7 @@ export function AccountHosts({
         handleLinuxDoMessage={verification.handleLinuxDoMessage}
         handleLinuxDoNavigation={loginNavigation.linuxdo}
         handleCredentialLoginFormMessage={credentials.handleCredentialLoginFormMessage}
+        onLinuxDoLoginFormDocumentRetired={(attempt) => credentials.retireCredentialFillDocument('linuxdo', attempt)}
         handleNodeImageAuthMessage={nodeImage.panel.handleMessage}
         handleNodeImageAuthNavigation={loginNavigation.nodeimage}
         linuxDoCredentialSaved={credentials.credentialSummaries.linuxdo.hasCredential}
@@ -181,6 +182,7 @@ export function AccountHosts({
         }}
         onClose={() => view.changeNodeSeekLoginPanel(false)}
         onHandleMessage={account.handleLoginMessage}
+        onLoginFormDocumentRetired={(attempt) => credentials.retireCredentialFillDocument('nodeseek', attempt)}
         onLoginFormMessage={credentials.handleCredentialLoginFormMessage}
         onNavigation={loginNavigation.nodeseek}
         onRequestCredentialFill={() => credentials.openAccountLogin('nodeseek', true)}
@@ -210,6 +212,7 @@ export function AccountHosts({
           void account.clearYaohuoLogin();
         }}
         onClose={() => view.changeYaohuoLoginPanel(false)}
+        onLoginFormDocumentRetired={(attempt) => credentials.retireCredentialFillDocument('yaohuo', attempt)}
         onLoginFormMessage={credentials.handleCredentialLoginFormMessage}
         onNavigation={loginNavigation.yaohuo}
         onRequestCredentialFill={() => credentials.openAccountLogin('yaohuo', true)}

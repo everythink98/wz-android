@@ -2,6 +2,7 @@ import { queryOptions, skipToken, useQuery, type QueryClient } from '@tanstack/r
 import { useMemo } from 'react';
 import type { ReaderSettings } from '@/domain/reader/readerData';
 import { isLocalReaderFontFamily, type LocalReaderFont, type LocalReaderFontFamily } from '@/domain/reader/readerFonts';
+import { errorMessage } from '@/platform/network/errors';
 import {
   downloadReaderFont,
   listLocalReaderFonts,
@@ -21,31 +22,38 @@ export const localReaderFontCatalog = queryOptions({
   gcTime: Infinity
 });
 
-export function readerFontProgress(family: LocalReaderFontFamily | null) {
-  return queryOptions<ReaderFontDownloadProgress>({
-    queryKey: ['reader-font-progress', family],
-    queryFn: skipToken,
-    gcTime: Infinity
-  });
-}
+export type ReaderFontTarget = 'interface' | 'reading';
 
-export function installReaderFont(client: QueryClient, font: DownloadableReaderFont) {
-  return client.fetchQuery({
-    queryKey: ['reader-font-download', font.family],
-    queryFn: async () => {
-      const { queryKey } = readerFontProgress(font.family);
-      client.setQueryData(queryKey, { phase: 'connecting' });
-      try {
-        return await downloadReaderFont(font, (progress) => client.setQueryData(queryKey, progress));
-      } finally {
-        client.removeQueries({ queryKey, exact: true });
-      }
-    },
-    networkMode: 'always',
-    staleTime: 0,
-    gcTime: 0,
-    retry: false
-  });
+type ReaderFontDownload = { target: ReaderFontTarget; family: LocalReaderFontFamily } & (
+  { status: 'running'; progress: ReaderFontDownloadProgress } | { status: 'failed'; message: string }
+);
+
+export const readerFontDownload = queryOptions<ReaderFontDownload | null>({
+  queryKey: ['reader-font-download'],
+  queryFn: skipToken,
+  gcTime: Infinity
+});
+
+export async function installReaderFont(client: QueryClient, font: DownloadableReaderFont, target: ReaderFontTarget) {
+  const { queryKey } = readerFontDownload;
+  if (client.getQueryData(queryKey)?.status === 'running') return null;
+
+  const family = font.family;
+  const publish = (progress: ReaderFontDownloadProgress) => {
+    const running: ReaderFontDownload = { status: 'running', family, target, progress };
+    client.setQueryData(queryKey, running);
+  };
+  publish({ phase: 'connecting' });
+  try {
+    const installed = await downloadReaderFont(font, publish);
+    await rememberInstalledReaderFont(client, installed);
+    client.setQueryData(queryKey, null);
+    return installed;
+  } catch (error) {
+    const failed: ReaderFontDownload = { status: 'failed', family, target, message: errorMessage(error) };
+    client.setQueryData(queryKey, failed);
+    return null;
+  }
 }
 
 export function localReaderFontRegistration(family: LocalReaderFontFamily | null) {

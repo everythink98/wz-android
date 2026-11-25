@@ -1,8 +1,96 @@
+diff --git a/node_modules/expo-image/android/build.gradle b/node_modules/expo-image/android/build.gradle
+--- a/node_modules/expo-image/android/build.gradle
++++ b/node_modules/expo-image/android/build.gradle
+@@ -68,3 +68,4 @@ dependencies {
+   testImplementation 'junit:junit:4.13.2'
+   testImplementation 'org.robolectric:robolectric:4.16'
++  testImplementation 'org.mockito:mockito-inline:3.12.4'
+ }
+diff --git a/node_modules/expo-image/android/src/main/java/expo/modules/image/CustomOptions.kt b/node_modules/expo-image/android/src/main/java/expo/modules/image/CustomOptions.kt
+index dacba94..6fae9de 100644
+--- a/node_modules/expo-image/android/src/main/java/expo/modules/image/CustomOptions.kt
++++ b/node_modules/expo-image/android/src/main/java/expo/modules/image/CustomOptions.kt
+@@ -5,4 +5,5 @@ import com.bumptech.glide.load.Option
+ object CustomOptions {
+   // To pass the tint color to the SVG decoder, we need to wrap it in a custom Glide option.
+   val tintColor = Option.memory<Int>("ExpoTintColor")
++  val rasterizeSvg = Option.memory("ExpoRasterizeSvg", false)
+ }
+diff --git a/node_modules/expo-image/android/src/main/java/expo/modules/image/ExpoImageModule.kt b/node_modules/expo-image/android/src/main/java/expo/modules/image/ExpoImageModule.kt
+index 2adb8be..0a58b8a 100644
+--- a/node_modules/expo-image/android/src/main/java/expo/modules/image/ExpoImageModule.kt
++++ b/node_modules/expo-image/android/src/main/java/expo/modules/image/ExpoImageModule.kt
+@@ -392,6 +392,10 @@ class ExpoImageModule : Module() {
+         view.allowDownscaling = allowDownscaling != false
+       }
+ 
++      Prop("cacheSvgInHardwareLayer") { view: ExpoImageViewWrapper, enabled: Boolean? ->
++        view.cacheSvgInHardwareLayer = enabled == true
++      }
++
+       Prop("autoplay") { view: ExpoImageViewWrapper, autoplay: Boolean? ->
+         view.autoplay = autoplay != false
+       }
+diff --git a/node_modules/expo-image/android/src/main/java/expo/modules/image/ExpoImageView.kt b/node_modules/expo-image/android/src/main/java/expo/modules/image/ExpoImageView.kt
+index 3cdf437..c6a6436 100644
+--- a/node_modules/expo-image/android/src/main/java/expo/modules/image/ExpoImageView.kt
++++ b/node_modules/expo-image/android/src/main/java/expo/modules/image/ExpoImageView.kt
+@@ -8,12 +8,17 @@ import android.graphics.RectF
+ import android.graphics.drawable.BitmapDrawable
+ import android.graphics.drawable.Drawable
+ import android.util.Log
++import android.view.View
+ import androidx.appcompat.widget.AppCompatImageView
+ import androidx.core.graphics.transform
+ import androidx.core.view.isVisible
+ import com.facebook.react.common.annotations.UnstableReactNativeAPI
+ import expo.modules.image.enums.ContentFit
+ import expo.modules.image.records.ContentPosition
++import expo.modules.image.svg.SVGPictureDrawable
++
++internal fun View.supportsSvgHardwareLayer(): Boolean =
++  isHardwareAccelerated && width in 1..4096 && height in 1..4096 && width.toLong() * height <= 4_194_304
+ 
+ @OptIn(UnstableReactNativeAPI::class)
+ @SuppressLint("ViewConstructor")
+@@ -25,6 +30,7 @@ class ExpoImageView(
+ 
+   fun recycleView(): ImageViewWrapperTarget? {
+     setImageDrawable(null)
++    updateSvgHardwareLayer(false)
+ 
+     val target = currentTarget?.apply {
+       isUsed = false
+@@ -37,6 +43,15 @@ class ExpoImageView(
+     return target
+   }
+ 
++  internal fun updateSvgHardwareLayer(enabled: Boolean) {
++    val nextLayerType = if (enabled && drawable is SVGPictureDrawable && supportsSvgHardwareLayer()) {
++      LAYER_TYPE_HARDWARE
++    } else {
++      LAYER_TYPE_NONE
++    }
++    if (layerType != nextLayerType) setLayerType(nextLayerType, null)
++  }
++
+   private var transformationMatrixChanged = false
+ 
+   override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
 diff --git a/node_modules/expo-image/android/src/main/java/expo/modules/image/ExpoImageViewWrapper.kt b/node_modules/expo-image/android/src/main/java/expo/modules/image/ExpoImageViewWrapper.kt
-index 7abe582..5f1b899 100644
+index 7abe582b..6929df3b 100644
 --- a/node_modules/expo-image/android/src/main/java/expo/modules/image/ExpoImageViewWrapper.kt
 +++ b/node_modules/expo-image/android/src/main/java/expo/modules/image/ExpoImageViewWrapper.kt
-@@ -54,6 +54,7 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
+@@ -32,7 +32,7 @@ import expo.modules.image.records.ImageLoadEvent
+ import expo.modules.image.records.ImageProgressEvent
+ import expo.modules.image.records.ImageTransition
+ import expo.modules.image.records.Source
+-import expo.modules.image.svg.SVGPictureDrawable
++import expo.modules.image.svg.SVGIntrinsicSize
+ import expo.modules.kotlin.AppContext
+ import expo.modules.kotlin.tracing.beginAsyncTraceBlock
+ import expo.modules.kotlin.tracing.trace
+@@ -55,6 +55,7 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
    private val secondView = ExpoImageView(activity)
  
    private val mainHandler = Handler(context.mainLooper)
@@ -19,17 +107,84 @@ index 7abe582..5f1b899 100644
    internal val onError by EventDispatcher<ImageErrorEvent>()
    internal val onLoad by EventDispatcher<ImageLoadEvent>()
    internal val onDisplay by EventDispatcher<Unit>()
-@@ -147,6 +148,7 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
+@@ -119,7 +120,7 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
+     set(value) {
+       field = value
+       // To apply the tint color to the SVG, we need to recreate the drawable.
+-      if (activeView.drawable is SVGPictureDrawable) {
++      if (activeView.drawable is SVGIntrinsicSize) {
+         shouldRerender = true
+       } else {
+         activeView.setTintColor(value)
+@@ -146,6 +147,7 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
+ 
    var recyclingKey: String? = null
      set(value) {
 +      if (field != value) resizeRerenderGeneration++
        clearViewBeforeChangingSource = field != null && value != null && value != field
        field = value
      }
+@@ -156,6 +158,14 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
+       shouldRerender = true
+     }
  
-@@ -425,13 +427,27 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
-     return bestSource
-   }
++  internal var cacheSvgInHardwareLayer: Boolean = false
++    set(value) {
++      if (field == value) return
++      field = value
++      firstView.updateSvgHardwareLayer(value)
++      secondView.updateSvgHardwareLayer(value)
++    }
++
+   internal var decodeFormat: DecodeFormat = DecodeFormat.ARGB_8888
+     set(value) {
+       field = value
+@@ -208,6 +218,12 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
+    * Currently loaded source
+    */
+   private var loadedSource: GlideModelProvider? = null
++  private class SourcePresentation(val target: ImageViewWrapperTarget, val rasterizedSvg: Boolean) {
++    var isSvg = false
++  }
++  private var sourcePresentation: SourcePresentation? = null
++  private fun wantsRasterizedSvg() = cacheSvgInHardwareLayer && !supportsSvgHardwareLayer()
++  private fun svgPresentationChanged() = sourcePresentation?.let { it.isSvg && it.rasterizedSvg != wantsRasterizedSvg() } == true
+ 
+   /**
+    * Currently loaded placeholder
+@@ -264,7 +280,8 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
+     target: ImageViewWrapperTarget,
+     resource: Drawable,
+     isPlaceholder: Boolean = false
+-  ) =
++  ) {
++    val presentation = sourcePresentation?.takeIf { !isPlaceholder && it.target === target }
+     // The "onResourceReady" function will be triggered when the new resource is available by the Glide.
+     // According to the Glide documentation (https://bumptech.github.io/glide/doc/debugging.html#you-cant-start-or-clear-loads-in-requestlistener-or-target-callbacks),
+     // it's not advisable to clear the Glide target within the stack frame.
+@@ -364,8 +381,13 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
+         if (resource is Animatable && !isPlaceholder && !autoplay) {
+           resource.stop()
+         }
++        if (presentation != null && sourcePresentation === presentation) {
++          presentation.isSvg = resource is SVGIntrinsicSize
++          if (svgPresentationChanged()) rerenderIfNeeded()
++        }
+       }
+     }
++  }
+ 
+   private fun configureView(
+     view: ExpoImageView,
+@@ -388,6 +410,7 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
+       // Therefore, we have to set the correct size manually.
+       it.layout(0, 0, width, height)
+ 
++      it.updateSvgHardwareLayer(cacheSvgInHardwareLayer)
+       it.applyTransformationMatrix()
+     }
+     target.isUsed = true
+@@ -427,16 +450,33 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
  
    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
      super.onSizeChanged(w, h, oldw, oldh)
@@ -60,15 +215,37 @@ index 7abe582..5f1b899 100644
    }
  
    private fun createPropOptions(): RequestOptions {
-@@ -467,6 +483,7 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
+     return RequestOptions()
+       .priority(this@ExpoImageViewWrapper.priority.toGlidePriority())
++      .customize(`when` = wantsRasterizedSvg()) {
++        set(CustomOptions.rasterizeSvg, true)
++      }
+       .customize(`when` = cachePolicy != CachePolicy.MEMORY_AND_DISK && cachePolicy != CachePolicy.MEMORY) {
+         skipMemoryCache(true)
+       }
+@@ -449,8 +489,12 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
+   }
+ 
    fun onViewDestroys() {
 +    resizeRerenderGeneration++
++    sourcePresentation = null
      firstView.setImageDrawable(null)
      secondView.setImageDrawable(null)
++    firstView.updateSvgHardwareLayer(false)
++    secondView.updateSvgHardwareLayer(false)
  
      requestManager.clear(firstTarget)
      requestManager.clear(secondTarget)
-@@ -537,10 +554,12 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
+@@ -471,6 +515,7 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
+ 
+       shouldRerender = false
+       loadedSource = null
++      sourcePresentation = null
+       loadedPlaceholder = null
+       transformationMatrixChanged = false
+       clearViewBeforeChangingSource = false
+@@ -520,13 +565,15 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
+ 
        val sourceToLoad = bestSource?.createGlideModelProvider(context)
        val placeholder = bestPlaceholder?.createGlideModelProvider(context)
 +      val sourceChanged = sourceToLoad != loadedSource || placeholder != loadedPlaceholder
@@ -80,22 +257,41 @@ index 7abe582..5f1b899 100644
        }
  
 -      val shouldRerender = sourceToLoad != loadedSource || placeholder != loadedPlaceholder || shouldRerender || (sourceToLoad == null && placeholder != null)
-+      val shouldRerender = sourceChanged || shouldRerender || (sourceToLoad == null && placeholder != null)
++      val shouldRerender = sourceChanged || shouldRerender || svgPresentationChanged() || (sourceToLoad == null && placeholder != null)
        if (!shouldRerender && !shouldRerenderBecauseOfResize) {
-@@ -562,6 +581,8 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
+         // In the case where the source didn't change, but the transformation matrix has to be
+         // recalculated, we can apply the new transformation right away.
+@@ -562,7 +609,10 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
        } else {
          secondTarget
        }
 +      newTarget.sourceWidth = -1
 +      newTarget.sourceHeight = -1
        newTarget.hasSource = sourceToLoad != null
++      sourcePresentation = if (newTarget.hasSource) SourcePresentation(newTarget, wantsRasterizedSvg()) else null
  
        val downsampleStrategy = createDownsampleStrategy(newTarget)
+ 
+diff --git a/node_modules/expo-image/android/src/main/java/expo/modules/image/GlideModelProvider.kt b/node_modules/expo-image/android/src/main/java/expo/modules/image/GlideModelProvider.kt
+index 617dbf9..ba0d6ec 100644
+--- a/node_modules/expo-image/android/src/main/java/expo/modules/image/GlideModelProvider.kt
++++ b/node_modules/expo-image/android/src/main/java/expo/modules/image/GlideModelProvider.kt
+@@ -19,7 +19,9 @@ data class DecodedModelProvider(
+ }
+ 
+ data class UrlModelProvider(
+-  private val glideUrl: GlideUrl
++  private val glideUrl: GlideUrl,
++  // A new consumer attempt must still reach RequestManager (including explicit retry).
++  private val diagnosticHeaders: Map<String, String> = emptyMap()
+ ) : GlideModelProvider {
+   override fun getGlideModel() = GlideUrlWrapper(glideUrl)
+ }
 diff --git a/node_modules/expo-image/android/src/main/java/expo/modules/image/events/GlideRequestListener.kt b/node_modules/expo-image/android/src/main/java/expo/modules/image/events/GlideRequestListener.kt
-index f453e4a..efa9cfc 100644
+index f453e4a..4f4a349 100644
 --- a/node_modules/expo-image/android/src/main/java/expo/modules/image/events/GlideRequestListener.kt
 +++ b/node_modules/expo-image/android/src/main/java/expo/modules/image/events/GlideRequestListener.kt
-@@ -9,6 +9,7 @@ import com.bumptech.glide.request.RequestListener
+@@ -9,16 +9,28 @@ import com.bumptech.glide.request.RequestListener
  import com.bumptech.glide.request.target.Target
  import expo.modules.image.ExpoImageModule
  import expo.modules.image.ExpoImageViewWrapper
@@ -103,7 +299,11 @@ index f453e4a..efa9cfc 100644
  import expo.modules.image.decodedsource.DecodedModel
  import expo.modules.image.enums.ImageCacheType
  import expo.modules.image.records.ImageErrorEvent
-@@ -19,6 +20,17 @@ import kotlinx.coroutines.launch
+ import expo.modules.image.records.ImageLoadEvent
+ import expo.modules.image.records.ImageSource
+-import expo.modules.image.svg.SVGPictureDrawable
++import expo.modules.image.svg.SVGIntrinsicSize
+ import kotlinx.coroutines.launch
  import java.lang.ref.WeakReference
  import java.util.Locale
  
@@ -121,10 +321,17 @@ index f453e4a..efa9cfc 100644
  class GlideRequestListener(
    private val expoImageViewWrapper: WeakReference<ExpoImageViewWrapper>
  ) : RequestListener<Drawable> {
-@@ -56,6 +68,13 @@ class GlideRequestListener(
-       ?: resource.intrinsicWidth
-     val intrinsicHeight = (resource as? SVGPictureDrawable)?.svgIntrinsicHeight
-       ?: resource.intrinsicHeight
+@@ -52,10 +64,16 @@ class GlideRequestListener(
+     dataSource: DataSource,
+     isFirstResource: Boolean
+   ): Boolean {
+-    val intrinsicWidth = (resource as? SVGPictureDrawable)?.svgIntrinsicWidth
+-      ?: resource.intrinsicWidth
+-    val intrinsicHeight = (resource as? SVGPictureDrawable)?.svgIntrinsicHeight
+-      ?: resource.intrinsicHeight
++    val svgSize = resource as? SVGIntrinsicSize
++    val intrinsicWidth = svgSize?.svgIntrinsicWidth ?: resource.intrinsicWidth
++    val intrinsicHeight = svgSize?.svgIntrinsicHeight ?: resource.intrinsicHeight
 +    val imageTarget = target as? ImageViewWrapperTarget
 +    val (width, height) = resolveImageLoadDimensions(
 +      sourceWidth = imageTarget?.sourceWidth ?: -1,
@@ -135,79 +342,19 @@ index f453e4a..efa9cfc 100644
  
      val imageWrapper = expoImageViewWrapper.get() ?: return false
      val appContext = imageWrapper.appContext
-@@ -65,8 +84,8 @@ class GlideRequestListener(
+@@ -65,9 +83,9 @@ class GlideRequestListener(
            cacheType = ImageCacheType.fromNativeValue(dataSource).name.lowercase(Locale.getDefault()),
            source = ImageSource(
              url = model.toString(),
 -            width = intrinsicWidth,
 -            height = intrinsicHeight,
+-            mediaType = null, // TODO(@lukmccall): add mediaType
 +            width = width,
 +            height = height,
-             mediaType = null, // TODO(@lukmccall): add mediaType
++            mediaType = if (svgSize != null) "image/svg+xml" else null,
              isAnimated = resource is Animatable
            )
-diff --git a/node_modules/expo-image/android/src/test/java/expo/modules/image/events/GlideRequestListenerTest.kt b/node_modules/expo-image/android/src/test/java/expo/modules/image/events/GlideRequestListenerTest.kt
-new file mode 100644
-index 0000000..de520b8
---- /dev/null
-+++ b/node_modules/expo-image/android/src/test/java/expo/modules/image/events/GlideRequestListenerTest.kt
-@@ -0,0 +1,41 @@
-+package expo.modules.image.events
-+
-+import org.junit.Assert.assertEquals
-+import org.junit.Test
-+
-+class GlideRequestListenerTest {
-+  @Test
-+  fun usesOriginalDimensionsCapturedDuringDownsampling() {
-+    assertEquals(
-+      1_000 to 5_000,
-+      resolveImageLoadDimensions(
-+        sourceWidth = 1_000,
-+        sourceHeight = 5_000,
-+        decodedWidth = 68,
-+        decodedHeight = 342
-+      )
-+    )
-+  }
-+
-+  @Test
-+  fun fallsBackToDecodedDimensionsWhenOriginalDimensionsAreUnavailable() {
-+    assertEquals(
-+      68 to 342,
-+      resolveImageLoadDimensions(
-+        sourceWidth = -1,
-+        sourceHeight = -1,
-+        decodedWidth = 68,
-+        decodedHeight = 342
-+      )
-+    )
-+    assertEquals(
-+      68 to 342,
-+      resolveImageLoadDimensions(
-+        sourceWidth = 1_000,
-+        sourceHeight = -1,
-+        decodedWidth = 68,
-+        decodedHeight = 342
-+      )
-+    )
-+  }
-+}
-diff --git a/node_modules/expo-image/android/src/main/java/expo/modules/image/GlideModelProvider.kt b/node_modules/expo-image/android/src/main/java/expo/modules/image/GlideModelProvider.kt
-index 617dbf9..ba0d6ec 100644
---- a/node_modules/expo-image/android/src/main/java/expo/modules/image/GlideModelProvider.kt
-+++ b/node_modules/expo-image/android/src/main/java/expo/modules/image/GlideModelProvider.kt
-@@ -19,7 +19,9 @@ data class DecodedModelProvider(
- }
- 
- data class UrlModelProvider(
--  private val glideUrl: GlideUrl
-+  private val glideUrl: GlideUrl,
-+  // A new consumer attempt must still reach RequestManager (including explicit retry).
-+  private val diagnosticHeaders: Map<String, String> = emptyMap()
- ) : GlideModelProvider {
-   override fun getGlideModel() = GlideUrlWrapper(glideUrl)
- }
+         )
 diff --git a/node_modules/expo-image/android/src/main/java/expo/modules/image/okhttp/ExpoImageOkHttpClientGlideModule.kt b/node_modules/expo-image/android/src/main/java/expo/modules/image/okhttp/ExpoImageOkHttpClientGlideModule.kt
 index aded0c8..8a1a3c1 100644
 --- a/node_modules/expo-image/android/src/main/java/expo/modules/image/okhttp/ExpoImageOkHttpClientGlideModule.kt
@@ -292,31 +439,146 @@ index 0071b4f..67b1fa4 100644
          }
        }
        .build()
-diff --git a/node_modules/expo-image/android/build.gradle b/node_modules/expo-image/android/build.gradle
---- a/node_modules/expo-image/android/build.gradle
-+++ b/node_modules/expo-image/android/build.gradle
-@@ -68,3 +68,4 @@ dependencies {
-   testImplementation 'junit:junit:4.13.2'
-   testImplementation 'org.robolectric:robolectric:4.16'
-+  testImplementation 'org.mockito:mockito-inline:3.12.4'
+diff --git a/node_modules/expo-image/android/src/main/java/expo/modules/image/svg/SVGDrawableTranscoder.kt b/node_modules/expo-image/android/src/main/java/expo/modules/image/svg/SVGDrawableTranscoder.kt
+index 40c7fce..b9e928c 100644
+--- a/node_modules/expo-image/android/src/main/java/expo/modules/image/svg/SVGDrawableTranscoder.kt
++++ b/node_modules/expo-image/android/src/main/java/expo/modules/image/svg/SVGDrawableTranscoder.kt
+@@ -1,22 +1,61 @@
+ package expo.modules.image.svg
+ 
+ import android.content.Context
++import android.content.res.Resources
++import android.graphics.Bitmap
++import android.graphics.Canvas
+ import android.graphics.Picture
++import android.graphics.Rect
++import android.graphics.drawable.BitmapDrawable
+ import android.graphics.drawable.Drawable
+ import android.graphics.drawable.PictureDrawable
++import android.os.Trace
++import com.bumptech.glide.Glide
+ import com.bumptech.glide.load.Options
++import com.bumptech.glide.load.engine.Initializable
+ import com.bumptech.glide.load.engine.Resource
+ import com.bumptech.glide.load.resource.SimpleResource
++import com.bumptech.glide.load.resource.bitmap.BitmapResource
+ import com.bumptech.glide.load.resource.transcode.ResourceTranscoder
+ import com.caverock.androidsvg.SVG
+ import com.caverock.androidsvg.applyTintColor
+ import expo.modules.image.CustomOptions
++import kotlin.math.roundToInt
++
++private const val MAX_RASTERIZED_SVG_EDGE = 2048
++
++internal interface SVGIntrinsicSize {
++  val svgIntrinsicWidth: Int
++  val svgIntrinsicHeight: Int
++}
+ 
+ /**
+  * We have to use the intrinsicWidth/Height from the Picture to render the image at a high enough resolution, but at the same time we want to return the actual
+  * preferred width and height of the SVG to JS. This class allows us to do that.
+  */
+-class SVGPictureDrawable(picture: Picture, val svgIntrinsicWidth: Int, val svgIntrinsicHeight: Int) : PictureDrawable(picture)
++internal class SVGPictureDrawable(
++  picture: Picture,
++  override val svgIntrinsicWidth: Int,
++  override val svgIntrinsicHeight: Int
++) : PictureDrawable(picture), SVGIntrinsicSize
++
++private class SVGBitmapResource(
++  private val resources: Resources,
++  private val bitmap: BitmapResource,
++  private val originalWidth: Int,
++  private val originalHeight: Int
++) : Resource<Drawable>, Initializable {
++  override fun getResourceClass(): Class<Drawable> = Drawable::class.java
++
++  override fun get(): Drawable = object : BitmapDrawable(resources, bitmap.get()), SVGIntrinsicSize {
++    override val svgIntrinsicWidth = originalWidth
++    override val svgIntrinsicHeight = originalHeight
++  }
++
++  override fun getSize(): Int = bitmap.size
++  override fun initialize() = bitmap.initialize()
++  override fun recycle() = bitmap.recycle()
++}
+ 
+ /**
+  * Convert the [SVG]'s internal representation to an Android-compatible one ([Picture]).
+@@ -24,7 +63,7 @@ class SVGPictureDrawable(picture: Picture, val svgIntrinsicWidth: Int, val svgIn
+  * Copied from https://github.com/bumptech/glide/blob/10acc31a16b4c1b5684f69e8de3117371dfa77a8/samples/svg/src/main/java/com/bumptech/glide/samples/svg/SvgDrawableTranscoder.java
+  * and rewritten to Kotlin.
+  */
+-class SVGDrawableTranscoder(val context: Context) : ResourceTranscoder<SVG?, Drawable> {
++class SVGDrawableTranscoder(private val context: Context) : ResourceTranscoder<SVG?, Drawable> {
+   override fun transcode(toTranscode: Resource<SVG?>, options: Options): Resource<Drawable> {
+     val svgData = toTranscode.get()
+     // If the svg doesn't have a viewBox, we can't determine its intrinsic width and height, so we default to 512x512.
+@@ -37,13 +76,33 @@ class SVGDrawableTranscoder(val context: Context) : ResourceTranscoder<SVG?, Dra
+       applyTintColor(svgData, tintColor)
+     }
+ 
+-    val picture = SVGPictureDrawable(
+-      svgData.renderToPicture(),
+-      intrinsicWidth,
+-      intrinsicHeight
+-    )
+-    return SimpleResource(
+-      picture
+-    )
++    val picture = svgData.renderToPicture()
++    if (
++      options.get(CustomOptions.rasterizeSvg) == true &&
++      picture.width > 0 && picture.height > 0 &&
++      !picture.requiresHardwareAcceleration()
++    ) {
++      return SVGBitmapResource(context.resources, rasterize(picture), intrinsicWidth, intrinsicHeight)
++    }
++    return SimpleResource(SVGPictureDrawable(picture, intrinsicWidth, intrinsicHeight))
++  }
++
++  private fun rasterize(picture: Picture): BitmapResource {
++    val scale = minOf(1.0, MAX_RASTERIZED_SVG_EDGE.toDouble() / maxOf(picture.width, picture.height))
++    val width = (picture.width * scale).roundToInt().coerceAtLeast(1)
++    val height = (picture.height * scale).roundToInt().coerceAtLeast(1)
++    val pool = Glide.get(context).bitmapPool
++    val bitmap = pool.get(width, height, Bitmap.Config.ARGB_8888)
++    bitmap.density = context.resources.displayMetrics.densityDpi
++    Trace.beginSection("WZ.Image.RasterizeSvg")
++    try {
++      Canvas(bitmap).drawPicture(picture, Rect(0, 0, width, height))
++      return BitmapResource(bitmap, pool)
++    } catch (error: RuntimeException) {
++      pool.put(bitmap)
++      throw error
++    } finally {
++      Trace.endSection()
++    }
+   }
  }
 diff --git a/node_modules/expo-image/android/src/test/java/expo/modules/image/ExpoImageViewWrapperTest.kt b/node_modules/expo-image/android/src/test/java/expo/modules/image/ExpoImageViewWrapperTest.kt
 new file mode 100644
-index 0000000..7853f8f
+index 00000000..ed4e4f53
 --- /dev/null
 +++ b/node_modules/expo-image/android/src/test/java/expo/modules/image/ExpoImageViewWrapperTest.kt
-@@ -0,0 +1,229 @@
+@@ -0,0 +1,284 @@
 +package expo.modules.image
 +
 +import android.app.Activity
 +import android.graphics.Color
++import android.graphics.drawable.BitmapDrawable
 +import android.graphics.drawable.ColorDrawable
 +import android.graphics.drawable.Drawable
++import android.graphics.drawable.PictureDrawable
 +import android.os.Looper
 +import android.widget.FrameLayout
 +import com.bumptech.glide.RequestBuilder
 +import com.bumptech.glide.RequestManager
++import com.bumptech.glide.load.Options
++import com.bumptech.glide.load.resource.SimpleResource
 +import com.bumptech.glide.request.target.Target
++import com.caverock.androidsvg.SVG
 +import com.facebook.react.bridge.BridgeReactContext
 +import com.facebook.react.bridge.WritableMap
 +import com.facebook.react.uimanager.events.Event
@@ -325,6 +587,8 @@ index 0000000..7853f8f
 +import expo.modules.image.decodedsource.DecodedModel
 +import expo.modules.image.records.DecodedSource
 +import expo.modules.image.records.ImageProgressEvent
++import expo.modules.image.svg.SVGDrawableTranscoder
++import expo.modules.image.svg.SVGIntrinsicSize
 +import java.lang.ref.WeakReference
 +import org.junit.After
 +import org.junit.Assert.*
@@ -374,6 +638,33 @@ index 0000000..7853f8f
 +    setCache("requestManager", null)
 +    setCache("appContextRef", WeakReference<AppContext>(null))
 +    setCache("activityRef", WeakReference<Activity>(null))
++  }
++
++  @Test
++  fun scrollingSvgUsesABoundedBitmapAndFullPreviewKeepsAVector() {
++    val svg = SVG.getFromString(
++      """<svg xmlns="http://www.w3.org/2000/svg" width="4096" height="2048" viewBox="0 0 4096 2048">
++        <path d="M0 0H2048V2048H0Z" fill="red"/>
++      </svg>""".trimIndent()
++    )
++    val source = SimpleResource(svg)
++    val transcoder = SVGDrawableTranscoder(activity.get())
++    val options = Options().set(CustomOptions.rasterizeSvg, true)
++    val body = transcoder.transcode(source, options)
++    try {
++      val drawable = body.get()
++      assertTrue("A scrolling SVG must draw from a bitmap", drawable is BitmapDrawable)
++      val bitmap = (drawable as BitmapDrawable).bitmap
++      assertEquals(2048, bitmap.width)
++      assertEquals(1024, bitmap.height)
++      assertEquals(4096, (drawable as SVGIntrinsicSize).svgIntrinsicWidth)
++      assertEquals(2048, drawable.svgIntrinsicHeight)
++      assertTrue(body.size >= bitmap.byteCount)
++      assertNotSame(drawable, body.get())
++    } finally {
++      body.recycle()
++    }
++    assertTrue(transcoder.transcode(source, Options()).get() is PictureDrawable)
 +  }
 +
 +  @Test
@@ -456,7 +747,12 @@ index 0000000..7853f8f
 +    replaceImageWhileResizeIsQueued(changeRecyclingKey = false)
 +  }
 +
-+  private fun replaceImageWhileResizeIsQueued(changeRecyclingKey: Boolean) {
++  @Test
++  fun changingSvgLayerOptionsLeavesTheSameOrdinaryBitmapRequestAlone() {
++    replaceImageWhileResizeIsQueued(changeRecyclingKey = false, exerciseLayerToggle = true)
++  }
++
++  private fun replaceImageWhileResizeIsQueued(changeRecyclingKey: Boolean, exerciseLayerToggle: Boolean = false) {
 +    val first = ColorDrawable(Color.RED)
 +    val second = ColorDrawable(Color.BLUE)
 +    val requested = mutableListOf<Drawable>()
@@ -484,12 +780,28 @@ index 0000000..7853f8f
 +      val callback = event as ViewEvent<Any>
 +      doAnswer { events.add(construction.arguments()[0] as String); null }.`when`(callback).invoke(Unit)
 +    }.use {
++      if (exerciseLayerToggle) {
++        view.layoutParams = FrameLayout.LayoutParams(2200, 2200)
++        view.layout(0, 0, 2200, 2200)
++        shadowOf(Looper.getMainLooper()).idle()
++      }
 +      view.recyclingKey = "consumer-a"
 +      view.sources = listOf(DecodedSource(first))
 +      view.rerenderIfNeeded()
 +      shadowOf(Looper.getMainLooper()).idle()
 +      assertSame(first, displayedDrawable())
 +      assertEquals(listOf("onLoadStart", "onDisplay"), events)
++
++      if (exerciseLayerToggle) {
++        assertFalse(view.supportsSvgHardwareLayer())
++        for (value in listOf(true, false, true, false)) {
++          view.cacheSvgInHardwareLayer = value
++          view.rerenderIfNeeded()
++          shadowOf(Looper.getMainLooper()).idle()
++        }
++        assertEquals(listOf(first), requested)
++        assertSame(first, displayedDrawable())
++      }
 +
 +      view.layoutParams = FrameLayout.LayoutParams(200, 200)
 +      view.layout(0, 0, 200, 200)
@@ -535,3 +847,77 @@ index 0000000..7853f8f
 +    }
 +  }
 +}
+diff --git a/node_modules/expo-image/android/src/test/java/expo/modules/image/events/GlideRequestListenerTest.kt b/node_modules/expo-image/android/src/test/java/expo/modules/image/events/GlideRequestListenerTest.kt
+new file mode 100644
+index 0000000..de520b8
+--- /dev/null
++++ b/node_modules/expo-image/android/src/test/java/expo/modules/image/events/GlideRequestListenerTest.kt
+@@ -0,0 +1,41 @@
++package expo.modules.image.events
++
++import org.junit.Assert.assertEquals
++import org.junit.Test
++
++class GlideRequestListenerTest {
++  @Test
++  fun usesOriginalDimensionsCapturedDuringDownsampling() {
++    assertEquals(
++      1_000 to 5_000,
++      resolveImageLoadDimensions(
++        sourceWidth = 1_000,
++        sourceHeight = 5_000,
++        decodedWidth = 68,
++        decodedHeight = 342
++      )
++    )
++  }
++
++  @Test
++  fun fallsBackToDecodedDimensionsWhenOriginalDimensionsAreUnavailable() {
++    assertEquals(
++      68 to 342,
++      resolveImageLoadDimensions(
++        sourceWidth = -1,
++        sourceHeight = -1,
++        decodedWidth = 68,
++        decodedHeight = 342
++      )
++    )
++    assertEquals(
++      68 to 342,
++      resolveImageLoadDimensions(
++        sourceWidth = 1_000,
++        sourceHeight = -1,
++        decodedWidth = 68,
++        decodedHeight = 342
++      )
++    )
++  }
++}
+diff --git a/node_modules/expo-image/build/Image.types.d.ts b/node_modules/expo-image/build/Image.types.d.ts
+index 28a57e3..ef3d9fb 100644
+--- a/node_modules/expo-image/build/Image.types.d.ts
++++ b/node_modules/expo-image/build/Image.types.d.ts
+@@ -350,6 +350,8 @@ export interface ImageProps extends Omit<ViewProps, 'style' | 'children'> {
+      * @default true
+      */
+     allowDownscaling?: boolean;
++    /** Keep the drawing of an SVG in a hardware layer on Android. */
++    cacheSvgInHardwareLayer?: boolean;
+     /**
+      * The format in which the image data should be decoded.
+      * It's not guaranteed that the platform will use the specified format.
+diff --git a/node_modules/expo-image/src/Image.types.ts b/node_modules/expo-image/src/Image.types.ts
+index 80a1e9d..95565b8 100644
+--- a/node_modules/expo-image/src/Image.types.ts
++++ b/node_modules/expo-image/src/Image.types.ts
+@@ -418,6 +418,9 @@ export interface ImageProps extends Omit<ViewProps, 'style' | 'children'> {
+    */
+   allowDownscaling?: boolean;
+ 
++  /** Keep the drawing of an SVG in a hardware layer on Android. */
++  cacheSvgInHardwareLayer?: boolean;
++
+   /**
+    * The format in which the image data should be decoded.
+    * It's not guaranteed that the platform will use the specified format.

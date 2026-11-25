@@ -5,7 +5,8 @@ import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import type { ReadGateway } from '@/sources/readGateway';
 import type { ReaderView, ReaderCommand } from '@/domain/reader/readerRecordState';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
-import type { LinuxDoReadRecovery, RequestAccountRecheck } from '@/domain/session/sessionContracts';
+import type { RequestAccountRecheck } from '@/domain/session/sessionContracts';
+import type { ReadRecovery } from '@/platform/query/readRecovery';
 import type { WritableSessionTicket } from '@/domain/session/writableSessionGate';
 import type { ReaderStyleContextValue } from '@/ui/theme/ReaderStyleProvider';
 
@@ -25,11 +26,8 @@ export type TopicRouteRuntimeValue = {
     requestAccountRecheck: RequestAccountRecheck;
     readGateway: ReadGateway;
     reconcileAccountStatus: (source: SessionSource) => Promise<unknown>;
-    requestNodeSeekVerification: (message: string, recovery: LinuxDoReadRecovery) => void;
-    showLinuxDoVerification: (
-      message?: string,
-      recovery?: LinuxDoReadRecovery
-    ) => void | boolean | Promise<void | boolean>;
+    requestNodeSeekVerification: (message: string, recovery: ReadRecovery) => void;
+    showLinuxDoVerification: (message?: string, recovery?: ReadRecovery) => void | boolean | Promise<void | boolean>;
     showYaohuoLogin: (message?: string) => void;
   };
   appActive: boolean;

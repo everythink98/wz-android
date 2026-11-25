@@ -1,4 +1,4 @@
-import { parseHtml, sortTopicsByCreatedAt, sortTopicsByTime, toIsoString } from '@/domain/forum/html';
+import { isRecord, parseHtml, sortTopicsByCreatedAt, sortTopicsByTime, toIsoString } from '@/domain/forum/html';
 import { getFeed } from '@/sources/feedRead';
 import { getLinuxDoUserTopics } from '@/sources/linuxdo/account';
 import { getLinuxDoTopic } from '@/sources/linuxdo/reader';
@@ -8,6 +8,39 @@ import { parseYaohuoListHtml } from '@/sources/yaohuo/feedParser';
 import { parseYaohuoTopicHtml } from '@/sources/yaohuo/topicParser';
 import { parseYaohuoUserProfileDocument } from '@/sources/yaohuo/userParser';
 import { check } from '../proofCheck';
+
+export async function scopedAggregateFeedFixtureCursor(source: 'linuxdo' | 'v2ex', fixture: object) {
+  const seed = await getFeed({
+    source: 'all',
+    includedSources: [source],
+    limit: 1,
+    discourseAuth: { userAgent: 'proof' },
+    fetcher: async (input) => {
+      if (source === 'v2ex') {
+        return new Response(
+          '<div class="cell item"><a class="topic-link" href="/t/101">Seed topic</a></div>' +
+            '<a href="/recent">更多新主题</a>'
+        );
+      }
+      const topics = new URL(input).searchParams.has('order')
+        ? [101, 102].map((id) => ({
+            id,
+            title: `Seed ${id}`,
+            slug: 'seed',
+            posts_count: 1,
+            created_at: '2026-10-01T00:00:00.000Z'
+          }))
+        : [];
+      return new Response(JSON.stringify({ topic_list: { topics } }), {
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+  });
+  check(seed.nextCursor, `Missing scoped ${source} aggregate fixture cursor`);
+  const wire: unknown = JSON.parse(decodeURIComponent(seed.nextCursor));
+  check(isRecord(wire) && typeof wire.bind === 'string', 'Missing aggregate fixture binding');
+  return encodeURIComponent(JSON.stringify({ ...fixture, bind: wire.bind }));
+}
 
 export async function verifySourcePaginationReview() {
   const row = (id: number) =>
@@ -32,12 +65,10 @@ export async function verifySourcePaginationReview() {
   }
   check(ids.join(',') === '1,2,3,4,5' && !result.hasMore, 'V2EX 最新主题分页漏项或重复');
   const buffered = { source: 'v2ex', id: '8', title: '缓存主题', url: 'https://www.v2ex.com/t/8', createdAt: '' };
-  const cursor = encodeURIComponent(
-    JSON.stringify({
-      buffers: { v2ex: [buffered, { ...buffered, source: 'yaohuo', id: '9' }, { ...buffered, id: '10', url: 42 }] },
-      sourceCursors: { v2ex: 'orphan' }
-    })
-  );
+  const cursor = await scopedAggregateFeedFixtureCursor('v2ex', {
+    buffers: { v2ex: [buffered, { ...buffered, source: 'yaohuo', id: '9' }, { ...buffered, id: '10', url: 42 }] },
+    sourceCursors: { v2ex: 'orphan' }
+  });
   const drained = await getFeed({
     source: 'all',
     includedSources: ['v2ex'],

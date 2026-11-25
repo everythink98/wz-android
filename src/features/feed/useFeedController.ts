@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { hashKey, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
-import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
+import { hashKey, useQuery, useQueryClient, type InfiniteData, type Query, type QueryKey } from '@tanstack/react-query';
+import type { LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
+import type { ReadRecovery } from '@/platform/query/readRecovery';
 import type { ReadGateway } from '@/sources/readGateway';
 import { useDiscourseVisited } from '@/platform/query/useDiscourseVisited';
 import {
@@ -11,7 +12,9 @@ import {
   shouldUseReadingFilter
 } from '@/domain/forum/feedOptions';
 import { applyFeedFilter, mergeCategories, mergeTopics, type ReadingFilter } from '@/domain/forum/feed';
+import { topicKey } from '@/domain/reader/readerData';
 import type { ReaderView } from '@/domain/reader/readerRecordState';
+import { applyFeedTopicUpdate } from '@/sources/linuxdo/reader';
 import {
   aggregateForumReadPlan,
   forumReadSites,
@@ -46,7 +49,12 @@ import type {
 } from '@/domain/forum/models';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { forumQueryKeys } from '@/platform/query/serverState';
-import { useFirstPageInfiniteQuery } from '@/platform/query/useFirstPageInfiniteQuery';
+import {
+  resumeExactQuery,
+  resumeInfiniteQueryPage,
+  useFirstPageInfiniteQuery,
+  type FirstPageInfiniteQueryOptions
+} from '@/platform/query/useFirstPageInfiniteQuery';
 import { createFeedRefreshIntent } from './feedRefreshIntent';
 
 type FeedPageParam = PagePosition;
@@ -60,6 +68,7 @@ type FeedSourceState = {
   loadMoreFailureSignal: number;
   loadMoreErrorMessage?: string;
   loadingMore: boolean;
+  manualContinuation: boolean;
   nextCursor?: string;
   page: number;
   refreshing: boolean;
@@ -116,16 +125,40 @@ function validateFeedPage(source: FeedSource, pageParam: FeedPageParam, response
   return { ...response, ...pageParam, errors };
 }
 
-function mergeFeedPages(pages: FeedPage[]) {
+function mergeFeedPages(pages: FeedPage[], source: FeedSource) {
   const lastPage = pages.at(-1);
   if (!lastPage) return { errors: {}, hasMore: false, items: [], nextPage: null };
+  const merged = mergeTopics(
+    [],
+    pages.flatMap((page) => page.items)
+  );
+  const hasUpdates = pages.some((page) => Boolean(page.topicUpdates?.length));
+  let items = merged;
+  if (hasUpdates && merged.length) {
+    const indexByKey = new Map<string, number>();
+    merged.forEach((topic, index) => {
+      indexByKey.set(topicKey(topic), index);
+    });
+    let updated: Topic[] | undefined;
+    for (const page of pages) {
+      for (const update of page.topicUpdates || []) {
+        const index = indexByKey.get(topicKey(update));
+        if (index === undefined) continue;
+        const current = (updated ?? merged)[index]!;
+        const next = applyFeedTopicUpdate(current, update);
+        if (next === current) continue;
+        updated ??= [...merged];
+        updated[index] = next;
+      }
+    }
+    if (updated) {
+      items = source === 'all' ? updated.filter((topic) => topic.pinned !== true) : updated;
+    }
+  }
   return {
     ...lastPage,
     errors: pages.reduce((errors, page) => ({ ...errors, ...page.errors }), {}),
-    items: mergeTopics(
-      [],
-      pages.flatMap((page) => page.items)
-    )
+    items
   };
 }
 
@@ -149,6 +182,9 @@ function safeFeedSnapshot(previous: FeedSnapshot | undefined, current: FeedRead)
     ),
     hasMore: false,
     items: page.items.filter((topic) => retainedSources.has(topic.source)),
+    ...(page.topicUpdates
+      ? { topicUpdates: page.topicUpdates.filter((topic) => retainedSources.has(topic.source)) }
+      : {}),
     nextCursor: null,
     nextPage: null
   }));
@@ -191,6 +227,7 @@ export function useFeedController({
   catalogCategories,
   sessionEpochs = initialForumSessionEpochs,
   linuxDoVerificationActive,
+  nodeSeekVerificationActive = false,
   notify,
   readerData,
   readerDataLoaded,
@@ -206,14 +243,12 @@ export function useFeedController({
   catalogCategories: Category[];
   sessionEpochs?: ForumSessionEpochs;
   linuxDoVerificationActive: boolean;
+  nodeSeekVerificationActive?: boolean;
   notify: (message: string) => void;
   readerData: ReaderView;
   readerDataLoaded: boolean;
-  showLinuxDoVerification: (
-    message?: string,
-    recovery?: LinuxDoReadRecovery
-  ) => void | boolean | Promise<void | boolean>;
-  showNodeSeekVerification: (message?: string) => void;
+  showLinuxDoVerification: (message?: string, recovery?: ReadRecovery) => void | boolean | Promise<void | boolean>;
+  showNodeSeekVerification: (message: string, recovery: ReadRecovery) => void;
   showYaohuoLogin: (message?: string) => void;
   readGateway: ReadGateway;
 }) {
@@ -241,8 +276,17 @@ export function useFeedController({
     setFeedSource('all');
     setCategoryFilterState('');
   }, [feedSourceIncluded]);
-  const handledSourceCategoriesErrorRef = useRef<unknown>(undefined);
-  const handledFeedErrorRef = useRef<unknown>(undefined);
+  const [handledReadErrors] = useState(() => new WeakMap<Query, number>());
+  const claimReadError = useCallback(
+    (queryKey: QueryKey, error: unknown) => {
+      const query = queryClient.getQueryCache().find({ queryKey, exact: true });
+      if (!query || query.state.fetchStatus !== 'idle' || !error || query.state.error !== error) return false;
+      if (handledReadErrors.get(query) === query.state.errorUpdateCount) return false;
+      handledReadErrors.set(query, query.state.errorUpdateCount);
+      return true;
+    },
+    [handledReadErrors, queryClient]
+  );
   const handledPartialErrorsRef = useRef<unknown>(undefined);
   const yaohuoLoginPromptedRef = useRef(false);
   const feedReadPlan =
@@ -276,7 +320,7 @@ export function useFeedController({
     feedSourceRequestEnabled && feedSource !== 'all' && shouldLoadCategoriesForSource(catalogCategories, feedSource);
   const sourceCategoriesSource = feedSource === 'all' ? 'v2ex' : feedSource;
   const sourceCategoriesReadPlan = readGateway.getReadPlan(sourceCategoriesSource, 'categories');
-  const sourceCategoriesQuery = useQuery({
+  const sourceCategoriesOptions = {
     queryKey: forumQueryKeys.categories(
       sourceCategoriesSource,
       sessionEpochs,
@@ -284,7 +328,7 @@ export function useFeedController({
       sourceCategoriesReadPlan.cacheScope
     ),
     enabled: feedActive && !linuxDoVerificationActive && needsSourceCategories,
-    queryFn: async ({ signal }) => {
+    queryFn: async ({ signal }: { signal: AbortSignal }) => {
       const trace = beginDiagnosticTrace('feed', 'categories', { source: feedSource });
       try {
         const data = await readGateway.getCategories(
@@ -305,7 +349,8 @@ export function useFeedController({
         throw error;
       }
     }
-  });
+  };
+  const sourceCategoriesQuery = useQuery(sourceCategoriesOptions);
   const categories = useMemo(
     () =>
       mergeCategories(
@@ -340,7 +385,16 @@ export function useFeedController({
     const current = activeFeedRead.current;
     return current?.hash === feedQueryHash && current.layout === feedLayoutKey ? current : null;
   }, [feedLayoutKey, feedQueryHash]);
-  const [feedQuery, refreshFeedFirstPage] = useFirstPageInfiniteQuery<FeedPage, FeedPageParam>({
+  const nodeSeekReadScope = hashKey([feedLayoutKey, categoryFilter, feedFilter, sessionEpochs.nodeseek]);
+  const nodeSeekReadOwner = useRef<object | null>(null);
+  const nodeSeekReadActive = feedActive && feedSourceRequestEnabled && feedSource === 'nodeseek';
+  useLayoutEffect(() => {
+    nodeSeekReadOwner.current = nodeSeekReadActive ? { scope: nodeSeekReadScope } : null;
+    return () => {
+      nodeSeekReadOwner.current = null;
+    };
+  }, [nodeSeekReadActive, nodeSeekReadScope]);
+  const feedOptions: FirstPageInfiniteQueryOptions<FeedPage, FeedPageParam> = {
     queryKey: feedQueryKey,
     enabled: feedActive && feedEnabled,
     initialPageParam: { page: 1 } satisfies FeedPageParam,
@@ -369,6 +423,15 @@ export function useFeedController({
           {
             plan: feedRead.plan,
             trace,
+            ...(pageParam.page > 1
+              ? {
+                  hasSelectedFeedTopic: (id: string) =>
+                    queryClient
+                      .getQueryData<InfiniteData<FeedPage, FeedPageParam>>(feedQueryKey)
+                      ?.pages.some((page) => page.items.some((item) => item.source === 'linuxdo' && item.id === id)) ===
+                    true
+                }
+              : {}),
             ...(pageParam.page === 1 && !queryClient.getQueryData(feedQueryKey)
               ? {
                   onProgress: (response: FeedResponse) => {
@@ -439,7 +502,8 @@ export function useFeedController({
       }
     },
     getNextPageParam: nextFeedPage
-  });
+  };
+  const [feedQuery, refreshFeedFirstPage] = useFirstPageInfiniteQuery(feedOptions);
   const retainedFeed = useMemo(() => safeFeedSnapshot(feedSnapshot, feedRead), [feedSnapshot, feedRead]);
   const feedData = feedQuery.data ?? retainedFeed;
   useLayoutEffect(() => {
@@ -460,7 +524,7 @@ export function useFeedController({
     publishRefresh();
     return () => refreshIntent.invalidate();
   }, [feedActive, feedLayoutKey, feedQueryHash, feedSourceRequestEnabled, publishRefresh, refreshIntent]);
-  const mergedFeed = useMemo(() => mergeFeedPages(pages), [pages]);
+  const mergedFeed = useMemo(() => mergeFeedPages(pages, feedSource), [feedSource, pages]);
   const lastPage = pages.at(-1);
   const nextPage = feedSourceRequestEnabled && feedQuery.data && lastPage ? nextFeedPage(lastPage) : undefined;
   const loadMoreError = feedSourceRequestEnabled && feedQuery.isFetchNextPageError;
@@ -476,6 +540,7 @@ export function useFeedController({
       loadMoreFailureSignal: loadMoreError ? feedQuery.errorUpdatedAt : 0,
       loadMoreErrorMessage: loadMoreError ? feedQuery.error?.message : undefined,
       loadingMore: feedQuery.isFetchingNextPage,
+      manualContinuation: Boolean(nextPage && lastPage?.manualContinuation),
       nextCursor: nextPage?.cursor,
       page: lastPage?.page || 1,
       refreshing: manualRefreshing || (feedQuery.isRefetching && !feedQuery.isFetchingNextPage)
@@ -486,6 +551,7 @@ export function useFeedController({
       feedQuery.isFetchingNextPage,
       feedQuery.isRefetching,
       feedSourceRequestEnabled,
+      lastPage?.manualContinuation,
       lastPage?.page,
       loadMoreError,
       manualRefreshing,
@@ -514,12 +580,12 @@ export function useFeedController({
           feedQuery.isError ? sourceErrorsFromFeedError(feedSource, feedQuery.error) : mergedFeed.errors
         );
   const resumeLinuxDoFeed = useCallback(
-    async (loadMore: boolean): Promise<LinuxDoReadResumeOutcome> => {
+    async (loadMore: boolean, signal?: AbortSignal): Promise<LinuxDoReadResumeOutcome> => {
       const owner = currentFeedRead();
-      if (!owner) return 'stale';
+      if (!owner || signal?.aborted) return 'stale';
       const result = loadMore ? await feedQuery.fetchNextPage({ cancelRefetch: false }) : await refreshFeedFirstPage();
-      if (activeFeedRead.current !== owner) return 'stale';
-      handledFeedErrorRef.current = result.error;
+      if (signal?.aborted || activeFeedRead.current !== owner) return 'stale';
+      claimReadError(feedQueryKey, result.error);
       const errors = result.data?.pages.at(-1)?.errors || {};
       handledPartialErrorsRef.current = errors;
       if (errors.linuxdo) return sourceReadRecoveryOutcome('linuxdo', errors.linuxdo);
@@ -528,7 +594,30 @@ export function useFeedController({
         result.error instanceof FeedQueryError ? result.error.sourceErrors.linuxdo || result.error : result.error;
       return sourceReadRecoveryOutcome('linuxdo', error);
     },
-    [currentFeedRead, feedQuery.fetchNextPage, refreshFeedFirstPage]
+    [claimReadError, currentFeedRead, feedQuery.fetchNextPage, feedQueryKey, refreshFeedFirstPage]
+  );
+
+  const requestNodeSeekReadRecovery = useCallback(
+    (
+      message: string,
+      queryKey: readonly unknown[],
+      plan: ForumReadPlan,
+      resume: (ownsRead: () => boolean, signal?: AbortSignal) => Promise<LinuxDoReadResumeOutcome>
+    ) => {
+      const owner = nodeSeekReadOwner.current;
+      if (!owner || nodeSeekVerificationActive) return;
+      const isCurrent = () => nodeSeekReadOwner.current === owner;
+      showNodeSeekVerification(message, {
+        queryKey,
+        isCurrent,
+        resume: (signal) =>
+          resume(
+            () => isCurrent() && readGateway.getReadPlan('nodeseek', plan.operation).cacheScope === plan.cacheScope,
+            signal
+          )
+      });
+    },
+    [nodeSeekVerificationActive, readGateway, showNodeSeekVerification]
   );
 
   useEffect(() => {
@@ -537,26 +626,34 @@ export function useFeedController({
       feedSource === 'all' ||
       !feedSourceRequestEnabled ||
       !sourceCategoriesQuery.isError ||
-      handledSourceCategoriesErrorRef.current === sourceCategoriesQuery.error
+      !claimReadError(sourceCategoriesOptions.queryKey, sourceCategoriesQuery.error)
     ) {
-      return;
-    }
-    handledSourceCategoriesErrorRef.current = sourceCategoriesQuery.error;
-    if (sourceCategoriesQuery.isFetching) {
       return;
     }
     const error = sourceErrorFromUnknown(feedSource, sourceCategoriesQuery.error);
     if (feedSource === 'nodeseek' && error.kind === 'verification-required') {
-      showNodeSeekVerification(error.message);
+      const { queryKey } = sourceCategoriesOptions;
+      requestNodeSeekReadRecovery(error.message, queryKey, sourceCategoriesReadPlan, async (ownsRead, signal) => {
+        const result = await resumeExactQuery(queryClient, sourceCategoriesOptions, ownsRead, signal);
+        if (result.kind === 'failed') {
+          claimReadError(queryKey, result.error);
+          return sourceReadRecoveryOutcome('nodeseek', result.error);
+        }
+        return result.kind === 'success' ? 'completed' : 'stale';
+      });
     } else {
       notify(error.message);
     }
   }, [
+    claimReadError,
     feedActive,
     feedSource,
     feedSourceRequestEnabled,
     notify,
-    showNodeSeekVerification,
+    queryClient,
+    requestNodeSeekReadRecovery,
+    sourceCategoriesOptions,
+    sourceCategoriesReadPlan,
     sourceCategoriesQuery.errorUpdatedAt,
     sourceCategoriesQuery.isError,
     sourceCategoriesQuery.isFetching,
@@ -568,12 +665,8 @@ export function useFeedController({
       !feedActive ||
       !feedSourceRequestEnabled ||
       !feedQuery.isError ||
-      handledFeedErrorRef.current === feedQuery.error
+      !claimReadError(feedQueryKey, feedQuery.error)
     ) {
-      return;
-    }
-    handledFeedErrorRef.current = feedQuery.error;
-    if (feedQuery.isFetching) {
       return;
     }
     const errors = sourceErrorsFromFeedError(feedSource, feedQuery.error);
@@ -581,15 +674,25 @@ export function useFeedController({
     const loadMorePrefix = loadMoreError ? '加载下一页失败：' : '';
     const message = `${loadMorePrefix}${sourceError.message}`;
     const nodeSeekMessage = nodeSeekVerificationNavigationMessage(feedSource, errors);
-    if (nodeSeekMessage || (feedSource === 'nodeseek' && sourceError.kind === 'verification-required')) {
-      showNodeSeekVerification(nodeSeekMessage ? `${loadMorePrefix}${nodeSeekMessage}` : message);
+    if (feedRead.plan.source === 'nodeseek' && (nodeSeekMessage || sourceError.kind === 'verification-required')) {
+      const pageParam = feedQuery.error instanceof FeedQueryError ? feedQuery.error.pageParam : null;
+      const page = loadMoreError && pageParam ? ({ kind: 'next', pageParam } as const) : ({ kind: 'first' } as const);
+      requestNodeSeekReadRecovery(message, feedQueryKey, feedRead.plan, async (ownsRead, signal) => {
+        const result = await resumeInfiniteQueryPage(queryClient, feedOptions, page, ownsRead, signal);
+        if (result.kind === 'stale') return 'stale';
+        if (result.kind === 'success') return 'completed';
+        claimReadError(feedQueryKey, result.error);
+        const failure =
+          result.error instanceof FeedQueryError ? (result.error.sourceErrors.nodeseek ?? result.error) : result.error;
+        return sourceReadRecoveryOutcome('nodeseek', failure);
+      });
       return;
     }
     const linuxDoMessage = linuxDoVerificationNavigationMessage(feedSource, errors);
     if (linuxDoMessage || (feedSource === 'linuxdo' && sourceError.kind === 'verification-required')) {
-      const recovery: LinuxDoReadRecovery = {
+      const recovery: ReadRecovery = {
         queryKey: feedQueryKey,
-        resume: () => resumeLinuxDoFeed(loadMoreError)
+        resume: (signal) => resumeLinuxDoFeed(loadMoreError, signal)
       };
       void showLinuxDoVerification(linuxDoMessage ? `${loadMorePrefix}${linuxDoMessage}` : message, recovery);
       return;
@@ -602,10 +705,13 @@ export function useFeedController({
     }
     if (!loadMoreError) notify(message);
   }, [
+    claimReadError,
     feedQuery.errorUpdatedAt,
     feedQuery.isFetching,
     feedQuery.isError,
     feedQueryKey,
+    feedRead.plan,
+    feedOptions,
     feedActive,
     feedSource,
     feedSourceRequestEnabled,
@@ -613,7 +719,8 @@ export function useFeedController({
     notify,
     resumeLinuxDoFeed,
     showLinuxDoVerification,
-    showNodeSeekVerification,
+    queryClient,
+    requestNodeSeekReadRecovery,
     showYaohuoLogin
   ]);
 
@@ -629,14 +736,11 @@ export function useFeedController({
       return;
     }
     handledPartialErrorsRef.current = errors;
-    const nodeSeekMessage = nodeSeekVerificationNavigationMessage(feedSource, errors);
     const linuxDoMessage = linuxDoVerificationNavigationMessage(feedSource, errors);
-    if (nodeSeekMessage) {
-      showNodeSeekVerification(nodeSeekMessage);
-    } else if (linuxDoMessage) {
+    if (linuxDoMessage) {
       void showLinuxDoVerification(linuxDoMessage, {
         queryKey: feedQueryKey,
-        resume: () => resumeLinuxDoFeed(false)
+        resume: (signal) => resumeLinuxDoFeed(false, signal)
       });
     } else {
       notify(formatSourceErrorMessages(errors, sourceLabel));
@@ -650,8 +754,7 @@ export function useFeedController({
     feedQuery.data,
     notify,
     resumeLinuxDoFeed,
-    showLinuxDoVerification,
-    showNodeSeekVerification
+    showLinuxDoVerification
   ]);
 
   const loadFeed = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {

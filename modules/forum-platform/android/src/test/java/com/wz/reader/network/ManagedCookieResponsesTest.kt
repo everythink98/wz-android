@@ -807,7 +807,7 @@ class ManagedCookieResponsesTest {
       "_t=A"
     }
     val client = OkHttpClient.Builder().cookieJar(JavaNetCookieJar(handler))
-      .addInterceptor(ForumMediaRequestInterceptor(sourceForUri = { "linuxdo" }, defaultUserAgent = { "provider-user-agent" }))
+      .addInterceptor(ForumMediaRequestInterceptor(sourceForUrl = { "linuxdo" }, defaultUserAgent = { "provider-user-agent" }))
       .addInterceptor(CookieResponseContextInterceptor(store))
       .addNetworkInterceptor(CookieResponseInterceptor(store)).build()
     try {

@@ -46,7 +46,7 @@ index 7089679..c8a777d 100644
      val height = MeasureSpec.getSize(heightMeasureSpec)
 diff --git a/node_modules/expo-blur/android/src/test/java/expo/modules/blur/ExpoBlurTargetViewTest.kt b/node_modules/expo-blur/android/src/test/java/expo/modules/blur/ExpoBlurTargetViewTest.kt
 new file mode 100644
-index 0000000..af5664d
+index 0000000..6e55d54
 --- /dev/null
 +++ b/node_modules/expo-blur/android/src/test/java/expo/modules/blur/ExpoBlurTargetViewTest.kt
 @@ -0,0 +1,55 @@
@@ -67,7 +67,7 @@ index 0000000..af5664d
 +import org.robolectric.annotation.Config
 +
 +@RunWith(RobolectricTestRunner::class)
-+@Config(sdk = [28, 35], manifest = Config.NONE)
++@Config(sdk = [29, 35], manifest = Config.NONE)
 +class ExpoBlurTargetViewTest {
 +  @Test
 +  fun removedContentStaysDrawnUntilTheRemovalTransitionEnds() {
@@ -132,7 +132,7 @@ index 71344c8..663ba6e 100644
    }
 diff --git a/node_modules/expo-blur/android/src/test/java/expo/modules/blur/ExpoBlurViewTest.kt b/node_modules/expo-blur/android/src/test/java/expo/modules/blur/ExpoBlurViewTest.kt
 new file mode 100644
-index 0000000..8065c00
+index 0000000..59f68f6
 --- /dev/null
 +++ b/node_modules/expo-blur/android/src/test/java/expo/modules/blur/ExpoBlurViewTest.kt
 @@ -0,0 +1,176 @@
@@ -257,7 +257,7 @@ index 0000000..8065c00
 +  }
 +
 +  @Test
-+  @Config(sdk = [28, 35], manifest = Config.NONE)
++  @Config(sdk = [29, 35], manifest = Config.NONE)
 +  fun aNoneMethodDoesNotInstallTargetListeners() = withFixture { view, host, targets ->
 +    view.setBlurTargetId(1)
 +    view.setBlurMethod(BlurMethod.NONE)
@@ -267,7 +267,7 @@ index 0000000..8065c00
 +  }
 +
 +  @Test
-+  @Config(sdk = [28], manifest = Config.NONE)
++  @Config(sdk = [29], manifest = Config.NONE)
 +  fun sdk31OnlyBlurKeepsItsOlderApiFallbackAfterTargetChanges() {
 +    // Count attempted renderer construction without requiring Robolectric to load a RenderScript driver.
 +    mockConstruction(RenderScriptBlur::class.java).use { renderer ->
@@ -284,7 +284,7 @@ index 0000000..8065c00
 +  }
 +
 +  @Test
-+  @Config(sdk = [28], manifest = Config.NONE)
++  @Config(sdk = [29], manifest = Config.NONE)
 +  fun theGeneralBlurMethodStillConfiguresItsOlderApiRenderer() {
 +    mockConstruction(RenderScriptBlur::class.java).use { renderer ->
 +      withFixture { view, _, _ ->

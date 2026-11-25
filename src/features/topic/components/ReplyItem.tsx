@@ -785,10 +785,8 @@ export function ReplyItem({
                 <DiscoursePolicyPanel
                   policy={policy}
                   busy={actionBusy}
-                  disabled={!decisionFor({ action: 'policy' }).allowed || policySubmission?.version === policy.version}
-                  status={
-                    policySubmission?.version === policy.version ? '操作已提交，请刷新公告核对阅读状态' : undefined
-                  }
+                  disabled={!decisionFor({ action: 'policy' }).allowed || Boolean(policySubmission)}
+                  status={policySubmission ? '请刷新公告核对阅读状态' : undefined}
                   onSetAcceptance={(accepted) => onSetPolicyAcceptance(policy, accepted)}
                 />
               ) : null}

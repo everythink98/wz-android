@@ -2,7 +2,7 @@ import type { Source, SessionSource } from '@/domain/forum/sourceCatalog';
 import { createContext, useContext, type ReactNode } from 'react';
 import type { TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import type { ReaderView, ReaderCommand } from '@/domain/reader/readerRecordState';
-import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
+import type { ReadRecovery } from '@/platform/query/readRecovery';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import type { ReadGateway } from '@/sources/readGateway';
 
@@ -12,12 +12,9 @@ export type UserRouteRuntimeValue = {
     linuxDoVerificationVisible: boolean;
     readGateway: ReadGateway;
     reconcileAccountStatus: (source: SessionSource) => Promise<unknown>;
-    requestNodeSeekVerification: (message: string, recovery?: LinuxDoReadRecovery) => void;
+    requestNodeSeekVerification: (message: string, recovery?: ReadRecovery) => void;
     sessionEpochs: ForumSessionEpochs;
-    showLinuxDoVerification: (
-      message?: string,
-      recovery?: LinuxDoReadRecovery
-    ) => void | boolean | Promise<void | boolean>;
+    showLinuxDoVerification: (message?: string, recovery?: ReadRecovery) => void | boolean | Promise<void | boolean>;
     showYaohuoLogin: (message?: string) => void;
   };
   appActive: boolean;

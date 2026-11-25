@@ -409,6 +409,30 @@ describe('Composer native keyboard viewport', () => {
     await act(() => currentClose.forEach((animation) => animation.finish()));
     expect(mockKeyboardSubscriptions).toBe(0);
   });
+
+  it('does not dismiss unrelated keyboard focus on initial mount or after the panel exit', async () => {
+    const dismiss = jest.spyOn(Keyboard, 'dismiss').mockImplementation(() => undefined);
+    const sheet = (visible: boolean) => (
+      <ComposerBottomSheet dark={false} fixedContent visible={visible} onOpenChange={() => {}}>
+        {() => <Text>编辑器</Text>}
+      </ComposerBottomSheet>
+    );
+    try {
+      const view = await render(sheet(false));
+      expect(dismiss).not.toHaveBeenCalled();
+      await view.rerender(sheet(true));
+      mockHoldAnimations = true;
+      await view.rerender(sheet(false));
+      const host = view.getByTestId('composer-bottom-sheet', { includeHiddenElements: true });
+      expect(host).toHaveProp('pointerEvents', 'none');
+      expect(host).toHaveProp('enabled', false);
+      expect(host).toHaveProp('dismissOnDisable', true);
+      await act(() => mockAnimations.splice(0).forEach((animation) => animation.finish()));
+      expect(dismiss).not.toHaveBeenCalled();
+    } finally {
+      dismiss.mockRestore();
+    }
+  });
   it('keeps fullscreen and return geometry on the same editor without repeating initial focus', async () => {
     const host = (presentation: 'sheet' | 'fullscreen', active = true) => (
       <ComposerBottomSheet

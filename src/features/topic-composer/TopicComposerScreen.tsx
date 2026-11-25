@@ -541,7 +541,7 @@ export function TopicComposerScreen({
   });
   const freshTagResult = tagSearch.rulesCurrent ? tagSearch.result : undefined;
   const allowed = (field: keyof NonNullable<typeof c.editContext>['permissions']) =>
-    !c.editing || c.editContext?.permissions[field] === true;
+    !c.editing || (!c.replacementDocument && c.editContext?.permissions[field] === true);
   const titleEditable = !c.busy && allowed('title');
   const bodyReadOnly = c.busy || preview || !allowed('body');
   useEffect(() => {
@@ -769,10 +769,48 @@ export function TopicComposerScreen({
     c.busy ||
     c.loading ||
     c.contextLoading ||
+    Boolean(c.replacementDocument) ||
     c.uploading ||
     unresolved ||
     !c.session?.canWrite ||
     !c.enabled;
+  const renderDraftRecovery = () => {
+    if (c.loading && (!draft || c.enabled)) return <LoadingState compact text="恢复草稿中" />;
+    if (!c.enabled)
+      return (
+        <>
+          <Text style={styles.text}>此网站已停用</Text>
+          <AppButton label="管理内容来源" onPress={onManageSources} />
+        </>
+      );
+    if (c.recoverInitialEditRead)
+      return (
+        <>
+          <Text style={styles.text}>请完成验证后继续读取主帖</Text>
+          <AppButton label="完成验证后继续" onPress={c.recoverInitialEditRead} disabled={editorObscured && c.busy} />
+        </>
+      );
+    if (draft)
+      return (
+        <>
+          <Text style={styles.error}>尚未完成草稿保存与切换，原草稿仍保留。</Text>
+          <AppButton label="重试保存并恢复" onPress={() => c.retryDraft()} disabled={c.busy} />
+        </>
+      );
+    const loggedIn = c.session?.isLoggedIn;
+    return (
+      <>
+        <Text style={styles.text}>{loggedIn ? '草稿暂时无法读取' : '登录后创建和恢复你的草稿'}</Text>
+        <AppButton
+          label={loggedIn ? '重试读取草稿' : '登录当前网站'}
+          onPress={() => {
+            if (loggedIn) c.retryDraft();
+            else if (c.source) onOpenAccount(c.source);
+          }}
+        />
+      </>
+    );
+  };
   return (
     <NavigationBackdropProvider>
       <ComposerKeyboardHost
@@ -878,25 +916,8 @@ export function TopicComposerScreen({
                   </View>
                 </View>
               ) : null}
-              {c.loading && !draft ? (
-                <View style={styles.center}>
-                  <LoadingState compact text="恢复草稿中" />
-                </View>
-              ) : !c.enabled && !draft ? (
-                <View style={styles.center}>
-                  <Text style={styles.text}>此网站已停用</Text>
-                  <AppButton label="管理内容来源" onPress={onManageSources} />
-                </View>
-              ) : !draft ? (
-                <View style={styles.center}>
-                  <Text style={styles.text}>
-                    {c.session?.isLoggedIn ? '草稿暂时无法读取' : '登录后创建和恢复你的草稿'}
-                  </Text>
-                  <AppButton
-                    label={c.session?.isLoggedIn ? '重试读取草稿' : '登录当前网站'}
-                    onPress={() => (c.session?.isLoggedIn ? c.retryDraft() : c.source && onOpenAccount(c.source))}
-                  />
-                </View>
+              {!draft ? (
+                <View style={styles.center}>{renderDraftRecovery()}</View>
               ) : (
                 <View style={styles.flex}>
                   <View
@@ -1170,9 +1191,10 @@ export function TopicComposerScreen({
                           onReturnToEditor={returnToEditor}
                           actionBusy={c.busy}
                           visible={active && panel === null}
-                          content={draft.body}
-                          initialMode={draft.mode}
+                          content={c.replacementDocument?.draft.body ?? draft.body}
+                          initialMode={c.replacementDocument?.draft.mode ?? draft.mode}
                           readOnly={bodyReadOnly}
+                          replacementDocument={c.replacementDocument}
                           focusSignal={bodyFocusSignal}
                           intent={
                             draft.edit
@@ -1184,7 +1206,9 @@ export function TopicComposerScreen({
                                 }
                               : { kind: 'create-topic', site: draft.source, draftId: draft.id }
                           }
-                          pendingNodeSeekPolls={draft.pendingNodeSeekPolls}
+                          pendingNodeSeekPolls={
+                            c.replacementDocument?.draft.pendingNodeSeekPolls ?? draft.pendingNodeSeekPolls
+                          }
                           nodeSeekMemberId={
                             draft.source === 'nodeseek' ? draft.identityKey.slice('nodeseek:'.length) : undefined
                           }
@@ -1205,19 +1229,7 @@ export function TopicComposerScreen({
                   </View>
                   {editorObscured ? (
                     <View testID="draft-owner-overlay" style={[StyleSheet.absoluteFill, styles.root, styles.center]}>
-                      {c.enabled && c.loading ? (
-                        <LoadingState compact text="恢复草稿中" />
-                      ) : c.enabled ? (
-                        <>
-                          <Text style={styles.error}>尚未完成草稿保存与切换，原草稿仍保留。</Text>
-                          <AppButton label="重试保存并恢复" onPress={c.retryDraft} disabled={c.busy} />
-                        </>
-                      ) : (
-                        <>
-                          <Text style={styles.text}>此网站已停用</Text>
-                          <AppButton label="管理内容来源" onPress={onManageSources} />
-                        </>
-                      )}
+                      {renderDraftRecovery()}
                     </View>
                   ) : null}
                 </View>
@@ -1634,7 +1646,7 @@ export function TopicComposerScreen({
                               label="添加附件"
                               accessibilityLabel="选择附件"
                               style={styles.mediaPicker}
-                              disabled={c.busy || c.uploading || preview}
+                              disabled={c.busy || c.uploading || preview || !allowed('body')}
                               onPress={() => void pickPanelAttachment('attachment')}
                             />
                           ) : null}
@@ -1728,12 +1740,14 @@ export function TopicComposerScreen({
                                 <Pressable
                                   accessibilityRole="button"
                                   accessibilityLabel={`${file.status === 'failed' ? '重试上传' : file.status === 'unknown' ? '核对后重传' : '上传并插入'} ${file.name}`}
-                                  accessibilityState={{ disabled: c.busy || c.uploading || preview }}
+                                  accessibilityState={{
+                                    disabled: c.busy || c.uploading || preview || !allowed('body')
+                                  }}
                                   style={[
                                     styles.attachmentAction,
-                                    (c.busy || c.uploading || preview) && styles.disabled
+                                    (c.busy || c.uploading || preview || !allowed('body')) && styles.disabled
                                   ]}
-                                  disabled={c.busy || c.uploading || preview}
+                                  disabled={c.busy || c.uploading || preview || !allowed('body')}
                                   onPress={panelAction(() => c.uploadFiles([file]))}
                                 >
                                   {file.status === 'queued' ? (
@@ -1747,9 +1761,12 @@ export function TopicComposerScreen({
                                 <Pressable
                                   accessibilityRole="button"
                                   accessibilityLabel={`插入正文 ${file.name}`}
-                                  accessibilityState={{ disabled: c.busy || preview }}
-                                  style={[styles.attachmentAction, (c.busy || preview) && styles.disabled]}
-                                  disabled={c.busy || preview}
+                                  accessibilityState={{ disabled: c.busy || preview || !allowed('body') }}
+                                  style={[
+                                    styles.attachmentAction,
+                                    (c.busy || preview || !allowed('body')) && styles.disabled
+                                  ]}
+                                  disabled={c.busy || preview || !allowed('body')}
                                   onPress={() => void insertAndClose(file.markup!)}
                                 >
                                   <CornerDownLeft size={20} color={theme.primary} />

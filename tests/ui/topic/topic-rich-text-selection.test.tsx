@@ -625,6 +625,7 @@ function ProductionContentList({
       topicScrollRef={scrollRef || topicScrollRef}
       read={{
         isReadRecoveryCurrent: () => true,
+        verifyNodeSeek: () => undefined,
         wholeTopicRevision: 0,
         readingRuntime,
         readingEntry: {
@@ -1384,9 +1385,7 @@ describe('topic rich-text selection', () => {
           quotedReplies={{}}
           actions={{
             ...actions,
-            policySubmissions: submitted
-              ? { '121': { scope: 'linuxdo:42:0:7', postId: '121', version: '1', accepted: true } }
-              : {}
+            policySubmissions: submitted ? { '121': { postId: '121', version: '1', accepted: true } } : {}
           }}
         />
       </QueryTestWrapper>

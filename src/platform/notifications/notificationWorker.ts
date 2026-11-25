@@ -21,8 +21,12 @@ import { createNotificationWorkerDeadline } from './notificationWorkerDeadline';
 import { createNotificationDeliveryAttempt } from './notificationDeliveryAttempt';
 import {
   advanceNotificationDelivery,
+  notificationDeliveryAllowed,
+  notificationDeliveryPlanMatches,
+  readNotificationDeliveryScope,
   type NotificationContentDisableGuard,
   type NotificationDeliveryCommit,
+  type NotificationDeliveryScope,
   type NotificationState
 } from './notificationStore';
 
@@ -77,7 +81,7 @@ export interface NotificationWorkerDependencies<Access extends NotificationWorke
     load(): Promise<NotificationState>;
     record(
       source: NotificationSource,
-      identityKey: string,
+      scope: NotificationDeliveryScope,
       scannedIds: string[],
       fields: { lastSuccessAt: string },
       delivery?: NotificationDeliveryCommit
@@ -91,7 +95,12 @@ export interface NotificationWorkerDependencies<Access extends NotificationWorke
       identityKey: string,
       currentIdentifier: string | undefined
     ): Promise<void>;
-    presentDigest(source: NotificationSource, digest: NotificationDigest, identifier: string): Promise<string>;
+    presentDigest(
+      source: NotificationSource,
+      digest: NotificationDigest,
+      identifier: string,
+      assertCurrent: () => Promise<void>
+    ): Promise<string>;
     dismissDigest(source: NotificationSource, identifier: string): Promise<void>;
   };
   deadlineMs?: number;
@@ -122,11 +131,6 @@ function stagingNotificationIdentifier(
 ) {
   const [, first, second] = notificationIdentifiersForIdentity(source, identityKey);
   return previousIdentifier === first ? second! : first!;
-}
-
-function deliveryAllowed(state: NotificationState, source: NotificationSource, identityKey: string) {
-  const sourceState = state.sources[source];
-  return state.globalEnabled && sourceState.intentEnabled && sourceState.identityKey === identityKey;
 }
 
 export async function runNotificationBackgroundWorker<Access extends NotificationWorkerAccess>(
@@ -176,14 +180,14 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
     }
     if (deadline.signal.aborted) throw deadlineError;
   };
-  const assertPrivateAccessCurrent = async (source: NotificationSource, identityKey: string) => {
+  const assertPrivateAccessCurrent = async (source: NotificationSource, scope: NotificationDeliveryScope) => {
     await assertSourceCurrent(source);
     const latestState = await beforeDeadline(dependencies.store.load());
     const callerAllows = dependencies.privateAccessAllowed
-      ? await beforeDeadline(Promise.resolve(dependencies.privateAccessAllowed(source, identityKey)))
+      ? await beforeDeadline(Promise.resolve(dependencies.privateAccessAllowed(source, scope.identityKey)))
       : true;
     await assertSourceCurrent(source);
-    if (!deliveryAllowed(latestState, source, identityKey) || !callerAllows) {
+    if (!notificationDeliveryAllowed(latestState, source, scope) || !callerAllows) {
       throw Object.assign(new Error('消息私有访问状态已变化'), {
         reason: 'private-access-stale',
         source
@@ -227,15 +231,16 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
       roundState = 'global-disabled';
       return finishRound({ status: 'success' as const, delivered: 0, failedSources: 0, timedOut: false });
     }
-    const enabledSources = dependencies.sources.filter(
-      (source) => state.sources[source].intentEnabled && state.sources[source].identityKey
-    );
+    const enabledSources = dependencies.sources.flatMap((source) => {
+      const scope = readNotificationDeliveryScope(state, source);
+      return scope ? [{ source, scope }] : [];
+    });
     roundState = enabledSources.length ? 'applying' : 'no-enabled-sources';
     markDiagnosticStage(roundTrace, 'guard', { state: roundState, count: enabledSources.length });
     let delivered = 0;
     const settlement = Promise.allSettled(
-      enabledSources.map((source) =>
-        deliveries.run(`${source}\u0000${state.sources[source].identityKey}`, async () => {
+      enabledSources.map(({ source, scope }) =>
+        deliveries.run(`${source}\u0000${scope.identityKey}`, async () => {
           const trace = beginDiagnosticTrace('source', 'notification-delivery', {
             source,
             parentTraceId: roundTrace.traceId,
@@ -263,10 +268,10 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
               throw error;
             }
           };
+          const { identityKey: capturedIdentityKey } = scope;
+          const assertCurrent = () => assertPrivateAccessCurrent(source, scope);
           try {
-            const sourceState = state.sources[source];
-            const capturedIdentityKey = sourceState.identityKey!;
-            const currentState = await assertPrivateAccessCurrent(source, capturedIdentityKey);
+            const currentState = await assertCurrent();
             // The caller deadline is bounded; started mutations keep the lane until they settle.
             await step('apply', 'reconcile', () =>
               dependencies.system.reconcileDigests(
@@ -275,11 +280,11 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
                 currentState.sources[source].notificationIdentifier
               )
             );
-            await assertPrivateAccessCurrent(source, capturedIdentityKey);
+            await assertCurrent();
             const access = await step('credential', 'probe-access', () =>
               beforeDeadline(
                 dependencies.network.probeAccess(source, deadline.signal, async () => {
-                  await assertPrivateAccessCurrent(source, capturedIdentityKey);
+                  await assertCurrent();
                 })
               )
             );
@@ -291,11 +296,11 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
               finishDiagnosticTrace(trace, 'blocked', { source, reason: 'not_ready' });
               return;
             }
-            await assertPrivateAccessCurrent(source, capturedIdentityKey);
+            await assertCurrent();
             const diagnosticAccess = {
               ...access,
               fetcher: withFetchGuard(withDiagnosticFetcher(trace, access.fetcher || fetch), async () => {
-                await assertPrivateAccessCurrent(source, capturedIdentityKey);
+                await assertCurrent();
               }),
               signal: deadline.signal
             };
@@ -304,7 +309,7 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
             const seenCursors = new Set<string>();
             let cursor: string | null | undefined;
             while (rawScannedCount < 60) {
-              await assertPrivateAccessCurrent(source, capturedIdentityKey);
+              await assertCurrent();
               const page = await beforeDeadline(
                 dependencies.network.listPage(source, diagnosticAccess, deadline.signal, cursor)
               );
@@ -326,7 +331,7 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
                 );
                 throw qualityError;
               }
-              await assertPrivateAccessCurrent(source, capturedIdentityKey);
+              await assertCurrent();
               const scannedPage = page.items.slice(0, 60 - rawScannedCount);
               rawScannedCount += scannedPage.length;
               for (const item of scannedPage) {
@@ -345,14 +350,14 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
             const fields = {
               lastSuccessAt: (dependencies.now?.() || new Date()).toISOString()
             };
-            const latestState = await assertPrivateAccessCurrent(source, capturedIdentityKey);
+            const latestState = await assertCurrent();
             const latestSourceState = latestState.sources[source];
             const preview = advanceNotificationDelivery(latestSourceState, access.identityKey, scannedIds);
             const newIds = new Set(preview.newIds);
             const newItems = scanned.filter((item) => newIds.has(item.id));
             if (!newItems.length) {
               const recorded = await step('persist', 'applying', () =>
-                dependencies.store.record(source, access.identityKey, scannedIds, fields)
+                dependencies.store.record(source, scope, scannedIds, fields)
               );
               if (!recorded.committed) {
                 throw Object.assign(new Error('消息投递状态已变化'), { reason: 'private-access-stale', source });
@@ -361,6 +366,7 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
               return;
             }
             const previousIdentifier = latestSourceState.notificationIdentifier;
+            const plan = { previousIdentifier, expectedNewIds: preview.newIds };
             const attempt = createNotificationDeliveryAttempt(
               stagingNotificationIdentifier(source, access.identityKey, previousIdentifier)
             );
@@ -370,16 +376,33 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
                   dependencies.system.presentDigest(
                     source,
                     buildSourceNotificationDigest(source, newItems),
-                    attempt.identifier
+                    attempt.identifier,
+                    async () => {
+                      await assertCurrent();
+                      const current = await beforeDeadline(dependencies.store.load());
+                      const advanced = advanceNotificationDelivery(
+                        current.sources[source],
+                        access.identityKey,
+                        scannedIds
+                      );
+                      if (
+                        !notificationDeliveryAllowed(current, source, scope) ||
+                        !notificationDeliveryPlanMatches(advanced, plan)
+                      ) {
+                        throw Object.assign(new Error('消息投递状态已变化'), {
+                          reason: 'private-access-stale',
+                          source
+                        });
+                      }
+                    }
                   )
                 )
               );
-              await assertPrivateAccessCurrent(source, capturedIdentityKey);
+              await assertCurrent();
               attempt.recording();
               const commitOperation = step('persist', 'applying', () =>
-                dependencies.store.record(source, access.identityKey, scannedIds, fields, {
-                  expectedNewIds: preview.newIds,
-                  previousIdentifier,
+                dependencies.store.record(source, scope, scannedIds, fields, {
+                  ...plan,
                   notificationIdentifier: attempt.identifier
                 })
               );
@@ -388,7 +411,7 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
                 throw Object.assign(new Error('消息投递状态已变化'), { reason: 'private-access-stale', source });
               }
               attempt.recorded(recorded.rollback);
-              await assertPrivateAccessCurrent(source, capturedIdentityKey);
+              await assertCurrent();
               if (previousIdentifier && previousIdentifier !== attempt.identifier) {
                 await step('apply', 'dismiss-previous', () =>
                   dependencies.system.dismissDigest(source, previousIdentifier)
@@ -424,7 +447,7 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
               ) {
                 await step('rollback', 'clear-disabled-source', () =>
                   dependencies.store.clearForContentDisable(source, {
-                    identityKey: capturedIdentityKey,
+                    ...scope,
                     sourceStillDisabled: async () => !(await sourceAllowed(source))
                   })
                 ).catch(() => undefined);

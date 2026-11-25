@@ -14,7 +14,7 @@ import {
 } from 'react';
 import {
   Modal,
-  PixelRatio,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -32,7 +32,7 @@ import {
   usePanGesture
 } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming, type SharedValue } from 'react-native-reanimated';
-import { scheduleOnRN } from 'react-native-worklets';
+import { runOnUISync, scheduleOnRN } from 'react-native-worklets';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ResumableZoom, fitContainer, type ResumableZoomRefType } from 'react-native-zoom-toolkit';
 import { X } from 'lucide-react-native';
@@ -58,11 +58,16 @@ import {
 import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
 import { forumMediaTargetClass, type ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import { markOriginalImageDisplayed, originalImageDisplayRevision } from '@/platform/media/originalImageLoading';
-import { previewBitmapDecodeTarget, previewMaxScale } from '@/platform/media/previewBitmapBudget';
+import {
+  previewBitmapDecodeTarget,
+  previewMaxScale,
+  type PreviewBitmapDecodeTarget
+} from '@/platform/media/previewBitmapBudget';
 import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
 import { diagnosticRef, type DiagnosticFields, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import { useReadNetworkRuntimeGeneration } from '@/platform/network/readNetworkRuntime';
 import { CompatibleSvgDocumentView } from '@/ui/content/CompatibleSvgDocumentView';
+import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { PreviewPageLoadLayer } from './PreviewPageLoadLayer';
 import { PreviewRegionImage, type PreviewRegionViewport } from './PreviewRegionImage';
 
@@ -81,7 +86,7 @@ type PreviewImageState = {
   regionEligible: boolean;
   sourceIdentity: string;
 };
-type PreviewResolution = { height: number; width: number };
+type PreviewResolution = { height: number; width: number; svg?: boolean };
 type PreviewRegionState = {
   scale: number;
   sourceIdentity: string;
@@ -222,6 +227,7 @@ type PreviewPageProps = {
   active: boolean;
   activeZoomed: boolean;
   animatedSvgZoomSuspended: boolean;
+  decodeTarget: PreviewBitmapDecodeTarget;
   height: number;
   index: number;
   item: ImagePreviewItem;
@@ -232,6 +238,7 @@ type PreviewPageProps = {
   onResolution: (requestIdentity: string, resolution: PreviewResolution) => void;
   onToggleChrome: () => void;
   onVisibleImageChange?: ImagePreviewModalProps['onVisibleImageChange'];
+  onZoomClamped: (index: number, scale: number) => void;
   onZoomGestureSettled: (index: number, scale: number) => void;
   onZoomGestureStart: (index: number) => void;
   onZoomUpdate: (index: number, scale: number) => void;
@@ -265,7 +272,10 @@ type PreviewRingState = {
   slots: PreviewRingSlot[];
 };
 
-type PreviewRingTransition = { phase: 'idle' | 'animating' } | { phase: 'committing'; ring: PreviewRingState };
+type PreviewRingTransition =
+  | { phase: 'idle' }
+  | { phase: 'animating'; stepId: number; zoomReset: boolean }
+  | { phase: 'committing'; ring: PreviewRingState; stepId: number };
 
 /** Owns the JS ring and queued destination; UI-thread animation is a separate physical receipt. */
 class PreviewRingController {
@@ -274,6 +284,10 @@ class PreviewRingController {
   private pendingExternalRebuild = false;
   private requestedIndex: number;
   private destination: number;
+  private currentEpoch = 1;
+  private active = true;
+  private lastAppliedRevision = 0;
+  private lastSettledStepId = 0;
 
   constructor(
     private items: readonly ImagePreviewItem[],
@@ -283,8 +297,8 @@ class PreviewRingController {
     private open: boolean
   ) {
     this.currentRing = createPreviewRingState(items, index, overrideIndex, override);
-    this.requestedIndex = index;
-    this.destination = index;
+    this.requestedIndex = this.currentRing.activeIndex;
+    this.destination = this.currentRing.activeIndex;
   }
 
   get ring() {
@@ -296,6 +310,12 @@ class PreviewRingController {
   get desiredIndex() {
     return this.destination;
   }
+  get epoch() {
+    return this.currentEpoch;
+  }
+  get itemCount() {
+    return this.items.length;
+  }
   get transitioning() {
     return this.transition.phase !== 'idle';
   }
@@ -303,18 +323,44 @@ class PreviewRingController {
     return this.pendingExternalRebuild;
   }
 
-  commitPublished(ring: PreviewRingState) {
-    if (this.transition.phase !== 'committing' || this.transition.ring !== ring) return false;
+  activate() {
+    if (!this.active) {
+      this.active = true;
+      this.currentEpoch += 1;
+      this.transition = { phase: 'idle' };
+      this.pendingExternalRebuild = false;
+      this.lastAppliedRevision = 0;
+    }
+    return this.currentEpoch;
+  }
+
+  deactivate() {
+    this.active = false;
+    this.currentEpoch += 1;
     this.transition = { phase: 'idle' };
-    return true;
+    this.pendingExternalRebuild = false;
+    this.lastAppliedRevision = 0;
+    return this.currentEpoch;
+  }
+
+  isCurrentEpoch(epoch: number) {
+    return this.active && epoch === this.currentEpoch;
+  }
+
+  commitPublished(ring: PreviewRingState) {
+    if (this.transition.phase !== 'committing' || this.transition.ring !== ring) return null;
+    this.transition = { phase: 'idle' };
+    return this.currentEpoch;
   }
 
   rebuild(index: number) {
+    this.currentEpoch += 1;
     this.currentRing = createPreviewRingState(this.items, index, this.overrideIndex, this.override);
     this.transition = { phase: 'idle' };
     this.pendingExternalRebuild = false;
     this.destination = this.currentRing.activeIndex;
-    return this.currentRing;
+    this.lastAppliedRevision = 0;
+    return { count: this.items.length, epoch: this.currentEpoch, ring: this.currentRing };
   }
 
   observeCatalog(
@@ -335,7 +381,10 @@ class PreviewRingController {
   requestExternal(index: number, catalogChanged: boolean, reopening: boolean, animationRunning: boolean) {
     if (!reopening && !catalogChanged && this.requestedIndex === index) return 'unchanged';
     this.requestedIndex = index;
-    this.destination = index;
+    this.destination = clampIndex(index, this.items.length);
+    if (catalogChanged || reopening) {
+      return 'rebuild';
+    }
     if (this.transitioning || animationRunning) {
       this.pendingExternalRebuild = true;
       return 'deferred';
@@ -343,20 +392,79 @@ class PreviewRingController {
     return 'rebuild';
   }
 
-  started(targetIndex: number) {
-    this.transition = { phase: 'animating' };
-    if (this.destination === this.activeIndex) this.destination = targetIndex;
+  syncTarget(epoch: number, targetIndex: number, revision: number) {
+    if (!this.isCurrentEpoch(epoch) || revision <= this.lastAppliedRevision) {
+      return false;
+    }
+    this.lastAppliedRevision = revision;
+    this.destination = clampIndex(targetIndex, this.items.length);
+    this.pendingExternalRebuild = false;
+    return true;
   }
 
-  canceled() {
+  beginStep(epoch: number, stepId: number, targetIndex: number, revision: number) {
+    if (!this.isCurrentEpoch(epoch) || stepId <= this.lastSettledStepId) {
+      return { shouldResetZoom: false, started: false };
+    }
+    if (this.transition.phase !== 'idle' && this.transition.stepId === stepId) {
+      return { shouldResetZoom: false, started: false };
+    }
+    if (this.transition.phase === 'committing') {
+      return { shouldResetZoom: false, started: false };
+    }
+    this.transition = { phase: 'animating', stepId, zoomReset: true };
+    if (revision > this.lastAppliedRevision) {
+      this.lastAppliedRevision = revision;
+      this.destination = clampIndex(targetIndex, this.items.length);
+    }
+    return { shouldResetZoom: true, started: true };
+  }
+
+  cancelStep(epoch: number, stepId: number, activeIndex: number, revision: number) {
+    if (!this.isCurrentEpoch(epoch) || stepId <= this.lastSettledStepId) {
+      return false;
+    }
+    if (this.transition.phase === 'committing') {
+      return false;
+    }
+    if (this.transition.phase === 'animating' && this.transition.stepId !== stepId) {
+      return false;
+    }
+    this.lastSettledStepId = stepId;
     this.transition = { phase: 'idle' };
-    if (!this.pendingExternalRebuild) this.destination = this.activeIndex;
+    if (!this.pendingExternalRebuild && revision > this.lastAppliedRevision) {
+      this.lastAppliedRevision = revision;
+      this.destination = clampIndex(activeIndex, this.items.length);
+    }
+    return true;
   }
 
-  commitStep(direction: -1 | 1, targetIndex: number, targetSlot: number, recycleSlot: number) {
+  commitStep(
+    epoch: number,
+    stepId: number,
+    direction: -1 | 1,
+    targetIndex: number,
+    targetSlot: number,
+    recycleSlot: number
+  ) {
+    if (!this.isCurrentEpoch(epoch) || stepId <= this.lastSettledStepId) {
+      return null;
+    }
+    if (this.transition.phase === 'committing') {
+      return null;
+    }
+    if (this.transition.phase === 'animating' && this.transition.stepId !== stepId) {
+      return null;
+    }
+    const shouldResetZoom = !(
+      this.transition.phase === 'animating' &&
+      this.transition.stepId === stepId &&
+      this.transition.zoomReset
+    );
     const currentRing = this.currentRing;
     const target = currentRing.slots.find(({ slot }) => slot === targetSlot);
     if (target?.page?.index !== targetIndex || targetIndex !== currentRing.activeIndex + direction) {
+      this.lastSettledStepId = stepId;
       this.transition = { phase: 'idle' };
       return null;
     }
@@ -372,15 +480,10 @@ class PreviewRingController {
     const nextRing = { activeIndex: targetIndex, activeSlot: targetSlot, slots: nextSlots };
     const notifySelection = !this.pendingExternalRebuild;
     if (notifySelection) this.requestedIndex = targetIndex;
+    this.lastSettledStepId = stepId;
     this.currentRing = nextRing;
-    this.transition = { phase: 'committing', ring: nextRing };
-    return { ring: nextRing, notifySelection };
-  }
-
-  requestMove(index: number) {
-    this.destination = clampIndex(index, this.items.length);
-    this.pendingExternalRebuild = false;
-    return this.destination;
+    this.transition = { phase: 'committing', ring: nextRing, stepId };
+    return { leavingIndex: currentRing.activeIndex, notifySelection, ring: nextRing, shouldResetZoom };
   }
 }
 
@@ -431,7 +534,7 @@ function ImagePreviewModalContent({
   onInteraction
 }: ImagePreviewModalProps & { mediaContext: ForumMediaRequestContext }) {
   const { styles, theme } = useReaderThemeStyles(createStyles);
-  const { width, height } = useWindowDimensions();
+  const { width, height, scale: windowScale } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const previewItems = preview?.items || EMPTY_PREVIEW_ITEMS;
   const itemOverride = preview?.itemOverride;
@@ -449,6 +552,7 @@ function ImagePreviewModalContent({
   const [animatedSvgZoomSuspended, setAnimatedSvgZoomSuspended] = useState(false);
   const [resolutions, setResolutions] = useState<Record<string, PreviewResolution>>({});
   const zoomRefs = useRef(new Map<number, ResumableZoomRefType>());
+  const startRingStepRef = useRef<((direction: -1 | 1) => boolean) | null>(null);
   const mountedRef = useRef(true);
   const overlayOpacity = useSharedValue(1);
   const pullTranslateY = useSharedValue(0);
@@ -458,6 +562,14 @@ function ImagePreviewModalContent({
   const zoomGestureActive = useSharedValue(false);
   const lastInteractionAt = useSharedValue(0);
   const activeIndexOnUI = useSharedValue(requestedIndex);
+  const stepTargetOnUI = useSharedValue(requestedIndex);
+  const targetRevisionOnUI = useSharedValue(0);
+  const itemCountOnUI = useSharedValue(previewCount);
+  const ringEpochOnUI = useSharedValue(previewRing.epoch);
+  const nextStepIdOnUI = useSharedValue(0);
+  const activeStepIdOnUI = useSharedValue(0);
+  const mountedOnUI = useSharedValue(true);
+  const gestureEpochOnUI = useSharedValue(previewRing.epoch);
   const transitioning = useSharedValue(false);
   const gestureAxis = useSharedValue(0);
   const gestureQueuesTransition = useSharedValue(false);
@@ -483,40 +595,104 @@ function ImagePreviewModalContent({
 
   useLayoutEffect(() => {
     mountedRef.current = true;
+    const epoch = previewRing.activate();
+    const currentRing = previewRing.ring;
+    const count = previewRing.itemCount;
+    const desired = previewRing.desiredIndex;
+    runOnUISync(() => {
+      'worklet';
+      mountedOnUI.value = true;
+      ringEpochOnUI.value = epoch;
+      gestureEpochOnUI.value = epoch;
+      itemCountOnUI.value = count;
+      activeIndexOnUI.value = currentRing.activeIndex;
+      stepTargetOnUI.value = desired;
+      targetRevisionOnUI.value = 0;
+      activeStepIdOnUI.value = 0;
+      transitioning.value = false;
+    });
     return () => {
       mountedRef.current = false;
+      const retiredEpoch = previewRing.deactivate();
+      runOnUISync(() => {
+        'worklet';
+        mountedOnUI.value = false;
+        ringEpochOnUI.value = retiredEpoch;
+        activeStepIdOnUI.value = 0;
+        transitioning.value = false;
+      });
     };
-  }, []);
+  }, [
+    activeIndexOnUI,
+    activeStepIdOnUI,
+    gestureEpochOnUI,
+    itemCountOnUI,
+    mountedOnUI,
+    previewRing,
+    ringEpochOnUI,
+    stepTargetOnUI,
+    targetRevisionOnUI,
+    transitioning
+  ]);
 
   useLayoutEffect(() => {
-    if (previewRing.commitPublished(ring)) transitioning.value = false;
-  }, [previewRing, ring, transitioning]);
+    const publishedEpoch = previewRing.commitPublished(ring);
+    if (publishedEpoch === null) {
+      return;
+    }
+    runOnUISync(() => {
+      'worklet';
+      if (ringEpochOnUI.value === publishedEpoch && activeStepIdOnUI.value === 0) {
+        transitioning.value = false;
+      }
+    });
+  }, [activeStepIdOnUI, previewRing, ring, ringEpochOnUI, transitioning]);
 
   const rebuildRing = useCallback(
     (index: number) => {
       zoomRefs.current.get(previewRing.activeIndex)?.reset(false);
-      const nextRing = previewRing.rebuild(index);
-      for (const slot of nextRing.slots) {
-        setSlotRole(slot.slot, slot.role);
-      }
-      ringTranslateX.value = 0;
-      pullTranslateY.value = 0;
-      overlayOpacity.value = 1;
-      activeZoomScale.value = 1;
-      activeIndexOnUI.value = nextRing.activeIndex;
-      transitioning.value = false;
+      const { count, epoch, ring: nextRing } = previewRing.rebuild(index);
+      const nextSlot0Role = nextRing.slots.find(({ slot }) => slot === 0)?.role ?? 0;
+      const nextSlot1Role = nextRing.slots.find(({ slot }) => slot === 1)?.role ?? 0;
+      const nextSlot2Role = nextRing.slots.find(({ slot }) => slot === 2)?.role ?? 0;
+      runOnUISync(() => {
+        'worklet';
+        ringEpochOnUI.value = epoch;
+        gestureEpochOnUI.value = epoch;
+        itemCountOnUI.value = count;
+        activeStepIdOnUI.value = 0;
+        targetRevisionOnUI.value = 0;
+        stepTargetOnUI.value = nextRing.activeIndex;
+        slot0Role.value = nextSlot0Role;
+        slot1Role.value = nextSlot1Role;
+        slot2Role.value = nextSlot2Role;
+        ringTranslateX.value = 0;
+        pullTranslateY.value = 0;
+        overlayOpacity.value = 1;
+        activeZoomScale.value = 1;
+        activeIndexOnUI.value = nextRing.activeIndex;
+        transitioning.value = false;
+      });
       setActiveZoomed(false);
       setAnimatedSvgZoomSuspended(false);
       setRing(nextRing);
     },
     [
       activeIndexOnUI,
+      activeStepIdOnUI,
       activeZoomScale,
+      gestureEpochOnUI,
+      itemCountOnUI,
       overlayOpacity,
       previewRing,
       pullTranslateY,
+      ringEpochOnUI,
       ringTranslateX,
-      setSlotRole,
+      slot0Role,
+      slot1Role,
+      slot2Role,
+      stepTargetOnUI,
+      targetRevisionOnUI,
       transitioning
     ]
   );
@@ -559,15 +735,25 @@ function ImagePreviewModalContent({
 
   const activeItem = previewItemAtIndex(previewItems, activeIndex, itemOverrideIndex, itemOverride);
   const activeRequestIdentity = activeItem ? previewResolutionIdentity(mediaContext, activeItem) : '';
-  const activeResolution = resolutions[activeRequestIdentity] || activeItem?.displaySize || null;
+  const activeResolution: PreviewResolution | null =
+    resolutions[activeRequestIdentity] || activeItem?.displaySize || null;
+  const zoomedSvg = Platform.OS === 'android' && activeZoomed && activeResolution?.svg === true;
+  const decodeTarget = useMemo(
+    () => previewBitmapDecodeTarget({ width, height }, windowScale),
+    [height, width, windowScale]
+  );
   const imagePreviewMaxScale = useMemo(() => {
-    return previewMaxScale(activeResolution, { width, height }, PixelRatio.get());
-  }, [activeResolution, height, width]);
+    return previewMaxScale(activeResolution, { width, height }, windowScale);
+  }, [activeResolution, height, width, windowScale]);
 
   const handleResolution = useCallback((requestIdentity: string, resolution: PreviewResolution) => {
     setResolutions((current) => {
       const previous = current[requestIdentity];
-      if (previous?.width === resolution.width && previous.height === resolution.height) {
+      if (
+        previous?.width === resolution.width &&
+        previous.height === resolution.height &&
+        previous.svg === resolution.svg
+      ) {
         return current;
       }
       return { ...current, [requestIdentity]: resolution };
@@ -613,6 +799,16 @@ function ImagePreviewModalContent({
     },
     [previewRing, reportInteraction, zoomGestureActive]
   );
+  const handleZoomClamped = useCallback(
+    (index: number, scale: number) => {
+      if (previewRing.activeIndex !== index) return;
+      activeZoomScale.value = scale;
+      const zoomed = Math.abs(scale - 1) > 0.001;
+      setActiveZoomed(zoomed);
+      setAnimatedSvgZoomSuspended(zoomed);
+    },
+    [activeZoomScale, previewRing]
+  );
   useLayoutEffect(() => {
     zoomGestureActive.value = false;
   }, [activeIndex, zoomGestureActive]);
@@ -628,55 +824,100 @@ function ImagePreviewModalContent({
   );
 
   const markTransitionStarted = useCallback(
-    (targetIndex: number) => {
+    (epoch: number, stepId: number, targetIndex: number, revision: number) => {
       if (!mountedRef.current) {
         return;
       }
-      previewRing.started(targetIndex);
-      zoomRefs.current.get(previewRing.activeIndex)?.reset(false);
-      activeZoomScale.value = 1;
-      setActiveZoomed(false);
-      setAnimatedSvgZoomSuspended(false);
+      const started = previewRing.beginStep(epoch, stepId, targetIndex, revision);
+      if (!started.started) {
+        return;
+      }
+      if (started.shouldResetZoom) {
+        zoomRefs.current.get(previewRing.activeIndex)?.reset(false);
+        activeZoomScale.value = 1;
+        setActiveZoomed(false);
+        setAnimatedSvgZoomSuspended(false);
+      }
     },
     [activeZoomScale, previewRing]
   );
 
-  const cancelTransition = useCallback(() => {
-    previewRing.canceled();
-    if (previewRing.needsRebuild) rebuildRing(previewRing.desiredIndex);
-  }, [previewRing, rebuildRing]);
-
-  const commitRingStep = useCallback(
-    (direction: -1 | 1, targetIndex: number, targetSlot: number, recycleSlot: number) => {
+  const cancelTransition = useCallback(
+    (epoch: number, stepId: number, activeIndexOnCancel: number, revision: number) => {
       if (!mountedRef.current) {
         return;
       }
-      const committed = previewRing.commitStep(direction, targetIndex, targetSlot, recycleSlot);
-      if (!committed) {
-        transitioning.value = false;
+      if (!previewRing.cancelStep(epoch, stepId, activeIndexOnCancel, revision)) {
         return;
       }
-      activeIndexOnUI.value = targetIndex;
+      if (previewRing.needsRebuild) {
+        rebuildRing(previewRing.desiredIndex);
+      } else if (previewRing.desiredIndex !== previewRing.activeIndex) {
+        startRingStepRef.current?.(previewRing.desiredIndex > previewRing.activeIndex ? 1 : -1);
+      }
+    },
+    [previewRing, rebuildRing]
+  );
+
+  const commitRingStep = useCallback(
+    (
+      epoch: number,
+      stepId: number,
+      direction: -1 | 1,
+      targetIndex: number,
+      targetSlot: number,
+      recycleSlot: number
+    ) => {
+      if (!mountedRef.current) {
+        return;
+      }
+      const committed = previewRing.commitStep(epoch, stepId, direction, targetIndex, targetSlot, recycleSlot);
+      if (!committed) {
+        if (previewRing.isCurrentEpoch(epoch)) {
+          runOnUISync(() => {
+            'worklet';
+            if (ringEpochOnUI.value === epoch && activeStepIdOnUI.value === 0) {
+              transitioning.value = false;
+            }
+          });
+        }
+        return;
+      }
+      if (committed.shouldResetZoom) {
+        zoomRefs.current.get(committed.leavingIndex)?.reset(false);
+        activeZoomScale.value = 1;
+        setActiveZoomed(false);
+        setAnimatedSvgZoomSuspended(false);
+      }
       setRing(committed.ring);
       if (committed.notifySelection) onSelect(targetIndex);
     },
-    [activeIndexOnUI, onSelect, previewRing, transitioning]
+    [activeStepIdOnUI, activeZoomScale, onSelect, previewRing, ringEpochOnUI, transitioning]
   );
 
   const animateRingStep = useCallback(
-    (direction: -1 | 1, targetIndex: number, currentSlot: number, targetSlot: number, recycleSlot: number) => {
+    (
+      epoch: number,
+      stepId: number,
+      direction: -1 | 1,
+      targetIndex: number,
+      currentSlot: number,
+      targetSlot: number,
+      recycleSlot: number
+    ) => {
       'worklet';
-      if (transitioning.value) {
-        return;
-      }
-      transitioning.value = true;
-      activeZoomScale.value = 1;
-      scheduleOnRN(markTransitionStarted, targetIndex);
       ringTranslateX.value = withTiming(-direction * width, { duration: PAGE_TRANSITION_DURATION_MS }, (finished) => {
+        if (!mountedOnUI.value || ringEpochOnUI.value !== epoch || activeStepIdOnUI.value !== stepId) {
+          return;
+        }
+        activeStepIdOnUI.value = 0;
         if (!finished) {
           ringTranslateX.value = 0;
           transitioning.value = false;
-          scheduleOnRN(cancelTransition);
+          stepTargetOnUI.value = activeIndexOnUI.value;
+          const cancelRevision = targetRevisionOnUI.value + 1;
+          targetRevisionOnUI.value = cancelRevision;
+          scheduleOnRN(cancelTransition, epoch, stepId, activeIndexOnUI.value, cancelRevision);
           return;
         }
         setSlotRole(currentSlot, direction === 1 ? -1 : 1);
@@ -686,17 +927,20 @@ function ImagePreviewModalContent({
         }
         activeIndexOnUI.value = targetIndex;
         ringTranslateX.value = 0;
-        scheduleOnRN(commitRingStep, direction, targetIndex, targetSlot, recycleSlot);
+        scheduleOnRN(commitRingStep, epoch, stepId, direction, targetIndex, targetSlot, recycleSlot);
       });
     },
     [
       activeIndexOnUI,
-      activeZoomScale,
+      activeStepIdOnUI,
       cancelTransition,
       commitRingStep,
-      markTransitionStarted,
+      mountedOnUI,
+      ringEpochOnUI,
       ringTranslateX,
       setSlotRole,
+      stepTargetOnUI,
+      targetRevisionOnUI,
       transitioning,
       width
     ]
@@ -704,9 +948,10 @@ function ImagePreviewModalContent({
 
   const startRingStep = useCallback(
     (direction: -1 | 1) => {
-      if (previewRing.transitioning || transitioning.value) {
+      if (!mountedRef.current || previewRing.transitioning) {
         return false;
       }
+      const epoch = previewRing.epoch;
       const currentRing = previewRing.ring;
       const targetIndex = currentRing.activeIndex + direction;
       const target = currentRing.slots.find(({ page, role }) => role === direction && page?.index === targetIndex);
@@ -717,28 +962,99 @@ function ImagePreviewModalContent({
         currentRing.slots.length === 3
           ? (currentRing.slots.find(({ role }) => role === (direction === 1 ? -1 : 1))?.slot ?? -1)
           : -1;
-      markTransitionStarted(targetIndex);
-      animateRingStep(direction, targetIndex, currentRing.activeSlot, target.slot, recycle);
+      const claimed = runOnUISync(() => {
+        'worklet';
+        if (
+          !mountedOnUI.value ||
+          ringEpochOnUI.value !== epoch ||
+          transitioning.value ||
+          activeIndexOnUI.value !== currentRing.activeIndex
+        ) {
+          return null;
+        }
+        const stepId = nextStepIdOnUI.value + 1;
+        nextStepIdOnUI.value = stepId;
+        activeStepIdOnUI.value = stepId;
+        transitioning.value = true;
+        activeZoomScale.value = 1;
+        return { revision: targetRevisionOnUI.value, stepId };
+      });
+      if (!claimed) {
+        return false;
+      }
+      markTransitionStarted(epoch, claimed.stepId, targetIndex, claimed.revision);
+      animateRingStep(epoch, claimed.stepId, direction, targetIndex, currentRing.activeSlot, target.slot, recycle);
       return true;
     },
-    [animateRingStep, markTransitionStarted, previewRing, transitioning]
+    [
+      activeIndexOnUI,
+      activeStepIdOnUI,
+      activeZoomScale,
+      animateRingStep,
+      markTransitionStarted,
+      mountedOnUI,
+      nextStepIdOnUI,
+      previewRing,
+      ringEpochOnUI,
+      targetRevisionOnUI,
+      transitioning
+    ]
   );
 
-  const moveToIndex = useCallback(
-    (index: number) => {
-      const nextIndex = previewRing.requestMove(index);
-      if (!previewRing.transitioning && !transitioning.value && nextIndex !== previewRing.activeIndex) {
-        startRingStep(nextIndex > previewRing.activeIndex ? 1 : -1);
+  useLayoutEffect(() => {
+    startRingStepRef.current = startRingStep;
+  }, [startRingStep]);
+
+  const syncQueuedStepTarget = useCallback(
+    (epoch: number, nextTarget: number, revision: number) => {
+      if (!mountedRef.current) {
+        return;
+      }
+      if (!previewRing.syncTarget(epoch, nextTarget, revision)) {
+        return;
+      }
+      if (!previewRing.transitioning && !transitioning.value && previewRing.desiredIndex !== previewRing.activeIndex) {
+        startRingStep(previewRing.desiredIndex > previewRing.activeIndex ? 1 : -1);
       }
     },
     [previewRing, startRingStep, transitioning]
   );
 
-  const queueGestureStep = useCallback(
+  const stepRelativeOnUI = useCallback(
     (direction: -1 | 1) => {
-      moveToIndex(previewRing.desiredIndex + direction);
+      if (!mountedRef.current) {
+        return;
+      }
+      const epoch = previewRing.epoch;
+      const step = runOnUISync(() => {
+        'worklet';
+        if (!mountedOnUI.value || ringEpochOnUI.value !== epoch) {
+          return null;
+        }
+        const nextTarget = clampIndex(stepTargetOnUI.value + direction, itemCountOnUI.value);
+        stepTargetOnUI.value = nextTarget;
+        const revision = targetRevisionOnUI.value + 1;
+        targetRevisionOnUI.value = revision;
+        return { isTransitioning: transitioning.value, nextTarget, revision };
+      });
+      if (!step) {
+        return;
+      }
+      previewRing.syncTarget(epoch, step.nextTarget, step.revision);
+      if (!previewRing.transitioning && !step.isTransitioning && step.nextTarget !== previewRing.activeIndex) {
+        startRingStep(step.nextTarget > previewRing.activeIndex ? 1 : -1);
+      }
     },
-    [moveToIndex, previewRing]
+    [
+      itemCountOnUI,
+      mountedOnUI,
+      previewRing,
+      ringEpochOnUI,
+      startRingStep,
+      stepTargetOnUI,
+      targetRevisionOnUI,
+      transitioning
+    ]
   );
 
   useEffect(() => {
@@ -758,12 +1074,12 @@ function ImagePreviewModalContent({
   const handleAccessibilityAction = useCallback(
     (event: AccessibilityActionEvent) => {
       if (event.nativeEvent.actionName === 'increment') {
-        moveToIndex(previewRing.desiredIndex + 1);
+        stepRelativeOnUI(1);
       } else if (event.nativeEvent.actionName === 'decrement') {
-        moveToIndex(previewRing.desiredIndex - 1);
+        stepRelativeOnUI(-1);
       }
     },
-    [moveToIndex, previewRing]
+    [stepRelativeOnUI]
   );
 
   const handleSave = useCallback(async () => {
@@ -813,7 +1129,9 @@ function ImagePreviewModalContent({
   const singlePreviewTouch = (event: GestureTouchEvent) => {
     'worklet';
     const touch =
-      event.numberOfTouches !== 1 || Math.abs(activeZoomScale.value - 1) > 0.001 ? undefined : event.allTouches[0];
+      !mountedOnUI.value || event.numberOfTouches !== 1 || Math.abs(activeZoomScale.value - 1) > 0.001
+        ? undefined
+        : event.allTouches[0];
     if (!touch) GestureStateManager.fail(event.handlerTag);
     return touch;
   };
@@ -824,6 +1142,7 @@ function ImagePreviewModalContent({
       'worklet';
       const touch = singlePreviewTouch(event);
       if (!touch) return;
+      gestureEpochOnUI.value = ringEpochOnUI.value;
       gestureAxis.value = 0;
       gestureQueuesTransition.value = transitioning.value;
       gestureStartX.value = touch.absoluteX;
@@ -832,6 +1151,10 @@ function ImagePreviewModalContent({
     },
     onTouchesMove: (event) => {
       'worklet';
+      if (gestureEpochOnUI.value !== ringEpochOnUI.value) {
+        GestureStateManager.fail(event.handlerTag);
+        return;
+      }
       const touch = singlePreviewTouch(event);
       if (!touch) return;
       if (transitioning.value) {
@@ -848,7 +1171,12 @@ function ImagePreviewModalContent({
     onUpdate: (event) => {
       'worklet';
       reportContinuousInteraction();
-      if (gestureQueuesTransition.value) {
+      if (
+        !mountedOnUI.value ||
+        gestureEpochOnUI.value !== ringEpochOnUI.value ||
+        gestureQueuesTransition.value ||
+        transitioning.value
+      ) {
         return;
       }
       if (gestureAxis.value === 1) {
@@ -864,11 +1192,11 @@ function ImagePreviewModalContent({
     },
     onDeactivate: (event) => {
       'worklet';
-      if (event.canceled) {
+      if (event.canceled || !mountedOnUI.value || gestureEpochOnUI.value !== ringEpochOnUI.value) {
         return;
       }
       if (gestureAxis.value === 2) {
-        if (!gestureQueuesTransition.value) {
+        if (!gestureQueuesTransition.value && !transitioning.value) {
           handleVerticalPull({
             released: true,
             translateY: Math.max(0, event.translationY),
@@ -890,9 +1218,14 @@ function ImagePreviewModalContent({
           (horizontalVelocity >= PAGE_SWIPE_VELOCITY && horizontalVelocity > verticalVelocity));
       const signedMovement = horizontalDistance > 1 ? event.translationX : event.velocityX;
       const direction = signedMovement < 0 ? 1 : -1;
-      if (gestureQueuesTransition.value) {
+      const epoch = ringEpochOnUI.value;
+      if (gestureQueuesTransition.value || transitioning.value || activeIndexOnUI.value !== activeIndex) {
         if (shouldMove && signedMovement !== 0) {
-          scheduleOnRN(queueGestureStep, direction);
+          const nextTarget = clampIndex(stepTargetOnUI.value + direction, itemCountOnUI.value);
+          stepTargetOnUI.value = nextTarget;
+          const revision = targetRevisionOnUI.value + 1;
+          targetRevisionOnUI.value = revision;
+          scheduleOnRN(syncQueuedStepTarget, epoch, nextTarget, revision);
         }
         return;
       }
@@ -901,9 +1234,21 @@ function ImagePreviewModalContent({
         ringTranslateX.value = withTiming(0, { duration: PAGE_TRANSITION_DURATION_MS });
         return;
       }
+      const targetIndex = clampIndex(activeIndex + direction, itemCountOnUI.value);
+      const stepId = nextStepIdOnUI.value + 1;
+      nextStepIdOnUI.value = stepId;
+      activeStepIdOnUI.value = stepId;
+      stepTargetOnUI.value = targetIndex;
+      const revision = targetRevisionOnUI.value + 1;
+      targetRevisionOnUI.value = revision;
+      transitioning.value = true;
+      activeZoomScale.value = 1;
+      scheduleOnRN(markTransitionStarted, epoch, stepId, targetIndex, revision);
       animateRingStep(
+        epoch,
+        stepId,
         direction,
-        activeIndex + direction,
+        targetIndex,
         ring.activeSlot,
         targetSlot,
         direction === 1 ? recycleForNext : recycleForPrevious
@@ -911,10 +1256,11 @@ function ImagePreviewModalContent({
     },
     onFinalize: (event) => {
       'worklet';
+      const sameEpoch = mountedOnUI.value && gestureEpochOnUI.value === ringEpochOnUI.value;
       const queuedTransition = gestureQueuesTransition.value;
       gestureAxis.value = 0;
       gestureQueuesTransition.value = false;
-      if (event.canceled && !queuedTransition) {
+      if (event.canceled && sameEpoch && !queuedTransition && !transitioning.value) {
         ringTranslateX.value = withTiming(0, { duration: PAGE_TRANSITION_DURATION_MS });
         pullTranslateY.value = withTiming(0);
         overlayOpacity.value = withTiming(1);
@@ -965,6 +1311,7 @@ function ImagePreviewModalContent({
                               active={selected}
                               activeZoomed={selected && activeZoomed}
                               animatedSvgZoomSuspended={selected && animatedSvgZoomSuspended}
+                              decodeTarget={decodeTarget}
                               height={height}
                               index={page.index}
                               item={page.item}
@@ -978,6 +1325,7 @@ function ImagePreviewModalContent({
                                 setChromeVisible((current) => !current);
                               }}
                               onVisibleImageChange={onVisibleImageChange}
+                              onZoomClamped={handleZoomClamped}
                               onZoomGestureSettled={handleZoomGestureSettled}
                               onZoomGestureStart={handleZoomGestureStart}
                               onZoomUpdate={handleZoomUpdate}
@@ -1021,11 +1369,11 @@ function ImagePreviewModalContent({
                   style={styles.imagePreviewClose}
                   onPress={closePreview}
                 >
-                  <NavigationGlass variant="media" />
+                  <NavigationGlass sampleBackdrop={!zoomedSvg} variant="media" />
                   <X size={22} color={theme.onOverlay} strokeWidth={1.8} />
                 </Pressable>
                 <View style={styles.imagePreviewCounter}>
-                  <NavigationGlass variant="media" />
+                  <NavigationGlass sampleBackdrop={!zoomedSvg} variant="media" />
                   <Text accessibilityLiveRegion="polite" style={styles.imagePreviewCount}>
                     {activeIndex + 1}/{previewCount}
                   </Text>
@@ -1047,7 +1395,7 @@ function ImagePreviewModalContent({
                       void handleSave();
                     }}
                   >
-                    <NavigationGlass variant="media" />
+                    <NavigationGlass sampleBackdrop={!zoomedSvg} variant="media" />
                     <Text style={styles.imagePreviewButtonText}>{saving ? '保存中…' : '保存'}</Text>
                   </Pressable>
                 </View>
@@ -1165,6 +1513,7 @@ function PreviewPage({
   active,
   activeZoomed,
   animatedSvgZoomSuspended,
+  decodeTarget,
   height,
   index,
   item,
@@ -1175,6 +1524,7 @@ function PreviewPage({
   onResolution,
   onToggleChrome,
   onVisibleImageChange,
+  onZoomClamped,
   onZoomGestureSettled,
   onZoomGestureStart,
   onZoomUpdate,
@@ -1183,7 +1533,6 @@ function PreviewPage({
   width
 }: PreviewPageProps) {
   const runtimeGeneration = useReadNetworkRuntimeGeneration(mediaContext.contentSource);
-  const decodeTarget = useMemo(() => previewBitmapDecodeTarget({ width, height }, PixelRatio.get()), [height, width]);
   const originalSource = useMemo(
     () =>
       imageSourceFromUrl(item.originalUri, {
@@ -1260,13 +1609,25 @@ function PreviewPage({
   const svgViewIdentity = activeAnimatedArtifact
     ? `${sourceIdentity}\u0000${activeAnimatedArtifact.requestIdentity}`
     : '';
-  const [svgPresentation, setSvgPresentation] = useState({ viewIdentity: '', posterIdentity: '' });
+  const [svgPresentation, setSvgPresentation] = useState({
+    exitedViewIdentity: '',
+    posterIdentity: '',
+    viewIdentity: ''
+  });
   const readySvgViewIdentity = svgPresentation.viewIdentity;
   const displayedSvgPosterIdentity = svgPresentation.posterIdentity;
+  const exitedSvgViewIdentity = svgPresentation.exitedViewIdentity;
+  const displayedSvgPosterRef = useRef('');
+  const unavailableSvgPosterRef = useRef('');
   const svgPosterIdentity = activeAnimatedArtifact
     ? `${svgViewIdentity}\u0000${activeAnimatedArtifact.posterRevision}`
     : '';
-  const animatedSvgPosterReady = displayedSvgPosterIdentity === svgPosterIdentity;
+  const animatedSvgPosterReady = Boolean(svgPosterIdentity) && displayedSvgPosterIdentity === svgPosterIdentity;
+  const animatedSvgRendererExited = Boolean(svgViewIdentity) && exitedSvgViewIdentity === svgViewIdentity;
+  const currentAnimatedPoster = useCommittedRef({
+    identity: svgPosterIdentity,
+    rendererExited: animatedSvgRendererExited
+  });
   const [imageState, setImageState] = useState<PreviewImageState>({
     regionEligible: false,
     sourceIdentity
@@ -1409,6 +1770,17 @@ function PreviewPage({
     [finishActiveDiagnostic, loadMetricsRef, logicalLoadOwner, sourceIdentity]
   );
 
+  const waitForSvgPoster = useCallback(() => {
+    if (logicalLoadOwner.reopenSettled()) {
+      loadMetricsRef.current = { sourceIdentity, startedAt: Date.now() };
+    }
+    currentDiagnostic(true);
+  }, [currentDiagnostic, loadMetricsRef, logicalLoadOwner, sourceIdentity]);
+
+  useEffect(() => {
+    if (animatedSvgRendererExited && animatedSvgPosterReady) settleLoaded(true);
+  }, [animatedSvgPosterReady, animatedSvgRendererExited, settleLoaded]);
+
   const recoverSvgArtifact = useCallback(
     async (diagnosticSource = originalSource) => {
       if (
@@ -1476,18 +1848,24 @@ function PreviewPage({
       if (!mountedRef.current || !activeRef.current || logicalLoadOwner.sourceIdentity !== sourceIdentity) {
         return;
       }
+      const posterIdentity = artifact.animated ? currentAnimatedPoster.current.identity : '';
+      const rejectPoster = () => {
+        if (logicalLoadOwner.sourceIdentity !== sourceIdentity) return;
+        if (posterIdentity) {
+          if (currentAnimatedPoster.current.identity !== posterIdentity) return;
+          unavailableSvgPosterRef.current = posterIdentity;
+        }
+        if (terminalOnFailure || currentAnimatedPoster.current.rendererExited) {
+          settleFailure(true, 'fallback-error');
+        }
+      };
       const refresh = logicalLoadOwner.claimPosterRefresh(sourceIdentity);
       if (refresh === 'busy') return;
       if (refresh === 'already-attempted') {
-        if (terminalOnFailure) {
-          settleFailure(true, 'fallback-error');
-        }
+        rejectPoster();
         return;
       }
-      if (logicalLoadOwner.reopenSettled()) {
-        loadMetricsRef.current = { sourceIdentity, startedAt: Date.now() };
-      }
-      currentDiagnostic(true);
+      if (terminalOnFailure || !logicalLoadOwner.settled) waitForSvgPoster();
       try {
         const refreshed = await refreshCompatibleSvgPoster(artifact, {
           signal: svgArtifactConsumer.signal
@@ -1499,16 +1877,13 @@ function PreviewPage({
         setResolution(refreshed.dimensions);
         onResolution(resolutionIdentity, refreshed.dimensions);
       } catch {
-        if (terminalOnFailure) {
-          settleFailure(true, 'fallback-error');
-        }
+        rejectPoster();
       } finally {
         logicalLoadOwner.finishPosterRefresh(sourceIdentity);
       }
     },
     [
-      currentDiagnostic,
-      loadMetricsRef,
+      currentAnimatedPoster,
       onResolution,
       logicalLoadOwner,
       resolutionIdentity,
@@ -1516,7 +1891,8 @@ function PreviewPage({
       setResolution,
       settleFailure,
       sourceIdentity,
-      svgArtifactConsumer
+      svgArtifactConsumer,
+      waitForSvgPoster
     ]
   );
 
@@ -1552,7 +1928,8 @@ function PreviewPage({
 
   useEffect(() => {
     if (!active) {
-      setSvgPresentation({ viewIdentity: '', posterIdentity: '' });
+      displayedSvgPosterRef.current = '';
+      setSvgPresentation({ exitedViewIdentity: '', posterIdentity: '', viewIdentity: '' });
       logicalLoadOwner.invalidateRecovery();
       finishActiveDiagnostic('stale', false, 'stale', previewImageMetricFields(loadMetricsRef.current));
       return;
@@ -1660,10 +2037,42 @@ function PreviewPage({
     finishActiveDiagnostic('stale', false, 'stale', previewImageMetricFields(loadMetricsRef.current));
     const nextRetryVersion = retryVersion + 1;
     const nextSourceIdentity = `${requestIdentity}\u0000${nextRetryVersion}`;
+    displayedSvgPosterRef.current = '';
+    unavailableSvgPosterRef.current = '';
+    setSvgPresentation({ exitedViewIdentity: '', posterIdentity: '', viewIdentity: '' });
     logicalLoadOwner.dispose();
     setLogicalLoadOwner(createPreviewLoadOwner(requestIdentity, nextSourceIdentity, Date.now()));
     setRetryState({ requestIdentity, version: nextRetryVersion });
   }, [finishActiveDiagnostic, loadMetricsRef, logicalLoadOwner, requestIdentity, retryVersion]);
+
+  useEffect(() => {
+    if (!active) {
+      return;
+    }
+    const zoom = zoomRef.current;
+    if (!zoom) {
+      return;
+    }
+    const state = zoom.getState();
+    if (typeof state.scale !== 'number' || !Number.isFinite(state.scale) || state.scale <= maxScale) {
+      return;
+    }
+    zoom.setTransformState?.(
+      {
+        scale: maxScale,
+        translateX: state.translateX,
+        translateY: state.translateY
+      },
+      false
+    );
+    onZoomClamped(index, maxScale);
+    const clampedRegion = currentPreviewRegion(zoom);
+    setRegionState({
+      sourceIdentity,
+      scale: Math.min(clampedRegion.scale, maxScale),
+      viewport: clampedRegion.viewport
+    });
+  }, [active, index, maxScale, onZoomClamped, sourceIdentity]);
   const handledRuntimeGenerationRef = useRef({ generation: runtimeGeneration, requestIdentity });
   useEffect(() => {
     if (handledRuntimeGenerationRef.current.requestIdentity !== requestIdentity) {
@@ -1720,6 +2129,7 @@ function PreviewPage({
               activeAnimatedArtifact={activeAnimatedArtifact}
               animatedSvgPosterReady={animatedSvgPosterReady}
               animatedSvgZoomSuspended={animatedSvgZoomSuspended}
+              cacheSvgInHardwareLayer={!activeZoomed || regionSuspended}
               displaySource={displaySource}
               displayUri={item.displayUri}
               decodeTarget={decodeTarget}
@@ -1734,19 +2144,34 @@ function PreviewPage({
               svgViewIdentity={svgViewIdentity}
               showDisplayUnderlay={!knownArtifact && status !== 'loaded'}
               onAnimatedPosterDisplay={() => {
-                if (!mountedRef.current || !activeRef.current || logicalLoadOwner.sourceIdentity !== sourceIdentity) {
+                if (
+                  !mountedRef.current ||
+                  !activeRef.current ||
+                  logicalLoadOwner.sourceIdentity !== sourceIdentity ||
+                  currentAnimatedPoster.current.identity !== svgPosterIdentity
+                ) {
                   return;
                 }
+                displayedSvgPosterRef.current = svgPosterIdentity;
+                if (unavailableSvgPosterRef.current === svgPosterIdentity) unavailableSvgPosterRef.current = '';
                 setSvgPresentation((current) => ({ ...current, posterIdentity: svgPosterIdentity }));
               }}
               onAnimatedPosterError={() => {
-                if (!mountedRef.current || !activeRef.current || logicalLoadOwner.sourceIdentity !== sourceIdentity) {
+                if (
+                  !mountedRef.current ||
+                  !activeRef.current ||
+                  logicalLoadOwner.sourceIdentity !== sourceIdentity ||
+                  currentAnimatedPoster.current.identity !== svgPosterIdentity
+                ) {
                   return;
+                }
+                if (displayedSvgPosterRef.current === svgPosterIdentity) {
+                  displayedSvgPosterRef.current = '';
                 }
                 setSvgPresentation((current) =>
                   current.posterIdentity === svgPosterIdentity ? { ...current, posterIdentity: '' } : current
                 );
-                void refreshSvgPoster(activeAnimatedArtifact!, false);
+                void refreshSvgPoster(activeAnimatedArtifact!, animatedSvgRendererExited);
               }}
               onDisplay={() => settleLoaded(false)}
               onError={(diagnosticSource) => {
@@ -1769,7 +2194,11 @@ function PreviewPage({
                     !SVG_IMAGE_URI_PATTERN.test(item.originalUri.trim())
                 );
                 if (source.width > 0 && source.height > 0) {
-                  const nextResolution = { width: source.width, height: source.height };
+                  const nextResolution = {
+                    width: source.width,
+                    height: source.height,
+                    svg: source.mediaType === 'image/svg+xml' ? true : undefined
+                  };
                   loadMetricsRef.current = {
                     ...loadMetricsRef.current,
                     cacheType: event.cacheType,
@@ -1855,7 +2284,7 @@ function PreviewPage({
           ) : null}
         </View>
       </ResumableZoom>
-      {activeAnimatedArtifact ? (
+      {activeAnimatedArtifact && status !== 'failed' && !animatedSvgRendererExited ? (
         <View pointerEvents="none" style={componentStyles.documentOverlay}>
           <View style={[componentStyles.previewPage, imageSize]}>
             <CompatibleSvgDocumentView
@@ -1874,7 +2303,32 @@ function PreviewPage({
                 setSvgPresentation((current) => ({ ...current, viewIdentity: svgViewIdentity }));
                 settleLoaded(true);
               }}
-              onError={() => settleFailure(true, 'fallback-error')}
+              onError={() => {
+                if (!mountedRef.current || !activeRef.current || logicalLoadOwner.sourceIdentity !== sourceIdentity) {
+                  return;
+                }
+                setSvgPresentation((current) => ({
+                  ...current,
+                  exitedViewIdentity: svgViewIdentity,
+                  viewIdentity: ''
+                }));
+                settleFailure(true, 'fallback-error');
+              }}
+              onRenderProcessGone={() => {
+                if (!mountedRef.current || !activeRef.current || logicalLoadOwner.sourceIdentity !== sourceIdentity) {
+                  return;
+                }
+                setSvgPresentation((current) => ({
+                  ...current,
+                  exitedViewIdentity: svgViewIdentity,
+                  viewIdentity: ''
+                }));
+                if (!activeAnimatedArtifact.posterSource.uri || unavailableSvgPosterRef.current === svgPosterIdentity) {
+                  settleFailure(true, 'fallback-error');
+                } else if (displayedSvgPosterRef.current !== svgPosterIdentity) {
+                  waitForSvgPoster();
+                }
+              }}
             />
           </View>
         </View>
@@ -1903,6 +2357,7 @@ function PreviewPage({
 }
 
 function clampIndex(index: number, count: number) {
+  'worklet';
   return Math.max(0, Math.min(index, Math.max(0, count - 1)));
 }
 

@@ -1,12 +1,13 @@
 import { useQueryClient } from '@tanstack/react-query';
+import { readerLibraryQueryKeys } from '@/platform/query/serverState';
 import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { recordStartupPhase } from '@/platform/diagnostics/startupTiming';
 import { errorMessage } from '@/platform/network/errors';
 import {
   createEmptyReaderState,
+  readerStorageRestartMessage,
   type ReaderCommand,
-  type ReaderStatus,
   type ReaderState
 } from '@/domain/reader/readerRecordState';
 import {
@@ -30,7 +31,7 @@ export async function loadInitialReaderData({
   isActive: () => boolean;
   load?: () => Promise<ReaderState>;
   notify: (message: string) => void;
-  onLoaded: (data: ReaderState, status: Exclude<ReaderStatus, 'loading'>) => void;
+  onLoaded: (data: ReaderState, status: 'ready' | 'recovery') => void;
 }) {
   try {
     const state = await load();
@@ -52,28 +53,36 @@ export function useReaderRuntime({ notify }: { notify: (message: string) => void
   const publish = useCallback(() => {
     if (commands.active) setView(commands.snapshot);
   }, [commands]);
-  const requireRecovery = useCallback(() => {
-    commands.recoveryRequired();
+  const requireRestart = useCallback(() => {
+    const initializing = commands.status === 'loading';
+    commands.requireRestart();
     publish();
+    if (initializing) recordStartupPhase('reader-ready');
   }, [commands, publish]);
   useLayoutEffect(() => {
     const lifetime = commands.attached();
-    const unsubscribe = subscribeReaderStorageFreeze(requireRecovery);
+    const unsubscribe = subscribeReaderStorageFreeze(requireRestart);
     return () => {
       unsubscribe();
       lifetime.abort();
     };
-  }, [commands, requireRecovery]);
+  }, [commands, requireRestart]);
 
   const commitReaderData = useCallback(
     (command: ReaderCommand) => {
       if (!commands.active) return;
       if (commands.status !== 'ready') {
-        notifyRef.current(
-          commands.status === 'recovery'
-            ? '本机资料读取失败，请先导入备份再修改本机资料。'
-            : '本机资料尚未加载完成，请稍后再试。'
-        );
+        switch (commands.status) {
+          case 'restart-required':
+            notifyRef.current(readerStorageRestartMessage);
+            break;
+          case 'recovery':
+            notifyRef.current('本机资料读取失败，请先导入备份再修改本机资料。');
+            break;
+          case 'loading':
+            notifyRef.current('本机资料尚未加载完成，请稍后再试。');
+            break;
+        }
         return;
       }
       const trace = beginDiagnosticTrace('reader-data', 'mutate', { state: 'queued' });
@@ -87,7 +96,7 @@ export function useReaderRuntime({ notify }: { notify: (message: string) => void
           (change) => {
             commands.confirmed(change);
             for (const collection of change.changed)
-              void queryClient.invalidateQueries({ queryKey: ['reader-library', collection] });
+              void queryClient.invalidateQueries({ queryKey: readerLibraryQueryKeys.collection(collection) });
             finishDiagnosticTrace(trace, 'success');
           },
           (error) => {
@@ -106,28 +115,32 @@ export function useReaderRuntime({ notify }: { notify: (message: string) => void
 
   const importBackup = useCallback(
     async (json: string) => {
+      if (commands.status === 'restart-required') throw new Error(readerStorageRestartMessage);
       if (commands.status === 'loading') throw new Error('本机资料尚未加载完成，请稍后再试。');
       const state = await importReaderDataBackup(json, commands.status === 'recovery');
       // Import invalidates all loaded collections, even when membership is equal.
       commands.restored(state, 'ready');
-      void queryClient.invalidateQueries({ queryKey: ['reader-library'] });
+      void queryClient.invalidateQueries({ queryKey: readerLibraryQueryKeys.all });
       publish();
     },
     [commands, publish, queryClient]
   );
 
   const exportBackup = useCallback(() => {
+    if (commands.status === 'restart-required') return Promise.reject(new Error(readerStorageRestartMessage));
     if (commands.status !== 'ready') return Promise.reject(new Error('本机资料尚未恢复，无法导出。'));
     return exportReaderDataBackup();
   }, [commands]);
 
   useEffect(() => {
+    if (commands.status !== 'loading') return;
     const owner = commands.signal;
+    const isActive = () => commands.current(owner) && commands.status === 'loading';
     void loadInitialReaderData({
-      isActive: () => commands.current(owner),
+      isActive,
       load: async () => {
         const state = await loadReaderState();
-        if (commands.current(owner)) await prepareSavedReaderFonts(queryClient, state.settings);
+        if (isActive()) await prepareSavedReaderFonts(queryClient, state.settings);
         return state;
       },
       notify: (message) => notifyRef.current(message),

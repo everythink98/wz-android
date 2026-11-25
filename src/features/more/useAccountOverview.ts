@@ -5,6 +5,7 @@ import type { AccountOverview } from '@/domain/forum/accountData';
 import type { ReadGateway } from '@/sources/readGateway';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { forumQueryKeys } from '@/platform/query/serverState';
+import { nodeSeekAttendanceKey, nodeSeekAttendanceQuery } from '@/sources/nodeseek/attendanceQuery';
 
 export type AccountOverviewGateway = Pick<
   ReadGateway,
@@ -53,14 +54,7 @@ export function useAccountOverview({
     [site, userId, sessionEpochs, privatePlan.cacheScope]
   );
   const boardKey = useMemo(
-    () =>
-      forumQueryKeys.accountData({
-        source: 'nodeseek',
-        kind: 'attendance',
-        userId,
-        sessionEpoch: sessionEpochs.nodeseek,
-        readPlanScope: privatePlan.cacheScope
-      }),
+    () => nodeSeekAttendanceKey(userId, sessionEpochs.nodeseek, privatePlan.cacheScope),
     [userId, sessionEpochs.nodeseek, privatePlan.cacheScope]
   );
   const overviewQuery = useQuery<AccountOverview>({
@@ -84,10 +78,9 @@ export function useAccountOverview({
       gateway.getUserDetails({ source: site, id: userId, username: user?.username, signal }, { plan: profilePlan })
   });
   const boardQuery = useQuery({
-    gcTime: Infinity,
+    ...nodeSeekAttendanceQuery({ gateway, userId, sessionEpoch: sessionEpochs.nodeseek, plan: privatePlan }),
     queryKey: boardKey,
-    enabled: enabled && privatePlan.state === 'ready' && site === 'nodeseek',
-    queryFn: ({ signal }) => gateway.getNodeSeekAttendanceBoard({ userId, signal }, { plan: privatePlan })
+    enabled: enabled && privatePlan.state === 'ready' && site === 'nodeseek'
   });
   const keys = useMemo(
     () => [profileKey, ...(site === 'linuxdo' ? [] : [privateKey]), ...(site === 'nodeseek' ? [boardKey] : [])],

@@ -63,6 +63,8 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
     DISABLED, DISABLED_WITH_REQUEST, ENABLED, ENABLED_WITH_REQUEST
   }
   private var autoImePhase = AutoImePhase.DISABLED
+  private var dismissOnDisable = false
+  private val defaultDescendantFocusability = descendantFocusability
   private val hostEnabled: Boolean
     get() = autoImePhase == AutoImePhase.ENABLED || autoImePhase == AutoImePhase.ENABLED_WITH_REQUEST
   private val autoImeRequested: Boolean
@@ -119,18 +121,36 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
   }
 
   fun setHostEnabled(value: Boolean) {
-    if (!value) resetImeInsets()
+    val releasingFocus = if (!value && dismissOnDisable && windowAvailable()) {
+      findFocus()?.takeUnless { it === this }
+    } else null
+    if (!value) {
+      pending?.let(::cancelRequest)
+      val token = windowToken
+      if (releasingFocus != null && token != null) standardHide(releasingFocus, token)
+      resetImeInsets()
+    }
     autoImePhase = when {
       !value -> AutoImePhase.DISABLED
       autoImeRequested -> AutoImePhase.ENABLED_WITH_REQUEST
       else -> AutoImePhase.ENABLED
     }
+    updateDescendantFocusability()
     if (!value) {
-      pending?.let(::cancelRequest)
+      if (releasingFocus != null && findFocus() === releasingFocus) releasingFocus.clearFocus()
     } else {
       syncImeInsets()
       showAutoImeWhenReady()
     }
+  }
+
+  fun setDismissOnDisable(value: Boolean) {
+    dismissOnDisable = value
+    updateDescendantFocusability()
+  }
+
+  private fun updateDescendantFocusability() {
+    descendantFocusability = if (dismissOnDisable && !hostEnabled) FOCUS_BLOCK_DESCENDANTS else defaultDescendantFocusability
   }
 
   fun setAutoShowIme(value: Boolean) {
@@ -582,6 +602,9 @@ class ComposerKeyboardHostManager : ReactViewManager() {
 
   @ReactProp(name = "enabled", defaultBoolean = false)
   fun setEnabled(view: ReactViewGroup, enabled: Boolean) = (view as ComposerKeyboardHost).setHostEnabled(enabled)
+
+  @ReactProp(name = "dismissOnDisable", defaultBoolean = false)
+  fun setDismissOnDisable(view: ReactViewGroup, value: Boolean) = (view as ComposerKeyboardHost).setDismissOnDisable(value)
 
   @ReactProp(name = "trackImeInsets", defaultBoolean = false)
   fun setTrackImeInsets(view: ReactViewGroup, value: Boolean) = (view as ComposerKeyboardHost).setTrackImeInsets(value)

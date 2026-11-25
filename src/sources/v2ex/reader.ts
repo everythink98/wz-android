@@ -30,6 +30,7 @@ import {
   parseHtml,
   sortTopicsByTime,
   textExcerpt,
+  textExcerptFromPlainText,
   textContentFromHtml,
   toIsoString
 } from '@/domain/forum/html';
@@ -160,7 +161,10 @@ function normalizeApiTopic(raw: unknown): Topic | null {
     createdAt,
     lastReplyAt,
     replyCount: Number(raw.replies || 0),
-    excerpt: textExcerpt(raw.content || raw.content_rendered || ''),
+    excerpt:
+      typeof raw.content === 'string' && raw.content.trim()
+        ? textExcerptFromPlainText(raw.content)
+        : textExcerpt(raw.content_rendered || ''),
     ...(authorLevelLabel ? { authorLevelLabel } : {}),
     ...(accessRequirement ? { accessRequirement } : {})
   };

@@ -234,6 +234,7 @@ function controllerFor(draft: TopicDraft, overrides: Partial<Controller> = {}): 
     draft,
     context: contextFor(draft.source),
     loading: false,
+    recoverInitialEditRead: undefined,
     contextLoading: false,
     busy: false,
     uploading: false,
@@ -246,6 +247,7 @@ function controllerFor(draft: TopicDraft, overrides: Partial<Controller> = {}): 
     draftSites: {},
     emojiUrls: {},
     editorRef: { current: null },
+    replacementDocument: undefined,
     enabled: true,
     session: sessions[draft.source],
     change: jest.fn(),
@@ -443,6 +445,74 @@ describe('Create topic screen', () => {
     expect(view.queryByText('已核对，未发布')).toBeNull();
     await view.rerender(<Harness initialDraft={draft} overrides={{ busy: false, attempt }} />);
     expect(view.getByText('已核对，未发布')).toBeTruthy();
+  });
+
+  it('shows local draft body, local save status, pending save notice and disabled submit when editing offline with an unknown receipt', async () => {
+    const draft: TopicDraft = {
+      ...draftFor('nodeseek'),
+      id: 'older-local-edit-draft',
+      body: '本机保留的旧编辑正文',
+      edit: {
+        topicId: '123',
+        original: { title: '草稿标题', body: '本机保留的旧编辑正文', categoryId: '1', rank: 0 }
+      }
+    };
+    const attempt = {
+      id: 'unknown-edit-attempt',
+      source: draft.source,
+      identityKey: draft.identityKey,
+      target: 'edit:123',
+      draftId: 'discarded-edit-draft',
+      revision: 1,
+      startedAt: 1,
+      status: 'unknown' as const,
+      result: { status: 'unknown' as const, message: '提交结果未知，请先到原站核对，勿重复提交' }
+    };
+    const view = await render(
+      <Harness
+        initialDraft={draft}
+        overrides={{
+          editing: true,
+          context: null,
+          editContext: null,
+          contextError: '网络连接失败',
+          saveStatus: '已恢复本机草稿',
+          attempt
+        }}
+      />
+    );
+    expect(mockStructuredProps.content).toBe('本机保留的旧编辑正文');
+    expect(view.getByText(/已恢复本机草稿/)).toBeTruthy();
+    expect(view.queryByText(/已载入原站最新内容/)).toBeNull();
+    expect(view.getByText('上次保存结果尚未确认，请先到原站核对。')).toBeTruthy();
+    expect(view.getByRole('button', { name: '到原站核对' })).toBeTruthy();
+    expect(view.getByRole('button', { name: '已核对，未保存' })).toBeTruthy();
+    expect(view.getByText('网络连接失败')).toBeTruthy();
+    expect(view.getByRole('button', { name: '重试加载规则' })).toBeTruthy();
+    expect(view.getByRole('button', { name: '保存修改' })).toBeDisabled();
+
+    const editContext = {
+      ...draft.edit!,
+      source: draft.source,
+      identityKey: draft.identityKey,
+      rules: contextFor('nodeseek'),
+      permissions: { title: true, body: true, categoryId: false, tags: false, rank: true, additionalReward: false }
+    };
+    await view.rerender(
+      <Harness
+        initialDraft={draft}
+        overrides={{
+          editing: true,
+          context: contextFor('nodeseek'),
+          editContext,
+          hasChanges: true,
+          saveStatus: '已保存到本机',
+          attempt
+        }}
+      />
+    );
+    expect(view.getByText('上次保存结果尚未确认，请先到原站核对。')).toBeTruthy();
+    expect(view.getByRole('button', { name: '保存修改' })).toBeDisabled();
   });
 
   it('shows attachment operation errors inside the open panel', async () => {

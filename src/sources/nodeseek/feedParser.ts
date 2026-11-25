@@ -7,7 +7,6 @@ import {
   isRecord,
   parseHtml,
   parsePositiveInteger,
-  textExcerpt,
   textExcerptFromPlainText,
   toIsoString
 } from '@/domain/forum/html';
@@ -76,7 +75,7 @@ function normalizeTopic(raw: Record<string, unknown>): Topic | null {
     lastReplyAt,
     replyCount: nodeSeekEmbeddedReplyCount(raw),
     viewCount: parseViewCount(raw.views || raw.viewCount),
-    excerpt: textExcerpt(raw.content || raw.markdown || ''),
+    excerpt: textExcerptFromPlainText(raw.content || raw.markdown || ''),
     ...(raw.pined === true || raw.pinned === true ? { pinned: true } : {}),
     ...(accessRequirement ? { accessRequirement } : {})
   };

@@ -4,7 +4,8 @@ import { Linking, Pressable, Text } from 'react-native';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import * as WebBrowser from 'expo-web-browser';
-import { TopicRoute, TopicRouteRuntimeProvider, type TopicRouteRuntimeValue } from '@/features/topic/TopicRoute';
+import { TopicRoute } from '@/features/topic/TopicRoute';
+import { TopicRouteRuntimeProvider, type TopicRouteRuntimeValue } from '@/features/topic/TopicRouteRuntime';
 import type { TopicScreen } from '@/features/topic/TopicScreen';
 import { TopicComposerRoute } from '@/features/topic-composer/TopicComposerRoute';
 import {
@@ -25,7 +26,11 @@ import { setLinuxDoCookieResponseBarrier } from '@/platform/network/managedCooki
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import type { Fetcher } from '@/platform/network/request';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
-import type { UserReference } from '@/domain/forum/models';
+import type { Topic, TopicDetail, UserReference } from '@/domain/forum/models';
+import { resolveForumReadPlan } from '@/domain/forum/readPlan';
+import { prepareTopicContent } from '@/domain/forum/topicContentSplit';
+import type { ReadGateway } from '@/sources/readGateway';
+import type { ReadRecovery } from '@/platform/query/readRecovery';
 import { resolveReaderStyleSettings, createTheme } from '@/ui/theme/tokens';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { act, fireEvent, render, waitFor } from '../render';
@@ -51,6 +56,9 @@ jest.mock('@/features/topic/TopicScreen', () => {
           </Text>
           <Pressable onPress={() => props.chrome.verifyLinuxDo()}>
             <Text>去验证</Text>
+          </Pressable>
+          <Pressable onPress={() => props.chrome.verifyNodeSeek()}>
+            <Text>手动验证 NodeSeek</Text>
           </Pressable>
           <Pressable onPress={props.chrome.openReadingSettings}>
             <Text>离开详情</Text>
@@ -139,7 +147,14 @@ beforeEach(() => {
 });
 afterEach(() => jest.restoreAllMocks());
 
-async function mount(readTopic?: Fetcher) {
+async function mount(
+  readTopic?: Fetcher,
+  nodeSeek?: {
+    topic: Topic;
+    gateway: Pick<ReadGateway, 'getTopic' | 'getReadPlan'>;
+    verify: TopicRouteRuntimeValue['account']['requestNodeSeekVerification'];
+  }
+) {
   const navigationRef = createNavigationContainerRef<RootStackParamList>();
   const readerCommit = jest.fn<void, Parameters<TopicRouteRuntimeValue['reader']['commit']>>();
   await saveAccountSessionSnapshot(seedLinuxDoAccount());
@@ -188,9 +203,9 @@ async function mount(readTopic?: Fetcher) {
         getNodeSeekUserAgent: account.read.getNodeSeekUserAgent,
         nodeSeekUserId: null,
         linuxDoVerificationVisible: account.hosts.linuxDoVerificationVisible,
-        readGateway: account.read.readGateway,
+        readGateway: nodeSeek ? { ...account.read.readGateway, ...nodeSeek.gateway } : account.read.readGateway,
         reconcileAccountStatus: account.read.reconcileAccountStatus,
-        requestNodeSeekVerification: account.hosts.requestNodeSeekVerification,
+        requestNodeSeekVerification: nodeSeek?.verify ?? account.hosts.requestNodeSeekVerification,
         showLinuxDoVerification: account.hosts.showLinuxDoVerification,
         showYaohuoLogin: account.hosts.showYaohuoLogin
       },
@@ -229,7 +244,7 @@ async function mount(readTopic?: Fetcher) {
           <TopicComposerRouteRuntimeProvider value={composerRuntime}>
             <NavigationContainer ref={navigationRef}>
               <Stack.Navigator screenOptions={{ headerShown: false, animation: 'none' }}>
-                <Stack.Screen name="Topic" component={TopicRoute} initialParams={{ topic }} />
+                <Stack.Screen name="Topic" component={TopicRoute} initialParams={{ topic: nodeSeek?.topic ?? topic }} />
                 <Stack.Screen name="User">
                   {({ route }) => <Text>{`用户 ${route.params.user.username}`}</Text>}
                 </Stack.Screen>
@@ -266,6 +281,60 @@ async function mount(readTopic?: Fetcher) {
     }
   };
 }
+
+it('manually verifies the NodeSeek Topic and refreshes its original authenticated detail', async () => {
+  let handoff: 'closed' | 'open' | 'resuming' = 'closed';
+  const nodeTopic: Topic = { ...topic, source: 'nodeseek', url: 'https://www.nodeseek.com/post-42-1', replyCount: 0 };
+  const detail: TopicDetail = { ...nodeTopic, contentHtml: '<p>body</p>', replies: [], replyCompleteness: 'complete' };
+  const getTopic = jest.fn<ReturnType<ReadGateway['getTopic']>, Parameters<ReadGateway['getTopic']>>(async () =>
+    prepareTopicContent({ ...detail, title: handoff === 'resuming' ? 'Recovered NodeSeek Topic' : detail.title })
+  );
+  const verify = jest.fn<void, [string, ReadRecovery]>();
+  const { view, Harness } = await mount(undefined, {
+    topic: nodeTopic,
+    verify,
+    gateway: {
+      getTopic,
+      getReadPlan: (source, operation) =>
+        resolveForumReadPlan(
+          source,
+          operation,
+          true,
+          source === 'nodeseek'
+            ? {
+                source,
+                authenticated: true,
+                authSurfaceOpen: handoff !== 'closed',
+                identityKey: 'nodeseek:fixture',
+                identityTrust: 'confirmed',
+                sessionEpoch: 0,
+                sourceEnabled: true,
+                ...(handoff === 'resuming' ? { foregroundReadDuringHandoff: true } : {})
+              }
+            : undefined
+        )
+    }
+  });
+  await waitFor(() => expect(view.getByText(detail.title)).toBeTruthy());
+  await fireEvent.press(view.getByText('手动验证 NodeSeek'));
+  expect(verify).toHaveBeenCalledTimes(1);
+  const ticket = verify.mock.calls[0]![1];
+  handoff = 'open';
+  await view.rerender(<Harness />);
+  expect(ticket.isCurrent?.()).toBe(true);
+
+  handoff = 'resuming';
+  const previous = getTopic.mock.calls.length;
+  await act(async () => {
+    await expect(ticket.resume(new AbortController().signal)).resolves.toBe('completed');
+  });
+  expect(getTopic.mock.calls.slice(previous).map(([, request]) => request?.plan?.cacheScope)).toEqual([
+    'authenticated:0'
+  ]);
+  handoff = 'closed';
+  await view.rerender(<Harness />);
+  await waitFor(() => expect(view.getByText('Recovered NodeSeek Topic')).toBeTruthy());
+});
 
 it('closes reply reads and writes after the saved opening is denied, then restores them on refresh', async () => {
   let restricted = false;
@@ -654,6 +723,51 @@ it('reopens Account verification after cancellation and explicitly refreshes the
   await fireEvent.press(view.getByText('返回详情'));
   await waitFor(() => expect(view.getByText('Recovered topic')).toBeTruthy());
   expect(requests).toHaveLength(confirmed);
+});
+
+it('discards a late whole-topic refresh when verification is closed and can verify again', async () => {
+  const pending = Promise.withResolvers<Response>();
+  let attempt = 'challenge';
+  let canceledSignal: AbortSignal | null | undefined;
+  const { view } = await mount(async (_url, init) => {
+    if (attempt === 'challenge') {
+      return new Response('<title>Just a moment...</title>', {
+        status: 403,
+        headers: { 'content-type': 'text/html', 'cf-mitigated': 'challenge' }
+      });
+    }
+    if (attempt === 'pending') {
+      canceledSignal = init?.signal;
+      return pending.promise;
+    }
+    return Response.json({ ...body, title: 'Fresh verification result' });
+  });
+  try {
+    await view.findByText('topic-error', { includeHiddenElements: true });
+    await fireEvent.press(view.getByText('取消验证'));
+    await act(async () => fireEvent.press(view.getByText('去验证')));
+    const initialize = await returnToForum(view);
+    attempt = 'pending';
+    await fireEvent.press(view.getByText('检测并继续'));
+    await initialize();
+    await waitFor(() => expect(canceledSignal).toBeTruthy());
+
+    await fireEvent.press(view.getByText('取消验证'));
+    expect(canceledSignal?.aborted).toBe(true);
+    await act(() => pending.resolve(Response.json({ ...body, title: 'Canceled verification result' })));
+    expect(mockTopicScreenProps?.article.topic?.title).not.toBe('Canceled verification result');
+
+    await act(async () => fireEvent.press(view.getByText('去验证')));
+    const initializeAgain = await returnToForum(view);
+    attempt = 'fresh';
+    await fireEvent.press(view.getByText('检测并继续'));
+    await initializeAgain();
+    expect(await view.findByText('Fresh verification result')).toBeTruthy();
+    expect(view.queryByText('检测并继续')).toBeNull();
+  } finally {
+    pending.resolve(Response.json(body));
+    await view.unmount();
+  }
 });
 
 it.each(['background', 'identity', 'source', 'route'] as const)(

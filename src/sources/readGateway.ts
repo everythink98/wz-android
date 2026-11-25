@@ -23,13 +23,20 @@ import {
   getNodeSeekStardustCredits as getNodeSeekStardustCreditsDirect
 } from '@/sources/nodeseek/accountData';
 import { getYaohuoAccountOverview as getYaohuoAccountOverviewDirect } from '@/sources/yaohuo/accountData';
-import { getLinuxDoCreditAccount, getLinuxDoCreditTransactions, LINUXDO_CREDIT_URL } from '@/sources/linuxdo/credit';
+import { getLinuxDoCreditAccount, getLinuxDoCreditTransactions } from '@/sources/linuxdo/credit';
 import { LinuxDoCreditError } from '@/domain/forum/linuxDoCredit';
 import {
   getLinuxDoLevelProfile as getLocalLinuxDoLevelProfile,
   type LinuxDoLevelProfile
 } from '@/sources/linuxdo/level';
-import { getLinuxDoEmojiUrls, type LinuxDoOptions, type LinuxDoReadAuth } from '@/sources/linuxdo/reader';
+import {
+  getLinuxDoEmojiUrls,
+  hasTrustedLinuxDoFeedReading,
+  isExplicitlyUnseenLinuxDoTopic,
+  linuxDoTopicRequiresReadingConfirmation,
+  type LinuxDoOptions,
+  type LinuxDoReadAuth
+} from '@/sources/linuxdo/reader';
 import { loadLinuxDoInteractionConfig } from '@/sources/linuxdo/interactionConfig';
 import {
   RequestCanceledError,
@@ -47,7 +54,10 @@ import {
   type BrowserFetchIntent
 } from '@/platform/network/browserFetchIntent';
 import { recoverReadNetworkRuntime } from '@/platform/network/networkProxy';
-import { getReadNetworkRuntimeSnapshot } from '@/platform/network/readNetworkRuntime';
+import {
+  currentReadNetworkRuntimeGeneration,
+  getReadNetworkRuntimeSnapshot
+} from '@/platform/network/readNetworkRuntime';
 import { errorRequiresAccountRecheck, sourceErrorFromUnknown } from './sourceErrors';
 import { forumResponseAccountFailure } from './sessionFailure';
 import type { RequestAccountRecheck } from '@/domain/session/sessionContracts';
@@ -80,9 +90,9 @@ import {
   resolveForumReadPlan,
   type AggregateForumReadPlan,
   type ForumReadOperation,
-  type ForumReadPlan
+  type ForumReadPlan,
+  type ForumReadSession
 } from '@/domain/forum/readPlan';
-import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
 import { isSessionSource, sourceValues, type DiscourseSource, type SessionSource } from '@/domain/forum/sourceCatalog';
 
 import type { DiscourseReadingRuntime } from '@/platform/query/discourseReadingRuntime';
@@ -92,10 +102,6 @@ import { loadLinuxDoTopicEditContext } from '@/sources/linuxdo/topicEditing';
 import { loadNodeSeekTopicEditContext } from '@/sources/nodeseek/topicEditing';
 import { loadYaohuoTopicEditContext } from '@/sources/yaohuo/topicEditing';
 import type { TopicCreationSource } from '@/domain/forum/topicComposer';
-
-export { getCurrentUserIdentity } from './sourceRead';
-export { getLinuxDoLevelProfile, type LinuxDoLevelProfile } from '@/sources/linuxdo/level';
-export { checkYaohuoLoginDirect as checkYaohuoLogin } from '@/sources/yaohuo/reader';
 
 type GetFeedOptions = Parameters<typeof getForumFeed>[0];
 
@@ -157,8 +163,6 @@ export async function getReply(
   return result;
 }
 
-export { getUserDetails, getUserTopics, getUserReplies } from './sourceRead';
-
 type ReadGatewayDependencies = {
   reading?: DiscourseReadingRuntime;
   anonymousFetcher: Fetcher;
@@ -169,7 +173,7 @@ type ReadGatewayDependencies = {
   nodeSeekUserAgent: () => string;
   onSessionExpired?: (source: SessionSource, requestSessionEpoch: number) => void;
   requestAccountRecheck?: RequestAccountRecheck;
-  readSessionRuntimeSnapshot: (source: SessionSource) => SessionRuntimeSnapshot;
+  readSessionRuntimeSnapshot: (source: SessionSource) => ForumReadSession;
 };
 
 type GetCategoriesOptions = NonNullable<Parameters<typeof getForumCategories>[0]>;
@@ -182,6 +186,7 @@ type ManagedReadKeys =
   | 'nodeSeekAuthenticated'
   | 'nodeSeekUserAgent'
   | 'includedSources'
+  | 'aggregateFeedScopes'
   | 'preparation'
   | 'onProgress'
   | 'unavailableSources';
@@ -225,6 +230,7 @@ type ManagedLinuxDoLevelProfileOptions = Omit<
 type ReadGatewayReadContext = {
   plan?: ForumReadPlan | AggregateForumReadPlan;
   trace?: DiagnosticTrace;
+  hasSelectedFeedTopic?: (id: string) => boolean;
 };
 
 function normalizeEnabledSources(sources?: readonly Source[]) {
@@ -380,6 +386,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
     readOperation: ForumReadOperation,
     operation: (
       credentials: {
+        aggregateFeedScopes?: Partial<Record<Source, string>>;
         discourseAuth?: LinuxDoReadAuth;
         fetcher: Fetcher;
         fetcherForSource?: (source: Source) => Fetcher;
@@ -517,16 +524,44 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       const yaohuoPlan = planFor('yaohuo');
       const linuxDoAuthenticated = linuxDoPlan?.state === 'ready' && linuxDoPlan.lane === 'authenticated';
       const nodeSeekAuthenticated = nodeSeekPlan?.state === 'ready' && nodeSeekPlan.lane === 'authenticated';
+      const linuxDoSession = sessionSnapshots.get('linuxdo');
       const discourseAuth: LinuxDoReadAuth | undefined =
         linuxDoPlan?.state === 'ready'
           ? {
               authenticated: linuxDoAuthenticated,
               categoryCacheScope: linuxDoPlan.cacheScope,
+              ...(readOperation === 'feed'
+                ? {
+                    ...(linuxDoAuthenticated && linuxDoSession?.identityKey
+                      ? { identityKey: linuxDoSession.identityKey }
+                      : {}),
+                    ...(linuxDoSession?.sessionEpoch !== undefined
+                      ? { sessionEpoch: linuxDoSession.sessionEpoch }
+                      : {}),
+                    ...(linuxDoAuthenticated
+                      ? {
+                          readingScope: `${linuxDoPlan.cacheScope}:${linuxDoSession?.identityKey ?? ''}:${dependencies.reading?.scope() ?? ''}`
+                        }
+                      : {})
+                  }
+                : {}),
               onAccountFailure: (reason) => recordAccountFailure('linuxdo', reason),
               userAgent: dependencies.linuxDoUserAgent?.()
             }
           : undefined;
       const unavailableSources = source === 'all' ? unavailablePlanSources : [];
+      const aggregateFeedScopes =
+        source === 'all' && readOperation === 'feed'
+          ? Object.fromEntries(
+              planSources.map((planSource) => {
+                const session = isSessionSource(planSource) ? sessionSnapshots.get(planSource) : undefined;
+                return [
+                  planSource,
+                  JSON.stringify([planFor(planSource)?.cacheScope, session?.identityKey, session?.sessionEpoch])
+                ];
+              })
+            )
+          : undefined;
       if (!readIsCurrent()) {
         throw new Error(REQUEST_CANCELED_MESSAGE);
       }
@@ -573,11 +608,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
           }
           return response;
         };
-        const forumFetcher = rejectUnauthorizedResponse(managedFetcher, planSource === 'linuxdo');
-        return (input, init) =>
-          planSource === 'linuxdo' && new URL(input).origin === LINUXDO_CREDIT_URL
-            ? managedFetcher(input, init)
-            : forumFetcher(input, init);
+        return rejectUnauthorizedResponse(planSource, managedFetcher);
       };
       const operationFetcher = source === 'all' ? localFetcher : sourcePlanFetcher(source);
       let expectedGeneration = getReadNetworkRuntimeSnapshot().generation;
@@ -622,6 +653,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       const runOperation = (fetcher: Fetcher, attempt: ReadAttempt) =>
         operation(
           {
+            ...(aggregateFeedScopes ? { aggregateFeedScopes } : {}),
             discourseAuth,
             fetcher: ownFetcher(fetcher, attempt),
             ...(source === 'all'
@@ -666,8 +698,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         const recoveryEligible = recoveryCommitIsEligible();
         const retryAfterRotation =
           source !== 'all' &&
-          runtimeAfterFailure.generation > expectedGeneration &&
-          runtimeAfterFailure.triggerSource === source &&
+          currentReadNetworkRuntimeGeneration(source) > expectedGeneration &&
           requests === 'foreground-read' &&
           recoveryEligible;
         const recoverAfterTimeout =
@@ -806,39 +837,61 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       }
       if (!readIsCurrent()) throw new Error(REQUEST_CANCELED_MESSAGE);
       if (readingRequest && dependencies.reading && linuxDoAuthenticated) {
+        const expectedReadingScope = discourseAuth?.readingScope;
         const record = result && typeof result === 'object' ? (result as Record<string, unknown>) : {};
-        const candidates: unknown[] = Array.isArray(result)
+        const primaryCandidates: unknown[] = Array.isArray(result)
           ? result
           : [
               result,
               ...(Array.isArray(record.items) ? record.items : []),
               ...(Array.isArray(record.topics) ? record.topics : [])
             ];
-        const missing: string[] = [];
+        const updateCandidates: unknown[] =
+          !Array.isArray(result) && Array.isArray(record.topicUpdates) ? record.topicUpdates : [];
+        const missing = new Set<string>();
         const snapshots: DiscourseTopicReading[] = [];
-        for (const candidate of candidates) {
-          if (!candidate || typeof candidate !== 'object') continue;
+        const currentReadingState = dependencies.reading.state();
+        const inspectCandidate = (candidate: unknown, isUpdateOnly: boolean) => {
+          if (!candidate || typeof candidate !== 'object') return;
           const value = candidate as {
             source?: string;
             id?: string;
             topicId?: string;
             reading?: DiscourseTopicReading;
             isPrivateMessage?: boolean;
+            pinned?: boolean;
           };
-          if (value.isPrivateMessage) continue;
-          if (value.reading) snapshots.push(value.reading);
-          else if (value.topicId && /^\d+$/.test(value.topicId)) snapshots.push(value as DiscourseTopicReading);
+          if (value.isPrivateMessage) return;
+          const feedTopic = readOperation === 'feed' && value.source === 'linuxdo';
+          const trustedReading = !feedTopic || hasTrustedLinuxDoFeedReading(value, expectedReadingScope);
+          if (value.reading && trustedReading) snapshots.push(value.reading);
+          else if (!feedTopic && value.topicId && /^\d+$/.test(value.topicId)) {
+            snapshots.push(value as DiscourseTopicReading);
+          }
+          if (value.source !== 'linuxdo' || !value.id || !/^\d+$/.test(value.id)) return;
           if (
-            value.source === 'linuxdo' &&
-            value.id &&
-            /^\d+$/.test(value.id) &&
-            value.reading?.lastReadPostNumber === undefined
+            feedTopic &&
+            isUpdateOnly &&
+            (!context?.hasSelectedFeedTopic?.(value.id) || (source === 'all' && value.pinned === true))
           )
-            missing.push(value.id);
-        }
+            return;
+          if (linuxDoTopicRequiresReadingConfirmation(value, expectedReadingScope)) {
+            missing.add(value.id);
+            return;
+          }
+          if (
+            (!trustedReading || value.reading?.lastReadPostNumber === undefined) &&
+            !isExplicitlyUnseenLinuxDoTopic(value, expectedReadingScope) &&
+            (!isUpdateOnly || currentReadingState[value.id]?.server.lastReadPostNumber === undefined)
+          ) {
+            missing.add(value.id);
+          }
+        };
+        for (const candidate of primaryCandidates) inspectCandidate(candidate, false);
+        for (const candidate of updateCandidates) inspectCandidate(candidate, true);
         dependencies.reading.observe(snapshots, readingRequest);
-        if (missing.length && ['feed', 'search', 'semantic-search', 'user-profile'].includes(readOperation)) {
-          void getReadingBatch(missing, signal).catch(() => undefined);
+        if (missing.size && ['feed', 'search', 'semantic-search', 'user-profile'].includes(readOperation)) {
+          void getReadingBatch([...missing], signal).catch(() => undefined);
         }
       }
       const summary = summarizeReadResult(result);

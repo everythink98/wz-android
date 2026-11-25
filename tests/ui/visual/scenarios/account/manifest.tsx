@@ -12,7 +12,7 @@ import { LinuxDoLevelPanel } from '@/features/more/components/LinuxDoLevelPanel'
 import { NodeSeekServicesPanel } from '@/features/more/components/NodeSeekServicesPanel';
 import { createMoreScreenStyles } from '@/features/more/styles';
 import { emptyCredentialSummaries, type CredentialSummaries } from '@/platform/storage/credentialVault';
-import type { LinuxDoLevelProfile } from '@/sources/readGateway';
+import type { LinuxDoLevelProfile } from '@/sources/linuxdo/level';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import type { VisualScenarioDefinition } from '../../types';
 

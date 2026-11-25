@@ -6,11 +6,33 @@ vi.mock('expo-secure-store', () => ({
   deleteItemAsync: vi.fn(async () => undefined)
 }));
 
-import { runLinuxDoAction } from './actionClient';
+import { loadLinuxDoReplyEditSource, runLinuxDoAction } from './actionClient';
 import { buildDiscourseActionRequest } from '@/sources/discourse/actionRequest';
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
 
 describe('linux.do action client', () => {
+  it.each([{}, { id: 99 }, { topic_id: 99 }, { post_number: 4 }, { can_edit: false }])(
+    'validates the exact reply and permission when reading edit source with %j',
+    async (override) => {
+      const fetcher = vi.fn(async () =>
+        Response.json({ id: 5, topic_id: 19, post_number: 3, can_edit: true, raw: ' 原始 Markdown\n', ...override })
+      );
+      const reading = loadLinuxDoReplyEditSource({
+        topicId: '19',
+        commentId: 5,
+        floor: 3,
+        fetcher,
+        signal: new AbortController().signal,
+        userAgent: 'fixture'
+      });
+      if (Object.keys(override).length) await expect(reading).rejects.toThrow('原站未确认');
+      else await expect(reading).resolves.toBe(' 原始 Markdown\n');
+      expect(fetcher).toHaveBeenCalledExactlyOnceWith(
+        'https://linux.do/posts/5.json',
+        expect.objectContaining({ method: 'GET' })
+      );
+    }
+  );
   it.each([
     ['没有权限执行该操作', 403],
     ['需要等级 Lv3 才能查看', 403],

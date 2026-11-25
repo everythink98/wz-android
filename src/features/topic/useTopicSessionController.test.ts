@@ -49,6 +49,20 @@ describe('route-local reply search reuse', () => {
     expect(byAuthor({ ...topic, author: '同名', authorUrl: 'https://linux.do/u/alice' })).toEqual([owner]);
     expect(byAuthor({ ...topic, author: '同名' })).toEqual([]);
   });
+  it.each(['nodeseek', 'yaohuo'] as const)('matches the %s original poster by user ID before nickname', (source) => {
+    const owner = { author: '新昵称', authorId: '1001', contentHtml: '', createdAt: '' };
+    const other = { ...owner, author: '旧昵称', authorId: '2001' };
+    const legacy = { author: '旧昵称', contentHtml: '', createdAt: '' };
+    expect(
+      filterTopicSessionReplies({
+        topicDetail: { ...topic, source, author: '旧昵称', authorId: '1001' },
+        topicReplies: [other, owner, legacy],
+        source,
+        replyFilter: 'author',
+        commentQuery: ''
+      })
+    ).toEqual([owner, legacy]);
+  });
   const reply = (contentHtml: string, floor = 1): Reply => ({ author: 'alice', contentHtml, createdAt: '', floor });
 
   it('normalizes each unchanged body once across cold and warm query sequences', () => {

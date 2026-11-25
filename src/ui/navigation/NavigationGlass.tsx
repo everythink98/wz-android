@@ -80,9 +80,11 @@ const targetStyle = { flex: 1 };
 
 export function NavigationGlass({
   accent = false,
+  sampleBackdrop = true,
   variant = 'navigation'
 }: {
   accent?: boolean;
+  sampleBackdrop?: boolean;
   variant?: 'navigation' | 'toolbar' | 'surface' | 'media' | 'control';
 }) {
   const backdrop = useContext(NavigationBackdropContext);
@@ -100,7 +102,7 @@ export function NavigationGlass({
       ]}
     />
   );
-  if (!backdrop?.target.current) {
+  if (!sampleBackdrop || !backdrop?.target.current) {
     return (
       <View
         testID={testID}

@@ -14,9 +14,12 @@ const appClasses = [
   'ComposerKeyboardHostTest',
   'ComposerWebViewInsetsTest',
   'ComposerWebViewPrewarmTest',
+  'CreditWebViewNavigationTest',
   'DocumentPickerThreadingTest',
   'SharingModuleTest'
-].map((name) => `com.wz.reader.${name}`);
+]
+  .map((name) => `com.wz.reader.${name}`)
+  .concat('com.reactnativecommunity.slider.ReaderSliderGestureTest');
 const reactClasses = [
   'com.facebook.react.views.scroll.MaintainVisibleScrollPositionHelperTest',
   'com.facebook.react.modules.fresco.ReactOkHttpNetworkFetcherTest',
@@ -64,7 +67,8 @@ export const nativeTestTasks = {
       'ForumSearchCustomTabUrlTest',
       'NotificationDigestExecutorTest',
       'PreviewRegionImageMathTest',
-      'ForumPlatformPackageTest'
+      'ForumPlatformPackageTest',
+      'SearchHistoryArtworkTest'
     ].map((name) => `com.wz.reader.${name}`)
   },
   ':forum-content-selection:testDebugUnitTest': {

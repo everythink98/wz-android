@@ -151,6 +151,33 @@ describe('Yaohuo activity scan resources', () => {
 });
 
 describe('source user read', () => {
+  it.each([
+    ['<content>Example &amp;copy; and &lt;Name&gt;</content>', 'Example &copy; and <Name>'],
+    ['<content type="text">Example &amp;copy; and &lt;Name&gt;</content>', 'Example &copy; and <Name>'],
+    ['<content>0</content>', '0'],
+    ['<content type="text">0007</content>', '0007'],
+    ['<content type="html">&lt;p&gt;Example &amp;copy;&lt;/p&gt;</content>', 'Example ©'],
+    ['<content src="https://example.invalid/external"></content>', '']
+  ])('honors the V2EX Atom content type for %s', async (content, excerpt) => {
+    const fetcher = vi.fn(async (url: string) => {
+      if (url.endsWith('/member/neo/topics')) throw new Error('HTML unavailable');
+      if (url.endsWith('/feed/member/neo.xml')) {
+        return new Response(
+          '<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>Example topic</title>' +
+            '<link href="https://www.v2ex.com/t/123"/>' +
+            content +
+            '</entry></feed>'
+        );
+      }
+      throw new Error('Unexpected fixture request: ' + url);
+    });
+    const profile: UserDetails = { source: 'v2ex', id: 'neo', username: 'neo', url: 'https://www.v2ex.com/member/neo' };
+    const result = await getUserTopics({ source: 'v2ex', profile, fetcher });
+
+    expect(result.topics).toMatchObject([{ id: '123', excerpt }]);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
   it('attempts the V2EX Atom fallback only once when HTML fails and the feed is empty', async () => {
     const failure = new Error('HTML unavailable');
     const fetcher = vi.fn(async (url: string) => {
@@ -390,6 +417,193 @@ describe('source user read', () => {
       expect(result.replies?.[0]?.createdAt).toBe('2025-12-28T00:00:00.000Z');
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it('resolves V2EX reply dates in UTC+8 identically across Shanghai, UTC, and Los Angeles device timezones', async () => {
+    const profile: UserDetails = {
+      source: 'v2ex',
+      id: 'alice',
+      username: 'alice',
+      url: 'https://www.v2ex.com/member/alice'
+    };
+    const html = [
+      '<div class="dock_area">1 月 1 日回复了 bob 创建的主题 › 分享创造 › <a href="/t/201#reply3">新年主题</a></div>',
+      '<div class="inner"><div class="reply_content">新年第一条</div></div>',
+      '<div class="dock_area">12 月 31 日回复了 carol 创建的主题 › 问与答 › <a href="/t/200#reply9">跨年主题</a></div>',
+      '<div class="cell"><div class="reply_content">去年最后一条</div></div>'
+    ].join('');
+    const previousTz = process.env.TZ;
+    const idsByTimeZone: string[][] = [];
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2025-12-31T16:30:00Z'));
+      for (const timeZone of ['Asia/Shanghai', 'UTC', 'America/Los_Angeles']) {
+        process.env.TZ = timeZone;
+        const result = await getUserReplies({
+          source: 'v2ex',
+          profile,
+          fetcher: async () => new Response(html)
+        });
+        const replies = result.replies || [];
+        expect(
+          replies.map((reply) => ({
+            topicId: reply.topicId,
+            createdAt: reply.createdAt,
+            displayTimeText: reply.displayTimeText,
+            excerpt: reply.excerpt
+          })),
+          `device TZ=${timeZone}`
+        ).toEqual([
+          {
+            topicId: '201',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            displayTimeText: '1 月 1 日',
+            excerpt: '新年第一条'
+          },
+          {
+            topicId: '200',
+            createdAt: '2025-12-31T00:00:00.000Z',
+            displayTimeText: '12 月 31 日',
+            excerpt: '去年最后一条'
+          }
+        ]);
+        idsByTimeZone.push(replies.map((reply) => reply.id));
+      }
+      expect(idsByTimeZone[1]).toEqual(idsByTimeZone[0]);
+      expect(idsByTimeZone[2]).toEqual(idsByTimeZone[0]);
+    } finally {
+      vi.useRealTimers();
+      if (previousTz === undefined) delete process.env.TZ;
+      else process.env.TZ = previousTz;
+    }
+  });
+
+  it('handles UTC+8 month-end, leap day, and invalid dates while preserving reply order and unique identifiers', async () => {
+    const profile: UserDetails = {
+      source: 'v2ex',
+      id: 'alice',
+      username: 'alice',
+      url: 'https://www.v2ex.com/member/alice'
+    };
+    const row = (dateLabel: string, topicId: number, body: string) =>
+      `<div class="dock_area">${dateLabel}回复了 bob 创建的主题 › 分享创造 › <a href="/t/${topicId}#reply2">主题 ${topicId}</a></div>` +
+      `<div class="inner"><div class="reply_content">${body}</div></div>`;
+    const previousTz = process.env.TZ;
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      process.env.TZ = 'America/Los_Angeles';
+
+      // Normal month-end across UTC+8 midnight (2026-06-01 00:30 UTC+8, still 2026-05-31 in Los Angeles).
+      vi.setSystemTime(new Date('2026-05-31T16:30:00Z'));
+      const monthEnd = await getUserReplies({
+        source: 'v2ex',
+        profile,
+        fetcher: async () =>
+          new Response(
+            row('6 月 1 日', 301, '月初') + row('5 月 31 日', 302, '月末') + row('6 月 2 日', 303, '去年明日')
+          )
+      });
+      expect(monthEnd.replies?.map((reply) => [reply.topicId, reply.createdAt])).toEqual([
+        ['301', '2026-06-01T00:00:00.000Z'],
+        ['302', '2026-05-31T00:00:00.000Z'],
+        ['303', '2025-06-02T00:00:00.000Z']
+      ]);
+
+      // Leap day on 2024-02-29 00:30 UTC+8 (still 2024-02-28 in Los Angeles).
+      vi.setSystemTime(new Date('2024-02-28T16:30:00Z'));
+      const onLeapDay = await getUserReplies({
+        source: 'v2ex',
+        profile,
+        fetcher: async () => new Response(row('2 月 29 日', 401, '闰日') + row('3 月 1 日', 402, '去年三月'))
+      });
+      expect(onLeapDay.replies?.map((reply) => [reply.topicId, reply.createdAt])).toEqual([
+        ['401', '2024-02-29T00:00:00.000Z'],
+        ['402', '2023-03-01T00:00:00.000Z']
+      ]);
+
+      // Reading in Jan 2025 sees previous leap year's Feb 29.
+      vi.setSystemTime(new Date('2025-01-15T00:00:00Z'));
+      const previousLeapDay = await getUserReplies({
+        source: 'v2ex',
+        profile,
+        fetcher: async () => new Response(row('2 月 29 日', 403, '去年闰日'))
+      });
+      expect(previousLeapDay.replies?.[0]?.createdAt).toBe('2024-02-29T00:00:00.000Z');
+
+      // Non-leap year past Feb 28 rejects Feb 29 along with impossible calendar dates while keeping order & IDs.
+      vi.setSystemTime(new Date('2025-03-01T00:00:00Z'));
+      const invalidDates = await getUserReplies({
+        source: 'v2ex',
+        profile,
+        fetcher: async () =>
+          new Response(
+            row('2 月 29 日', 501, '平年闰日') +
+              row('2 月 30 日', 502, '二月三十') +
+              row('4 月 31 日', 503, '四月三十一') +
+              row('13 月 1 日', 504, '十三月') +
+              row('0 月 10 日', 505, '零月') +
+              row('1 月 0 日', 506, '零日') +
+              row('3 天前', 507, '相对时间')
+          )
+      });
+      const invalidReplies = invalidDates.replies || [];
+      expect(invalidReplies.map((reply) => reply.topicId)).toEqual(['501', '502', '503', '504', '505', '506', '507']);
+      expect(invalidReplies.every((reply) => reply.createdAt === undefined)).toBe(true);
+      expect(new Set(invalidReplies.map((reply) => reply.id)).size).toBe(7);
+    } finally {
+      vi.useRealTimers();
+      if (previousTz === undefined) delete process.env.TZ;
+      else process.env.TZ = previousTz;
+    }
+  });
+
+  it('uses one shared reference timestamp across an entire V2EX reply page', async () => {
+    const profile: UserDetails = {
+      source: 'v2ex',
+      id: 'alice',
+      username: 'alice',
+      url: 'https://www.v2ex.com/member/alice'
+    };
+    const html = [
+      '<div class="dock_area">1 月 1 日回复了 bob 创建的主题 › 分享创造 › <a href="/t/601#reply1">同页第一条</a></div>',
+      '<div class="inner"><div class="reply_content">相同内容</div></div>',
+      '<div class="dock_area">1 月 1 日回复了 bob 创建的主题 › 分享创造 › <a href="/t/601#reply1">同页第一条</a></div>',
+      '<div class="inner"><div class="reply_content">相同内容</div></div>'
+    ].join('');
+    const previousTz = process.env.TZ;
+    const RealDate = Date;
+    let reads = 0;
+    const instants = [RealDate.parse('2025-12-31T15:59:59.999Z'), RealDate.parse('2025-12-31T16:00:00.001Z')];
+    const nextInstant = () => instants[Math.min(reads++, instants.length - 1)];
+    class SteppingDate extends RealDate {
+      constructor(...args: ConstructorParameters<typeof RealDate> | []) {
+        if (args.length === 0) super(nextInstant());
+        else super(...(args as [number]));
+      }
+      static override now() {
+        return nextInstant();
+      }
+    }
+    vi.stubGlobal('Date', SteppingDate);
+    try {
+      process.env.TZ = 'Asia/Shanghai';
+      const result = await getUserReplies({
+        source: 'v2ex',
+        profile,
+        fetcher: async () => new Response(html)
+      });
+      const replies = result.replies || [];
+      expect(replies).toHaveLength(2);
+      expect(replies[0]?.createdAt).toBe('2025-01-01T00:00:00.000Z');
+      expect(replies[1]?.createdAt).toBe('2025-01-01T00:00:00.000Z');
+      expect(replies[0]?.id.endsWith(':0')).toBe(true);
+      expect(replies[1]?.id.endsWith(':1')).toBe(true);
+      expect(replies[0]?.id.slice(0, -2)).toBe(replies[1]?.id.slice(0, -2));
+    } finally {
+      vi.unstubAllGlobals();
+      if (previousTz === undefined) delete process.env.TZ;
+      else process.env.TZ = previousTz;
     }
   });
 

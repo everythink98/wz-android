@@ -8,12 +8,14 @@ import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { useTopicController } from '@/features/topic/useTopicController';
 import { useTopicSessionController } from '@/features/topic/useTopicSessionController';
-import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
+import type { LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
+import type { ReadRecovery } from '@/platform/query/readRecovery';
 import { LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
 import { beginDiagnosticTrace, setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { type DiagnosticEvent } from '@/platform/diagnostics/diagnosticPolicy';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import type { ReadGateway } from '@/sources/readGateway';
+import { resolveForumReadPlan } from '@/domain/forum/readPlan';
 import type { RepliesResponse, Reply, TopicLocationTarget, Source, Topic, TopicDetail } from '@/domain/forum/models';
 import { createSessionReadPlan } from '../sessionReadPlan';
 import type { SessionSource } from '@/domain/forum/sourceCatalog';
@@ -61,6 +63,21 @@ type TestReadGateway = Omit<Partial<ReadGateway>, 'getTopic' | 'getReplies' | 'g
 };
 
 type ReplyRequest = Parameters<TestGetReplies>[0];
+type NodeSeekHandoff = 'closed' | 'open' | 'resuming';
+
+function nodeSeekHandoffPlan(handoff: () => NodeSeekHandoff): ReadGateway['getReadPlan'] {
+  return (source, operation) =>
+    resolveForumReadPlan(source, operation, true, {
+      source: 'nodeseek',
+      authenticated: true,
+      authSurfaceOpen: handoff() !== 'closed',
+      identityKey: 'nodeseek:fixture',
+      identityTrust: 'confirmed',
+      sessionEpoch: 0,
+      sourceEnabled: true,
+      ...(handoff() === 'resuming' ? { foregroundReadDuringHandoff: true } : {})
+    });
+}
 
 function replyRequestPage(request: ReplyRequest) {
   return request.position.kind === 'cursor' ? request.position.page : undefined;
@@ -155,7 +172,7 @@ function renderTopicController({
   onOpenTopic = jest.fn(),
   onReplyLocationResolved = jest.fn(),
   readGateway,
-  showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
+  showLinuxDoVerification = jest.fn<(message?: string, recovery?: ReadRecovery) => void>(),
   showYaohuoLogin = jest.fn<(message?: string) => void>(),
   location,
   getLocation = () => location,
@@ -173,11 +190,11 @@ function renderTopicController({
   getSessionEpochs?: () => ForumSessionEpochs;
   notify?: (message: string) => void;
   onRetryIdentityStatus?: (source: Source) => Promise<unknown> | unknown;
-  onNodeSeekTopicVerificationRequired?: (message: string, recovery: LinuxDoReadRecovery) => void;
+  onNodeSeekTopicVerificationRequired?: (message: string, recovery: ReadRecovery) => void;
   onOpenTopic?: (topic: Topic) => void;
   onReplyLocationResolved?: (location: TopicLocationTarget) => void;
   readGateway: TestReadGateway;
-  showLinuxDoVerification?: (message?: string, recovery?: LinuxDoReadRecovery) => void;
+  showLinuxDoVerification?: (message?: string, recovery?: ReadRecovery) => void;
   showYaohuoLogin?: (message?: string) => void;
   location?: TopicLocationTarget;
   getLocation?: () => TopicLocationTarget | undefined;
@@ -194,12 +211,14 @@ function renderTopicController({
         () =>
           ({
             ...readGateway,
-            getReadPlan: createSessionReadPlan({
-              getIdentityBarriers,
-              getIdentityTrust,
-              getSessionEpochs,
-              getSourceEnabled
-            })
+            getReadPlan:
+              readGateway.getReadPlan ??
+              createSessionReadPlan({
+                getIdentityBarriers,
+                getIdentityTrust,
+                getSessionEpochs,
+                getSourceEnabled
+              })
           }) as ReadGateway,
         [readGateway, getIdentityBarriers, getIdentityTrust, getSourceEnabled, getSessionEpochs]
       );
@@ -231,6 +250,168 @@ function renderTopicController({
 }
 
 describe('topic query controller', () => {
+  it.each(['opening', 'whole-refresh', 'comments-refresh', 'next-page', 'previous-page', 'floor'] as const)(
+    'restores the exact NodeSeek %s read after same-account verification',
+    async (entry) => {
+      let handoff: NodeSeekHandoff = 'closed';
+      let challenged = entry === 'opening';
+      const challenge = Object.assign(new Error('NodeSeek 需要完成 Cloudflare 验证'), {
+        source: 'nodeseek',
+        reason: 'cloudflare',
+        verificationRequired: true
+      });
+      const detail: TopicDetail = { ...firstDetail, replyCount: 50, replyHasMore: true, replyNextPage: 2 };
+      const exactReply = { ...firstReply, floor: 25, commentId: 125 };
+      const anchorReply = { ...firstReply, floor: 35, commentId: 135 };
+      const laterReply = { ...firstReply, floor: 45, commentId: 145 };
+      const requests: [scope: string | undefined, resource: 'topic' | ReplyRequest['position']][] = [];
+      const getTopic = jest.fn<TestGetTopic>(async (_request, options) => {
+        requests.push([options?.plan?.cacheScope, 'topic']);
+        if (challenged && handoff === 'closed') throw challenge;
+        return detail;
+      });
+      const getReplies = jest.fn<TestGetReplies>(async (request, options) => {
+        requests.push([options?.plan?.cacheScope, request.position]);
+        if (challenged && handoff === 'closed') throw challenge;
+        if (entry === 'previous-page' && request.position.kind === 'target') {
+          return {
+            items: [anchorReply],
+            currentPage: 3,
+            previousPage: 2,
+            completeness: 'complete',
+            hasMore: true,
+            nextPage: 4
+          };
+        }
+        if (request.position.kind === 'cursor' && request.position.page === 4) {
+          return { items: [laterReply], currentPage: 4, completeness: 'complete', hasMore: false, nextPage: null };
+        }
+        return {
+          items: request.position.kind === 'start' ? [firstReply] : [exactReply],
+          currentPage: request.position.kind === 'start' ? 1 : 2,
+          completeness: 'complete',
+          hasMore: false,
+          nextPage: null
+        };
+      });
+      const verify = jest.fn<(message: string, recovery: ReadRecovery) => void>();
+      const hook = await renderTopicController({
+        onNodeSeekTopicVerificationRequired: verify,
+        readGateway: { getTopic, getReplies, getReadPlan: nodeSeekHandoffPlan(() => handoff) }
+      });
+      if (entry !== 'opening') {
+        await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([firstReply]));
+        if (entry === 'previous-page') {
+          await act(async () => {
+            await expect(hook.result.current.controller.locateReply({ commentId: 135, floor: 35 })).resolves.toBe(
+              'completed'
+            );
+          });
+          await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([anchorReply]));
+          await act(async () => {
+            await expect(hook.result.current.controller.loadMoreReplies({ silent: true })).resolves.toBe('completed');
+          });
+          await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([anchorReply, laterReply]));
+        }
+        challenged = true;
+        const controller = hook.result.current.controller;
+        await act(async () => {
+          const outcome =
+            entry === 'whole-refresh'
+              ? controller.refreshWholeTopic()
+              : entry === 'comments-refresh'
+                ? controller.refreshTopicReplies()
+                : entry === 'next-page'
+                  ? controller.loadMoreReplies()
+                  : entry === 'previous-page'
+                    ? controller.loadPreviousReplies()
+                    : controller.locateReply({ floor: 25, commentId: 125 });
+          await expect(outcome).resolves.toBe('verification-required');
+        });
+      }
+      await waitFor(() => expect(verify).toHaveBeenCalledTimes(1));
+      const ticket = verify.mock.calls[0][1];
+      expect(ticket.isCurrent?.()).toBe(true);
+      handoff = 'open';
+      await act(() => hook.rerender(undefined));
+      expect(JSON.stringify(hook.result.current.controller.topicQueryKey)).toContain('public:omit');
+      expect(ticket.isCurrent?.()).toBe(true);
+
+      const beforeResume = requests.length;
+      handoff = 'resuming';
+      const expectedResource =
+        entry === 'next-page' || entry === 'previous-page'
+          ? { kind: 'cursor', page: 2, offset: null }
+          : entry === 'floor'
+            ? { kind: 'target', target: { commentId: 125, floor: 25 } }
+            : entry === 'comments-refresh'
+              ? { kind: 'start' }
+              : 'topic';
+      await act(async () => {
+        await expect(ticket.resume(new AbortController().signal)).resolves.toBe('completed');
+        expect(requests.slice(beforeResume)).toEqual([['authenticated:0', expectedResource]]);
+      });
+
+      handoff = 'closed';
+      challenged = false;
+      await act(() => hook.rerender(undefined));
+      await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(detail));
+      const replies =
+        entry === 'next-page'
+          ? [firstReply, exactReply]
+          : entry === 'previous-page'
+            ? [exactReply, anchorReply, laterReply]
+            : entry === 'floor'
+              ? [exactReply]
+              : [firstReply];
+      await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual(replies));
+      if (entry === 'previous-page') expect(hook.result.current.controller.topicReplies[1]).toBe(anchorReply);
+    }
+  );
+
+  it('keeps the original window when a resumed NodeSeek floor read is canceled before the server response', async () => {
+    let handoff: NodeSeekHandoff = 'closed';
+    const reply = { ...firstReply, floor: 25, commentId: 125 };
+    const latePage = Promise.withResolvers<RepliesResponse>();
+    const started = Promise.withResolvers<AbortSignal | undefined>();
+    const verify = jest.fn<(message: string, recovery: ReadRecovery) => void>();
+    const getReplies = jest.fn<TestGetReplies>(async ({ position, signal }) => {
+      if (position.kind !== 'target') throw new Error('Unexpected read');
+      if (handoff === 'closed')
+        throw Object.assign(new Error('NodeSeek 需要完成 Cloudflare 验证'), { verificationRequired: true });
+      started.resolve(signal);
+      return latePage.promise;
+    });
+    const hook = await renderTopicController({
+      onNodeSeekTopicVerificationRequired: verify,
+      readGateway: { getTopic: async () => firstDetail, getReplies, getReadPlan: nodeSeekHandoffPlan(() => handoff) }
+    });
+    await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([firstReply]));
+    await act(async () => {
+      await expect(hook.result.current.controller.locateReply({ commentId: 125, floor: 25 })).resolves.toBe(
+        'verification-required'
+      );
+    });
+    const ticket = verify.mock.calls[0]![1];
+    handoff = 'open';
+    await act(() => hook.rerender(undefined));
+    const cancellation = new AbortController();
+    handoff = 'resuming';
+    await act(async () => {
+      const recovery = ticket.resume(cancellation.signal);
+      const requestSignal = await started.promise;
+      cancellation.abort();
+      await expect(recovery).resolves.toBe('stale');
+      expect(requestSignal?.aborted).toBe(true);
+      latePage.resolve({ items: [reply], completeness: 'complete', currentPage: 2, hasMore: false, nextPage: null });
+      await latePage.promise;
+    });
+    handoff = 'closed';
+    await act(() => hook.rerender(undefined));
+    expect(hook.result.current.controller.topicReplies).toEqual([firstReply]);
+    expect(verify).toHaveBeenCalledTimes(1);
+  });
+
   it('reloads an evicted detail when returning to the retained topic without registering the visit twice', async () => {
     let focused = true;
     let appActive = true;
@@ -491,34 +672,6 @@ describe('topic query controller', () => {
     }
   );
 
-  it('resumes a canceled cold linux.do read when its retained route returns', async () => {
-    let focused = true;
-    const topic = { ...firstTopic, source: 'linuxdo' as const };
-    const detail = { ...firstDetail, ...topic };
-    const getTopic = jest
-      .fn<TestGetTopic>()
-      .mockImplementationOnce(
-        async ({ signal }) =>
-          new Promise((_resolve, reject) => {
-            signal?.addEventListener('abort', () =>
-              reject(Object.assign(new Error('canceled'), { name: 'AbortError' }))
-            );
-          })
-      )
-      .mockResolvedValue(detail);
-    const hook = await renderTopicController({ topic, getActive: () => focused, readGateway: { getTopic } });
-    await waitFor(() => expect(getTopic).toHaveBeenCalledTimes(1));
-    await act(async () => {
-      focused = false;
-      hook.rerender(undefined);
-    });
-    await act(async () => {
-      focused = true;
-      hook.rerender(undefined);
-    });
-    await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(detail));
-    expect(getTopic).toHaveBeenCalledTimes(2);
-  });
   it.each(['oldest', 'newest'] as const)(
     'locates the confirmed linux.do reply with one %s window read',
     async (order) => {
@@ -2887,7 +3040,8 @@ describe('topic query controller', () => {
       .mockResolvedValueOnce({ items: [target], currentPage: 4, previousPage: 5, hasMore: true, nextPage: 3 })
       .mockImplementationOnce(() => adjacent.promise)
       .mockImplementationOnce(() => refresh.promise);
-    const hook = await renderTopicController({ readGateway: { getTopic, getReplies } });
+    const notify = jest.fn();
+    const hook = await renderTopicController({ notify, readGateway: { getTopic, getReplies } });
     await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([opening]));
     await act(async () => hook.result.current.session.commands.view.changeReplyOrder('newest'));
     await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([tail]));
@@ -2900,7 +3054,7 @@ describe('topic query controller', () => {
 
     let loadMore: Promise<LinuxDoReadResumeOutcome>;
     await act(async () => {
-      loadMore = hook.result.current.controller.loadMoreReplies({ silent: true });
+      loadMore = hook.result.current.controller.loadMoreReplies();
     });
     await waitFor(() => expect(getReplies).toHaveBeenCalledTimes(3));
     const adjacentSignal = getReplies.mock.calls[2][0].signal;
@@ -2925,9 +3079,10 @@ describe('topic query controller', () => {
       refresh.resolve({ items: [updatedTail], currentPage: 9, hasMore: true, nextPage: 8 });
       await expect(refreshWindow).resolves.toBe('completed');
       adjacent.resolve({ items: [{ ...target, floor: 25 }], currentPage: 3, hasMore: true, nextPage: 2 });
-      await loadMore;
+      await expect(loadMore).resolves.toBe('stale');
     });
     await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([updatedTail]));
+    expect(notify).not.toHaveBeenCalledWith('已加载 1 条回复');
     expect(hook.result.current.controller.replyNextPage).toBe(8);
     expect(hook.result.current.controller.replyHasPrevious).toBe(false);
     expect(getTopic).toHaveBeenCalledTimes(1);
@@ -3952,6 +4107,86 @@ describe('topic query controller', () => {
     );
   });
 
+  it('consumes a failed route target even if ordinary pagination finds it later', async () => {
+    const topic: Topic = { ...firstTopic, source: 'v2ex', url: 'https://www.v2ex.com/t/1', replyCount: 101 };
+    const detail: TopicDetail = {
+      ...firstDetail,
+      ...topic,
+      replyCompleteness: 'partial',
+      replyHasMore: true,
+      replyNextPage: 2
+    };
+    const target = { ...firstReply, floor: 101, commentId: 1101 };
+    const getReplies = jest.fn<TestGetReplies>(async ({ position }) => {
+      if (position?.kind === 'target') throw new Error('目标楼层读取失败');
+      return { items: [target], currentPage: 2, hasMore: false, nextPage: null, nextOffset: null };
+    });
+    const hook = await renderTopicController({
+      topic,
+      location: { kind: 'reply', target: { floor: 101 } },
+      readGateway: { getTopic: async () => detail, getReplies }
+    });
+    await waitFor(() => expect(getReplies).toHaveBeenCalled());
+    await act(async () => {});
+    expect(hook.result.current.controller.readingEntry.location).toBeUndefined();
+    await act(async () => {
+      await hook.result.current.controller.loadMoreReplies();
+    });
+    await waitFor(() => expect(hook.result.current.controller.topicReplies).toContainEqual(target));
+    expect(hook.result.current.controller.readingEntry.location).toBeUndefined();
+  });
+
+  it('consumes a dragged-away route target before ordinary pagination arrives, scoped to the current request id', async () => {
+    const topic: Topic = { ...firstTopic, source: 'v2ex', url: 'https://www.v2ex.com/t/1', replyCount: 101 };
+    const detail: TopicDetail = {
+      ...firstDetail,
+      ...topic,
+      replyCompleteness: 'partial',
+      replyHasMore: true,
+      replyNextPage: 2
+    };
+    const target = { ...firstReply, floor: 101, commentId: 1101 };
+    const page = { items: [target], currentPage: 2, hasMore: false, nextPage: null, nextOffset: null };
+    const pendingTarget = Promise.withResolvers<RepliesResponse>();
+    const location: TopicLocationTarget = { kind: 'reply', target: { floor: target.floor } };
+    let focused = true;
+    let requestId = 1;
+    const getReplies = jest.fn<TestGetReplies>(async ({ position }) =>
+      position.kind === 'target' ? pendingTarget.promise : page
+    );
+    const hook = await renderTopicController({
+      topic,
+      location,
+      getActive: () => focused,
+      getLocationRequestId: () => requestId,
+      readGateway: { getTopic: async () => detail, getReplies }
+    });
+    await waitFor(() => expect(getReplies).toHaveBeenCalledTimes(1));
+    await act(async () => hook.result.current.controller.cancelReplyLocation());
+    await act(async () => {
+      pendingTarget.resolve(page);
+      await hook.result.current.controller.loadMoreReplies();
+    });
+    await waitFor(() => expect(hook.result.current.controller.topicReplies).toContainEqual(target));
+    expect(getReplies.mock.calls.map(([request]) => request.position.kind)).toEqual(['target', 'cursor']);
+    expect(hook.result.current.controller.readingEntry.location).toBeUndefined();
+
+    const { topicQueryKey } = hook.result.current.controller;
+    const repliesKey = forumQueryKeys.replies(topicQueryKey, 'oldest', 'public:omit');
+    expect(appQueryClient.getQueryData(repliesKey)).toBeDefined();
+    focused = false;
+    await hook.rerender(undefined);
+    appQueryClient.removeQueries({ queryKey: repliesKey, exact: true });
+    focused = true;
+    await hook.rerender(undefined);
+    await act(async () => {});
+    expect(getReplies.mock.calls.filter(([request]) => request.position.kind === 'target')).toHaveLength(1);
+
+    requestId++;
+    await hook.rerender(undefined);
+    expect(hook.result.current.controller.readingEntry.location).toEqual(location);
+  });
+
   it('reads a V2EX route target once without a duplicate start read', async () => {
     const prefixReply = { ...firstReply, floor: 1, commentId: 101 };
     const target = { ...firstReply, floor: 2, commentId: 102 };
@@ -4083,7 +4318,7 @@ describe('topic query controller', () => {
         hasMore: false,
         nextPage: null
       });
-    const onNodeSeekTopicVerificationRequired = jest.fn<(message: string, recovery: LinuxDoReadRecovery) => void>();
+    const onNodeSeekTopicVerificationRequired = jest.fn<(message: string, recovery: ReadRecovery) => void>();
     const hook = await renderTopicController({
       onNodeSeekTopicVerificationRequired,
       readGateway: {
@@ -4257,7 +4492,7 @@ describe('topic query controller', () => {
         nextPage: null,
         nextOffset: null
       });
-    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: ReadRecovery) => void>();
     const hook = await renderTopicController({
       showLinuxDoVerification,
       topic: linuxTopic,
@@ -4286,6 +4521,71 @@ describe('topic query controller', () => {
       expect(hook.result.current.controller.topicReplies).toEqual([firstReply, secondReply]);
       expect(hook.result.current.controller.replyHasMore).toBe(false);
     });
+  });
+
+  it('keeps the current reply window when a linux.do comments refresh is canceled during verification', async () => {
+    const linuxTopic = { ...firstTopic, source: 'linuxdo' as const, url: 'https://linux.do/t/1' };
+    const pending = Promise.withResolvers<RepliesResponse>();
+    const oldReply = { ...firstReply, floor: 2, commentId: 11, contentHtml: '<p>canceled refresh</p>' };
+    const freshReply = { ...firstReply, floor: 3, commentId: 12, contentHtml: '<p>fresh refresh</p>' };
+    const page = (reply: Reply): RepliesResponse => ({
+      items: [reply],
+      currentPage: 1,
+      hasMore: false,
+      nextPage: null
+    });
+    const getReplies = jest
+      .fn<TestGetReplies>()
+      .mockRejectedValueOnce(new LinuxDoCloudflareError())
+      .mockReturnValueOnce(pending.promise)
+      .mockRejectedValueOnce(new LinuxDoCloudflareError())
+      .mockResolvedValueOnce(page(freshReply));
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: ReadRecovery) => void>();
+    const hook = await renderTopicController({
+      topic: linuxTopic,
+      showLinuxDoVerification,
+      readGateway: { getTopic: async () => ({ ...firstDetail, ...linuxTopic }), getReplies }
+    });
+    try {
+      await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([firstReply]));
+      const refresh = async () => {
+        await act(async () => {
+          await expect(hook.result.current.controller.refreshTopicReplies()).resolves.toBe('verification-required');
+        });
+      };
+      await refresh();
+      const verification = new AbortController();
+      let recovering: ReturnType<ReadRecovery['resume']> | undefined;
+      await act(async () => {
+        recovering = showLinuxDoVerification.mock.lastCall?.[1]?.resume(verification.signal);
+      });
+      await waitFor(() => expect(getReplies).toHaveBeenCalledTimes(2));
+      const resumedSignal = getReplies.mock.lastCall?.[0].signal;
+      await act(async () => {
+        verification.abort();
+        pending.resolve(page(oldReply));
+        await expect(recovering).resolves.toBe('stale');
+      });
+      expect(resumedSignal?.aborted).toBe(true);
+      expect(hook.result.current.controller.topicReplies).toEqual([firstReply]);
+
+      await refresh();
+      await act(async () => {
+        await expect(showLinuxDoVerification.mock.lastCall?.[1]?.resume(new AbortController().signal)).resolves.toBe(
+          'completed'
+        );
+      });
+      await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([freshReply]));
+      expect(getReplies.mock.calls.map(([request]) => request.position.kind)).toEqual([
+        'start',
+        'start',
+        'start',
+        'start'
+      ]);
+    } finally {
+      pending.resolve(page(oldReply));
+      await act(() => hook.unmount());
+    }
   });
 
   it.each(['oldest', 'newest'] as const)(
@@ -4634,7 +4934,7 @@ describe('topic query controller', () => {
       if (attempts === 1) throw new LinuxDoCloudflareError();
       return linuxDetail;
     });
-    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: ReadRecovery) => void>();
     const hook = await renderTopicController({ readGateway: { getTopic }, showLinuxDoVerification, topic: linuxTopic });
 
     await act(async () => {
@@ -4664,7 +4964,7 @@ describe('topic query controller', () => {
     const getTopic = jest.fn<TestGetTopic>(async () => {
       throw new LinuxDoCloudflareError();
     });
-    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: ReadRecovery) => void>();
     const hook = await renderTopicController({
       topic: linuxTopic,
       readGateway: { getTopic },
@@ -4896,7 +5196,7 @@ describe('topic query controller', () => {
       solved: true
     };
     const notify = jest.fn();
-    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: ReadRecovery) => void>();
     const getReply = jest.fn<TestGetReply>(async () => {
       throw new LinuxDoCloudflareError();
     });
@@ -5374,6 +5674,55 @@ describe('topic query controller', () => {
     expect(getReply).toHaveBeenCalledTimes(1);
   });
 
+  it('only retries and prompts for a failed manual quote while a reference is expanded', async () => {
+    let focused = true;
+    const linuxTopic = { ...firstTopic, source: 'linuxdo' as const, url: 'https://linux.do/t/1' };
+    const linuxDetail = { ...firstDetail, ...linuxTopic };
+    const quote = {
+      instanceKey: 'topic:1:linuxdo:2:9',
+      reference: { source: 'linuxdo' as const, topicId: '2', postNumber: 9 }
+    };
+    const notify = jest.fn();
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: ReadRecovery) => void>();
+    const getReply = jest
+      .fn<TestGetReply>()
+      .mockRejectedValueOnce(new Error('引用读取失败'))
+      .mockRejectedValue(new LinuxDoCloudflareError());
+    const hook = await renderTopicController({
+      getActive: () => focused,
+      notify,
+      showLinuxDoVerification,
+      topic: linuxTopic,
+      readGateway: { getTopic: async () => linuxDetail, getReply }
+    });
+    await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(linuxDetail));
+    const toggle = async () => {
+      await act(async () => {
+        await hook.result.current.controller.toggleTopicBodyQuote(quote);
+      });
+    };
+    await toggle();
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('引用读取失败'));
+    await toggle();
+    expect(hook.result.current.session.state.expandedQuotes[quote.instanceKey]).toBeFalsy();
+
+    focused = false;
+    await act(() => hook.rerender(undefined));
+    focused = true;
+    await act(() => hook.rerender(undefined));
+    expect(getReply).toHaveBeenCalledTimes(1);
+    expect(showLinuxDoVerification).not.toHaveBeenCalled();
+
+    await toggle();
+    await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1];
+    expect(recovery?.isCurrent?.()).toBe(true);
+    await toggle();
+    expect(recovery?.isCurrent?.()).toBe(false);
+    await expect(recovery?.resume()).resolves.toBe('stale');
+    expect(getReply).toHaveBeenCalledTimes(2);
+  });
+
   it('reports an ordinary exact-quote recovery failure', async () => {
     const linuxTopic = { ...firstTopic, source: 'linuxdo' as const, url: 'https://linux.do/t/1' };
     const linuxDetail = { ...firstDetail, ...linuxTopic };
@@ -5382,7 +5731,7 @@ describe('topic query controller', () => {
       .mockRejectedValueOnce(new LinuxDoCloudflareError())
       .mockRejectedValueOnce(new LinuxDoCloudflareError())
       .mockRejectedValueOnce(new Error('引用恢复网络失败'));
-    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: ReadRecovery) => void>();
     const hook = await renderTopicController({
       showLinuxDoVerification,
       topic: linuxTopic,

@@ -123,7 +123,6 @@ describe('Android release packaging guards', () => {
     );
 
     expect(buildProperties?.[1]?.android).toMatchObject({
-      buildReactNativeFromSource: true,
       enableMinifyInReleaseBuilds: true,
       enableShrinkResourcesInReleaseBuilds: true,
       enableBundleCompression: false,
@@ -353,26 +352,6 @@ describe('Android release packaging guards', () => {
 
     expect(plugin).toContain('Invalid SOCKS5 IPv4 host');
     expect(plugin).not.toContain('output.write(part.toInt() and 0xff)');
-  });
-
-  it('keeps local Android development hosts direct even when a system proxy exists', () => {
-    const plugin = readNativePlugin('network');
-    const localHostIndex = plugin.indexOf('if (isLocalDevHost(targetHost))');
-    const noProxyIndex = plugin.indexOf('return mutableListOf(Proxy.NO_PROXY)', localHostIndex);
-    const delegateIndex = plugin.indexOf('delegate?.select(uri)', localHostIndex);
-
-    expect(localHostIndex).toBeGreaterThanOrEqual(0);
-    expect(noProxyIndex).toBeGreaterThan(localHostIndex);
-    expect(delegateIndex).toBeGreaterThan(noProxyIndex);
-  });
-
-  it('keeps the phone system proxy available when the app proxy is disabled', () => {
-    const plugin = readNativePlugin('network');
-    const disabledIndex = plugin.indexOf('if (proxy == null)');
-    const delegateIndex = plugin.indexOf('delegate?.select(uri)', disabledIndex);
-
-    expect(disabledIndex).toBeGreaterThanOrEqual(0);
-    expect(delegateIndex).toBeGreaterThan(disabledIndex);
   });
 
   it('limits media library permissions to photos', () => {

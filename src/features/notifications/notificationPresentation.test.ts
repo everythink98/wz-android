@@ -64,6 +64,19 @@ describe('notification presentation', () => {
     expect(notificationTitleText({ ...message, title: '独立的会话主题' })).toBe('独立的会话主题');
   });
 
+  it('uses link labels in a NodeSeek private message summary', () => {
+    const message: ForumNotification = {
+      ...item('message', null),
+      kind: 'private-message',
+      title: '张三',
+      preview:
+        '您的帖子『[标题 (一)](https://www.nodeseek.com/post-1-1)』被用户 [李四](https://www.nodeseek.com/space/2) 星辰点赞'
+    };
+    const summary = '您的帖子『标题 (一)』被用户 李四 星辰点赞';
+    expect(notificationTitleText(message)).toBe(summary);
+    expect(notificationAccessibilityLabel(message)).toBe('NodeSeek，未读，张三，发来了私信，' + summary);
+  });
+
   it('uses one explicit 24-hour timestamp for parsed and site fallback values', () => {
     const createdAt = new Date(2026, 7, 3, 9, 5).toISOString();
 

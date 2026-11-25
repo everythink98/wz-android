@@ -8,6 +8,7 @@ const MAX_DELIVERED_IDS = 200;
 interface NotificationSourceState {
   intentEnabled: boolean;
   identityKey?: string;
+  deliveryGeneration?: number;
   baselineReady: boolean;
   deliveredIds: string[];
   lastSuccessAt?: string;
@@ -19,6 +20,7 @@ export interface NotificationState {
   version: 1;
   globalEnabled: boolean;
   hasOptedIn: boolean;
+  androidPermissionRequestStarted: boolean;
   sources: Record<NotificationSource, NotificationSourceState>;
 }
 
@@ -31,6 +33,7 @@ export function defaultNotificationState(): NotificationState {
     version: 1,
     globalEnabled: false,
     hasOptedIn: false,
+    androidPermissionRequestStarted: false,
     sources: Object.fromEntries(notificationSources.map((source) => [source, emptySourceState()])) as Record<
       NotificationSource,
       NotificationSourceState
@@ -52,9 +55,13 @@ function normalizeSourceState(source: NotificationSource, value: unknown): Notif
       )
     : [];
   const unreadCount = Number(data.unreadCount);
+  const deliveryGeneration = data.deliveryGeneration;
   return {
     intentEnabled: data.intentEnabled === true,
     ...(identityKey?.startsWith(`${source}:`) ? { identityKey } : {}),
+    ...(typeof deliveryGeneration === 'number' && Number.isSafeInteger(deliveryGeneration) && deliveryGeneration > 0
+      ? { deliveryGeneration }
+      : {}),
     baselineReady: data.baselineReady === true,
     deliveredIds,
     ...(shortString(data.lastSuccessAt) ? { lastSuccessAt: shortString(data.lastSuccessAt) } : {}),
@@ -71,10 +78,14 @@ export function normalizeNotificationState(value: unknown): NotificationState {
     data.sources && typeof data.sources === 'object' && !Array.isArray(data.sources)
       ? (data.sources as Record<string, unknown>)
       : {};
+  const hasOptedIn = data.hasOptedIn === true;
+  const androidPermissionRequestStarted =
+    typeof data.androidPermissionRequestStarted === 'boolean' ? data.androidPermissionRequestStarted : hasOptedIn;
   return {
     version: 1,
     globalEnabled: data.globalEnabled === true,
-    hasOptedIn: data.hasOptedIn === true,
+    hasOptedIn,
+    androidPermissionRequestStarted,
     sources: Object.fromEntries(
       notificationSources.map((source) => [source, normalizeSourceState(source, rawSources[source])])
     ) as Record<NotificationSource, NotificationSourceState>
@@ -110,22 +121,22 @@ function updateNotificationState(update: (state: NotificationState) => Notificat
   return operation;
 }
 
+function restartNotificationDelivery(previous: NotificationSourceState) {
+  return { deliveryGeneration: (previous.deliveryGeneration ?? 0) + 1, baselineReady: false, deliveredIds: [] };
+}
+
 export function setGlobalNotificationIntent(enabled: boolean) {
   return updateNotificationState((current) => {
     const firstOptIn = enabled && !current.hasOptedIn;
+    if (!firstOptIn && current.globalEnabled === enabled) return current;
     const sources = { ...current.sources };
-    if (firstOptIn) {
-      for (const source of notificationSources) {
-        sources[source] = { ...sources[source], intentEnabled: true };
-      }
-    } else if (!enabled) {
-      for (const source of notificationSources) {
-        sources[source] = {
-          ...sources[source],
-          baselineReady: false,
-          deliveredIds: []
-        };
-      }
+    for (const source of notificationSources) {
+      const previous = current.sources[source];
+      sources[source] = {
+        ...previous,
+        ...restartNotificationDelivery(previous),
+        intentEnabled: firstOptIn || previous.intentEnabled
+      };
     }
     return {
       ...current,
@@ -136,22 +147,29 @@ export function setGlobalNotificationIntent(enabled: boolean) {
   });
 }
 
+export function markAndroidNotificationPermissionRequestStarted() {
+  return updateNotificationState((current) =>
+    current.androidPermissionRequestStarted
+      ? current
+      : {
+          ...current,
+          androidPermissionRequestStarted: true
+        }
+  );
+}
+
 export function setSourceNotificationIntent(source: NotificationSource, enabled: boolean) {
-  return updateNotificationState((current) => ({
-    ...current,
-    sources: {
-      ...current.sources,
-      [source]: {
-        ...current.sources[source],
-        intentEnabled: enabled,
-        ...(!enabled
-          ? { baselineReady: false, deliveredIds: [] }
-          : current.sources[source].intentEnabled
-            ? {}
-            : { baselineReady: false, deliveredIds: [] })
+  return updateNotificationState((current) => {
+    const previous = current.sources[source];
+    if (previous.intentEnabled === enabled) return current;
+    return {
+      ...current,
+      sources: {
+        ...current.sources,
+        [source]: { ...previous, ...restartNotificationDelivery(previous), intentEnabled: enabled }
       }
-    }
-  }));
+    };
+  });
 }
 
 export function confirmDisabledNotificationDismissal(
@@ -174,8 +192,7 @@ export function confirmDisabledNotificationDismissal(
   });
 }
 
-export type NotificationContentDisableGuard = {
-  identityKey: string;
+export type NotificationContentDisableGuard = NotificationDeliveryScope & {
   sourceStillDisabled(): Promise<boolean>;
 };
 
@@ -184,8 +201,9 @@ export function clearNotificationSourceForContentDisable(
   guard?: NotificationContentDisableGuard
 ) {
   return updateNotificationState(async (current) => {
-    const { identityKey, intentEnabled } = current.sources[source];
-    if (guard && (identityKey !== guard.identityKey || !(await guard.sourceStillDisabled()))) return current;
+    const previous = current.sources[source];
+    const { identityKey, intentEnabled } = previous;
+    if (guard && (!ownsNotificationDelivery(previous, guard) || !(await guard.sourceStillDisabled()))) return current;
     return {
       ...current,
       sources: {
@@ -193,8 +211,7 @@ export function clearNotificationSourceForContentDisable(
         [source]: {
           intentEnabled,
           ...(identityKey ? { identityKey } : {}),
-          baselineReady: false,
-          deliveredIds: []
+          ...restartNotificationDelivery(previous)
         }
       }
     };
@@ -234,13 +251,51 @@ export interface NotificationDeliveryCommit {
   notificationIdentifier: string;
 }
 
+export type NotificationDeliveryScope = Readonly<{ identityKey: string; deliveryGeneration: number }>;
+
+export function readNotificationDeliveryScope(state: NotificationState, source: NotificationSource) {
+  const sourceState = state.sources[source];
+  const { identityKey, intentEnabled, deliveryGeneration = 0 } = sourceState;
+  return state.globalEnabled && intentEnabled && identityKey ? { identityKey, deliveryGeneration } : undefined;
+}
+
+function ownsNotificationDelivery(
+  sourceState: Pick<NotificationSourceState, 'identityKey' | 'deliveryGeneration'>,
+  scope: NotificationDeliveryScope
+) {
+  return (
+    sourceState.identityKey === scope.identityKey && (sourceState.deliveryGeneration ?? 0) === scope.deliveryGeneration
+  );
+}
+
+export function notificationDeliveryAllowed(
+  state: NotificationState,
+  source: NotificationSource,
+  scope: NotificationDeliveryScope
+) {
+  const current = readNotificationDeliveryScope(state, source);
+  return current !== undefined && ownsNotificationDelivery(current, scope);
+}
+
+export function notificationDeliveryPlanMatches(
+  advanced: ReturnType<typeof advanceNotificationDelivery>,
+  plan?: Pick<NotificationDeliveryCommit, 'expectedNewIds' | 'previousIdentifier'>
+) {
+  if (!plan) return advanced.newIds.length === 0;
+  return (
+    advanced.state.notificationIdentifier === plan.previousIdentifier &&
+    advanced.newIds.length === plan.expectedNewIds.length &&
+    advanced.newIds.every((id, index) => id === plan.expectedNewIds[index])
+  );
+}
+
 type DeliveryRecording =
   | { phase: 'uncommitted'; newIds: string[] }
   | { phase: 'committed'; newIds: string[]; previous: Pick<NotificationSourceState, 'baselineReady' | 'deliveredIds'> };
 
 export function recordNotificationDelivery(
   source: NotificationSource,
-  identityKey: string,
+  scope: NotificationDeliveryScope,
   scannedIds: string[],
   fields: { lastSuccessAt: string },
   delivery?: NotificationDeliveryCommit
@@ -248,21 +303,11 @@ export function recordNotificationDelivery(
   let recording: DeliveryRecording = { phase: 'uncommitted', newIds: [] };
   const operation = updateNotificationState((current) => {
     const sourceState = current.sources[source];
-    if (!current.globalEnabled || !sourceState.intentEnabled || sourceState.identityKey !== identityKey) return current;
-    const advanced = advanceNotificationDelivery(sourceState, identityKey, scannedIds);
+    if (!notificationDeliveryAllowed(current, source, scope)) return current;
+    const advanced = advanceNotificationDelivery(sourceState, scope.identityKey, scannedIds);
     const newIds = advanced.newIds;
     recording = { phase: 'uncommitted', newIds };
-    const plannedIdsMatch = delivery
-      ? delivery.expectedNewIds.length === newIds.length &&
-        delivery.expectedNewIds.every((id, index) => id === newIds[index])
-      : false;
-    if (
-      delivery
-        ? !plannedIdsMatch || sourceState.notificationIdentifier !== delivery.previousIdentifier
-        : newIds.length > 0
-    ) {
-      return current;
-    }
+    if (!notificationDeliveryPlanMatches(advanced, delivery)) return current;
     recording = {
       phase: 'committed',
       newIds,
@@ -295,10 +340,8 @@ export function recordNotificationDelivery(
           : updateNotificationState((current) => {
               const sourceState = current.sources[source];
               if (
-                !current.globalEnabled ||
-                !sourceState.intentEnabled ||
+                !notificationDeliveryAllowed(current, source, scope) ||
                 !sourceState.baselineReady ||
-                sourceState.identityKey !== identityKey ||
                 sourceState.notificationIdentifier !== delivery.notificationIdentifier
               ) {
                 return current;
@@ -325,7 +368,7 @@ export function resetNotificationSourceIdentity(source: NotificationSource, iden
     sources: {
       ...current.sources,
       [source]: {
-        ...emptySourceState(),
+        ...restartNotificationDelivery(current.sources[source]),
         intentEnabled: current.sources[source].intentEnabled,
         ...(identityKey ? { identityKey } : {})
       }

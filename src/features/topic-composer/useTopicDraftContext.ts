@@ -32,7 +32,10 @@ export function useTopicDraftContext(input: {
   readRules(
     value: TopicDraft,
     signal: AbortSignal
-  ): Promise<{ context: TopicCreationContext; editing: TopicEditContext | null }>;
+  ): Promise<{
+    context: TopicCreationContext;
+    editing: TopicEditContext | null;
+  }>;
   readEmojis(signal: AbortSignal): Promise<Record<string, string>>;
   rulesReady(value: TopicDraft, context: TopicCreationContext): void;
 }) {
@@ -76,9 +79,23 @@ export function useTopicDraftContext(input: {
     publish({ ...state, request: {} });
   }, [key, keyRef, publish, request]);
   const installRestoredEdit = useCallback(
-    (editing: TopicEditContext) =>
-      publish({ ...current.current, editContext: editing, rules: { phase: 'idle', preloaded: editing.rules } }),
-    [publish]
+    (editing: TopicEditContext, verifiedDraftId?: string) => {
+      const state = current.current;
+      const { source, identityKey, target, sessionEpoch } = inputRef.current;
+      publish({
+        ...state,
+        editContext: editing,
+        rules: verifiedDraftId
+          ? {
+              phase: 'ready',
+              key: JSON.stringify([source, identityKey, target, verifiedDraftId, sessionEpoch]),
+              request: state.request,
+              context: editing.rules
+            }
+          : { phase: 'idle', preloaded: editing.rules }
+      });
+    },
+    [inputRef, publish]
   );
   const reviewedEdit = useCallback(
     (editing: TopicEditContext) => publish({ ...current.current, editContext: editing }),
@@ -112,7 +129,26 @@ export function useTopicDraftContext(input: {
       current.current.rules.phase === 'loading' &&
       current.current.rules.run === run &&
       !run.controller.signal.aborted &&
+      inputRef.current.canRead &&
       keyRef.current === run.key;
+    const fail = (cause: unknown) => {
+      if (!owns()) return;
+      const kind = sourceErrorFromUnknown(value.source, cause).kind;
+      publish({
+        ...current.current,
+        rules: {
+          phase: 'failed',
+          key,
+          request,
+          failure: {
+            kind: ['verification-required', 'login-required', 'login-expired'].includes(kind)
+              ? 'verification'
+              : 'error',
+            message: errorMessage(cause)
+          }
+        }
+      });
+    };
     void inputRef.current
       .readRules(value, run.controller.signal)
       .then((result) => {
@@ -124,24 +160,7 @@ export function useTopicDraftContext(input: {
         });
         if (keyRef.current === run.key) inputRef.current.rulesReady(value, result.context);
       })
-      .catch((cause) => {
-        if (!owns()) return;
-        const kind = sourceErrorFromUnknown(value.source, cause).kind;
-        publish({
-          ...current.current,
-          rules: {
-            phase: 'failed',
-            key,
-            request,
-            failure: {
-              kind: ['verification-required', 'login-required', 'login-expired'].includes(kind)
-                ? 'verification'
-                : 'error',
-              message: errorMessage(cause)
-            }
-          }
-        });
-      });
+      .catch(fail);
     return () => {
       run.controller.abort();
       if (current.current.rules.phase === 'loading' && current.current.rules.run === run)

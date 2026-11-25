@@ -6,11 +6,13 @@ import { useForumCatalogRuntime } from '@/app/useForumCatalogRuntime';
 import { createEmptyReaderData, topicKey } from '@/domain/reader/readerData';
 import { canonicalEnabledSourcesKey, projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
+import { createDiscourseReadingRuntime } from '@/platform/query/discourseReadingRuntime';
+import { readingResumeAnchor } from '@/domain/forum/discourseReading';
 import { createReadGateway, type ReadGateway } from '@/sources/readGateway';
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { resetForumSourceQueries } from '@/features/account/sessionQueryOwnership';
-import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
+import type { ReadRecovery } from '@/platform/query/readRecovery';
 import { sessionSources, sourceValues, type SessionSource, type Source } from '@/domain/forum/sourceCatalog';
 import type { Category, FeedResponse, SourceErrors, Topic } from '@/domain/forum/models';
 import { aggregateForumReadPlan, resolveForumReadPlan, type ForumReadOperation } from '@/domain/forum/readPlan';
@@ -120,6 +122,149 @@ function readerDataWithEnabledSources(enabledSources: readonly Source[]) {
 }
 
 describe('Feed controller sessions', () => {
+  it.each(['categories', 'next-page', 'cancel'] as const)(
+    'restores the original NodeSeek %s while the Feed still observes the public lane',
+    async (operation) => {
+      const enabledSources: Source[] = ['nodeseek'];
+      const readerData = readerDataWithEnabledSources(enabledSources);
+      const firstTopic: Topic = {
+        source: 'nodeseek',
+        id: '1',
+        title: '第一条主题',
+        url: 'https://www.nodeseek.com/post-1-1',
+        author: 'alice',
+        createdAt: '2026-07-20T00:00:00.000Z',
+        replyCount: 0
+      };
+      const secondTopic = { ...firstTopic, id: '2', url: 'https://www.nodeseek.com/post-2-1' };
+      const expectedCategory: Category = { source: 'nodeseek', id: 'tech', name: '技术' };
+      const empty = { items: [], errors: {}, hasMore: false, nextPage: null };
+      const errors: SourceErrors = {
+        nodeseek: { kind: 'verification-required', message: 'NodeSeek 需要验证' }
+      };
+      let authSurfaceOpen = false;
+      let foregroundReadDuringHandoff = false;
+      let failNextRefresh = false;
+      const getCategories = jest
+        .fn<ReturnType<ReadGateway['getCategories']>, Parameters<ReadGateway['getCategories']>>()
+        .mockImplementation(async (_options, context) => {
+          const authenticated = context?.plan?.cacheScope === 'authenticated:0';
+          if (operation !== 'categories') return { items: [], errors: {} };
+          if (!authenticated) return { items: [], errors: authSurfaceOpen ? errors : {} };
+          return foregroundReadDuringHandoff ? { items: [expectedCategory], errors: {} } : { items: [], errors };
+        });
+      const getFeed = jest
+        .fn<ReturnType<ReadGateway['getFeed']>, Parameters<ReadGateway['getFeed']>>()
+        .mockImplementation(async ({ source, page = 1 }, context) => {
+          if (source !== 'nodeseek') return empty;
+          if (context?.plan?.cacheScope !== 'authenticated:0') return authSurfaceOpen ? { ...empty, errors } : empty;
+          if (failNextRefresh) return { ...empty, errors };
+          if (page === 1) return { ...empty, items: [firstTopic], hasMore: true, nextPage: 2, nextCursor: 'page-2' };
+          return foregroundReadDuringHandoff ? { ...empty, items: [secondTopic] } : { ...empty, errors };
+        });
+      const showNodeSeekVerification = jest.fn<void, [message?: string, recovery?: ReadRecovery]>();
+      const readGateway = {
+        getCategories,
+        getFeed,
+        getReadPlan: (source: Source, requestedOperation: ForumReadOperation) =>
+          resolveForumReadPlan(source, requestedOperation, source === 'nodeseek', {
+            source: 'nodeseek',
+            authenticated: true,
+            identityKey: 'nodeseek:test',
+            identityTrust: 'confirmed',
+            sessionEpoch: 0,
+            authSurfaceOpen,
+            ...(foregroundReadDuringHandoff ? { foregroundReadDuringHandoff: true } : {})
+          })
+      } as unknown as ReadGateway;
+      const hook = await renderHook(() =>
+        useFeedController({
+          active: true,
+          enabledSources,
+          enabledSourcesKey: 'nodeseek',
+          feedLayoutKey: 'nodeseek',
+          catalogCategories: [],
+          linuxDoVerificationActive: false,
+          nodeSeekVerificationActive: authSurfaceOpen,
+          notify: jest.fn(),
+          readerData,
+          readerDataLoaded: true,
+          showLinuxDoVerification: jest.fn(),
+          showNodeSeekVerification,
+          showYaohuoLogin: jest.fn(),
+          readGateway
+        })
+      );
+      try {
+        await act(async () => hook.result.current.changeFeedSource('nodeseek'));
+        await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([firstTopic]));
+        if (operation !== 'categories') {
+          await act(async () => {
+            await hook.result.current.loadFeed();
+          });
+        }
+        await waitFor(() => expect(showNodeSeekVerification).toHaveBeenCalledTimes(1));
+        const recovery = showNodeSeekVerification.mock.calls[0][1];
+        expect(recovery?.queryKey.slice(0, 3)).toEqual([
+          'forum',
+          'nodeseek',
+          operation === 'categories' ? 'categories' : 'feed'
+        ]);
+        authSurfaceOpen = true;
+        await act(async () => hook.rerender(undefined));
+        await waitFor(() => {
+          expect(hook.result.current.feedOutcomeKind).toBe('auth');
+          expect(showNodeSeekVerification).toHaveBeenCalledTimes(1);
+        });
+        expect(hook.result.current.activeFeedState.items).toEqual([]);
+        if (operation === 'cancel') {
+          authSurfaceOpen = false;
+          await act(async () => hook.rerender(undefined));
+          await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([firstTopic]));
+          expect(showNodeSeekVerification).toHaveBeenCalledTimes(1);
+          failNextRefresh = true;
+          await act(async () => hook.result.current.refreshFeed());
+          await waitFor(() => expect(showNodeSeekVerification).toHaveBeenCalledTimes(2));
+          return;
+        }
+        await act(async () => {
+          foregroundReadDuringHandoff = true;
+          await expect(recovery?.resume()).resolves.toBe('completed');
+          authSurfaceOpen = false;
+          foregroundReadDuringHandoff = false;
+        });
+        await act(async () => hook.rerender(undefined));
+        if (operation === 'categories') {
+          await waitFor(() => expect(hook.result.current.categories).toEqual([expectedCategory]));
+          expect(
+            getCategories.mock.calls.filter(([, context]) => context?.plan?.cacheScope === 'authenticated:0')
+          ).toHaveLength(2);
+        } else {
+          await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([firstTopic, secondTopic]));
+          expect(
+            getFeed.mock.calls.flatMap(([options, context]) =>
+              options.source === 'nodeseek' && context?.plan?.cacheScope === 'authenticated:0'
+                ? [[options.page, options.cursor]]
+                : []
+            )
+          ).toEqual([
+            [1, undefined],
+            [2, 'page-2'],
+            [2, 'page-2']
+          ]);
+        }
+        expect(showNodeSeekVerification).toHaveBeenCalledTimes(1);
+        if (operation === 'next-page') {
+          failNextRefresh = true;
+          await act(async () => hook.result.current.refreshFeed());
+          await waitFor(() => expect(showNodeSeekVerification).toHaveBeenCalledTimes(2));
+        }
+      } finally {
+        await hook.unmount();
+      }
+    }
+  );
+
   it('shows a loading state during a retry after a cached empty feed failed to refresh', async () => {
     const empty: FeedResponse = { items: [], errors: {}, hasMore: false, nextPage: null };
     const next = Promise.withResolvers<FeedResponse>();
@@ -789,7 +934,7 @@ describe('Feed controller sessions', () => {
     expect(requests[1].context?.plan).toMatchObject({ sites: [{ source: 'v2ex' }] });
   });
 
-  it('keeps Feed selection on reorder and exposes no warm data when all sources are disabled', async () => {
+  it('exposes no warm Feed data when all sources are disabled', async () => {
     const topic: Topic = {
       source: 'v2ex',
       id: 'enabled-topic',
@@ -821,17 +966,6 @@ describe('Feed controller sessions', () => {
     );
 
     await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([topic]));
-    await act(async () => hook.result.current.setReadingFilter('unread'));
-    readerData = readerDataWithEnabledSources(['nodeseek', 'v2ex']);
-    await act(async () => {
-      hook.rerender({});
-      await Promise.resolve();
-    });
-
-    expect(getFeed).toHaveBeenCalledTimes(1);
-    expect(hook.result.current.feedSource).toBe('all');
-    expect(hook.result.current.readingFilter).toBe('unread');
-
     readerData = readerDataWithEnabledSources([]);
     await act(async () => {
       hook.rerender({});
@@ -1105,7 +1239,7 @@ describe('Feed controller sessions', () => {
         feedSignals.push(signal);
         return pendingFeed.promise;
       });
-      const showLinuxDoVerification = jest.fn<void, [message?: string, recovery?: LinuxDoReadRecovery]>();
+      const showLinuxDoVerification = jest.fn<void, [message?: string, recovery?: ReadRecovery]>();
       const showNodeSeekVerification = jest.fn<void, [message?: string]>();
       const showYaohuoLogin = jest.fn<void, [message?: string]>();
       const notify = jest.fn();
@@ -1428,7 +1562,7 @@ describe('Feed controller sessions', () => {
             };
       }
     );
-    const showLinuxDoVerification = jest.fn<void, [message?: string, recovery?: LinuxDoReadRecovery]>();
+    const showLinuxDoVerification = jest.fn<void, [message?: string, recovery?: ReadRecovery]>();
     const readGateway = {
       getCategories: jest.fn(async () => ({ items: [], errors: {} })),
       getFeed,
@@ -1475,7 +1609,7 @@ describe('Feed controller sessions', () => {
       await Promise.resolve();
     });
 
-    let recoveryOutcome: Awaited<ReturnType<LinuxDoReadRecovery['resume']>> | undefined;
+    let recoveryOutcome: Awaited<ReturnType<ReadRecovery['resume']>> | undefined;
     await act(async () => {
       recoveryOutcome = await recovery!.resume();
     });
@@ -3640,7 +3774,7 @@ describe('Feed controller sessions', () => {
     });
 
     await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
-    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as ReadRecovery;
     expect(recovery).toBeDefined();
 
     expect(hook.result.current.activeFeedState).toMatchObject({
@@ -3754,7 +3888,7 @@ describe('Feed controller sessions', () => {
           : { items: [v2exTopic, linuxDoTopic], errors: {}, hasMore: false, nextPage: null };
       }
     );
-    const showLinuxDoVerification = jest.fn<void, [message?: string, recovery?: LinuxDoReadRecovery]>();
+    const showLinuxDoVerification = jest.fn<void, [message?: string, recovery?: ReadRecovery]>();
     const hook = await renderHook(() =>
       useFeedRuntime({
         linuxDoVerificationActive: false,
@@ -3775,7 +3909,7 @@ describe('Feed controller sessions', () => {
 
     await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([v2exTopic]));
     await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
-    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as ReadRecovery;
     const initialReadPlanScopes = getFeed.mock.calls[0]?.[1]?.plan;
 
     await act(async () => {
@@ -3865,7 +3999,7 @@ describe('Feed controller sessions', () => {
       await hook.result.current.refreshFeed();
     });
     await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
-    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as ReadRecovery;
     expect(hook.result.current.activeFeedState.items).toEqual([firstTopic, secondTopic]);
 
     await act(async () => {
@@ -4150,4 +4284,232 @@ describe('Feed controller sessions', () => {
       await waitFor(() => expect(hook.result.current.activeFeedState.loadMoreFailureSignal).toBeGreaterThan(0));
     }
   );
+
+  it.each(['linuxdo', 'all'] as const)(
+    'applies topicUpdates to already-displayed %s feed rows by key without duplicating rows or consuming quota',
+    async (mode) => {
+      const enabledSources: Source[] = ['linuxdo'];
+      const readerData = readerDataWithEnabledSources(enabledSources);
+      const makeRow = (id: number, extra: Record<string, unknown> = {}) => ({
+        id,
+        slug: `topic-${id}`,
+        title: `Topic ${id}`,
+        created_at: new Date(Date.UTC(2026, 9, 10, 12, 0, 0) - id * 60_000).toISOString(),
+        posts_count: 5,
+        highest_post_number: 5,
+        ...extra
+      });
+      const requestedPages: (string | null)[] = [];
+      const fetcher = jest.fn(async (input: string) => {
+        const url = new URL(input);
+        if (url.pathname === '/filter.json' || !url.searchParams.has('order')) {
+          return Response.json({ topic_list: { topics: [] } });
+        }
+        const pageParam = url.searchParams.get('page');
+        requestedPages.push(pageParam);
+        const upstreamPage = Number(pageParam || 0);
+        if (upstreamPage === 0) {
+          return Response.json({
+            topic_list: {
+              topics: Array.from({ length: 30 }, (_, index) => makeRow(index + 1)),
+              more_topics_url: '/latest?order=created&page=1'
+            }
+          });
+        }
+        return Response.json({
+          topic_list: {
+            topics: [
+              makeRow(1, { pinned: true, pinned_globally: true }),
+              makeRow(2, { required_trust_level: 3 }),
+              ...Array.from({ length: 30 }, (_, index) => makeRow(index + 31))
+            ],
+            more_topics_url: null
+          }
+        });
+      });
+      const gateway = createReadGateway({
+        fetcher,
+        anonymousFetcher: fetcher,
+        getEnabledSources: () => enabledSources,
+        linuxDoUserAgent: () => 'saved',
+        nodeSeekUserAgent: () => 'saved',
+        readSessionRuntimeSnapshot: (source) => ({
+          source,
+          sourceEnabled: true,
+          authenticated: false,
+          authSurfaceOpen: false,
+          identityKey: `${source}:anonymous`,
+          identityTrust: 'none',
+          sessionEpoch: 0
+        })
+      });
+      const hook = await renderHook(() =>
+        useFeedController({
+          active: true,
+          enabledSources,
+          enabledSourcesKey: canonicalEnabledSourcesKey(readerData.settings.contentSources),
+          catalogCategories: [],
+          linuxDoVerificationActive: false,
+          notify: jest.fn(),
+          readerData,
+          readerDataLoaded: true,
+          showLinuxDoVerification: jest.fn(),
+          showNodeSeekVerification: jest.fn(),
+          showYaohuoLogin: jest.fn(),
+          readGateway: gateway
+        })
+      );
+      try {
+        if (mode === 'linuxdo') {
+          await act(async () => hook.result.current.changeFeedSource('linuxdo'));
+        }
+        await waitFor(() => expect(hook.result.current.activeFeedState.items).toHaveLength(30));
+        requestedPages.length = 0;
+
+        await act(async () => {
+          await hook.result.current.loadFeed();
+        });
+        await waitFor(() => expect(hook.result.current.activeFeedState.loadingMore).toBe(false));
+        expect(requestedPages).toEqual(['1']);
+
+        const items = hook.result.current.activeFeedState.items;
+        const ids = items.map((item) => item.id);
+        expect(new Set(ids).size).toBe(ids.length);
+        expect(items.find((item) => item.id === '2')?.accessRequirement).toMatchObject({
+          type: 'level',
+          label: '需等级',
+          detail: 'Lv3'
+        });
+        if (mode === 'linuxdo') {
+          expect(items).toHaveLength(60);
+          expect(items.find((item) => item.id === '1')?.pinned).toBe(true);
+        } else {
+          expect(items).toHaveLength(59);
+          expect(ids).not.toContain('1');
+        }
+      } finally {
+        await hook.unmount();
+      }
+    }
+  );
+
+  it('updates feed read-status filter and continue-reading position after stale unseen backfill and topicUpdates floor regression', async () => {
+    const enabledSources: Source[] = ['linuxdo'];
+    const readerData = readerDataWithEnabledSources(enabledSources);
+    const reading = createDiscourseReadingRuntime({
+      queryClient: appQueryClient,
+      scope: () => 'alice',
+      send: async () => undefined
+    });
+    const makeRow = (id: number, extra: Record<string, unknown> = {}) => ({
+      id,
+      slug: `topic-${id}`,
+      title: `Topic ${id}`,
+      created_at: new Date(Date.UTC(2026, 9, 10, 12, 0, 0) - id * 60_000).toISOString(),
+      posts_count: 12,
+      highest_post_number: 12,
+      ...extra
+    });
+    const batchRequests: string[][] = [];
+    const fetcher = jest.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.pathname === '/filter.json') {
+        return Response.json({ topic_list: { topics: [] } });
+      }
+      const batchIds = url.searchParams.getAll('topic_ids[]');
+      if (batchIds.length) {
+        batchRequests.push(batchIds);
+        return Response.json({
+          topic_list: {
+            topics: batchIds.map((id) => ({ id: Number(id), last_read_post_number: 7, highest_post_number: 12 }))
+          }
+        });
+      }
+      const upstreamPage = Number(url.searchParams.get('page') || 0);
+      if (upstreamPage === 0) {
+        return Response.json({
+          topic_list: {
+            topics: [
+              makeRow(1, { last_read_post_number: 7, highest_post_number: 12 }),
+              makeRow(2, { unseen: true, highest_post_number: 12 }),
+              ...Array.from({ length: 28 }, (_, index) => makeRow(index + 3, { unseen: true, highest_post_number: 12 }))
+            ],
+            more_topics_url: '/latest?order=created&page=1'
+          }
+        });
+      }
+      return Response.json({
+        topic_list: {
+          topics: [
+            makeRow(1, { last_read_post_number: 2, highest_post_number: 12 }),
+            makeRow(2, { unseen: false, highest_post_number: 12 }),
+            makeRow(31, { unseen: true, highest_post_number: 12 })
+          ],
+          more_topics_url: null
+        }
+      });
+    });
+    const gateway = createReadGateway({
+      reading,
+      fetcher,
+      anonymousFetcher: fetcher,
+      getEnabledSources: () => enabledSources,
+      linuxDoUserAgent: () => 'saved',
+      nodeSeekUserAgent: () => 'saved',
+      readSessionRuntimeSnapshot: (source) => ({
+        source,
+        sourceEnabled: true,
+        authenticated: true,
+        authSurfaceOpen: false,
+        identityKey: 'alice',
+        identityTrust: 'confirmed',
+        sessionEpoch: 1
+      })
+    });
+    const hook = await renderHook(() =>
+      useFeedController({
+        active: true,
+        enabledSources,
+        enabledSourcesKey: canonicalEnabledSourcesKey(readerData.settings.contentSources),
+        catalogCategories: [],
+        linuxDoVerificationActive: false,
+        notify: jest.fn(),
+        readerData,
+        readerDataLoaded: true,
+        showLinuxDoVerification: jest.fn(),
+        showNodeSeekVerification: jest.fn(),
+        showYaohuoLogin: jest.fn(),
+        readGateway: gateway
+      })
+    );
+    try {
+      await waitFor(() => expect(hook.result.current.activeFeedState.items).toHaveLength(30));
+      expect(batchRequests).toEqual([]);
+      expect(readingResumeAnchor(reading.state()['1'])).toEqual({ floor: 8 });
+
+      await act(() => hook.result.current.setReadingFilter('read'));
+      expect(hook.result.current.shownFeedItems.map((item) => item.id)).toEqual(['1']);
+
+      await act(() => hook.result.current.setReadingFilter('all'));
+      await act(async () => {
+        await hook.result.current.loadFeed();
+      });
+      await waitFor(() => expect(hook.result.current.activeFeedState.items).toHaveLength(31));
+      await waitFor(() => expect(reading.state()['2']?.server.lastReadPostNumber).toBe(7));
+
+      expect(batchRequests).toEqual([['2']]);
+      expect(reading.state()['1']?.server.lastReadPostNumber).toBe(2);
+      expect(readingResumeAnchor(reading.state()['1'])).toEqual({ floor: 3 });
+      expect(readingResumeAnchor(reading.state()['2'])).toEqual({ floor: 8 });
+
+      await act(() => hook.result.current.setReadingFilter('read'));
+      expect(hook.result.current.shownFeedItems.map((item) => item.id)).toEqual(['1', '2']);
+
+      await act(() => hook.result.current.setReadingFilter('unread'));
+      expect(hook.result.current.shownFeedItems.map((item) => item.id)).not.toContain('2');
+    } finally {
+      await hook.unmount();
+      reading.dispose();
+    }
+  });
 });

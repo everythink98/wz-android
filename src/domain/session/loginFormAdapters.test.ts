@@ -81,6 +81,7 @@ describe('login form adapters', () => {
 
     const script = adapter.fillScript({ account: accountValue, password: passwordValue }, 1);
     expect(script).not.toContain('</script>');
+    evaluateScript(page, adapter.probeScript(1));
     evaluateScript(page, script);
 
     expect(account.value).toBe(accountValue);
@@ -90,13 +91,41 @@ describe('login form adapters', () => {
     expect(passwordInput).toHaveBeenCalledTimes(1);
     expect(passwordChange).toHaveBeenCalledTimes(1);
     expect(submit).not.toHaveBeenCalled();
-    expect(parseLoginFormMessage(page.postMessage.mock.calls[0]?.[0])).toEqual({
+    expect(parseLoginFormMessage(page.postMessage.mock.lastCall?.[0])).toEqual({
       type: 'login-form-fill',
       site: adapter.site,
       attempt: 1,
       ok: true,
       url: adapter.loginUrl
     });
+  });
+
+  it('restricts a document-bound fill to the form and attempt that were probed', () => {
+    const { adapter, html } = siteCases[0];
+    const original = createPage(adapter, html);
+    const reloaded = createPage(adapter, html);
+    const credential = { account: 'fixture-account', password: 'fixture-password' };
+    const fill = adapter.fillScript(credential, 1);
+    const readResult = (page: ReturnType<typeof createPage>) =>
+      parseLoginFormMessage(page.postMessage.mock.lastCall?.[0]);
+
+    evaluateScript(original, adapter.probeScript(1));
+    evaluateScript(reloaded, fill);
+    expect(readResult(reloaded)?.ok).toBe(false);
+    expect(Array.from(reloaded.pageDocument.querySelectorAll('input')).some((input) => input.value)).toBe(false);
+
+    evaluateScript(original, adapter.fillScript(credential, 2));
+    expect(readResult(original)?.ok).toBe(false);
+    evaluateScript(original, fill);
+    expect(readResult(original)?.ok).toBe(true);
+    evaluateScript(original, fill);
+    expect(readResult(original)?.ok).toBe(false);
+
+    evaluateScript(reloaded, adapter.probeScript(2));
+    reloaded.pageDocument.body.innerHTML = html;
+    evaluateScript(reloaded, adapter.fillScript(credential, 2));
+    expect(readResult(reloaded)?.ok).toBe(false);
+    expect(Array.from(reloaded.pageDocument.querySelectorAll('input')).some((input) => input.value)).toBe(false);
   });
 
   it.each([

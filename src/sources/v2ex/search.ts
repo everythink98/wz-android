@@ -2,7 +2,7 @@ import { normalizeTopicId } from '@/domain/forum/numericValues';
 import type { SearchSort } from '@/domain/forum/feed';
 import { searchTimeRangeStartEpoch, type V2exSearchFilter } from '@/domain/forum/searchFilters';
 import type { SearchResponse, Topic } from '@/domain/forum/models';
-import { isRecord, textExcerpt, toIsoString } from '@/domain/forum/html';
+import { isRecord, textExcerptFromPlainText, toIsoString } from '@/domain/forum/html';
 import { accessRequirementFromObject } from '@/domain/forum/accessRequirements';
 import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { SOV2EX_URL, V2EX_BASE_URL as BASE_URL } from './protocol';
@@ -111,6 +111,7 @@ export async function searchV2ex(
       }
       const createdAt = toIsoString(source.created);
       const accessRequirement = accessRequirementFromObject(source);
+      const highlighted = highlightText(isRecord(hit) ? hit.highlight : undefined);
       return {
         source: 'v2ex' as const,
         id,
@@ -121,7 +122,9 @@ export async function searchV2ex(
         createdAt,
         lastReplyAt: createdAt || undefined,
         replyCount: Number(source.replies || 0),
-        excerpt: textExcerpt(highlightText(isRecord(hit) ? hit.highlight : undefined) || source.content || ''),
+        excerpt: highlighted
+          ? textExcerptFromPlainText(highlighted.replace(/<\/?em>/gi, ''))
+          : textExcerptFromPlainText(source.content || ''),
         ...(accessRequirement ? { accessRequirement } : {})
       };
     })

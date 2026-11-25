@@ -1,4 +1,3 @@
-import { checkYaohuoLogin } from '@/sources/readGateway';
 import { summarizeCookieHeader } from '@/platform/network/cookieHeaderNames';
 import { errorMessage, isCanceledRequest } from '@/platform/network/errors';
 import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
@@ -17,7 +16,7 @@ import {
   withDiagnosticFetcher
 } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
-import { fetchYaohuoHtml } from './reader';
+import { checkYaohuoLoginDirect, fetchYaohuoHtml } from './reader';
 import { parseYaohuoUserProfileDocument } from './userParser';
 import { parseYaohuoListDocument } from './feedParser';
 import { YAOHUO_BASE_URL, yaohuoUserProfileTopicListUrlFromRoot } from './protocol';
@@ -70,7 +69,7 @@ export async function readYaohuoAccountStatus({
     const cookieSummary = summarizeCookieHeader(cookieHeader).names;
     const diagnosticFetcher = withDiagnosticFetcher(trace, fetcher);
     markDiagnosticStage(trace, 'credential', { source: 'yaohuo', hasCredential: Boolean(cookieHeader) });
-    const check = await checkYaohuoLogin({ yaohuoFetcher: diagnosticFetcher, signal });
+    const check = await checkYaohuoLoginDirect({ yaohuoFetcher: diagnosticFetcher, signal });
     const expired = 'reason' in check && check.reason === 'expired';
     if (!check.ok && !expired) throw new Error(check.message || '妖火登录状态暂时无法确认。');
     if (expired) {

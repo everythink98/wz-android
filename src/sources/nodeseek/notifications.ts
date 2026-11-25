@@ -21,6 +21,7 @@ import type {
 import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
 import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { fetchWithTimeout } from '@/platform/network/request';
+import { nodeSeekReplyReceipt } from '@/sources/replyReceipt';
 import { isNodeSeekChallengeResponse, NODESEEK_BASE_URL, nodeSeekTopicUrl } from './protocol';
 import { runNodeSeekAction } from './actionClient';
 import { getNodeSeekReplies, getNodeSeekTopic } from './reader';
@@ -474,11 +475,10 @@ export const nodeSeekNotificationAdapter = {
       timeoutMs: options.timeoutMs,
       userAgent: options.userAgent
     });
-    if (!isRecord(data) || data.success !== true) {
-      return { confirmed: false, message: 'NodeSeek 未确认私信已发送' };
-    }
-    const message = text(data, 'message');
-    return { confirmed: true, ...(message ? { message } : {}) };
+    const receipt = nodeSeekReplyReceipt(data);
+    if (receipt.kind === 'rejected') throw Object.assign(new Error(receipt.message), { serverRejected: true });
+    if (receipt.kind !== 'confirmed') return { confirmed: false, message: 'NodeSeek 未确认私信已发送' };
+    return { confirmed: true, ...(receipt.message ? { message: receipt.message } : {}) };
   },
 
   async markAllRead(options: NotificationAdapterAccess): Promise<NotificationMarkResult> {

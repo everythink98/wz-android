@@ -1,7 +1,11 @@
 import { isRecord } from '@/domain/forum/html';
-import { sourceCatalog, type Source } from '@/domain/forum/sourceCatalog';
+import type { Source } from '@/domain/forum/sourceCatalog';
 import { isCloudflareChallengeResponse } from '@/platform/network/cloudflareChallenge';
-import { isLinuxDoUnauthorizedChallenge, withAbortableTimeout } from '@/platform/network/request';
+import {
+  classifyForumUnauthorizedResponse,
+  isForumResponseOrigin,
+  withAbortableTimeout
+} from '@/platform/network/request';
 import { discourseActionResponseMessage } from '@/sources/discourse/actionRequest';
 import { linuxDoRequestError } from '@/sources/linuxdo/protocol';
 import { errorRequiresAccountRecheck } from './sourceErrors';
@@ -12,15 +16,17 @@ export async function forumResponseAccountFailure(
   response: Response,
   signal?: AbortSignal
 ): Promise<'http-401' | 'account-recheck-required' | undefined> {
-  if (signal?.aborted || new URL(input).origin !== new URL(sourceCatalog[source].baseUrl).origin) return;
   if (response.status === 401) {
-    const challenge =
-      source === 'linuxdo'
-        ? await isLinuxDoUnauthorizedChallenge(response, signal)
-        : isCloudflareChallengeResponse(response);
-    return challenge || signal?.aborted ? undefined : 'http-401';
+    const reason = await classifyForumUnauthorizedResponse(source, input, response, signal);
+    return reason === 'http-401' ? reason : undefined;
   }
-  if (source !== 'linuxdo' || ![403, 404].includes(response.status)) return;
+  if (
+    source !== 'linuxdo' ||
+    ![403, 404].includes(response.status) ||
+    signal?.aborted ||
+    !isForumResponseOrigin(source, input, response)
+  )
+    return;
   let body: string;
   try {
     body = await withAbortableTimeout(() => response.clone().text(), { signal });

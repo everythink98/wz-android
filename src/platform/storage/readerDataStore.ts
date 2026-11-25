@@ -10,7 +10,11 @@ import {
   type ReaderSettings
 } from '@/domain/reader/readerData';
 import { exportReaderBackupJson, parseReaderBackupJson, utf8ByteLength } from '@/domain/reader/readerBackup';
-import type { ReaderCommand, ReaderPageRequest } from '@/domain/reader/readerRecordState';
+import {
+  readerStorageRestartMessage,
+  type ReaderCommand,
+  type ReaderPageRequest
+} from '@/domain/reader/readerRecordState';
 import type { Topic } from '@/domain/forum/models';
 import { isRecord } from '@/domain/forum/html';
 import { createTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
@@ -32,7 +36,7 @@ const LEGACY_KEYS = ['reader-data', 'reader-settings'];
 type ReaderConnectionOwner = { kind: 'cold' } | { kind: 'retained'; db: SQLiteDatabase };
 let connection: ReaderConnectionOwner = { kind: 'cold' };
 const { enqueue, transaction, assertUsable, subscribeToFreeze } = createSqliteExecutor(
-  '本机资料事务状态不明，请重新启动后恢复。',
+  readerStorageRestartMessage,
   '本机资料事务无法确认，已停止修改。'
 );
 export const subscribeReaderStorageFreeze = subscribeToFreeze;

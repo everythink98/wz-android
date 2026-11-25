@@ -1,5 +1,5 @@
 import { ActivityIndicator } from 'react-native-paper';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useEvent } from 'expo';
 import { VideoView, createVideoPlayer, type VideoPlayer } from 'expo-video';
@@ -61,6 +61,7 @@ type ForumContentVideoProps = {
   boundarySpacing?: StyleProp<ViewStyle>;
   mediaContext: ForumMediaRequestContext;
   nodeSeekMediaUserAgent?: string;
+  poster?: ReactNode;
   referrerPolicy?: MediaReferrerPolicy;
   src: string;
   theme: ReaderTheme;
@@ -217,12 +218,13 @@ function ForumContentVideoRuntime({
   boundarySpacing,
   mediaContext,
   nodeSeekMediaUserAgent,
+  poster,
   referrerPolicy,
   runtimeSnapshot,
   src,
   theme
 }: Required<Pick<ForumContentVideoProps, 'admission' | 'mediaContext' | 'src' | 'theme'>> &
-  Pick<ForumContentVideoProps, 'boundarySpacing' | 'nodeSeekMediaUserAgent' | 'referrerPolicy'> & {
+  Pick<ForumContentVideoProps, 'boundarySpacing' | 'nodeSeekMediaUserAgent' | 'poster' | 'referrerPolicy'> & {
     runtimeSnapshot: ReadNetworkRuntimeSnapshot | null;
   }) {
   const retryRuntimeGeneration =
@@ -237,7 +239,26 @@ function ForumContentVideoRuntime({
   const hasBeenReady = useRef(false);
   const activeLease = useRef<VideoRuntimeLease | null>(null);
   const leaseKey = JSON.stringify([admission.attemptId, playerGeneration, requestKey]);
-  const renderingLease = runtimeLease?.status === 'retained' ? runtimeLease.owner : null;
+  const currentLease =
+    runtimeLease?.admissionAttemptId === admission.attemptId &&
+    runtimeLease.requestKey === requestKey &&
+    runtimeLease.generation === playerGeneration
+      ? runtimeLease
+      : null;
+  const renderingLease = currentLease?.status === 'retained' ? currentLease.owner : null;
+  const [videoPresentation, setVideoPresentation] = useState<{
+    owner: VideoRuntimeLease;
+    aspectRatio: number;
+    hasFrame: boolean;
+  } | null>(null);
+  const handlePresentation = useCallback(
+    (aspectRatio: number, hasFrame: boolean) => {
+      if (renderingLease && activeLease.current === renderingLease) {
+        setVideoPresentation({ owner: renderingLease, aspectRatio, hasFrame });
+      }
+    },
+    [renderingLease]
+  );
 
   useEffect(() => {
     if (retryRuntimeGeneration > playerGeneration) {
@@ -309,75 +330,77 @@ function ForumContentVideoRuntime({
     [renderingLease]
   );
 
-  if (!admission.admitted) {
-    return (
-      <View
-        style={[styles.frame, { borderColor: theme.line, backgroundColor: theme.surface2 }, boundarySpacing]}
-        testID="forum-content-video-frame"
-      >
-        {admission.failure ? (
-          <Pressable
-            accessibilityLabel="视频加载失败，点按重试"
-            accessibilityRole="button"
-            style={styles.videoState}
-            onPress={admission.retry}
-          >
-            <Text style={{ color: theme.muted }}>视频加载失败，点按重试</Text>
-          </Pressable>
-        ) : null}
-      </View>
-    );
-  }
-
-  if (
-    runtimeLease?.admissionAttemptId !== admission.attemptId ||
-    runtimeLease.requestKey !== requestKey ||
-    runtimeLease.generation !== playerGeneration ||
-    runtimeLease.status !== 'retained'
-  ) {
-    const failed = runtimeLease?.generation === playerGeneration && runtimeLease.status === 'failed';
-    return (
-      <View
-        style={[styles.frame, { borderColor: theme.line, backgroundColor: theme.surface2 }, boundarySpacing]}
-        testID="forum-content-video-frame"
-      >
-        <View style={styles.videoState}>
+  const presentation = videoPresentation?.owner === renderingLease ? videoPresentation : null;
+  const showVideo = admission.admitted && currentLease?.status === 'retained';
+  const hasFrame = showVideo && presentation?.hasFrame === true;
+  const failed = currentLease?.status === 'failed' || (showVideo && playerStatus === 'error');
+  const loading =
+    admission.admitted &&
+    !failed &&
+    (!showVideo || playerStatus === 'idle' || playerStatus === 'loading' || (!hasFrame && playerStatus !== 'ended'));
+  return (
+    <View
+      style={[
+        styles.frame,
+        {
+          aspectRatio: presentation?.aspectRatio ?? DEFAULT_VIDEO_ASPECT_RATIO,
+          borderColor: theme.line,
+          backgroundColor: theme.surface2
+        },
+        boundarySpacing
+      ]}
+      testID="forum-content-video-frame"
+    >
+      {!hasFrame && poster ? (
+        <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+          {poster}
+        </View>
+      ) : null}
+      {showVideo && (
+        <ForumContentVideoPlayer
+          key={leaseKey}
+          mediaContext={mediaContext}
+          source={currentLease.source}
+          src={src}
+          onProgress={admission.progress}
+          lease={currentLease.owner}
+          onStatusChange={handleStatusChange}
+          onPresentation={handlePresentation}
+        />
+      )}
+      {!admission.admitted && admission.failure ? (
+        <Pressable
+          accessibilityLabel="视频加载失败，点按重试"
+          accessibilityRole="button"
+          style={styles.videoState}
+          onPress={admission.retry}
+        >
+          <Text style={{ color: theme.muted }}>视频加载失败，点按重试</Text>
+        </Pressable>
+      ) : loading || failed ? (
+        <View pointerEvents="none" style={styles.videoState}>
           {failed ? (
             <Text style={{ color: theme.muted }}>视频加载失败</Text>
           ) : (
             <ActivityIndicator color={theme.primary} />
           )}
         </View>
-      </View>
-    );
-  }
-
-  return (
-    <ForumContentVideoPlayer
-      key={`${mediaContext.sessionIdentity}:${src}:admission:${admission.attemptId}:runtime:${playerGeneration}`}
-      boundarySpacing={boundarySpacing}
-      mediaContext={mediaContext}
-      source={runtimeLease.source}
-      src={src}
-      theme={theme}
-      onProgress={admission.progress}
-      lease={runtimeLease.owner}
-      onStatusChange={handleStatusChange}
-    />
+      ) : null}
+    </View>
   );
 }
 
 function ForumContentVideoPlayer({
-  boundarySpacing,
   lease,
   mediaContext,
   onProgress,
+  onPresentation,
   onStatusChange,
   source,
-  src,
-  theme
-}: Omit<ForumContentVideoProps, 'admission' | 'nodeSeekMediaUserAgent' | 'referrerPolicy'> & {
+  src
+}: Pick<ForumContentVideoProps, 'mediaContext' | 'src'> & {
   onProgress: (value: number) => void;
+  onPresentation: (aspectRatio: number, hasFrame: boolean) => void;
   lease: VideoRuntimeLease;
   onStatusChange: (status: string, error?: unknown) => void;
   source: ForumMediaPlayerSource;
@@ -502,40 +525,24 @@ function ForumContentVideoPlayer({
     onProgress(timeUpdate.bufferedPosition);
   }, [onProgress, timeUpdate.bufferedPosition]);
   useEffect(() => onStatusChange(status || 'idle', statusEvent.error), [onStatusChange, status, statusEvent.error]);
-  const loadFailed = status === 'error';
-  const loading = !loadFailed && (status === 'idle' || status === 'loading' || (!hasReadyFrame && !ended));
+  const aspectRatio = videoAspectRatio(videoTrack?.size);
+  useLayoutEffect(() => onPresentation(aspectRatio, hasReadyFrame), [aspectRatio, hasReadyFrame, onPresentation]);
   return (
-    <View
-      style={[
-        styles.frame,
-        { aspectRatio: videoAspectRatio(videoTrack?.size), borderColor: theme.line, backgroundColor: theme.surface2 },
-        boundarySpacing
-      ]}
-      testID="forum-content-video-frame"
-    >
-      <VideoView
-        key={sourceKey}
-        onLayout={({ nativeEvent: { layout } }) => {
-          if (layout.width > 0 && layout.height > 0) observePlayer(player, 'layout');
-        }}
-        contentFit="contain"
-        fullscreenOptions={{ enable: true }}
-        nativeControls
-        onFirstFrameRender={() => observePlayer(player, 'frame')}
-        player={player}
-        style={styles.video}
-        surfaceType="textureView"
-      />
-      {loading || loadFailed ? (
-        <View pointerEvents="none" style={styles.videoState}>
-          {loadFailed ? (
-            <Text style={{ color: theme.muted }}>视频加载失败</Text>
-          ) : (
-            <ActivityIndicator color={theme.primary} />
-          )}
-        </View>
-      ) : null}
-    </View>
+    <VideoView
+      key={sourceKey}
+      onLayout={({ nativeEvent: { layout } }) => {
+        if (layout.width > 0 && layout.height > 0) observePlayer(player, 'layout');
+      }}
+      contentFit="contain"
+      buttonOptions={{ showSettings: true, showBottomBar: true }}
+      fullscreenOptions={{ enable: true }}
+      nativeControls
+      onFirstFrameRender={() => observePlayer(player, 'frame')}
+      player={player}
+      style={styles.video}
+      surfaceType="textureView"
+      useExoShutter={false}
+    />
   );
 }
 

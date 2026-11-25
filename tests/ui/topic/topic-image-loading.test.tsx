@@ -3284,6 +3284,45 @@ describe('topic block image loading', () => {
     expect(mockCreateVideoPlayer).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps progress with its actual source when switching back while another audio is preparing', async () => {
+    const firstAudioUrl = 'https://cdn.example.com/current.mp3';
+    const secondAudioUrl = 'https://cdn.example.com/preparing.mp3';
+    const rows = ['first-audio-row', 'second-audio-row'];
+    const preparing = Promise.withResolvers<string>();
+    mockVideoStatus = 'readyToPlay';
+    mockVideoDuration = 60;
+    const screen = await render(
+      <TopicBodyMediaCoordinatorProvider active paused={false} visibleRowKeys={rows} viewportRowKeys={rows}>
+        <TopicBodyMediaRowBoundary rowKey={rows[0]}>
+          <NodeSeekCustomMediaHarness rendererKey={FORUM_AUDIO_TAG} attributes={{ src: firstAudioUrl }} />
+        </TopicBodyMediaRowBoundary>
+        <TopicBodyMediaRowBoundary rowKey={rows[1]}>
+          <NodeSeekCustomMediaHarness rendererKey={FORUM_AUDIO_TAG} attributes={{ src: secondAudioUrl }} />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+    await waitFor(() => expect(mockReplaceMediaSource).toHaveBeenCalledTimes(1));
+    const player = mockCreateVideoPlayer.mock.results[0]?.value as ReturnType<typeof createMockManualVideoPlayer>;
+    await fireEvent.press(screen.getAllByLabelText('播放音频')[0]);
+    player.currentTime = 47;
+
+    mockGetDefaultUserAgent.mockImplementationOnce(() => preparing.promise);
+    await fireEvent.press(screen.getByLabelText('播放音频'));
+    await waitFor(() => expect(mockGetDefaultUserAgent).toHaveBeenCalledTimes(2));
+    expect(player.replaceAsync).toHaveBeenCalledTimes(1);
+    await fireEvent.press(screen.getByLabelText('播放音频'));
+    await act(() => preparing.resolve('native-provider-user-agent'));
+    await waitFor(() => expect(player.replaceAsync).toHaveBeenCalledTimes(2));
+    expect(player.currentTime).toBe(47);
+
+    const secondPlay = screen.getByLabelText('播放音频');
+    expect(secondPlay).toBeEnabled();
+    await fireEvent.press(secondPlay);
+    await waitFor(() => expect(player.replaceAsync).toHaveBeenCalledTimes(3));
+    expect(player.replaceAsync.mock.calls[2][0]).toEqual(expect.objectContaining({ uri: secondAudioUrl }));
+    expect(player.currentTime).toBe(0);
+  });
+
   it('keeps a healthy Topic audio on its retained generation', async () => {
     const audioUrl = 'https://cdn.example.com/rotated-topic-audio.mp3';
     mockVideoStatus = 'readyToPlay';
@@ -3314,6 +3353,50 @@ describe('topic block image loading', () => {
     expect(player.currentTime).toBe(17);
     expect(player.play).not.toHaveBeenCalled();
     expect(mockReleaseReadNetworkGeneration).not.toHaveBeenCalledWith(retainedGeneration);
+  });
+
+  it.each([true, false])('preserves a pending explicit audio play through rotation when active=%s', async (active) => {
+    const firstAudioUrl = 'https://cdn.example.com/current.mp3';
+    const secondAudioUrl = 'https://cdn.example.com/preparing.mp3';
+    const rows = ['first-audio-row', 'second-audio-row'];
+    const preparing = Promise.withResolvers<string>();
+    mockVideoStatus = 'readyToPlay';
+    const tree = (routeActive: boolean) => (
+      <TopicBodyMediaCoordinatorProvider
+        active={routeActive}
+        diagnosticSession={{ networkMediaCount: 2, plannedRowCount: 2, source: 'nodeseek', topicRef: 'audio-rotate' }}
+        paused={false}
+        visibleRowKeys={rows}
+        viewportRowKeys={rows}
+      >
+        <TopicBodyMediaRowBoundary rowKey={rows[0]}>
+          <NodeSeekCustomMediaHarness rendererKey={FORUM_AUDIO_TAG} attributes={{ src: firstAudioUrl }} />
+        </TopicBodyMediaRowBoundary>
+        <TopicBodyMediaRowBoundary rowKey={rows[1]}>
+          <NodeSeekCustomMediaHarness rendererKey={FORUM_AUDIO_TAG} attributes={{ src: secondAudioUrl }} />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+    const screen = await render(tree(true));
+    await waitFor(() => expect(mockReplaceMediaSource).toHaveBeenCalledTimes(1));
+    const player = mockCreateVideoPlayer.mock.results[0]?.value as ReturnType<typeof createMockManualVideoPlayer>;
+    await fireEvent.press(screen.getAllByLabelText('播放音频')[0]);
+    player.play.mockClear();
+
+    mockGetDefaultUserAgent.mockImplementationOnce(() => preparing.promise);
+    await fireEvent.press(screen.getByLabelText('播放音频'));
+    await waitFor(() => expect(mockGetDefaultUserAgent).toHaveBeenCalledTimes(2));
+    expect(player.replaceAsync).toHaveBeenCalledTimes(1);
+
+    if (!active) await screen.rerender(tree(false));
+    const before = getReadNetworkRuntimeSnapshot();
+    await act(() => publishReadNetworkRuntimeRotation(before.generation + 1, 'nodeseek'));
+    if (!active) await screen.rerender(tree(true));
+    await act(() => preparing.resolve('native-provider-user-agent'));
+
+    await waitFor(() => expect(player.replaceAsync).toHaveBeenCalledTimes(2));
+    expect(player.replaceAsync.mock.calls[1][0]).toEqual(expect.objectContaining({ uri: secondAudioUrl }));
+    expect(player.play).toHaveBeenCalledTimes(active ? 1 : 0);
   });
 
   it('retries failed native Topic audio only after the user asks', async () => {
@@ -3417,8 +3500,16 @@ describe('topic block image loading', () => {
     const videoUrl = 'https://cdn.example.com/poster-first.mp4';
     const mediaContext = { contentSource: 'yaohuo' as const, sessionIdentity: 'yaohuo:poster-first' };
     mockVideoStatus = 'loading';
-    const tree = () => <ForumContentVideo mediaContext={mediaContext} src={videoUrl} theme={theme} />;
+    const tree = () => (
+      <ForumContentVideo
+        mediaContext={mediaContext}
+        src={videoUrl}
+        theme={theme}
+        poster={<View testID="video-cover-probe" />}
+      />
+    );
     const screen = await render(tree());
+    expect(screen.getByTestId('video-cover-probe')).toBeTruthy();
     await waitFor(() => expect(mockReplaceMediaSource).toHaveBeenCalledTimes(1));
 
     expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(1);
@@ -3426,9 +3517,11 @@ describe('topic block image loading', () => {
 
     mockVideoStatus = 'readyToPlay';
     await screen.rerender(tree());
+    expect(screen.getByTestId('video-cover-probe')).toBeTruthy();
     expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(1);
     const videoProps = mockVideoView.mock.calls.at(-1)?.[0] as { onFirstFrameRender?: () => void };
     await act(() => videoProps.onFirstFrameRender?.());
+    expect(screen.queryByTestId('video-cover-probe')).toBeNull();
     expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(0);
     expect(mockVideoView.mock.calls.at(-1)?.[0]).toEqual(
       expect.objectContaining({ fullscreenOptions: { enable: true }, nativeControls: true })
@@ -3454,7 +3547,7 @@ describe('topic block image loading', () => {
     expect(mockReplaceMediaSource).toHaveBeenCalledTimes(1);
   });
 
-  it('loads video directly without requesting or displaying its HTML poster', async () => {
+  it('requests the original HTML poster independently from the video', async () => {
     const posterUrl = 'https://cdn.example.com/html-video-poster.webp';
     const videoUrl = 'https://cdn.example.com/html-video.mp4';
     mockVideoStatus = 'readyToPlay';
@@ -3469,16 +3562,47 @@ describe('topic block image loading', () => {
     await waitFor(() => expect(mockReplaceMediaSource).toHaveBeenCalled());
     expect(
       mockExpoImageProps.mock.calls.some(([props]) => (props as MockExpoImageProps).source?.uri === posterUrl)
-    ).toBe(false);
+    ).toBe(true);
     expect(
       mockReplaceMediaSource.mock.calls.filter(([source]) => (source as { uri?: string }).uri === videoUrl)
     ).toHaveLength(1);
 
+    await act(() => latestImageProps(posterUrl).onError?.({ error: 'poster unavailable' }));
     expect(mockVideoView.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({ nativeControls: true }));
     expect(screen.queryByLabelText('播放视频')).toBeNull();
     expect(
       mockReplaceMediaSource.mock.calls.filter(([source]) => (source as { uri?: string }).uri === videoUrl)
     ).toHaveLength(1);
+  });
+
+  it('keeps the cover on video failure and ignores a prior account frame', async () => {
+    const src = 'https://cdn.example.com/video-account.mp4';
+    const tree = (identity: string) => (
+      <ForumContentVideo
+        mediaContext={{ contentSource: 'nodeseek', sessionIdentity: identity }}
+        src={src}
+        theme={theme}
+        poster={<View testID={`cover-${identity}`} />}
+      />
+    );
+    mockVideoStatus = 'loading';
+    const screen = await render(tree('first'));
+    await waitFor(() => expect(mockReplaceMediaSource).toHaveBeenCalledTimes(1));
+    const frameForCurrentView = () =>
+      (mockVideoView.mock.calls.at(-1)?.[0] as { onFirstFrameRender: () => void }).onFirstFrameRender;
+    const oldFrame = frameForCurrentView();
+    mockVideoStatus = 'error';
+    await screen.rerender(tree('first'));
+    expect(screen.getByTestId('cover-first')).toBeTruthy();
+    expect(screen.getByText('视频加载失败')).toBeTruthy();
+
+    mockVideoStatus = 'loading';
+    await screen.rerender(tree('second'));
+    await waitFor(() => expect(mockReplaceMediaSource).toHaveBeenCalledTimes(2));
+    await act(() => oldFrame());
+    expect(screen.getByTestId('cover-second')).toBeTruthy();
+    await act(() => frameForCurrentView()());
+    expect(screen.queryByTestId('cover-second')).toBeNull();
   });
 
   it('applies the document and element policy to body images and native video', async () => {

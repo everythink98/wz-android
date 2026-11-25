@@ -28,7 +28,13 @@ jest.mock('@/platform/notifications/notificationSystem', () => ({
   dismissSourceNotificationExact: jest.fn(async () => undefined),
   notificationPermissionGranted: jest.fn(async () => true),
   openNotificationSystemSettings: jest.fn(async () => undefined),
-  presentSourceNotification: jest.fn(async (_source: string, _digest: unknown, identifier: string) => identifier),
+  presentSourceNotification: jest.fn<
+    ReturnType<typeof presentSourceNotification>,
+    Parameters<typeof presentSourceNotification>
+  >(async (_source, _digest, identifier, assertCurrent) => {
+    await assertCurrent();
+    return identifier;
+  }),
   requestNotificationPermission: jest.fn(async () => true),
   reconcileSourceNotificationSlots: jest.fn(async () => undefined),
   syncNotificationBackgroundRegistration: jest.fn(async () => true)
@@ -300,7 +306,8 @@ describe('notification runtime repeated lifecycle pressure', () => {
               body: `actor-${id}${source === 'linuxdo' ? '回复了你的主题' : '发来了私信'}，另有 1 条新互动`,
               data: { source }
             },
-            expect.stringContaining(encodeURIComponent(`${source}:${42 + Math.floor(cycle / 5) * 5}`))
+            expect.stringContaining(encodeURIComponent(`${source}:${42 + Math.floor(cycle / 5) * 5}`)),
+            expect.any(Function)
           );
         }
         expect(mockWorkerPeak).toBe(1);
@@ -352,7 +359,8 @@ describe('notification runtime repeated lifecycle pressure', () => {
         expect(presentSourceNotification).toHaveBeenLastCalledWith(
           'nodeseek',
           { title: 'NodeSeek', body: `actor-${id}回复了你的主题`, data: { source: 'nodeseek' } },
-          expect.stringContaining('nodeseek%3A42')
+          expect.stringContaining('nodeseek%3A42'),
+          expect.any(Function)
         );
       }
       options = { ...options, appActive: false };

@@ -1,3 +1,4 @@
+import { parser } from '@lezer/markdown';
 import { sourceCatalog } from '@/domain/forum/sourceCatalog';
 import { formatDateTime } from '@/domain/forum/presentation';
 import type { ForumNotification } from '@/domain/notifications/models';
@@ -19,22 +20,43 @@ export function sortNotifications(items: ForumNotification[]) {
   return [...known.sort((left, right) => right.time - left.time).map(({ item }) => item), ...unknown];
 }
 
-export function notificationAccessibilityLabel(item: ForumNotification) {
+export function notificationAccessibilityLabel(item: ForumNotification, title = notificationTitleText(item)) {
   return [
     sourceCatalog[item.source].label,
     item.unread ? '未读' : '已读',
     item.actor.name,
     notificationActionText(item.kind),
-    notificationTitleText(item)
+    title
   ]
     .filter(Boolean)
     .join('，');
 }
 
-export function notificationTitleText(item: ForumNotification) {
+function summaryText(item: ForumNotification, text: string) {
+  if (item.source !== 'nodeseek' || item.kind !== 'private-message' || !text.includes('](')) return text;
+  let output = '';
+  let cursor = 0;
+  parser.parse(text).iterate({
+    enter(node) {
+      if (node.name !== 'Link' || !node.node.getChild('URL')) return;
+      const labelEnd = node.node.getChildren('LinkMark')[1];
+      if (!labelEnd) return;
+      output += text.slice(cursor, node.from) + text.slice(node.from + 1, labelEnd.from);
+      cursor = node.to;
+      return false;
+    }
+  });
+  return output + text.slice(cursor);
+}
+
+export function notificationPreviewText(item: ForumNotification) {
+  return summaryText(item, item.preview || '');
+}
+
+export function notificationTitleText(item: ForumNotification, preview = notificationPreviewText(item)) {
   return item.kind === 'private-message' && item.title.trim() === item.actor.name.trim()
-    ? item.preview || ''
-    : item.title;
+    ? preview
+    : summaryText(item, item.title);
 }
 
 export function notificationActionText(kind: ForumNotification['kind']) {

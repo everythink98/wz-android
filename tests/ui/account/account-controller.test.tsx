@@ -1,12 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
-import type { LinuxDoLevelProfile, ReadGateway } from '@/sources/readGateway';
+import type { ReadGateway } from '@/sources/readGateway';
+import type { LinuxDoLevelProfile } from '@/sources/linuxdo/level';
 import { useAccountController } from '@/features/account/useAccountController';
+import { currentAppRoute, isAccountCenterFocused, navigationRef } from '@/app/appNavigation';
 import type { Screen } from '@/ui/navigation/types';
 import type { SiteSessionState } from '@/domain/session/siteSessionState';
 import { appQueryClient } from '@/platform/query/serverState';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import type { AccountReconcileResult, LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
+import type { AccountReconcileResult } from '@/domain/session/sessionContracts';
+import type { ReadRecovery } from '@/platform/query/readRecovery';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import type { DiagnosticEvent } from '@/platform/diagnostics/diagnosticPolicy';
@@ -55,7 +58,7 @@ async function renderAccountController(overrides: Partial<Parameters<typeof useA
     resetLinuxDoWebView: jest.fn(),
     screen: 'more',
     setChecking: jest.fn() as never,
-    showLinuxDoVerification: jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
+    showLinuxDoVerification: jest.fn<(message?: string, recovery?: ReadRecovery) => void>(),
     readGateway: {
       getLinuxDoLevelProfile: mockManagedLinuxDoLevelProfile
     },
@@ -194,7 +197,7 @@ describe('account workflows with canonical identity reconciliation', () => {
       .fn<ReadGateway['getLinuxDoLevelProfile']>()
       .mockRejectedValueOnce(linuxDoCloudflareError())
       .mockResolvedValueOnce(profile);
-    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: ReadRecovery) => void>();
     const { hook } = await renderAccountController({
       showLinuxDoVerification,
       readGateway: { getLinuxDoLevelProfile: getLevelProfile }
@@ -209,7 +212,7 @@ describe('account workflows with canonical identity reconciliation', () => {
     await waitFor(() => {
       expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
     });
-    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as ReadRecovery;
 
     expect(
       appQueryClient
@@ -230,6 +233,32 @@ describe('account workflows with canonical identity reconciliation', () => {
     });
   });
 
+  it('does not open late Level verification over Network Settings', async () => {
+    const route = jest.spyOn(navigationRef, 'getCurrentRoute').mockReturnValue({ key: 'account', name: 'more' });
+    const pending = Promise.withResolvers<LinuxDoLevelProfile>();
+    const getLevelProfile = jest.fn<ReadGateway['getLinuxDoLevelProfile']>().mockReturnValue(pending.promise);
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: ReadRecovery) => void>();
+    try {
+      const { hook } = await renderAccountController({
+        screen: currentAppRoute().screen,
+        isAccountCenterFocused,
+        showLinuxDoVerification,
+        readGateway: { getLinuxDoLevelProfile: getLevelProfile }
+      });
+      await act(async () => {
+        void hook.result.current.refreshLinuxDoLevel();
+      });
+      await waitFor(() => expect(getLevelProfile).toHaveBeenCalledTimes(1));
+      route.mockReturnValue({ key: 'network-settings', name: 'NetworkSettings' });
+      expect(currentAppRoute()).toMatchObject({ screen: 'more', routeKey: 'network-settings' });
+      await act(async () => pending.reject(linuxDoCloudflareError()));
+      await waitFor(() => expect(hook.result.current.linuxDoLevelError).toContain('Cloudflare'));
+      expect(showLinuxDoVerification).not.toHaveBeenCalled();
+    } finally {
+      route.mockRestore();
+    }
+  });
+
   it('aborts Level recovery and makes it stale after leaving More', async () => {
     let recoverySignal: AbortSignal | undefined;
     const getLevelProfile = jest
@@ -241,7 +270,7 @@ describe('account workflows with canonical identity reconciliation', () => {
           signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
         });
       });
-    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: ReadRecovery) => void>();
     const overrides: Partial<Parameters<typeof useAccountController>[0]> = {
       screen: 'more' as Screen,
       showLinuxDoVerification,
@@ -255,9 +284,9 @@ describe('account workflows with canonical identity reconciliation', () => {
     await waitFor(() => {
       expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
     });
-    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as ReadRecovery;
 
-    let resume!: ReturnType<LinuxDoReadRecovery['resume']>;
+    let resume!: ReturnType<ReadRecovery['resume']>;
     await act(async () => {
       resume = recovery.resume();
       await Promise.resolve();
@@ -302,7 +331,7 @@ describe('account workflows with canonical identity reconciliation', () => {
       .fn<ReadGateway['getLinuxDoLevelProfile']>()
       .mockRejectedValueOnce(linuxDoCloudflareError())
       .mockResolvedValueOnce({ username: 'alice' } as LinuxDoLevelProfile);
-    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: ReadRecovery) => void>();
     const notify = jest.fn();
     const { hook } = await renderAccountController({
       notify,
@@ -332,7 +361,7 @@ describe('account workflows with canonical identity reconciliation', () => {
       .mockRejectedValueOnce(linuxDoCloudflareError())
       .mockRejectedValueOnce(linuxDoCloudflareError('仍需验证'))
       .mockResolvedValueOnce(profile);
-    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: ReadRecovery) => void>();
     const { hook } = await renderAccountController({
       showLinuxDoVerification,
       readGateway: { getLinuxDoLevelProfile: getLevelProfile }
@@ -344,7 +373,7 @@ describe('account workflows with canonical identity reconciliation', () => {
     await waitFor(() => {
       expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
     });
-    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as ReadRecovery;
 
     await act(async () => {
       await expect(recovery.resume()).resolves.toBe('verification-required');
@@ -361,7 +390,7 @@ describe('account workflows with canonical identity reconciliation', () => {
       .fn<ReadGateway['getLinuxDoLevelProfile']>()
       .mockRejectedValueOnce(linuxDoCloudflareError())
       .mockResolvedValueOnce(profile);
-    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => Promise<boolean>>(
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: ReadRecovery) => Promise<boolean>>(
       async () => false
     );
     const { hook } = await renderAccountController({
@@ -383,7 +412,7 @@ describe('account workflows with canonical identity reconciliation', () => {
     await waitFor(() => {
       expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
     });
-    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as ReadRecovery;
     await waitFor(() => {
       expect(
         appQueryClient

@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react';
-import { PixelRatio, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { useSyncExternalStore, type ReactNode } from 'react';
+import { Dimensions, PixelRatio, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { ActivityIndicator, List } from 'react-native-paper';
 import { ChevronDown, ChevronRight, type LucideIcon } from 'lucide-react-native';
 import Animated, {
@@ -142,6 +142,17 @@ export function DisclosureChevron({ expanded, color, size = 18 }: { expanded: bo
   );
 }
 
+function subscribeSystemFontScale(onStoreChange: () => void) {
+  const subscription = Dimensions.addEventListener('change', onStoreChange);
+  return () => {
+    subscription.remove();
+  };
+}
+
+function getSystemFontScale() {
+  return PixelRatio.getFontScale();
+}
+
 export function MenuButton({
   accessibilityLabel,
   busy = false,
@@ -167,8 +178,9 @@ export function MenuButton({
   expanded?: boolean;
   onPress: () => void;
 }) {
+  const systemFontScale = useSyncExternalStore(subscribeSystemFontScale, getSystemFontScale, getSystemFontScale);
   const { styles, theme, settings } = useReaderThemeStyles(createExpandableStyles);
-  const inlineValue = Boolean(value) && !nested && PixelRatio.getFontScale() * settings.uiFontScale <= 1.25;
+  const inlineValue = Boolean(value) && !nested && systemFontScale * settings.uiFontScale <= 1.25;
   const Icon = icon;
   const nestedActionColor = theme.primary;
   const isDisabled = disabled || busy;

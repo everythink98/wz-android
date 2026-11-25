@@ -13,7 +13,7 @@ import {
   isRecord,
   parseHtml,
   parsePositiveInteger,
-  textExcerpt,
+  textExcerptFromPlainText,
   toIsoString
 } from '@/domain/forum/html';
 import { accessRequirementFromObject } from '@/domain/forum/accessRequirements';
@@ -91,7 +91,7 @@ function normalizeNodeSeekUserReply(
     return null;
   }
   const floor = parsePositiveInteger(raw.floor_id || raw.floor || raw.rank);
-  const excerpt = textExcerpt(raw.text || raw.content || raw.markdown || raw.comment || '');
+  const excerpt = textExcerptFromPlainText(raw.text || raw.content || raw.markdown || raw.comment || '');
   const topicUrl = safeNodeSeekTopicUrl(topicId, raw.url || `/post-${topicId}-1`);
   return {
     source: 'nodeseek',
@@ -305,7 +305,7 @@ export function parseNodeSeekUserTopics(
       String(
         discussion.category_name || discussion.categoryName || discussion.tag_cn_text || discussion.tagName || ''
       ).trim() || undefined;
-    const excerpt = textExcerpt(
+    const excerpt = textExcerptFromPlainText(
       discussion.text || discussion.content || discussion.markdown || discussion.excerpt || ''
     );
     return {

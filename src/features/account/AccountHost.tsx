@@ -7,6 +7,7 @@ import { MemoizedLinuxDoVerifyModal } from './components/LinuxDoVerifyModal';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
 import type { NodeImageAuthDocument } from './useNodeImageAuthController';
 import type { AccountHostStyles } from './accountHostStyles';
+import type { LoginFormMessageHandler } from './credentialFillSession';
 import type {
   LinuxDoForumDocumentEvent,
   LinuxDoRecoveryPanel,
@@ -43,6 +44,7 @@ export function AccountHost({
   handleNodeImageAuthMessage,
   handleNodeImageAuthNavigation,
   handleCredentialLoginFormMessage,
+  onLinuxDoLoginFormDocumentRetired,
   setLinuxDoWebViewErrorForSession,
   setLoadingLinuxDoPageForSession,
   setLoadingNodeImageAuthPage,
@@ -83,7 +85,8 @@ export function AccountHost({
   clearLinuxDoCookie: () => void;
   handleNodeImageAuthMessage: (event: WebViewMessageEvent) => void;
   handleNodeImageAuthNavigation: (request: LoginNavigationRequest) => boolean;
-  handleCredentialLoginFormMessage: (event: WebViewMessageEvent) => boolean;
+  handleCredentialLoginFormMessage: LoginFormMessageHandler;
+  onLinuxDoLoginFormDocumentRetired?: (attempt: number) => void;
   setLinuxDoWebViewErrorForSession: (value: string, webViewKey?: number, credentialAttempt?: number) => void;
   setLoadingLinuxDoPageForSession: (value: boolean, webViewKey?: number) => void;
   setLoadingNodeImageAuthPage: (value: boolean) => void;
@@ -122,6 +125,7 @@ export function AccountHost({
         onClearLinuxDoCookie={clearLinuxDoCookie}
         handleLinuxDoNavigation={handleLinuxDoNavigation}
         onHandleLinuxDoMessage={handleLinuxDoMessage}
+        onLoginFormDocumentRetired={onLinuxDoLoginFormDocumentRetired}
         onLoginFormMessage={handleCredentialLoginFormMessage}
         onRequestCredentialFill={requestLinuxDoCredentialFill}
         onResetLinuxDoWebView={resetLinuxDoWebView}

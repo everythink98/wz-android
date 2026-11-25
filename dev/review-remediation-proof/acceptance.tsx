@@ -13,11 +13,11 @@ import {
   createAccountSessionSnapshot,
   createAccountSessionViewModel
 } from '@/domain/session/siteSessionState';
+import { NotificationDetailRoute } from '@/features/notifications/NotificationRoute';
 import {
-  NotificationDetailRoute,
   NotificationRouteRuntimeProvider,
   type NotificationRouteRuntimeValue
-} from '@/features/notifications/NotificationRoute';
+} from '@/features/notifications/NotificationRouteRuntime';
 import { defaultNotificationState, NOTIFICATION_STORAGE_KEY } from '@/platform/notifications/notificationStore';
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { readReaderMeta, readReaderSnapshot } from '@/platform/storage/readerDatabase';

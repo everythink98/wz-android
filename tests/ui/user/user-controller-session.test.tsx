@@ -5,7 +5,7 @@ import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { resetForumSourceQueries } from '@/features/account/sessionQueryOwnership';
 import { useUserController } from '@/features/user/useUserController';
-import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
+import type { ReadRecovery } from '@/platform/query/readRecovery';
 import { LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import {
@@ -48,8 +48,8 @@ function renderUserController({
   notify = jest.fn<(message: string) => void>(),
   onRetryIdentityStatus = jest.fn(),
   resolveNodeSeekUser = jest.fn<ReadGateway['resolveNodeSeekUser']>(),
-  showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
-  showNodeSeekVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
+  showLinuxDoVerification = jest.fn<(message?: string, recovery?: ReadRecovery) => void>(),
+  showNodeSeekVerification = jest.fn<(message?: string, recovery?: ReadRecovery) => void>(),
   showYaohuoLogin = jest.fn<(message?: string) => void>()
 }: {
   getActive?: () => boolean;
@@ -62,8 +62,8 @@ function renderUserController({
   notify?: (message: string) => void;
   onRetryIdentityStatus?: (source: Source) => Promise<unknown> | unknown;
   resolveNodeSeekUser?: ReadGateway['resolveNodeSeekUser'];
-  showLinuxDoVerification?: (message?: string, recovery?: LinuxDoReadRecovery) => void;
-  showNodeSeekVerification?: (message?: string, recovery?: LinuxDoReadRecovery) => void;
+  showLinuxDoVerification?: (message?: string, recovery?: ReadRecovery) => void;
+  showNodeSeekVerification?: (message?: string, recovery?: ReadRecovery) => void;
   showYaohuoLogin?: (message?: string) => void;
 }) {
   // Session fixtures provide all lanes together. Adapt only this fixture to the split read boundary;
@@ -824,7 +824,7 @@ describe('user query controller', () => {
         url: 'https://www.nodeseek.com/member?t=alice'
       };
       let epochs = initialForumSessionEpochs;
-      const showNodeSeekVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+      const showNodeSeekVerification = jest.fn<(message?: string, recovery?: ReadRecovery) => void>();
       const resolveNodeSeekUser = jest
         .fn<ReadGateway['resolveNodeSeekUser']>()
         .mockRejectedValue(
@@ -870,7 +870,7 @@ describe('user query controller', () => {
       url: 'https://www.nodeseek.com/member?t=alice'
     };
     const pending = Promise.withResolvers<UserReference>();
-    const showNodeSeekVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const showNodeSeekVerification = jest.fn<(message?: string, recovery?: ReadRecovery) => void>();
     const resolveNodeSeekUser = jest
       .fn<ReadGateway['resolveNodeSeekUser']>()
       .mockRejectedValueOnce(
@@ -889,7 +889,7 @@ describe('user query controller', () => {
       showNodeSeekVerification,
       notify
     });
-    let outcome: ReturnType<LinuxDoReadRecovery['resume']> | undefined;
+    let outcome: ReturnType<ReadRecovery['resume']> | undefined;
     try {
       await waitFor(() => expect(showNodeSeekVerification).toHaveBeenCalledTimes(1));
       await act(async () => {
@@ -936,7 +936,7 @@ describe('user query controller', () => {
       id: '8052',
       username: 'xy'
     }));
-    const showNodeSeekVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const showNodeSeekVerification = jest.fn<(message?: string, recovery?: ReadRecovery) => void>();
     const hook = await renderUserController({
       getUser: () => reference,
       getUserProfile,
@@ -965,7 +965,7 @@ describe('user query controller', () => {
       )
       .mockResolvedValueOnce({ ...user, id: '1414', username: '男朋友' });
     const resolveNodeSeekUser = jest.fn<ReadGateway['resolveNodeSeekUser']>();
-    const showNodeSeekVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const showNodeSeekVerification = jest.fn<(message?: string, recovery?: ReadRecovery) => void>();
     const hook = await renderUserController({
       getUser: () => ({
         source: 'nodeseek',
@@ -1010,7 +1010,7 @@ describe('user query controller', () => {
           reason: 'cloudflare'
         })
       );
-    const showNodeSeekVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const showNodeSeekVerification = jest.fn<(message?: string, recovery?: ReadRecovery) => void>();
     const hook = await renderUserController({
       getUser: () => ({
         source: 'nodeseek',
@@ -1042,7 +1042,7 @@ describe('user query controller', () => {
         loginRequired: true
       });
     });
-    const showNodeSeekVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const showNodeSeekVerification = jest.fn<(message?: string, recovery?: ReadRecovery) => void>();
     const hook = await renderUserController({
       getUser: () => ({
         source: 'nodeseek',
@@ -1536,8 +1536,14 @@ describe('user query controller', () => {
         });
         await waitFor(() => expect(getUserProfile).toHaveBeenCalledTimes(change === 'cancel-after-error' ? 4 : 3));
         await act(async () => {
-          if (change === 'cancel' || change === 'cancel-after-error')
-            await appQueryClient.cancelQueries({ queryKey: profileKey, exact: true });
+          if (change === 'cancel' || change === 'cancel-after-error') {
+            const refresh = appQueryClient
+              .getQueryCache()
+              .findAll({ queryKey: profileKey })
+              .find(({ queryKey, state }) => queryKey.at(-2) === 'refresh' && state.fetchStatus === 'fetching');
+            expect(refresh).toBeDefined();
+            await appQueryClient.cancelQueries({ queryKey: refresh?.queryKey, exact: true });
+          }
           if (change === 'inactive') active = false;
           if (change === 'user') selectedUser = { ...user, id: '2', username: 'bob' };
           if (change === 'epoch') {
@@ -1822,7 +1828,7 @@ describe('user query controller', () => {
       if (attempts === 1) throw new LinuxDoCloudflareError();
       return { ...linuxUser, topics: [secondTopic], hasMoreTopics: false, nextTopicsCursor: null };
     });
-    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: ReadRecovery) => void>();
     const hook = await renderUserController({
       getUser: () => linuxUser,
       getUserProfile,
@@ -1833,7 +1839,7 @@ describe('user query controller', () => {
       await hook.result.current.loadMoreUserTopics();
     });
     await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1), { timeout: 3000 });
-    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as ReadRecovery;
 
     await act(async () => {
       await expect(recovery.resume()).resolves.toBe('completed');
@@ -1856,7 +1862,7 @@ describe('user query controller', () => {
       .mockRejectedValueOnce(new LinuxDoCloudflareError())
       .mockRejectedValueOnce(new LinuxDoCloudflareError())
       .mockRejectedValueOnce(new Error('恢复后网络失败'));
-    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: ReadRecovery) => void>();
     await renderUserController({
       getUser: () => linuxUser,
       getUserProfile,

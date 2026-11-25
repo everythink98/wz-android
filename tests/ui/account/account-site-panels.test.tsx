@@ -1161,6 +1161,51 @@ describe('Account site panels', () => {
     expect(mockLoginWebViewProps.userAgent).toBeUndefined();
   });
 
+  it.each(['linuxdo', 'nodeseek', 'yaohuo'] as const)(
+    'keeps the current %s login page when load completion arrives just before its deadline',
+    async (site) => {
+      let view: Awaited<ReturnType<typeof render>> | undefined;
+      const urlBySite = {
+        linuxdo: 'https://linux.do/latest',
+        nodeseek: 'https://www.nodeseek.com/',
+        yaohuo: 'https://yaohuo.me/waplogin.aspx?siteid=1000'
+      };
+      function Harness() {
+        const [loading, setLoading] = React.useState(true);
+        const [error, setError] = React.useState('');
+        if (site === 'linuxdo') {
+          return (
+            <LinuxDoVerifyModal
+              {...linuxDoVerifyProps({
+                loadingLinuxDoPage: loading,
+                onSetLoadingLinuxDoPage: setLoading,
+                linuxDoWebViewError: error,
+                onSetLinuxDoWebViewError: setError
+              })}
+            />
+          );
+        }
+        const props = site === 'yaohuo' ? yaohuoProps : nodeSeekProps;
+        return <SiteLoginHost {...props({ visible: true, loading, onSetLoading: setLoading })} />;
+      }
+      jest.useFakeTimers();
+      try {
+        view = await render(<Harness />);
+        expect(view.getByTestId('mock-login-webview')).toBeTruthy();
+        await act(async () => {
+          jest.advanceTimersByTime(11_999);
+          mockLoginWebViewProps.onLoadEnd({ nativeEvent: { url: urlBySite[site], loading: false } });
+          jest.advanceTimersByTime(1);
+        });
+        expect(view.queryByText(/页面打开超时/)).toBeNull();
+        expect(view.getByTestId('mock-login-webview')).toBeTruthy();
+      } finally {
+        if (view) await view.unmount();
+        jest.useRealTimers();
+      }
+    }
+  );
+
   it('unmounts a timed-out NodeSeek WebView until the user refreshes', async () => {
     jest.useFakeTimers();
     try {

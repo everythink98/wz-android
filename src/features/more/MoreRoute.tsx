@@ -23,8 +23,6 @@ import type { LibraryTab } from '@/domain/forum/feed';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 import { useMoreRouteRuntime } from './MoreRouteRuntime';
 
-export { MoreRouteRuntimeProvider, type MoreRouteRuntimeValue } from './MoreRouteRuntime';
-
 export function MoreRoute() {
   const runtime = useMoreRouteRuntime();
   const active = useIsFocused();
@@ -104,7 +102,7 @@ export function MoreRoute() {
         }
       },
       backup: {
-        recovery: runtime.reader.status === 'recovery',
+        readerStatus: runtime.reader.status,
         operation: backupOperation,
         exportFile: whenFocused(exportBackupFile),
         importFile: whenFocused(importBackupFile)

@@ -1,4 +1,7 @@
-import { decodeHtml } from './html';
+import { decodeHtmlAttribute, decodeHtmlEntities } from './html';
+import { htmlTagAttribute, transformHtmlSegments } from './htmlSegments';
+
+export { transformHtmlSegments };
 
 export function escapeSearchTerm(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -21,112 +24,19 @@ export function searchTerms(query: string) {
     .sort((left, right) => right.length - left.length);
 }
 
-function isHtmlTagStart(html: string, start: number) {
-  const first = html[start + 1];
-  const second = html[start + 2];
-  return Boolean(first && (/[A-Za-z!?]/.test(first) || (first === '/' && second && /[A-Za-z]/.test(second))));
-}
-
-function htmlTagEnd(html: string, start: number) {
-  if (html.startsWith('<!--', start)) {
-    const commentEnd = html.indexOf('-->', start + 4);
-    return commentEnd < 0 ? -1 : commentEnd + 3;
-  }
-  let quote = '';
-  for (let index = start + 1; index < html.length; index += 1) {
-    const character = html[index];
-    if (quote) {
-      if (character === quote) quote = '';
-    } else if (character === '"' || character === "'") {
-      quote = character;
-    } else if (character === '>') {
-      return index + 1;
-    }
-  }
-  return -1;
-}
-
-function htmlSuffixEnds(html: string) {
-  const tags = new Uint32Array(html.length + 1);
-  const comments = new Uint32Array(html.length + 1);
-  let singleQuoteEnd = 0;
-  let doubleQuoteEnd = 0;
-  let commentEnd = 0;
-  // Each state describes scanning from this offset with that quote already open.
-  // Only the unquoted results need an array; the quote states advance together.
-  for (let index = html.length - 1; index >= 0; index -= 1) {
-    const character = html[index];
-    const nextTagEnd = tags[index + 1];
-    tags[index] =
-      character === '>'
-        ? index + 1
-        : character === "'"
-          ? singleQuoteEnd
-          : character === '"'
-            ? doubleQuoteEnd
-            : nextTagEnd;
-    if (character === "'") singleQuoteEnd = nextTagEnd;
-    if (character === '"') doubleQuoteEnd = nextTagEnd;
-    if (html.startsWith('-->', index)) commentEnd = index + 3;
-    comments[index] = commentEnd;
-  }
-  return { tags, comments };
-}
-
-export function transformHtmlSegments(
-  html: string,
-  transformText: (text: string) => string,
-  transformTag: (tag: string) => string
-) {
-  let output = '';
-  let textStart = 0;
-  let index = 0;
-  let suffixEnds: ReturnType<typeof htmlSuffixEnds> | undefined;
-  while (index < html.length) {
-    if (html[index] !== '<' || !isHtmlTagStart(html, index)) {
-      index += 1;
-      continue;
-    }
-    const tagEnd = suffixEnds
-      ? (html.startsWith('<!--', index) ? suffixEnds.comments[index + 4] : suffixEnds.tags[index + 1]) || -1
-      : htmlTagEnd(html, index);
-    if (tagEnd < 0) {
-      suffixEnds ??= htmlSuffixEnds(html);
-      index += 1;
-      continue;
-    }
-    output += transformText(html.slice(textStart, index));
-    output += transformTag(html.slice(index, tagEnd));
-    index = tagEnd;
-    textStart = tagEnd;
-  }
-  return output + transformText(html.slice(textStart));
-}
-
 export function stripHtml(html: string | undefined) {
   const preLineBreakToken = '\0WZ_PRE_NL\0';
-  let ignoredElement = '';
   let preDepth = 0;
   const text = transformHtmlSegments(
     html || '',
-    (segment) => {
-      if (ignoredElement) return '';
-      return decodeHtml(preDepth > 0 ? segment.replace(/\n/g, preLineBreakToken) : segment);
-    },
+    (segment) => decodeHtmlEntities(preDepth > 0 ? segment.replace(/\n/g, preLineBreakToken) : segment),
     (tag) => {
-      if (tag.startsWith('<!--')) return '';
-      const tagMatch = tag.match(/^<\s*(\/?)\s*([A-Za-z][\w:-]*)/);
+      if (tag.startsWith('<!--') || tag.startsWith('<!')) return '';
+      const tagMatch = tag.match(/^<(\/?)([A-Za-z][A-Za-z0-9:-]*)/);
       if (!tagMatch) return '';
       const closing = tagMatch[1] === '/';
       const name = tagMatch[2].toLowerCase();
-      if (ignoredElement) {
-        if (closing && name === ignoredElement) ignoredElement = '';
-        return '';
-      }
-      if (!closing && (name === 'script' || name === 'style')) {
-        ignoredElement = name;
-        return '';
-      }
+      if (name === 'script' || name === 'style') return '';
       if (name === 'pre') {
         if (closing) {
           preDepth = Math.max(0, preDepth - 1);
@@ -136,13 +46,14 @@ export function stripHtml(html: string | undefined) {
         return '';
       }
       if (!closing && name === 'img') {
-        const label = tag.match(/\b(?:alt|title)=(["'])(.*?)\1/i)?.[2] || '';
-        return label ? ` ${decodeHtml(label)} ` : ' ';
+        const label = htmlTagAttribute(tag, 'alt') || htmlTagAttribute(tag, 'title') || '';
+        return label ? ` ${decodeHtmlAttribute(label)} ` : ' ';
       }
       if (!closing && (name === 'br' || name === 'li')) return '\n';
       if (closing && /^(?:p|div|blockquote|ul|ol|tr|h[1-6])$/.test(name)) return '\n';
       return '';
-    }
+    },
+    () => ''
   );
   return text
     .replace(/[ \t\f\v]+\n/g, '\n')

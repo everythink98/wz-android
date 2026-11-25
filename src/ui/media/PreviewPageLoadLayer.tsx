@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { isLinuxDoPacketCover } from '@/domain/forum/linuxDoPacket';
-import { StyleSheet, type ImageURISource } from 'react-native';
+import { Platform, StyleSheet, type ImageURISource } from 'react-native';
 import { Image as ExpoImage, type ImageLoadEventData, type ImageProgressEventData } from 'expo-image';
 
 import { compatibleImageRequestIdentity, type CompatibleSvgArtifact } from '@/platform/media/compatibleImageSources';
@@ -12,6 +12,7 @@ export function PreviewPageLoadLayer({
   activeAnimatedArtifact,
   animatedSvgPosterReady,
   animatedSvgZoomSuspended,
+  cacheSvgInHardwareLayer,
   displaySource,
   displayUri,
   decodeTarget,
@@ -39,6 +40,7 @@ export function PreviewPageLoadLayer({
   activeAnimatedArtifact: CompatibleSvgArtifact | null;
   animatedSvgPosterReady: boolean;
   animatedSvgZoomSuspended: boolean;
+  cacheSvgInHardwareLayer: boolean;
   displaySource: ImageURISource;
   displayUri: string;
   decodeTarget: PreviewBitmapDecodeTarget;
@@ -153,6 +155,7 @@ export function PreviewPageLoadLayer({
       <ExpoImage
         allowDownscaling
         key="display-underlay"
+        cacheSvgInHardwareLayer={Platform.OS === 'android' ? cacheSvgInHardwareLayer : undefined}
         testID={displayUnderlayVisible ? `preview-display-underlay-${index}` : `preview-hidden-underlay-owner-${index}`}
         cachePolicy={isLinuxDoPacketCover(displayUri) ? 'none' : 'disk'}
         contentFit="contain"
@@ -169,6 +172,7 @@ export function PreviewPageLoadLayer({
       <ExpoImage
         allowDownscaling
         key="native-raster"
+        cacheSvgInHardwareLayer={Platform.OS === 'android' ? cacheSvgInHardwareLayer : undefined}
         testID={`preview-image-${index}`}
         cachePolicy={isLinuxDoPacketCover(originalUri) ? 'none' : 'disk'}
         contentFit="contain"

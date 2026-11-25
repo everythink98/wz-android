@@ -1,6 +1,6 @@
 import { withDefaultBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import type { DiscourseTagOption, DiscourseUserOption, SearchResponse, Topic } from '@/domain/forum/models';
-import { isRecord, textExcerpt } from '@/domain/forum/html';
+import { isRecord, textContentFromHtml, textExcerptFromPlainText } from '@/domain/forum/html';
 import {
   annotateSourceDiagnosticSummary,
   sourceDiagnosticSummary
@@ -105,10 +105,13 @@ async function topicsFromLinuxDoSearchData(
       (isRecord(topic) ? discourseOriginalPoster(topic, users) : undefined) ||
       (Number(post?.post_number) === 1 ? post : undefined);
     const normalized = normalizeTopic(topic, categoryMap, authorData);
+    const rawBlurb = typeof post?.blurb === 'string' && post.blurb.trim() ? post.blurb : '';
     return normalized
       ? {
           ...normalized,
-          excerpt: textExcerpt(stripDiscourseCalloutMarkersFromExcerpt(post?.blurb || normalized.excerpt || ''))
+          excerpt: rawBlurb
+            ? textExcerptFromPlainText(stripDiscourseCalloutMarkersFromExcerpt(textContentFromHtml(rawBlurb)))
+            : textExcerptFromPlainText(stripDiscourseCalloutMarkersFromExcerpt(normalized.excerpt || ''))
         }
       : null;
   });

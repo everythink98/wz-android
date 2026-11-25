@@ -23,6 +23,11 @@ describe('forum response account failure', () => {
       ).toBeUndefined();
     }
   );
+  it.each([401, 403, 404])('ignores a final response from a different origin for HTTP %s', async (status) => {
+    const response = new Response('{"errors":["请先登录"]}', { status });
+    Object.defineProperty(response, 'url', { value: 'https://external.invalid/result' });
+    expect(await forumResponseAccountFailure('linuxdo', 'https://linux.do/posts', response)).toBeUndefined();
+  });
   it.each([403, 404])('recognizes only an explicit linux.do login HTTP %s response', async (status) => {
     const response = new Response(JSON.stringify({ errors: ['您需要登录才能执行此操作。'] }), { status });
     expect(await forumResponseAccountFailure('linuxdo', 'https://linux.do/posts', response)).toBe(

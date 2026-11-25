@@ -250,6 +250,14 @@ export function nodeSeekStardustMarkerRanges(markdown: string) {
   return ranges;
 }
 
+export function firstNodeSeekStardustIssue(markdown: string, memberId: string | undefined) {
+  for (const { receive } of nodeSeekStardustMarkerRanges(markdown)) {
+    if (!receive) continue;
+    if (!normalizeNodeSeekStardustRefId(receive.refId)) return 'Ref ID 必须为大于等于 100 的安全整数';
+    if (receive.receiverMemberId !== memberId) return '收款卡片属于其他账号，请替换为当前账号或移除';
+  }
+}
+
 export function replacePendingNodeSeekPollToken(markdown: string, localId: string, remoteId: string) {
   if (!/^\d+$/.test(remoteId)) throw new Error('NodeSeek 投票 id 不正确');
   return markdown.split(nodeSeekPendingPollToken(localId)).join(`nsapp://vote?id=${remoteId}`);

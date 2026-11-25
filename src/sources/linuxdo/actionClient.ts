@@ -1,4 +1,5 @@
-import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
+import { fetchWithTimeout, isDefinitiveHttpRejection, type Fetcher } from '@/platform/network/request';
+import { isRecord } from '@/domain/forum/html';
 import { withBrowserFetchIntent, type BrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { discourseActionResponseMessage, type DiscourseActionRequest } from '@/sources/discourse/actionRequest';
 import {
@@ -44,7 +45,8 @@ function linuxDoActionError(data: Record<string, unknown> | unknown[], response:
     return linuxDoLoginRequiredError();
   }
   const error = linuxDoRequestError(message, status, payload);
-  Object.assign(error, { serverRejected: true });
+  const explicitlyRejected = [408, 409].includes(status) && 'success' in payload && payload.success === false;
+  Object.assign(error, { serverRejected: isDefinitiveHttpRejection(status) || explicitlyRejected });
   if (status === 429) {
     Object.assign(error, { safeToRetry: true, retryAfterMs: responseRetryAfterMs(response.headers) ?? 0 });
   }
@@ -122,6 +124,45 @@ export async function getLinuxDoCsrfToken({
     throw new Error('linux.do CSRF 信息不完整');
   }
   return token;
+}
+
+export async function loadLinuxDoReplyEditSource({
+  topicId,
+  commentId,
+  floor,
+  fetcher,
+  signal,
+  userAgent
+}: {
+  topicId: string;
+  commentId: number;
+  floor?: number;
+  fetcher: Fetcher;
+  signal: AbortSignal;
+  userAgent: string;
+}) {
+  if (!Number.isSafeInteger(commentId) || commentId <= 0) throw new Error('当前回复缺少有效评论 id');
+  const post = await runLinuxDoAction({
+    fetcher,
+    signal,
+    userAgent,
+    browserFetchIntent: { owner: 'topic', priority: 'foreground' },
+    request: { path: `/posts/${commentId}.json`, method: 'GET', headers: {} }
+  });
+  if (
+    !isRecord(post) ||
+    post.id !== commentId ||
+    String(post.topic_id) !== topicId ||
+    typeof post.post_number !== 'number' ||
+    !Number.isSafeInteger(post.post_number) ||
+    post.post_number <= 1 ||
+    (floor !== undefined && post.post_number !== floor) ||
+    post.can_edit !== true ||
+    typeof post.raw !== 'string' ||
+    !post.raw.trim()
+  )
+    throw new Error('原站未确认回复身份、编辑权限或原文');
+  return post.raw;
 }
 
 export async function runLinuxDoAction({

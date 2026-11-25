@@ -1,7 +1,8 @@
 diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
+index 80c68034..5df128c4 100644
 --- a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
 +++ b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
-@@ -3,12 +3,16 @@
+@@ -3,12 +3,16 @@ package com.reactnativecommunity.webview;
  import android.annotation.SuppressLint;
  import android.graphics.Rect;
  import android.net.Uri;
@@ -18,7 +19,38 @@ diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactna
  import android.webkit.JavascriptInterface;
  import android.webkit.ValueCallback;
  import android.webkit.WebChromeClient;
-@@ -89,6 +93,125 @@
+@@ -28,6 +32,8 @@ import com.facebook.react.bridge.CatalystInstance;
+ import com.facebook.react.bridge.JavaScriptModule;
+ import com.facebook.react.bridge.LifecycleEventListener;
+ import com.facebook.react.bridge.ReactApplicationContext;
++import com.facebook.react.bridge.ReadableArray;
++import com.facebook.react.bridge.ReadableType;
+ import com.facebook.react.bridge.WritableMap;
+ import com.facebook.react.bridge.WritableNativeArray;
+ import com.facebook.react.bridge.WritableNativeMap;
+@@ -44,7 +50,11 @@ import com.reactnativecommunity.webview.events.TopMessageEvent;
+ import org.json.JSONException;
+ import org.json.JSONObject;
+ 
++import java.net.URI;
++import java.net.URISyntaxException;
++import java.util.HashSet;
+ import java.util.List;
++import java.util.Locale;
+ import java.util.Map;
+ import java.util.Set;
+ 
+@@ -76,6 +86,9 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
+     protected boolean sendContentSizeChangeEvents = false;
+     private OnScrollDispatchHelper mOnScrollDispatchHelper;
+     protected boolean hasScrollEvent = false;
++    protected boolean hasOnMainFrameLoadStart = false;
++    private volatile @Nullable Set<String> androidNavigationAllowedOrigins;
++    private @Nullable String androidTrustedMainOrigin;
+     protected boolean nestedScrollEnabled = false;
+     protected ProgressChangedFilter progressChangedFilter;
+ 
+@@ -89,6 +102,125 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
          super(reactContext);
          mMessagingJSModule = ((ThemedReactContext) this.getContext()).getReactApplicationContext().getJSModule(RNCWebViewMessagingModule.class);
          progressChangedFilter = new ProgressChangedFilter();
@@ -144,7 +176,88 @@ diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactna
      }
  
      public void setBasicAuthCredential(RNCBasicAuthCredential credential) {
-@@ -416,10 +539,19 @@
+@@ -103,6 +235,64 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
+         this.hasScrollEvent = hasScrollEvent;
+     }
+ 
++    public void setHasOnMainFrameLoadStart(boolean hasOnMainFrameLoadStart) {
++        this.hasOnMainFrameLoadStart = hasOnMainFrameLoadStart;
++    }
++
++    public boolean getHasOnMainFrameLoadStart() {
++        return this.hasOnMainFrameLoadStart;
++    }
++
++    public void setAndroidNavigationAllowedOrigins(@Nullable ReadableArray origins) {
++        if (origins == null) {
++            androidNavigationAllowedOrigins = null;
++            return;
++        }
++        Set<String> allowed = new HashSet<>();
++        for (int index = 0; index < origins.size(); index++) {
++            if (origins.getType(index) != ReadableType.String) continue;
++            String origin = httpsOrigin(origins.getString(index));
++            if (origin != null) allowed.add(origin);
++        }
++        androidNavigationAllowedOrigins = allowed;
++    }
++
++    @Nullable Boolean allowsAndroidNavigation(String url) {
++        Set<String> allowed = androidNavigationAllowedOrigins;
++        return allowed == null ? null : allowed.contains(httpsOrigin(url));
++    }
++
++    boolean hasAndroidNavigationPolicy() {
++        return androidNavigationAllowedOrigins != null;
++    }
++
++    boolean trustAndroidMainFrame(String url) {
++        if (!hasAndroidNavigationPolicy()) return true;
++        androidTrustedMainOrigin = Boolean.TRUE.equals(allowsAndroidNavigation(url)) &&
++            WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER) ? httpsOrigin(url) : null;
++        return androidTrustedMainOrigin != null;
++    }
++
++    boolean acceptsAndroidDocument(String url) {
++        return !hasAndroidNavigationPolicy() ||
++            (androidTrustedMainOrigin != null && androidTrustedMainOrigin.equals(httpsOrigin(url)) &&
++                Boolean.TRUE.equals(allowsAndroidNavigation(url)));
++    }
++
++    private static @Nullable String httpsOrigin(String url) {
++        if (url == null) return null;
++        try {
++            URI uri = new URI(url);
++            String host = uri.getHost();
++            int port = uri.getPort();
++            if (!"https".equalsIgnoreCase(uri.getScheme()) || host == null ||
++                uri.getRawUserInfo() != null || (port != -1 && port != 443)) return null;
++            return "https://" + host.toLowerCase(Locale.ROOT);
++        } catch (URISyntaxException invalidUrl) {
++            return null;
++        }
++    }
++
+     public void setNestedScrollEnabled(boolean nestedScrollEnabled) {
+         this.nestedScrollEnabled = nestedScrollEnabled;
+     }
+@@ -253,6 +443,7 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
+             this.bridgeListener = new WebViewCompat.WebMessageListener() {
+               @Override
+               public void onPostMessage(@NonNull WebView view, @NonNull WebMessageCompat message, @NonNull Uri sourceOrigin, boolean isMainFrame, @NonNull JavaScriptReplyProxy replyProxy) {
++                if (hasAndroidNavigationPolicy() && (!isMainFrame || !acceptsAndroidDocument(sourceOrigin.toString()))) return;
+                 RNCWebView.this.onMessage(message.getData(), sourceOrigin.toString());
+               }
+             };
+@@ -264,6 +455,7 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
+             );
+           }
+         } else {
++          if (hasAndroidNavigationPolicy()) return;
+           if (fallbackBridge == null) {
+             fallbackBridge = new RNCWebViewBridge(webView);
+             addJavascriptInterface(fallbackBridge, JAVASCRIPT_INTERFACE);
+@@ -416,10 +608,19 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
  
      @Override
      public void destroy() {
@@ -164,7 +277,15 @@ diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactna
      }
  
    public ThemedReactContext getThemedReactContext() {
-@@ -465,4 +597,4 @@
+@@ -444,6 +645,7 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
+          */
+         @JavascriptInterface
+         public void postMessage(String message) {
++            if (mWebView.hasAndroidNavigationPolicy()) return;
+             if (mWebView.getMessagingEnabled()) {
+                 // Post to main thread because `mWebView.getUrl()` requires to be executed on main.
+                 mWebView.post(() -> mWebView.onMessage(message, mWebView.getUrl()));
+@@ -465,4 +667,4 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
              return waitingForCommandLoadUrl;
          }
      }
@@ -172,12 +293,30 @@ diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactna
 \ No newline at end of file
 +}
 diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java
-index 209b855..753a981 100644
+index 209b8552..4424ebb0 100644
 --- a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java
 +++ b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java
-@@ -49,9 +49,20 @@ public class RNCWebViewClient extends WebViewClient {
+@@ -18,6 +18,7 @@ import androidx.core.util.Pair;
+ 
+ import com.facebook.common.logging.FLog;
+ import com.facebook.react.bridge.Arguments;
++import com.facebook.react.bridge.JavaScriptContextHolder;
+ import com.facebook.react.bridge.ReactContext;
+ import com.facebook.react.bridge.ReadableArray;
+ import com.facebook.react.bridge.WritableMap;
+@@ -28,6 +29,7 @@ import com.reactnativecommunity.webview.events.TopHttpErrorEvent;
+ import com.reactnativecommunity.webview.events.TopLoadingErrorEvent;
+ import com.reactnativecommunity.webview.events.TopLoadingFinishEvent;
+ import com.reactnativecommunity.webview.events.TopLoadingStartEvent;
++import com.reactnativecommunity.webview.events.TopMainFrameLoadStartEvent;
+ import com.reactnativecommunity.webview.events.TopRenderProcessGoneEvent;
+ import com.reactnativecommunity.webview.events.TopShouldStartLoadWithRequestEvent;
+ import android.webkit.CookieManager;
+@@ -48,10 +50,22 @@ public class RNCWebViewClient extends WebViewClient {
+ 
      @Override
      public void onPageFinished(WebView webView, String url) {
++        if (!((RNCWebView) webView).acceptsAndroidDocument(url)) return;
          super.onPageFinished(webView, url);
 -        String cookies = CookieManager.getInstance().getCookie(url);
 +        String cookies;
@@ -198,8 +337,113 @@ index 209b855..753a981 100644
          }
  
          if (!mLastLoadFailed) {
+@@ -80,21 +94,70 @@ public class RNCWebViewClient extends WebViewClient {
+       mLastLoadFailed = false;
+ 
+       RNCWebView reactWebView = (RNCWebView) webView;
++      if (!reactWebView.trustAndroidMainFrame(url)) {
++        mLastLoadFailed = true;
++        webView.stopLoading();
++        int reactTag = RNCWebViewWrapper.getReactTagFromWebView(webView);
++        if (reactTag == android.view.View.NO_ID) return;
++        var dispatcher = UIManagerHelper.getEventDispatcherForReactTag((ReactContext) webView.getContext(), reactTag);
++        if (dispatcher != null) {
++          WritableMap error = createWebViewEvent(webView, url);
++          error.putInt("code", ERROR_UNSUPPORTED_SCHEME);
++          error.putString("description", "无法在应用内确认此验证页面，请重试或打开官网。");
++          dispatcher.dispatchEvent(new TopLoadingErrorEvent(reactTag, error));
++        }
++        return;
++      }
+       reactWebView.callInjectedJavaScriptBeforeContentLoaded();
++      if (reactWebView.getHasOnMainFrameLoadStart()) {
++        WritableMap eventData = createWebViewEvent(webView, url);
++        eventData.putBoolean("loading", true);
++        reactWebView.dispatchEvent(
++          webView,
++          new TopMainFrameLoadStartEvent(
++            RNCWebViewWrapper.getReactTagFromWebView(webView),
++            eventData));
++      }
++    }
++
++    @Override
++    public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
++        if (request.isForMainFrame() && Boolean.FALSE.equals(
++            ((RNCWebView) view).allowsAndroidNavigation(request.getUrl().toString()))) {
++            return new WebResourceResponse("text/plain", "UTF-8", 403, "Forbidden",
++                java.util.Collections.emptyMap(), new java.io.ByteArrayInputStream(new byte[0]));
++        }
++        return super.shouldInterceptRequest(view, request);
+     }
+ 
+     @Override
+     public boolean shouldOverrideUrlLoading(WebView view, String url) {
++        return this.shouldOverrideUrlLoading(view, url, null);
++    }
++
++    @Override
++    public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
++        final String url = request.getUrl().toString();
++        return this.shouldOverrideUrlLoading(view, url, request.isForMainFrame());
++    }
++
++    protected boolean shouldOverrideUrlLoading(WebView view, String url, @Nullable Boolean isTopFrame) {
+         final RNCWebView rncWebView = (RNCWebView) view;
+-        final boolean isJsDebugging = rncWebView.getReactApplicationContext().getJavaScriptContextHolder().get() == 0;
++        final Boolean originAllowed = rncWebView.allowsAndroidNavigation(url);
++        if (Boolean.FALSE.equals(originAllowed)) return true;
++        final JavaScriptContextHolder jsContext = rncWebView.getReactApplicationContext().getJavaScriptContextHolder();
+ 
+-        if (!isJsDebugging && rncWebView.mMessagingJSModule != null) {
++        if (jsContext != null && jsContext.get() != 0 && rncWebView.mMessagingJSModule != null) {
+             final Pair<Double, AtomicReference<RNCWebViewModuleImpl.ShouldOverrideUrlLoadingLock.ShouldOverrideCallbackState>> lock = RNCWebViewModuleImpl.shouldOverrideUrlLoadingLock.getNewLock();
+             final double lockIdentifier = lock.first;
+             final AtomicReference<RNCWebViewModuleImpl.ShouldOverrideUrlLoadingLock.ShouldOverrideCallbackState> lockObject = lock.second;
+ 
+             final WritableMap event = createWebViewEvent(view, url);
+             event.putDouble("lockIdentifier", lockIdentifier);
++            event.putString("navigationType", "other");
++            if (isTopFrame != null) {
++                event.putBoolean("isTopFrame", isTopFrame);
++            }
+             rncWebView.dispatchDirectShouldStartLoadWithRequest(event);
+ 
+             try {
+@@ -121,23 +184,24 @@ public class RNCWebViewClient extends WebViewClient {
+ 
+             return shouldOverride;
+         } else {
++            // Continue the allowed request in its original frame and preserve its request data.
++            if (Boolean.TRUE.equals(originAllowed)) return false;
+             FLog.w(TAG, "Couldn't use blocking synchronous call for onShouldStartLoadWithRequest due to debugging or missing Catalyst instance, falling back to old event-and-load.");
+             progressChangedFilter.setWaitingForCommandLoadUrl(true);
+ 
++            final WritableMap event = createWebViewEvent(view, url);
++            if (isTopFrame != null) {
++                event.putBoolean("isTopFrame", isTopFrame);
++            }
++
+             int reactTag = RNCWebViewWrapper.getReactTagFromWebView(view);
+             UIManagerHelper.getEventDispatcherForReactTag((ReactContext) view.getContext(), reactTag).dispatchEvent(new TopShouldStartLoadWithRequestEvent(
+                     reactTag,
+-                    createWebViewEvent(view, url)));
++                    event));
+             return true;
+         }
+     }
+ 
+-    @Override
+-    public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+-        final String url = request.getUrl().toString();
+-        return this.shouldOverrideUrlLoading(view, url);
+-    }
+-
+     @Override
+     public void onReceivedHttpAuthRequest(WebView view, HttpAuthHandler handler, String host, String realm) {
+         if (basicAuthCredential != null) {
 diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewManagerImpl.kt b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewManagerImpl.kt
-index f83033b..c60eb23 100644
+index f83033b..7aaada9 100644
 --- a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewManagerImpl.kt
 +++ b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewManagerImpl.kt
 @@ -1,6 +1,7 @@
@@ -234,6 +478,22 @@ index f83033b..c60eb23 100644
          "clearFormData" -> webView.clearFormData()
          "clearCache" -> {
            val includeDiskFiles = args != null && args.getBoolean(0)
+@@ -542,6 +551,15 @@ class RNCWebViewManagerImpl(private val newArch: Boolean = false) {
+         view.setHasScrollEvent(value)
+     }
+ 
++    fun setHasOnMainFrameLoadStart(viewWrapper: RNCWebViewWrapper, value: Boolean) {
++        val view = viewWrapper.webView
++        view.setHasOnMainFrameLoadStart(value)
++    }
++
++    fun setAndroidNavigationAllowedOrigins(viewWrapper: RNCWebViewWrapper, value: ReadableArray?) {
++        viewWrapper.webView.setAndroidNavigationAllowedOrigins(value)
++    }
++
+     fun setJavaScriptEnabled(viewWrapper: RNCWebViewWrapper, enabled: Boolean) {
+         val view = viewWrapper.webView
+         view.settings.javaScriptEnabled = enabled
 diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewWrapper.kt b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewWrapper.kt
 index 9f9d6f3..1708f85 100644
 --- a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewWrapper.kt
@@ -276,8 +536,51 @@ index 9f9d6f3..1708f85 100644
      /**
       * A helper to get react tag id by given WebView
       */
+diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/events/TopMainFrameLoadStartEvent.kt b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/events/TopMainFrameLoadStartEvent.kt
+new file mode 100644
+index 0000000..e93421d
+--- /dev/null
++++ b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/events/TopMainFrameLoadStartEvent.kt
+@@ -0,0 +1,24 @@
++package com.reactnativecommunity.webview.events
++
++import com.facebook.react.bridge.WritableMap
++import com.facebook.react.uimanager.events.Event
++import com.facebook.react.uimanager.events.RCTEventEmitter
++
++/**
++ * Event emitted when Android WebViewClient.onPageStarted begins a main-frame load.
++ */
++class TopMainFrameLoadStartEvent(viewId: Int, private val mEventData: WritableMap) :
++  Event<TopMainFrameLoadStartEvent>(viewId) {
++  companion object {
++    const val EVENT_NAME = "topMainFrameLoadStart"
++  }
++
++  override fun getEventName(): String = EVENT_NAME
++
++  override fun canCoalesce(): Boolean = false
++
++  override fun getCoalescingKey(): Short = 0
++
++  override fun dispatch(rctEventEmitter: RCTEventEmitter) =
++    rctEventEmitter.receiveEvent(viewTag, eventName, mEventData)
++}
+diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/events/TopShouldStartLoadWithRequestEvent.kt b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/events/TopShouldStartLoadWithRequestEvent.kt
+index da4eb96..0f80ced 100644
+--- a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/events/TopShouldStartLoadWithRequestEvent.kt
++++ b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/events/TopShouldStartLoadWithRequestEvent.kt
+@@ -14,8 +14,6 @@ class TopShouldStartLoadWithRequestEvent(viewId: Int, private val mData: Writabl
+ 
+   init {
+     mData.putString("navigationType", "other")
+-    // Android does not raise shouldOverrideUrlLoading for inner frames
+-    mData.putBoolean("isTopFrame", true)
+   }
+ 
+   override fun getEventName(): String = EVENT_NAME
 diff --git a/node_modules/react-native-webview/android/src/newarch/com/reactnativecommunity/webview/RNCWebViewManager.java b/node_modules/react-native-webview/android/src/newarch/com/reactnativecommunity/webview/RNCWebViewManager.java
-index fa8efb8..dd98fab 100644
+index fa8efb8..f7baadc 100644
 --- a/node_modules/react-native-webview/android/src/newarch/com/reactnativecommunity/webview/RNCWebViewManager.java
 +++ b/node_modules/react-native-webview/android/src/newarch/com/reactnativecommunity/webview/RNCWebViewManager.java
 @@ -1,5 +1,7 @@
@@ -288,7 +591,15 @@ index fa8efb8..dd98fab 100644
  import androidx.annotation.NonNull;
  import androidx.annotation.Nullable;
  
-@@ -100,6 +102,12 @@ public class RNCWebViewManager extends ViewGroupManager<RNCWebViewWrapper>
+@@ -21,6 +23,7 @@ import com.reactnativecommunity.webview.events.TopLoadingErrorEvent;
+ import com.reactnativecommunity.webview.events.TopLoadingFinishEvent;
+ import com.reactnativecommunity.webview.events.TopLoadingProgressEvent;
+ import com.reactnativecommunity.webview.events.TopLoadingStartEvent;
++import com.reactnativecommunity.webview.events.TopMainFrameLoadStartEvent;
+ import com.reactnativecommunity.webview.events.TopMessageEvent;
+ import com.reactnativecommunity.webview.events.TopOpenWindowEvent;
+ import com.reactnativecommunity.webview.events.TopRenderProcessGoneEvent;
+@@ -100,6 +103,12 @@ public class RNCWebViewManager extends ViewGroupManager<RNCWebViewWrapper>
          mRNCWebViewManagerImpl.setAndroidLayerType(view, value);
      }
  
@@ -301,7 +612,26 @@ index fa8efb8..dd98fab 100644
      @Override
      @ReactProp(name = "applicationNameForUserAgent")
      public void setApplicationNameForUserAgent(RNCWebViewWrapper view, @Nullable String value) {
-@@ -358,7 +366,9 @@ public class RNCWebViewManager extends ViewGroupManager<RNCWebViewWrapper>
+@@ -154,6 +163,18 @@ public class RNCWebViewManager extends ViewGroupManager<RNCWebViewWrapper>
+         mRNCWebViewManagerImpl.setHasOnScroll(view, hasScrollEvent);
+     }
+ 
++    @Override
++    @ReactProp(name = "hasOnMainFrameLoadStart")
++    public void setHasOnMainFrameLoadStart(RNCWebViewWrapper view, boolean hasOnMainFrameLoadStart) {
++        mRNCWebViewManagerImpl.setHasOnMainFrameLoadStart(view, hasOnMainFrameLoadStart);
++    }
++
++    @Override
++    @ReactProp(name = "androidNavigationAllowedOrigins")
++    public void setAndroidNavigationAllowedOrigins(RNCWebViewWrapper view, @Nullable ReadableArray value) {
++        mRNCWebViewManagerImpl.setAndroidNavigationAllowedOrigins(view, value);
++    }
++
+     @Override
+     @ReactProp(name = "incognito")
+     public void setIncognito(RNCWebViewWrapper view, boolean value) {
+@@ -358,7 +379,9 @@ public class RNCWebViewManager extends ViewGroupManager<RNCWebViewWrapper>
      public void setAllowsLinkPreview(RNCWebViewWrapper view, boolean value) {}
  
      @Override
@@ -312,7 +642,7 @@ index fa8efb8..dd98fab 100644
  
      @Override
      public void setAutoManageStatusBarEnabled(RNCWebViewWrapper view, boolean value) {}
-@@ -466,7 +476,13 @@ public class RNCWebViewManager extends ViewGroupManager<RNCWebViewWrapper>
+@@ -466,7 +489,13 @@ public class RNCWebViewManager extends ViewGroupManager<RNCWebViewWrapper>
  
    @Override
    public void requestFocus(RNCWebViewWrapper view) {
@@ -327,7 +657,15 @@ index fa8efb8..dd98fab 100644
    }
  
    @Override
-@@ -564,4 +580,4 @@ public class RNCWebViewManager extends ViewGroupManager<RNCWebViewWrapper>
+@@ -526,6 +555,7 @@ public class RNCWebViewManager extends ViewGroupManager<RNCWebViewWrapper>
+         }
+         // Default events but adding them here explicitly for clarity
+         export.put(TopLoadingStartEvent.EVENT_NAME, MapBuilder.of("registrationName", "onLoadingStart"));
++        export.put(TopMainFrameLoadStartEvent.EVENT_NAME, MapBuilder.of("registrationName", "onMainFrameLoadStart"));
+         export.put(TopLoadingFinishEvent.EVENT_NAME, MapBuilder.of("registrationName", "onLoadingFinish"));
+         export.put(TopLoadingErrorEvent.EVENT_NAME, MapBuilder.of("registrationName", "onLoadingError"));
+         export.put(SubResourceErrorEvent.EVENT_NAME, MapBuilder.of("registrationName", "onLoadingSubResourceError"));
+@@ -564,4 +594,4 @@ public class RNCWebViewManager extends ViewGroupManager<RNCWebViewWrapper>
          mRNCWebViewManagerImpl.onDropViewInstance(view);
          super.onDropViewInstance(view);
      }
@@ -335,10 +673,18 @@ index fa8efb8..dd98fab 100644
 \ No newline at end of file
 +}
 diff --git a/node_modules/react-native-webview/android/src/oldarch/com/reactnativecommunity/webview/RNCWebViewManager.java b/node_modules/react-native-webview/android/src/oldarch/com/reactnativecommunity/webview/RNCWebViewManager.java
-index 974337f..d70f932 100644
+index 974337f..71cae53 100644
 --- a/node_modules/react-native-webview/android/src/oldarch/com/reactnativecommunity/webview/RNCWebViewManager.java
 +++ b/node_modules/react-native-webview/android/src/oldarch/com/reactnativecommunity/webview/RNCWebViewManager.java
-@@ -77,6 +77,11 @@ public class RNCWebViewManager extends ViewGroupManager<RNCWebViewWrapper> {
+@@ -17,6 +17,7 @@ import com.reactnativecommunity.webview.events.TopLoadingErrorEvent;
+ import com.reactnativecommunity.webview.events.TopLoadingFinishEvent;
+ import com.reactnativecommunity.webview.events.TopLoadingProgressEvent;
+ import com.reactnativecommunity.webview.events.TopLoadingStartEvent;
++import com.reactnativecommunity.webview.events.TopMainFrameLoadStartEvent;
+ import com.reactnativecommunity.webview.events.TopMessageEvent;
+ import com.reactnativecommunity.webview.events.TopOpenWindowEvent;
+ import com.reactnativecommunity.webview.events.TopRenderProcessGoneEvent;
+@@ -77,6 +78,11 @@ public class RNCWebViewManager extends ViewGroupManager<RNCWebViewWrapper> {
          mRNCWebViewManagerImpl.setAndroidLayerType(view, value);
      }
  
@@ -350,7 +696,32 @@ index 974337f..d70f932 100644
      @ReactProp(name = "applicationNameForUserAgent")
      public void setApplicationNameForUserAgent(RNCWebViewWrapper view, @Nullable String value) {
          mRNCWebViewManagerImpl.setApplicationNameForUserAgent(view, value);
-@@ -332,4 +337,4 @@ public class RNCWebViewManager extends ViewGroupManager<RNCWebViewWrapper> {
+@@ -122,6 +128,16 @@ public class RNCWebViewManager extends ViewGroupManager<RNCWebViewWrapper> {
+         mRNCWebViewManagerImpl.setHasOnScroll(view, hasScrollEvent);
+     }
+ 
++    @ReactProp(name = "hasOnMainFrameLoadStart")
++    public void setHasOnMainFrameLoadStart(RNCWebViewWrapper view, boolean hasOnMainFrameLoadStart) {
++        mRNCWebViewManagerImpl.setHasOnMainFrameLoadStart(view, hasOnMainFrameLoadStart);
++    }
++
++    @ReactProp(name = "androidNavigationAllowedOrigins")
++    public void setAndroidNavigationAllowedOrigins(RNCWebViewWrapper view, @Nullable ReadableArray value) {
++        mRNCWebViewManagerImpl.setAndroidNavigationAllowedOrigins(view, value);
++    }
++
+     @ReactProp(name = "incognito")
+     public void setIncognito(RNCWebViewWrapper view, boolean value) {
+         mRNCWebViewManagerImpl.setIncognito(view, value);
+@@ -293,6 +309,7 @@ public class RNCWebViewManager extends ViewGroupManager<RNCWebViewWrapper> {
+         }
+         // Default events but adding them here explicitly for clarity
+         export.put(TopLoadingStartEvent.EVENT_NAME, MapBuilder.of("registrationName", "onLoadingStart"));
++        export.put(TopMainFrameLoadStartEvent.EVENT_NAME, MapBuilder.of("registrationName", "onMainFrameLoadStart"));
+         export.put(TopLoadingFinishEvent.EVENT_NAME, MapBuilder.of("registrationName", "onLoadingFinish"));
+         export.put(TopLoadingErrorEvent.EVENT_NAME, MapBuilder.of("registrationName", "onLoadingError"));
+         export.put(SubResourceErrorEvent.EVENT_NAME, MapBuilder.of("registrationName", "onLoadingSubResourceError"));
+@@ -332,4 +349,4 @@ public class RNCWebViewManager extends ViewGroupManager<RNCWebViewWrapper> {
          mRNCWebViewManagerImpl.onDropViewInstance(view);
          super.onDropViewInstance(view);
      }
@@ -358,10 +729,15 @@ index 974337f..d70f932 100644
 \ No newline at end of file
 +}
 diff --git a/node_modules/react-native-webview/index.d.ts b/node_modules/react-native-webview/index.d.ts
-index 10b9c14..8487b10 100644
+index 10b9c14..4b9adbf 100644
 --- a/node_modules/react-native-webview/index.d.ts
 +++ b/node_modules/react-native-webview/index.d.ts
-@@ -5,7 +5,7 @@ export { FileDownload, WebViewMessageEvent, WebViewNavigation } from './lib/WebV
+@@ -1,11 +1,11 @@
+ import { Component } from 'react';
+ import { IOSWebViewProps, AndroidWebViewProps, WindowsWebViewProps } from './lib/WebViewTypes';
+ 
+-export { FileDownload, WebViewMessageEvent, WebViewNavigation } from './lib/WebViewTypes';
++export { FileDownload, WebViewMessageEvent, WebViewNavigation, WebViewNavigationEvent } from './lib/WebViewTypes';
  
  export type WebViewProps = IOSWebViewProps & AndroidWebViewProps & WindowsWebViewProps;
  
@@ -371,9 +747,18 @@ index 10b9c14..8487b10 100644
     * Go back one page in the webview's history.
     */
 diff --git a/node_modules/react-native-webview/lib/RNCWebViewNativeComponent.d.ts b/node_modules/react-native-webview/lib/RNCWebViewNativeComponent.d.ts
-index 6b789f9..24e909a 100644
+index 6b789f9..6f15d85 100644
 --- a/node_modules/react-native-webview/lib/RNCWebViewNativeComponent.d.ts
 +++ b/node_modules/react-native-webview/lib/RNCWebViewNativeComponent.d.ts
+@@ -74,7 +74,7 @@ export type ShouldStartLoadRequestEvent = Readonly<{
+     lockIdentifier: Double;
+     navigationType: 'click' | 'formsubmit' | 'backforward' | 'reload' | 'formresubmit' | 'other';
+     mainDocumentURL?: string;
+-    isTopFrame: boolean;
++    isTopFrame?: boolean;
+ }>;
+ type ScrollEvent = Readonly<{
+     contentInset: {
 @@ -117,6 +117,7 @@ export interface NativeProps extends ViewProps {
      allowsProtectedMedia?: boolean;
      allowsFullscreenVideo?: boolean;
@@ -382,11 +767,99 @@ index 6b789f9..24e909a 100644
      cacheMode?: WithDefault<'LOAD_DEFAULT' | 'LOAD_CACHE_ELSE_NETWORK' | 'LOAD_NO_CACHE' | 'LOAD_CACHE_ONLY', 'LOAD_DEFAULT'>;
      domStorageEnabled?: boolean;
      downloadingMessage?: string;
+@@ -128,6 +129,7 @@ export interface NativeProps extends ViewProps {
+     mixedContentMode?: WithDefault<'never' | 'always' | 'compatibility', 'never'>;
+     nestedScrollEnabled?: boolean;
+     onContentSizeChange?: DirectEventHandler<WebViewNativeEvent>;
++    onMainFrameLoadStart?: DirectEventHandler<WebViewNavigationEvent>;
+     onRenderProcessGone?: DirectEventHandler<WebViewRenderProcessGoneEvent>;
+     overScrollMode?: string;
+     saveFormDataDisabled?: boolean;
+@@ -138,6 +140,8 @@ export interface NativeProps extends ViewProps {
+     textZoom?: Int32;
+     thirdPartyCookiesEnabled?: WithDefault<boolean, true>;
+     hasOnScroll?: boolean;
++    hasOnMainFrameLoadStart?: boolean;
++    androidNavigationAllowedOrigins?: ReadonlyArray<string>;
+     allowingReadAccessToURL?: string;
+     allowsBackForwardNavigationGestures?: boolean;
+     allowsInlineMediaPlayback?: boolean;
+diff --git a/node_modules/react-native-webview/lib/RNCWebViewNativeComponent.js b/node_modules/react-native-webview/lib/RNCWebViewNativeComponent.js
+index 8261210..1866877 100644
+--- a/node_modules/react-native-webview/lib/RNCWebViewNativeComponent.js
++++ b/node_modules/react-native-webview/lib/RNCWebViewNativeComponent.js
+@@ -1 +1 @@
+-var _interopRequireDefault=require("@babel/runtime/helpers/interopRequireDefault");Object.defineProperty(exports,"__esModule",{value:true});exports.default=exports.__INTERNAL_VIEW_CONFIG=exports.Commands=void 0;var _codegenNativeComponent=_interopRequireDefault(require("react-native/Libraries/Utilities/codegenNativeComponent"));var _codegenNativeCommands=_interopRequireDefault(require("react-native/Libraries/Utilities/codegenNativeCommands"));var NativeComponentRegistry=require('react-native/Libraries/NativeComponent/NativeComponentRegistry');var _require=require('react-native/Libraries/NativeComponent/ViewConfigIgnore'),ConditionallyIgnoredEventHandlers=_require.ConditionallyIgnoredEventHandlers;var _require2=require("react-native/Libraries/ReactNative/RendererProxy"),dispatchCommand=_require2.dispatchCommand;var nativeComponentName='RNCWebView';var __INTERNAL_VIEW_CONFIG=exports.__INTERNAL_VIEW_CONFIG={uiViewClassName:'RNCWebView',directEventTypes:{topContentSizeChange:{registrationName:'onContentSizeChange'},topRenderProcessGone:{registrationName:'onRenderProcessGone'},topContentProcessDidTerminate:{registrationName:'onContentProcessDidTerminate'},topCustomMenuSelection:{registrationName:'onCustomMenuSelection'},topFileDownload:{registrationName:'onFileDownload'},topLoadingError:{registrationName:'onLoadingError'},topLoadingSubResourceError:{registrationName:'onLoadingSubResourceError'},topLoadingFinish:{registrationName:'onLoadingFinish'},topLoadingProgress:{registrationName:'onLoadingProgress'},topLoadingStart:{registrationName:'onLoadingStart'},topHttpError:{registrationName:'onHttpError'},topMessage:{registrationName:'onMessage'},topOpenWindow:{registrationName:'onOpenWindow'},topScroll:{registrationName:'onScroll'},topShouldStartLoadWithRequest:{registrationName:'onShouldStartLoadWithRequest'}},validAttributes:Object.assign({allowFileAccess:true,allowsProtectedMedia:true,allowsFullscreenVideo:true,androidLayerType:true,cacheMode:true,domStorageEnabled:true,downloadingMessage:true,forceDarkOn:true,geolocationEnabled:true,lackPermissionToDownloadMessage:true,messagingModuleName:true,minimumFontSize:true,mixedContentMode:true,nestedScrollEnabled:true,overScrollMode:true,saveFormDataDisabled:true,scalesPageToFit:true,setBuiltInZoomControls:true,setDisplayZoomControls:true,setSupportMultipleWindows:true,textZoom:true,thirdPartyCookiesEnabled:true,hasOnScroll:true,allowingReadAccessToURL:true,allowsBackForwardNavigationGestures:true,allowsInlineMediaPlayback:true,allowsPictureInPictureMediaPlayback:true,allowsAirPlayForMediaPlayback:true,allowsLinkPreview:true,automaticallyAdjustContentInsets:true,autoManageStatusBarEnabled:true,bounces:true,contentInset:true,contentInsetAdjustmentBehavior:true,contentMode:true,dataDetectorTypes:true,decelerationRate:true,directionalLockEnabled:true,enableApplePay:true,hideKeyboardAccessoryView:true,keyboardDisplayRequiresUserAction:true,limitsNavigationsToAppBoundDomains:true,mediaCapturePermissionGrantType:true,pagingEnabled:true,pullToRefreshEnabled:true,refreshControlLightMode:true,removeIosKeyboardObserver:true,scrollEnabled:true,sharedCookiesEnabled:true,textInteractionEnabled:true,useSharedProcessPool:true,menuItems:true,suppressMenuItems:true,hasOnFileDownload:true,fraudulentWebsiteWarningEnabled:true,allowFileAccessFromFileURLs:true,allowUniversalAccessFromFileURLs:true,applicationNameForUserAgent:true,basicAuthCredential:true,cacheEnabled:true,incognito:true,injectedJavaScript:true,injectedJavaScriptBeforeContentLoaded:true,injectedJavaScriptForMainFrameOnly:true,injectedJavaScriptBeforeContentLoadedForMainFrameOnly:true,javaScriptCanOpenWindowsAutomatically:true,javaScriptEnabled:true,webviewDebuggingEnabled:true,mediaPlaybackRequiresUserAction:true,messagingEnabled:true,hasOnOpenWindowEvent:true,showsHorizontalScrollIndicator:true,showsVerticalScrollIndicator:true,indicatorStyle:true,newSource:true,userAgent:true,injectedJavaScriptObject:true,paymentRequestEnabled:true},ConditionallyIgnoredEventHandlers({onContentSizeChange:true,onRenderProcessGone:true,onContentProcessDidTerminate:true,onCustomMenuSelection:true,onFileDownload:true,onLoadingError:true,onLoadingSubResourceError:true,onLoadingFinish:true,onLoadingProgress:true,onLoadingStart:true,onHttpError:true,onMessage:true,onOpenWindow:true,onScroll:true,onShouldStartLoadWithRequest:true}))};var _default=exports.default=NativeComponentRegistry.get(nativeComponentName,function(){return __INTERNAL_VIEW_CONFIG;});var Commands=exports.Commands={goBack:function goBack(ref){dispatchCommand(ref,"goBack",[]);},goForward:function goForward(ref){dispatchCommand(ref,"goForward",[]);},reload:function reload(ref){dispatchCommand(ref,"reload",[]);},stopLoading:function stopLoading(ref){dispatchCommand(ref,"stopLoading",[]);},injectJavaScript:function injectJavaScript(ref,javascript){dispatchCommand(ref,"injectJavaScript",[javascript]);},requestFocus:function requestFocus(ref){dispatchCommand(ref,"requestFocus",[]);},postMessage:function postMessage(ref,data){dispatchCommand(ref,"postMessage",[data]);},loadUrl:function loadUrl(ref,url){dispatchCommand(ref,"loadUrl",[url]);},clearFormData:function clearFormData(ref){dispatchCommand(ref,"clearFormData",[]);},clearCache:function clearCache(ref,includeDiskFiles){dispatchCommand(ref,"clearCache",[includeDiskFiles]);},clearHistory:function clearHistory(ref){dispatchCommand(ref,"clearHistory",[]);}};
+\ No newline at end of file
++var _interopRequireDefault=require("@babel/runtime/helpers/interopRequireDefault");Object.defineProperty(exports,"__esModule",{value:true});exports.default=exports.__INTERNAL_VIEW_CONFIG=exports.Commands=void 0;var _codegenNativeComponent=_interopRequireDefault(require("react-native/Libraries/Utilities/codegenNativeComponent"));var _codegenNativeCommands=_interopRequireDefault(require("react-native/Libraries/Utilities/codegenNativeCommands"));var NativeComponentRegistry=require('react-native/Libraries/NativeComponent/NativeComponentRegistry');var _require=require('react-native/Libraries/NativeComponent/ViewConfigIgnore'),ConditionallyIgnoredEventHandlers=_require.ConditionallyIgnoredEventHandlers;var _require2=require("react-native/Libraries/ReactNative/RendererProxy"),dispatchCommand=_require2.dispatchCommand;var nativeComponentName='RNCWebView';var __INTERNAL_VIEW_CONFIG=exports.__INTERNAL_VIEW_CONFIG={uiViewClassName:'RNCWebView',directEventTypes:{topContentSizeChange:{registrationName:'onContentSizeChange'},topMainFrameLoadStart:{registrationName:'onMainFrameLoadStart'},topRenderProcessGone:{registrationName:'onRenderProcessGone'},topContentProcessDidTerminate:{registrationName:'onContentProcessDidTerminate'},topCustomMenuSelection:{registrationName:'onCustomMenuSelection'},topFileDownload:{registrationName:'onFileDownload'},topLoadingError:{registrationName:'onLoadingError'},topLoadingSubResourceError:{registrationName:'onLoadingSubResourceError'},topLoadingFinish:{registrationName:'onLoadingFinish'},topLoadingProgress:{registrationName:'onLoadingProgress'},topLoadingStart:{registrationName:'onLoadingStart'},topHttpError:{registrationName:'onHttpError'},topMessage:{registrationName:'onMessage'},topOpenWindow:{registrationName:'onOpenWindow'},topScroll:{registrationName:'onScroll'},topShouldStartLoadWithRequest:{registrationName:'onShouldStartLoadWithRequest'}},validAttributes:Object.assign({allowFileAccess:true,allowsProtectedMedia:true,allowsFullscreenVideo:true,androidLayerType:true,cacheMode:true,domStorageEnabled:true,downloadingMessage:true,forceDarkOn:true,geolocationEnabled:true,lackPermissionToDownloadMessage:true,messagingModuleName:true,minimumFontSize:true,mixedContentMode:true,nestedScrollEnabled:true,overScrollMode:true,saveFormDataDisabled:true,scalesPageToFit:true,setBuiltInZoomControls:true,setDisplayZoomControls:true,setSupportMultipleWindows:true,textZoom:true,thirdPartyCookiesEnabled:true,hasOnScroll:true,hasOnMainFrameLoadStart:true,androidNavigationAllowedOrigins:true,allowingReadAccessToURL:true,allowsBackForwardNavigationGestures:true,allowsInlineMediaPlayback:true,allowsPictureInPictureMediaPlayback:true,allowsAirPlayForMediaPlayback:true,allowsLinkPreview:true,automaticallyAdjustContentInsets:true,autoManageStatusBarEnabled:true,bounces:true,contentInset:true,contentInsetAdjustmentBehavior:true,contentMode:true,dataDetectorTypes:true,decelerationRate:true,directionalLockEnabled:true,enableApplePay:true,hideKeyboardAccessoryView:true,keyboardDisplayRequiresUserAction:true,limitsNavigationsToAppBoundDomains:true,mediaCapturePermissionGrantType:true,pagingEnabled:true,pullToRefreshEnabled:true,refreshControlLightMode:true,removeIosKeyboardObserver:true,scrollEnabled:true,sharedCookiesEnabled:true,textInteractionEnabled:true,useSharedProcessPool:true,menuItems:true,suppressMenuItems:true,hasOnFileDownload:true,fraudulentWebsiteWarningEnabled:true,allowFileAccessFromFileURLs:true,allowUniversalAccessFromFileURLs:true,applicationNameForUserAgent:true,basicAuthCredential:true,cacheEnabled:true,incognito:true,injectedJavaScript:true,injectedJavaScriptBeforeContentLoaded:true,injectedJavaScriptForMainFrameOnly:true,injectedJavaScriptBeforeContentLoadedForMainFrameOnly:true,javaScriptCanOpenWindowsAutomatically:true,javaScriptEnabled:true,webviewDebuggingEnabled:true,mediaPlaybackRequiresUserAction:true,messagingEnabled:true,hasOnOpenWindowEvent:true,showsHorizontalScrollIndicator:true,showsVerticalScrollIndicator:true,indicatorStyle:true,newSource:true,userAgent:true,injectedJavaScriptObject:true,paymentRequestEnabled:true},ConditionallyIgnoredEventHandlers({onContentSizeChange:true,onMainFrameLoadStart:true,onRenderProcessGone:true,onContentProcessDidTerminate:true,onCustomMenuSelection:true,onFileDownload:true,onLoadingError:true,onLoadingSubResourceError:true,onLoadingFinish:true,onLoadingProgress:true,onLoadingStart:true,onHttpError:true,onMessage:true,onOpenWindow:true,onScroll:true,onShouldStartLoadWithRequest:true}))};var _default=exports.default=NativeComponentRegistry.get(nativeComponentName,function(){return __INTERNAL_VIEW_CONFIG;});var Commands=exports.Commands={goBack:function goBack(ref){dispatchCommand(ref,"goBack",[]);},goForward:function goForward(ref){dispatchCommand(ref,"goForward",[]);},reload:function reload(ref){dispatchCommand(ref,"reload",[]);},stopLoading:function stopLoading(ref){dispatchCommand(ref,"stopLoading",[]);},injectJavaScript:function injectJavaScript(ref,javascript){dispatchCommand(ref,"injectJavaScript",[javascript]);},requestFocus:function requestFocus(ref){dispatchCommand(ref,"requestFocus",[]);},postMessage:function postMessage(ref,data){dispatchCommand(ref,"postMessage",[data]);},loadUrl:function loadUrl(ref,url){dispatchCommand(ref,"loadUrl",[url]);},clearFormData:function clearFormData(ref){dispatchCommand(ref,"clearFormData",[]);},clearCache:function clearCache(ref,includeDiskFiles){dispatchCommand(ref,"clearCache",[includeDiskFiles]);},clearHistory:function clearHistory(ref){dispatchCommand(ref,"clearHistory",[]);}};
+\ No newline at end of file
+diff --git a/node_modules/react-native-webview/lib/WebView.android.js b/node_modules/react-native-webview/lib/WebView.android.js
+index 323e7dd..fff447f 100644
+--- a/node_modules/react-native-webview/lib/WebView.android.js
++++ b/node_modules/react-native-webview/lib/WebView.android.js
+@@ -1 +1 @@
+-var _interopRequireDefault=require("@babel/runtime/helpers/interopRequireDefault");Object.defineProperty(exports,"__esModule",{value:true});exports.default=void 0;var _asyncToGenerator2=_interopRequireDefault(require("@babel/runtime/helpers/asyncToGenerator"));var _defineProperty2=_interopRequireDefault(require("@babel/runtime/helpers/defineProperty"));var _slicedToArray2=_interopRequireDefault(require("@babel/runtime/helpers/slicedToArray"));var _objectWithoutProperties2=_interopRequireDefault(require("@babel/runtime/helpers/objectWithoutProperties"));var _react=_interopRequireWildcard(require("react"));var _reactNative=require("react-native");var _BatchedBridge=_interopRequireDefault(require("react-native/Libraries/BatchedBridge/BatchedBridge"));var _EventEmitter=_interopRequireDefault(require("react-native/Libraries/vendor/emitter/EventEmitter"));var _invariant=_interopRequireDefault(require("invariant"));var _RNCWebViewNativeComponent=_interopRequireWildcard(require("./RNCWebViewNativeComponent"));var _NativeRNCWebViewModule=_interopRequireDefault(require("./NativeRNCWebViewModule"));var _WebViewShared=require("./WebViewShared");var _WebView=_interopRequireDefault(require("./WebView.styles"));var _jsxRuntime=require("react/jsx-runtime");var _excluded=["overScrollMode","javaScriptEnabled","thirdPartyCookiesEnabled","scalesPageToFit","allowsFullscreenVideo","allowFileAccess","saveFormDataDisabled","cacheEnabled","androidLayerType","originWhitelist","setSupportMultipleWindows","setBuiltInZoomControls","setDisplayZoomControls","nestedScrollEnabled","startInLoadingState","onNavigationStateChange","onLoadStart","onError","onLoad","onLoadEnd","onLoadSubResourceError","onLoadProgress","onHttpError","onRenderProcessGone","onMessage","onOpenWindow","renderLoading","renderError","style","containerStyle","source","nativeConfig","onShouldStartLoadWithRequest","injectedJavaScriptObject"],_excluded2=["messagingModuleName"],_excluded3=["messagingModuleName"];var _require$registerCall,_this=this,_jsxFileName="/home/runner/work/react-native-webview/react-native-webview/src/WebView.android.tsx";function _interopRequireWildcard(e,t){if("function"==typeof WeakMap)var r=new WeakMap(),n=new WeakMap();return(_interopRequireWildcard=function _interopRequireWildcard(e,t){if(!t&&e&&e.__esModule)return e;var o,i,f={__proto__:null,default:e};if(null===e||"object"!=typeof e&&"function"!=typeof e)return f;if(o=t?n:r){if(o.has(e))return o.get(e);o.set(e,f);}for(var _t in e)"default"!==_t&&{}.hasOwnProperty.call(e,_t)&&((i=(o=Object.defineProperty)&&Object.getOwnPropertyDescriptor(e,_t))&&(i.get||i.set)?o(f,_t,i):f[_t]=e[_t]);return f;})(e,t);}var resolveAssetSource=function resolveAssetSource(source){return _reactNative.Image.resolveAssetSource(source);};var directEventEmitter=new _EventEmitter.default();var registerCallableModule=(_require$registerCall=require('react-native').registerCallableModule)!=null?_require$registerCall:_BatchedBridge.default.registerCallableModule.bind(_BatchedBridge.default);registerCallableModule('RNCWebViewMessagingModule',{onShouldStartLoadWithRequest:function onShouldStartLoadWithRequest(event){directEventEmitter.emit('onShouldStartLoadWithRequest',event);},onMessage:function onMessage(event){directEventEmitter.emit('onMessage',event);}});var uniqueRef=0;var WebViewComponent=(0,_react.forwardRef)(function(_ref,ref){var _ref$overScrollMode=_ref.overScrollMode,overScrollMode=_ref$overScrollMode===void 0?'always':_ref$overScrollMode,_ref$javaScriptEnable=_ref.javaScriptEnabled,javaScriptEnabled=_ref$javaScriptEnable===void 0?true:_ref$javaScriptEnable,_ref$thirdPartyCookie=_ref.thirdPartyCookiesEnabled,thirdPartyCookiesEnabled=_ref$thirdPartyCookie===void 0?true:_ref$thirdPartyCookie,_ref$scalesPageToFit=_ref.scalesPageToFit,scalesPageToFit=_ref$scalesPageToFit===void 0?true:_ref$scalesPageToFit,_ref$allowsFullscreen=_ref.allowsFullscreenVideo,allowsFullscreenVideo=_ref$allowsFullscreen===void 0?false:_ref$allowsFullscreen,_ref$allowFileAccess=_ref.allowFileAccess,allowFileAccess=_ref$allowFileAccess===void 0?false:_ref$allowFileAccess,_ref$saveFormDataDisa=_ref.saveFormDataDisabled,saveFormDataDisabled=_ref$saveFormDataDisa===void 0?false:_ref$saveFormDataDisa,_ref$cacheEnabled=_ref.cacheEnabled,cacheEnabled=_ref$cacheEnabled===void 0?true:_ref$cacheEnabled,_ref$androidLayerType=_ref.androidLayerType,androidLayerType=_ref$androidLayerType===void 0?'none':_ref$androidLayerType,_ref$originWhitelist=_ref.originWhitelist,originWhitelist=_ref$originWhitelist===void 0?_WebViewShared.defaultOriginWhitelist:_ref$originWhitelist,_ref$setSupportMultip=_ref.setSupportMultipleWindows,setSupportMultipleWindows=_ref$setSupportMultip===void 0?true:_ref$setSupportMultip,_ref$setBuiltInZoomCo=_ref.setBuiltInZoomControls,setBuiltInZoomControls=_ref$setBuiltInZoomCo===void 0?true:_ref$setBuiltInZoomCo,_ref$setDisplayZoomCo=_ref.setDisplayZoomControls,setDisplayZoomControls=_ref$setDisplayZoomCo===void 0?false:_ref$setDisplayZoomCo,_ref$nestedScrollEnab=_ref.nestedScrollEnabled,nestedScrollEnabled=_ref$nestedScrollEnab===void 0?false:_ref$nestedScrollEnab,startInLoadingState=_ref.startInLoadingState,onNavigationStateChange=_ref.onNavigationStateChange,onLoadStart=_ref.onLoadStart,onError=_ref.onError,onLoad=_ref.onLoad,onLoadEnd=_ref.onLoadEnd,onLoadSubResourceError=_ref.onLoadSubResourceError,onLoadProgress=_ref.onLoadProgress,onHttpErrorProp=_ref.onHttpError,onRenderProcessGoneProp=_ref.onRenderProcessGone,onMessageProp=_ref.onMessage,onOpenWindowProp=_ref.onOpenWindow,renderLoading=_ref.renderLoading,renderError=_ref.renderError,style=_ref.style,containerStyle=_ref.containerStyle,source=_ref.source,nativeConfig=_ref.nativeConfig,onShouldStartLoadWithRequestProp=_ref.onShouldStartLoadWithRequest,injectedJavaScriptObject=_ref.injectedJavaScriptObject,otherProps=(0,_objectWithoutProperties2.default)(_ref,_excluded);var messagingModuleName=(0,_react.useRef)(`WebViewMessageHandler${uniqueRef+=1}`).current;var webViewRef=(0,_react.useRef)(null);var onShouldStartLoadWithRequestCallback=(0,_react.useCallback)(function(shouldStart,url,lockIdentifier){if(lockIdentifier){_NativeRNCWebViewModule.default.shouldStartLoadWithLockIdentifier(shouldStart,lockIdentifier);}else if(shouldStart&&webViewRef.current){_RNCWebViewNativeComponent.Commands.loadUrl(webViewRef.current,url);}},[]);var _useWebViewLogic=(0,_WebViewShared.useWebViewLogic)({onNavigationStateChange:onNavigationStateChange,onLoad:onLoad,onError:onError,onHttpErrorProp:onHttpErrorProp,onLoadSubResourceError:onLoadSubResourceError,onLoadEnd:onLoadEnd,onLoadProgress:onLoadProgress,onLoadStart:onLoadStart,onRenderProcessGoneProp:onRenderProcessGoneProp,onMessageProp:onMessageProp,onOpenWindowProp:onOpenWindowProp,startInLoadingState:startInLoadingState,originWhitelist:originWhitelist,onShouldStartLoadWithRequestProp:onShouldStartLoadWithRequestProp,onShouldStartLoadWithRequestCallback:onShouldStartLoadWithRequestCallback}),onLoadingStart=_useWebViewLogic.onLoadingStart,onShouldStartLoadWithRequest=_useWebViewLogic.onShouldStartLoadWithRequest,onMessage=_useWebViewLogic.onMessage,viewState=_useWebViewLogic.viewState,setViewState=_useWebViewLogic.setViewState,lastErrorEvent=_useWebViewLogic.lastErrorEvent,onHttpError=_useWebViewLogic.onHttpError,onLoadingError=_useWebViewLogic.onLoadingError,onLoadingSubResourceError=_useWebViewLogic.onLoadingSubResourceError,onLoadingFinish=_useWebViewLogic.onLoadingFinish,onLoadingProgress=_useWebViewLogic.onLoadingProgress,onOpenWindow=_useWebViewLogic.onOpenWindow,onRenderProcessGone=_useWebViewLogic.onRenderProcessGone;(0,_react.useImperativeHandle)(ref,function(){return{goForward:function goForward(){return webViewRef.current&&_RNCWebViewNativeComponent.Commands.goForward(webViewRef.current);},goBack:function goBack(){return webViewRef.current&&_RNCWebViewNativeComponent.Commands.goBack(webViewRef.current);},reload:function reload(){setViewState('LOADING');if(webViewRef.current){_RNCWebViewNativeComponent.Commands.reload(webViewRef.current);}},stopLoading:function stopLoading(){return webViewRef.current&&_RNCWebViewNativeComponent.Commands.stopLoading(webViewRef.current);},postMessage:function postMessage(data){return webViewRef.current&&_RNCWebViewNativeComponent.Commands.postMessage(webViewRef.current,data);},injectJavaScript:function injectJavaScript(data){return webViewRef.current&&_RNCWebViewNativeComponent.Commands.injectJavaScript(webViewRef.current,data);},requestFocus:function requestFocus(){return webViewRef.current&&_RNCWebViewNativeComponent.Commands.requestFocus(webViewRef.current);},clearFormData:function clearFormData(){return webViewRef.current&&_RNCWebViewNativeComponent.Commands.clearFormData(webViewRef.current);},clearCache:function clearCache(includeDiskFiles){return webViewRef.current&&_RNCWebViewNativeComponent.Commands.clearCache(webViewRef.current,includeDiskFiles);},clearHistory:function clearHistory(){return webViewRef.current&&_RNCWebViewNativeComponent.Commands.clearHistory(webViewRef.current);}};},[setViewState,webViewRef]);(0,_react.useEffect)(function(){var onShouldStartLoadWithRequestSubscription=directEventEmitter.addListener('onShouldStartLoadWithRequest',function(event){if(event.messagingModuleName===messagingModuleName){var _=event.messagingModuleName,rest=(0,_objectWithoutProperties2.default)(event,_excluded2);onShouldStartLoadWithRequest(rest);}});var onMessageSubscription=directEventEmitter.addListener('onMessage',function(event){if(event.messagingModuleName===messagingModuleName){var _=event.messagingModuleName,rest=(0,_objectWithoutProperties2.default)(event,_excluded3);onMessage(rest);}});return function(){onShouldStartLoadWithRequestSubscription.remove();onMessageSubscription.remove();};},[messagingModuleName,onMessage,onShouldStartLoadWithRequest]);var otherView;if(viewState==='LOADING'){otherView=(renderLoading||_WebViewShared.defaultRenderLoading)();}else if(viewState==='ERROR'){(0,_invariant.default)(lastErrorEvent!=null,'lastErrorEvent expected to be non-null');if(lastErrorEvent){otherView=(renderError||_WebViewShared.defaultRenderError)(lastErrorEvent.domain,lastErrorEvent.code,lastErrorEvent.description);}}var webViewStyles=[_WebView.default.container,_WebView.default.webView,style];var webViewContainerStyle=[_WebView.default.container,containerStyle];if(typeof source!=='number'&&source&&'method'in source){if(source.method==='POST'&&source.headers){console.warn('WebView: `source.headers` is not supported when using POST.');}else if(source.method==='GET'&&source.body){console.warn('WebView: `source.body` is not supported when using GET.');}}var NativeWebView=(nativeConfig==null?void 0:nativeConfig.component)||_RNCWebViewNativeComponent.default;var sourceResolved=resolveAssetSource(source);var newSource=typeof sourceResolved==='object'?Object.entries(sourceResolved).reduce(function(prev,_ref2){var _ref3=(0,_slicedToArray2.default)(_ref2,2),currKey=_ref3[0],currValue=_ref3[1];return Object.assign({},prev,(0,_defineProperty2.default)({},currKey,currKey==='headers'&&currValue&&typeof currValue==='object'?Object.entries(currValue).map(function(_ref4){var _ref5=(0,_slicedToArray2.default)(_ref4,2),key=_ref5[0],value=_ref5[1];return{name:key,value:value};}):currValue));},{}):sourceResolved;var webView=(0,_jsxRuntime.jsx)(NativeWebView,Object.assign({},otherProps,{messagingEnabled:typeof onMessageProp==='function',messagingModuleName:messagingModuleName,hasOnScroll:!!otherProps.onScroll,onLoadingError:onLoadingError,onLoadingSubResourceError:onLoadingSubResourceError,onLoadingFinish:onLoadingFinish,onLoadingProgress:onLoadingProgress,onLoadingStart:onLoadingStart,onHttpError:onHttpError,onRenderProcessGone:onRenderProcessGone,onMessage:onMessage,onOpenWindow:onOpenWindow,hasOnOpenWindowEvent:onOpenWindowProp!==undefined,onShouldStartLoadWithRequest:onShouldStartLoadWithRequest,ref:webViewRef,source:sourceResolved,newSource:newSource,style:webViewStyles,overScrollMode:overScrollMode,javaScriptEnabled:javaScriptEnabled,thirdPartyCookiesEnabled:thirdPartyCookiesEnabled,scalesPageToFit:scalesPageToFit,allowsFullscreenVideo:allowsFullscreenVideo,allowFileAccess:allowFileAccess,saveFormDataDisabled:saveFormDataDisabled,cacheEnabled:cacheEnabled,androidLayerType:androidLayerType,setSupportMultipleWindows:setSupportMultipleWindows,setBuiltInZoomControls:setBuiltInZoomControls,setDisplayZoomControls:setDisplayZoomControls,nestedScrollEnabled:nestedScrollEnabled,injectedJavaScriptObject:JSON.stringify(injectedJavaScriptObject)},nativeConfig==null?void 0:nativeConfig.props),"webViewKey");return(0,_jsxRuntime.jsxs)(_reactNative.View,{style:webViewContainerStyle,children:[webView,otherView]});});var isFileUploadSupported=function(){var _ref6=(0,_asyncToGenerator2.default)(function*(){return true;});return function isFileUploadSupported(){return _ref6.apply(this,arguments);};}();var WebView=Object.assign(WebViewComponent,{isFileUploadSupported:isFileUploadSupported});var _default=exports.default=WebView;
+\ No newline at end of file
++var _interopRequireDefault=require("@babel/runtime/helpers/interopRequireDefault");Object.defineProperty(exports,"__esModule",{value:true});exports.default=void 0;var _asyncToGenerator2=_interopRequireDefault(require("@babel/runtime/helpers/asyncToGenerator"));var _defineProperty2=_interopRequireDefault(require("@babel/runtime/helpers/defineProperty"));var _slicedToArray2=_interopRequireDefault(require("@babel/runtime/helpers/slicedToArray"));var _objectWithoutProperties2=_interopRequireDefault(require("@babel/runtime/helpers/objectWithoutProperties"));var _react=_interopRequireWildcard(require("react"));var _reactNative=require("react-native");var _BatchedBridge=_interopRequireDefault(require("react-native/Libraries/BatchedBridge/BatchedBridge"));var _EventEmitter=_interopRequireDefault(require("react-native/Libraries/vendor/emitter/EventEmitter"));var _invariant=_interopRequireDefault(require("invariant"));var _RNCWebViewNativeComponent=_interopRequireWildcard(require("./RNCWebViewNativeComponent"));var _NativeRNCWebViewModule=_interopRequireDefault(require("./NativeRNCWebViewModule"));var _WebViewShared=require("./WebViewShared");var _WebView=_interopRequireDefault(require("./WebView.styles"));var _jsxRuntime=require("react/jsx-runtime");var _excluded=["overScrollMode","javaScriptEnabled","thirdPartyCookiesEnabled","scalesPageToFit","allowsFullscreenVideo","allowFileAccess","saveFormDataDisabled","cacheEnabled","androidLayerType","originWhitelist","setSupportMultipleWindows","setBuiltInZoomControls","setDisplayZoomControls","nestedScrollEnabled","startInLoadingState","onNavigationStateChange","onLoadStart","onMainFrameLoadStart","onError","onLoad","onLoadEnd","onLoadSubResourceError","onLoadProgress","onHttpError","onRenderProcessGone","onMessage","onOpenWindow","renderLoading","renderError","style","containerStyle","source","nativeConfig","onShouldStartLoadWithRequest","injectedJavaScriptObject"],_excluded2=["messagingModuleName"],_excluded3=["messagingModuleName"];var _require$registerCall,_this=this,_jsxFileName="/home/runner/work/react-native-webview/react-native-webview/src/WebView.android.tsx";function _interopRequireWildcard(e,t){if("function"==typeof WeakMap)var r=new WeakMap(),n=new WeakMap();return(_interopRequireWildcard=function _interopRequireWildcard(e,t){if(!t&&e&&e.__esModule)return e;var o,i,f={__proto__:null,default:e};if(null===e||"object"!=typeof e&&"function"!=typeof e)return f;if(o=t?n:r){if(o.has(e))return o.get(e);o.set(e,f);}for(var _t in e)"default"!==_t&&{}.hasOwnProperty.call(e,_t)&&((i=(o=Object.defineProperty)&&Object.getOwnPropertyDescriptor(e,_t))&&(i.get||i.set)?o(f,_t,i):f[_t]=e[_t]);return f;})(e,t);}var resolveAssetSource=function resolveAssetSource(source){return _reactNative.Image.resolveAssetSource(source);};var directEventEmitter=new _EventEmitter.default();var registerCallableModule=(_require$registerCall=require('react-native').registerCallableModule)!=null?_require$registerCall:_BatchedBridge.default.registerCallableModule.bind(_BatchedBridge.default);registerCallableModule('RNCWebViewMessagingModule',{onShouldStartLoadWithRequest:function onShouldStartLoadWithRequest(event){directEventEmitter.emit('onShouldStartLoadWithRequest',event);},onMessage:function onMessage(event){directEventEmitter.emit('onMessage',event);}});var uniqueRef=0;var WebViewComponent=(0,_react.forwardRef)(function(_ref,ref){var _ref$overScrollMode=_ref.overScrollMode,overScrollMode=_ref$overScrollMode===void 0?'always':_ref$overScrollMode,_ref$javaScriptEnable=_ref.javaScriptEnabled,javaScriptEnabled=_ref$javaScriptEnable===void 0?true:_ref$javaScriptEnable,_ref$thirdPartyCookie=_ref.thirdPartyCookiesEnabled,thirdPartyCookiesEnabled=_ref$thirdPartyCookie===void 0?true:_ref$thirdPartyCookie,_ref$scalesPageToFit=_ref.scalesPageToFit,scalesPageToFit=_ref$scalesPageToFit===void 0?true:_ref$scalesPageToFit,_ref$allowsFullscreen=_ref.allowsFullscreenVideo,allowsFullscreenVideo=_ref$allowsFullscreen===void 0?false:_ref$allowsFullscreen,_ref$allowFileAccess=_ref.allowFileAccess,allowFileAccess=_ref$allowFileAccess===void 0?false:_ref$allowFileAccess,_ref$saveFormDataDisa=_ref.saveFormDataDisabled,saveFormDataDisabled=_ref$saveFormDataDisa===void 0?false:_ref$saveFormDataDisa,_ref$cacheEnabled=_ref.cacheEnabled,cacheEnabled=_ref$cacheEnabled===void 0?true:_ref$cacheEnabled,_ref$androidLayerType=_ref.androidLayerType,androidLayerType=_ref$androidLayerType===void 0?'none':_ref$androidLayerType,_ref$originWhitelist=_ref.originWhitelist,originWhitelist=_ref$originWhitelist===void 0?_WebViewShared.defaultOriginWhitelist:_ref$originWhitelist,_ref$setSupportMultip=_ref.setSupportMultipleWindows,setSupportMultipleWindows=_ref$setSupportMultip===void 0?true:_ref$setSupportMultip,_ref$setBuiltInZoomCo=_ref.setBuiltInZoomControls,setBuiltInZoomControls=_ref$setBuiltInZoomCo===void 0?true:_ref$setBuiltInZoomCo,_ref$setDisplayZoomCo=_ref.setDisplayZoomControls,setDisplayZoomControls=_ref$setDisplayZoomCo===void 0?false:_ref$setDisplayZoomCo,_ref$nestedScrollEnab=_ref.nestedScrollEnabled,nestedScrollEnabled=_ref$nestedScrollEnab===void 0?false:_ref$nestedScrollEnab,startInLoadingState=_ref.startInLoadingState,onNavigationStateChange=_ref.onNavigationStateChange,onLoadStart=_ref.onLoadStart,onMainFrameLoadStartProp=_ref.onMainFrameLoadStart,onError=_ref.onError,onLoad=_ref.onLoad,onLoadEnd=_ref.onLoadEnd,onLoadSubResourceError=_ref.onLoadSubResourceError,onLoadProgress=_ref.onLoadProgress,onHttpErrorProp=_ref.onHttpError,onRenderProcessGoneProp=_ref.onRenderProcessGone,onMessageProp=_ref.onMessage,onOpenWindowProp=_ref.onOpenWindow,renderLoading=_ref.renderLoading,renderError=_ref.renderError,style=_ref.style,containerStyle=_ref.containerStyle,source=_ref.source,nativeConfig=_ref.nativeConfig,onShouldStartLoadWithRequestProp=_ref.onShouldStartLoadWithRequest,injectedJavaScriptObject=_ref.injectedJavaScriptObject,otherProps=(0,_objectWithoutProperties2.default)(_ref,_excluded);var messagingModuleName=(0,_react.useRef)(`WebViewMessageHandler${uniqueRef+=1}`).current;var webViewRef=(0,_react.useRef)(null);var onShouldStartLoadWithRequestCallback=(0,_react.useCallback)(function(shouldStart,url,lockIdentifier){if(lockIdentifier){_NativeRNCWebViewModule.default.shouldStartLoadWithLockIdentifier(shouldStart,lockIdentifier);}else if(shouldStart&&webViewRef.current){_RNCWebViewNativeComponent.Commands.loadUrl(webViewRef.current,url);}},[]);var _useWebViewLogic=(0,_WebViewShared.useWebViewLogic)({onNavigationStateChange:onNavigationStateChange,onLoad:onLoad,onError:onError,onHttpErrorProp:onHttpErrorProp,onLoadSubResourceError:onLoadSubResourceError,onLoadEnd:onLoadEnd,onLoadProgress:onLoadProgress,onLoadStart:onLoadStart,onMainFrameLoadStartProp:onMainFrameLoadStartProp,onRenderProcessGoneProp:onRenderProcessGoneProp,onMessageProp:onMessageProp,onOpenWindowProp:onOpenWindowProp,startInLoadingState:startInLoadingState,originWhitelist:originWhitelist,onShouldStartLoadWithRequestProp:onShouldStartLoadWithRequestProp,onShouldStartLoadWithRequestCallback:onShouldStartLoadWithRequestCallback}),onLoadingStart=_useWebViewLogic.onLoadingStart,onMainFrameLoadStart=_useWebViewLogic.onMainFrameLoadStart,onShouldStartLoadWithRequest=_useWebViewLogic.onShouldStartLoadWithRequest,onMessage=_useWebViewLogic.onMessage,viewState=_useWebViewLogic.viewState,setViewState=_useWebViewLogic.setViewState,lastErrorEvent=_useWebViewLogic.lastErrorEvent,onHttpError=_useWebViewLogic.onHttpError,onLoadingError=_useWebViewLogic.onLoadingError,onLoadingSubResourceError=_useWebViewLogic.onLoadingSubResourceError,onLoadingFinish=_useWebViewLogic.onLoadingFinish,onLoadingProgress=_useWebViewLogic.onLoadingProgress,onOpenWindow=_useWebViewLogic.onOpenWindow,onRenderProcessGone=_useWebViewLogic.onRenderProcessGone;(0,_react.useImperativeHandle)(ref,function(){return{goForward:function goForward(){return webViewRef.current&&_RNCWebViewNativeComponent.Commands.goForward(webViewRef.current);},goBack:function goBack(){return webViewRef.current&&_RNCWebViewNativeComponent.Commands.goBack(webViewRef.current);},reload:function reload(){setViewState('LOADING');if(webViewRef.current){_RNCWebViewNativeComponent.Commands.reload(webViewRef.current);}},stopLoading:function stopLoading(){return webViewRef.current&&_RNCWebViewNativeComponent.Commands.stopLoading(webViewRef.current);},postMessage:function postMessage(data){return webViewRef.current&&_RNCWebViewNativeComponent.Commands.postMessage(webViewRef.current,data);},injectJavaScript:function injectJavaScript(data){return webViewRef.current&&_RNCWebViewNativeComponent.Commands.injectJavaScript(webViewRef.current,data);},requestFocus:function requestFocus(){return webViewRef.current&&_RNCWebViewNativeComponent.Commands.requestFocus(webViewRef.current);},clearFormData:function clearFormData(){return webViewRef.current&&_RNCWebViewNativeComponent.Commands.clearFormData(webViewRef.current);},clearCache:function clearCache(includeDiskFiles){return webViewRef.current&&_RNCWebViewNativeComponent.Commands.clearCache(webViewRef.current,includeDiskFiles);},clearHistory:function clearHistory(){return webViewRef.current&&_RNCWebViewNativeComponent.Commands.clearHistory(webViewRef.current);}};},[setViewState,webViewRef]);(0,_react.useEffect)(function(){var onShouldStartLoadWithRequestSubscription=directEventEmitter.addListener('onShouldStartLoadWithRequest',function(event){if(event.messagingModuleName===messagingModuleName){var _=event.messagingModuleName,rest=(0,_objectWithoutProperties2.default)(event,_excluded2);onShouldStartLoadWithRequest(rest);}});var onMessageSubscription=directEventEmitter.addListener('onMessage',function(event){if(event.messagingModuleName===messagingModuleName){var _=event.messagingModuleName,rest=(0,_objectWithoutProperties2.default)(event,_excluded3);onMessage(rest);}});return function(){onShouldStartLoadWithRequestSubscription.remove();onMessageSubscription.remove();};},[messagingModuleName,onMessage,onShouldStartLoadWithRequest]);var otherView;if(viewState==='LOADING'){otherView=(renderLoading||_WebViewShared.defaultRenderLoading)();}else if(viewState==='ERROR'){(0,_invariant.default)(lastErrorEvent!=null,'lastErrorEvent expected to be non-null');if(lastErrorEvent){otherView=(renderError||_WebViewShared.defaultRenderError)(lastErrorEvent.domain,lastErrorEvent.code,lastErrorEvent.description);}}var webViewStyles=[_WebView.default.container,_WebView.default.webView,style];var webViewContainerStyle=[_WebView.default.container,containerStyle];if(typeof source!=='number'&&source&&'method'in source){if(source.method==='POST'&&source.headers){console.warn('WebView: `source.headers` is not supported when using POST.');}else if(source.method==='GET'&&source.body){console.warn('WebView: `source.body` is not supported when using GET.');}}var NativeWebView=(nativeConfig==null?void 0:nativeConfig.component)||_RNCWebViewNativeComponent.default;var sourceResolved=resolveAssetSource(source);var newSource=typeof sourceResolved==='object'?Object.entries(sourceResolved).reduce(function(prev,_ref2){var _ref3=(0,_slicedToArray2.default)(_ref2,2),currKey=_ref3[0],currValue=_ref3[1];return Object.assign({},prev,(0,_defineProperty2.default)({},currKey,currKey==='headers'&&currValue&&typeof currValue==='object'?Object.entries(currValue).map(function(_ref4){var _ref5=(0,_slicedToArray2.default)(_ref4,2),key=_ref5[0],value=_ref5[1];return{name:key,value:value};}):currValue));},{}):sourceResolved;var webView=(0,_jsxRuntime.jsx)(NativeWebView,Object.assign({},otherProps,{messagingEnabled:typeof onMessageProp==='function',messagingModuleName:messagingModuleName,hasOnScroll:!!otherProps.onScroll,hasOnMainFrameLoadStart:typeof onMainFrameLoadStartProp==='function',onLoadingError:onLoadingError,onLoadingSubResourceError:onLoadingSubResourceError,onLoadingFinish:onLoadingFinish,onLoadingProgress:onLoadingProgress,onLoadingStart:onLoadingStart,onMainFrameLoadStart:onMainFrameLoadStart,onHttpError:onHttpError,onRenderProcessGone:onRenderProcessGone,onMessage:onMessage,onOpenWindow:onOpenWindow,hasOnOpenWindowEvent:onOpenWindowProp!==undefined,onShouldStartLoadWithRequest:onShouldStartLoadWithRequest,ref:webViewRef,source:sourceResolved,newSource:newSource,style:webViewStyles,overScrollMode:overScrollMode,javaScriptEnabled:javaScriptEnabled,thirdPartyCookiesEnabled:thirdPartyCookiesEnabled,scalesPageToFit:scalesPageToFit,allowsFullscreenVideo:allowsFullscreenVideo,allowFileAccess:allowFileAccess,saveFormDataDisabled:saveFormDataDisabled,cacheEnabled:cacheEnabled,androidLayerType:androidLayerType,setSupportMultipleWindows:setSupportMultipleWindows,setBuiltInZoomControls:setBuiltInZoomControls,setDisplayZoomControls:setDisplayZoomControls,nestedScrollEnabled:nestedScrollEnabled,injectedJavaScriptObject:JSON.stringify(injectedJavaScriptObject)},nativeConfig==null?void 0:nativeConfig.props),"webViewKey");return(0,_jsxRuntime.jsxs)(_reactNative.View,{style:webViewContainerStyle,children:[webView,otherView]});});var isFileUploadSupported=function(){var _ref6=(0,_asyncToGenerator2.default)(function*(){return true;});return function isFileUploadSupported(){return _ref6.apply(this,arguments);};}();var WebView=Object.assign(WebViewComponent,{isFileUploadSupported:isFileUploadSupported});var _default=exports.default=WebView;
+\ No newline at end of file
+diff --git a/node_modules/react-native-webview/lib/WebViewShared.d.ts b/node_modules/react-native-webview/lib/WebViewShared.d.ts
+index 409dcd8..4806100 100644
+--- a/node_modules/react-native-webview/lib/WebViewShared.d.ts
++++ b/node_modules/react-native-webview/lib/WebViewShared.d.ts
+@@ -5,10 +5,11 @@ declare const createOnShouldStartLoadWithRequest: (loadRequest: (shouldStart: bo
+ declare const defaultRenderLoading: () => React.JSX.Element;
+ declare const defaultRenderError: (errorDomain: string | undefined, errorCode: number, errorDesc: string) => React.JSX.Element;
+ export { defaultOriginWhitelist, createOnShouldStartLoadWithRequest, defaultRenderLoading, defaultRenderError, };
+-export declare const useWebViewLogic: ({ startInLoadingState, onNavigationStateChange, onLoadStart, onLoad, onLoadProgress, onLoadEnd, onError, onLoadSubResourceError, onHttpErrorProp, onMessageProp, onOpenWindowProp, onRenderProcessGoneProp, onContentProcessDidTerminateProp, originWhitelist, onShouldStartLoadWithRequestProp, onShouldStartLoadWithRequestCallback, }: {
++export declare const useWebViewLogic: ({ startInLoadingState, onNavigationStateChange, onLoadStart, onMainFrameLoadStartProp, onLoad, onLoadProgress, onLoadEnd, onError, onLoadSubResourceError, onHttpErrorProp, onMessageProp, onOpenWindowProp, onRenderProcessGoneProp, onContentProcessDidTerminateProp, originWhitelist, onShouldStartLoadWithRequestProp, onShouldStartLoadWithRequestCallback, }: {
+     startInLoadingState?: boolean;
+     onNavigationStateChange?: (event: WebViewNavigation) => void;
+     onLoadStart?: (event: WebViewNavigationEvent) => void;
++    onMainFrameLoadStartProp?: (event: WebViewNavigationEvent) => void;
+     onLoad?: (event: WebViewNavigationEvent) => void;
+     onLoadProgress?: (event: WebViewProgressEvent) => void;
+     onLoadEnd?: (event: WebViewNavigationEvent | WebViewErrorEvent) => void;
+@@ -25,6 +26,7 @@ export declare const useWebViewLogic: ({ startInLoadingState, onNavigationStateC
+ }) => {
+     onShouldStartLoadWithRequest: ({ nativeEvent }: ShouldStartLoadRequestEvent) => void;
+     onLoadingStart: (event: WebViewNavigationEvent) => void;
++    onMainFrameLoadStart: (event: WebViewNavigationEvent) => void;
+     onLoadingProgress: (event: WebViewProgressEvent) => void;
+     onLoadingError: (event: WebViewErrorEvent) => void;
+     onLoadingSubResourceError: (event: WebViewErrorEvent) => void;
+diff --git a/node_modules/react-native-webview/lib/WebViewShared.js b/node_modules/react-native-webview/lib/WebViewShared.js
+index 907f697..3e34a07 100644
+--- a/node_modules/react-native-webview/lib/WebViewShared.js
++++ b/node_modules/react-native-webview/lib/WebViewShared.js
+@@ -1 +1 @@
+-var _interopRequireDefault=require("@babel/runtime/helpers/interopRequireDefault");Object.defineProperty(exports,"__esModule",{value:true});exports.useWebViewLogic=exports.defaultRenderLoading=exports.defaultRenderError=exports.defaultOriginWhitelist=exports.createOnShouldStartLoadWithRequest=void 0;var _slicedToArray2=_interopRequireDefault(require("@babel/runtime/helpers/slicedToArray"));var _asyncToGenerator2=_interopRequireDefault(require("@babel/runtime/helpers/asyncToGenerator"));var _toConsumableArray2=_interopRequireDefault(require("@babel/runtime/helpers/toConsumableArray"));var _escapeStringRegexp=_interopRequireDefault(require("escape-string-regexp"));var _react=_interopRequireWildcard(require("react"));var _reactNative=require("react-native");var _WebView=_interopRequireDefault(require("./WebView.styles"));var _jsxRuntime=require("react/jsx-runtime");var _this=this,_jsxFileName="/home/runner/work/react-native-webview/react-native-webview/src/WebViewShared.tsx";function _interopRequireWildcard(e,t){if("function"==typeof WeakMap)var r=new WeakMap(),n=new WeakMap();return(_interopRequireWildcard=function _interopRequireWildcard(e,t){if(!t&&e&&e.__esModule)return e;var o,i,f={__proto__:null,default:e};if(null===e||"object"!=typeof e&&"function"!=typeof e)return f;if(o=t?n:r){if(o.has(e))return o.get(e);o.set(e,f);}for(var _t in e)"default"!==_t&&{}.hasOwnProperty.call(e,_t)&&((i=(o=Object.defineProperty)&&Object.getOwnPropertyDescriptor(e,_t))&&(i.get||i.set)?o(f,_t,i):f[_t]=e[_t]);return f;})(e,t);}var defaultOriginWhitelist=exports.defaultOriginWhitelist=['http://*','https://*'];var extractOrigin=function extractOrigin(url){var result=/^[A-Za-z][A-Za-z0-9+\-.]+:(\/\/)?[^/]*/.exec(url);return result===null?'':result[0];};var originWhitelistToRegex=function originWhitelistToRegex(originWhitelist){return`^${(0,_escapeStringRegexp.default)(originWhitelist).replace(/\\\*/g,'.*')}`;};var passesWhitelist=function passesWhitelist(compiledWhitelist,url){var origin=extractOrigin(url);return compiledWhitelist.some(function(x){return new RegExp(x).test(origin);});};var compileWhitelist=function compileWhitelist(originWhitelist){return['about:blank'].concat((0,_toConsumableArray2.default)(originWhitelist||[])).map(originWhitelistToRegex);};var createOnShouldStartLoadWithRequest=exports.createOnShouldStartLoadWithRequest=function createOnShouldStartLoadWithRequest(loadRequest,originWhitelist,onShouldStartLoadWithRequest){return function(_ref){var nativeEvent=_ref.nativeEvent;var shouldStart=true;var url=nativeEvent.url,lockIdentifier=nativeEvent.lockIdentifier;if(!passesWhitelist(compileWhitelist(originWhitelist),url)){_reactNative.Linking.canOpenURL(url).then(function(){var _ref2=(0,_asyncToGenerator2.default)(function*(supported){if(supported){return _reactNative.Linking.openURL(url);}console.warn(`Can't open url: ${url}`);return undefined;});return function(_x){return _ref2.apply(this,arguments);};}()).catch(function(e){console.warn('Error opening URL: ',e);});shouldStart=false;}else if(onShouldStartLoadWithRequest){shouldStart=onShouldStartLoadWithRequest(nativeEvent);}loadRequest(shouldStart,url,lockIdentifier);};};var defaultRenderLoading=exports.defaultRenderLoading=function defaultRenderLoading(){return(0,_jsxRuntime.jsx)(_reactNative.View,{style:_WebView.default.loadingOrErrorView,children:(0,_jsxRuntime.jsx)(_reactNative.ActivityIndicator,{})});};var defaultRenderError=exports.defaultRenderError=function defaultRenderError(errorDomain,errorCode,errorDesc){return(0,_jsxRuntime.jsxs)(_reactNative.View,{style:_WebView.default.loadingOrErrorView,children:[(0,_jsxRuntime.jsx)(_reactNative.Text,{style:_WebView.default.errorTextTitle,children:"Error loading page"}),(0,_jsxRuntime.jsx)(_reactNative.Text,{style:_WebView.default.errorText,children:`Domain: ${errorDomain}`}),(0,_jsxRuntime.jsx)(_reactNative.Text,{style:_WebView.default.errorText,children:`Error Code: ${errorCode}`}),(0,_jsxRuntime.jsx)(_reactNative.Text,{style:_WebView.default.errorText,children:`Description: ${errorDesc}`})]});};var useWebViewLogic=exports.useWebViewLogic=function useWebViewLogic(_ref3){var startInLoadingState=_ref3.startInLoadingState,onNavigationStateChange=_ref3.onNavigationStateChange,onLoadStart=_ref3.onLoadStart,onLoad=_ref3.onLoad,onLoadProgress=_ref3.onLoadProgress,onLoadEnd=_ref3.onLoadEnd,onError=_ref3.onError,onLoadSubResourceError=_ref3.onLoadSubResourceError,onHttpErrorProp=_ref3.onHttpErrorProp,onMessageProp=_ref3.onMessageProp,onOpenWindowProp=_ref3.onOpenWindowProp,onRenderProcessGoneProp=_ref3.onRenderProcessGoneProp,onContentProcessDidTerminateProp=_ref3.onContentProcessDidTerminateProp,originWhitelist=_ref3.originWhitelist,onShouldStartLoadWithRequestProp=_ref3.onShouldStartLoadWithRequestProp,onShouldStartLoadWithRequestCallback=_ref3.onShouldStartLoadWithRequestCallback;var _useState=(0,_react.useState)(startInLoadingState?'LOADING':'IDLE'),_useState2=(0,_slicedToArray2.default)(_useState,2),viewState=_useState2[0],setViewState=_useState2[1];var _useState3=(0,_react.useState)(null),_useState4=(0,_slicedToArray2.default)(_useState3,2),lastErrorEvent=_useState4[0],setLastErrorEvent=_useState4[1];var startUrl=(0,_react.useRef)(null);var updateNavigationState=(0,_react.useCallback)(function(event){onNavigationStateChange==null?void 0:onNavigationStateChange(event.nativeEvent);},[onNavigationStateChange]);var onLoadingStart=(0,_react.useCallback)(function(event){startUrl.current=event.nativeEvent.url;onLoadStart==null?void 0:onLoadStart(event);updateNavigationState(event);},[onLoadStart,updateNavigationState]);var onLoadingError=(0,_react.useCallback)(function(event){event.persist();if(onError){onError(event);}else{console.warn('Encountered an error loading page',event.nativeEvent);}onLoadEnd==null?void 0:onLoadEnd(event);if(event.isDefaultPrevented()){return;}setViewState('ERROR');setLastErrorEvent(event.nativeEvent);},[onError,onLoadEnd]);var onLoadingSubResourceError=(0,_react.useCallback)(function(event){onLoadSubResourceError==null?void 0:onLoadSubResourceError(event);},[onLoadSubResourceError]);var onHttpError=(0,_react.useCallback)(function(event){onHttpErrorProp==null?void 0:onHttpErrorProp(event);},[onHttpErrorProp]);var onRenderProcessGone=(0,_react.useCallback)(function(event){onRenderProcessGoneProp==null?void 0:onRenderProcessGoneProp(event);},[onRenderProcessGoneProp]);var onContentProcessDidTerminate=(0,_react.useCallback)(function(event){onContentProcessDidTerminateProp==null?void 0:onContentProcessDidTerminateProp(event);},[onContentProcessDidTerminateProp]);var onLoadingFinish=(0,_react.useCallback)(function(event){onLoad==null?void 0:onLoad(event);onLoadEnd==null?void 0:onLoadEnd(event);var url=event.nativeEvent.url;if(_reactNative.Platform.OS!=='android'||url===startUrl.current){setViewState('IDLE');}updateNavigationState(event);},[onLoad,onLoadEnd,updateNavigationState]);var onMessage=(0,_react.useCallback)(function(event){onMessageProp==null?void 0:onMessageProp(event);},[onMessageProp]);var onLoadingProgress=(0,_react.useCallback)(function(event){var progress=event.nativeEvent.progress;if(_reactNative.Platform.OS==='android'&&progress===1){setViewState(function(prevViewState){return prevViewState==='LOADING'?'IDLE':prevViewState;});}onLoadProgress==null?void 0:onLoadProgress(event);},[onLoadProgress]);var onShouldStartLoadWithRequest=(0,_react.useMemo)(function(){return createOnShouldStartLoadWithRequest(onShouldStartLoadWithRequestCallback,originWhitelist,onShouldStartLoadWithRequestProp);},[originWhitelist,onShouldStartLoadWithRequestProp,onShouldStartLoadWithRequestCallback]);var onOpenWindow=(0,_react.useCallback)(function(event){onOpenWindowProp==null?void 0:onOpenWindowProp(event);},[onOpenWindowProp]);return{onShouldStartLoadWithRequest:onShouldStartLoadWithRequest,onLoadingStart:onLoadingStart,onLoadingProgress:onLoadingProgress,onLoadingError:onLoadingError,onLoadingSubResourceError:onLoadingSubResourceError,onLoadingFinish:onLoadingFinish,onHttpError:onHttpError,onRenderProcessGone:onRenderProcessGone,onContentProcessDidTerminate:onContentProcessDidTerminate,onMessage:onMessage,onOpenWindow:onOpenWindow,viewState:viewState,setViewState:setViewState,lastErrorEvent:lastErrorEvent};};
+\ No newline at end of file
++var _interopRequireDefault=require("@babel/runtime/helpers/interopRequireDefault");Object.defineProperty(exports,"__esModule",{value:true});exports.useWebViewLogic=exports.defaultRenderLoading=exports.defaultRenderError=exports.defaultOriginWhitelist=exports.createOnShouldStartLoadWithRequest=void 0;var _slicedToArray2=_interopRequireDefault(require("@babel/runtime/helpers/slicedToArray"));var _asyncToGenerator2=_interopRequireDefault(require("@babel/runtime/helpers/asyncToGenerator"));var _toConsumableArray2=_interopRequireDefault(require("@babel/runtime/helpers/toConsumableArray"));var _escapeStringRegexp=_interopRequireDefault(require("escape-string-regexp"));var _react=_interopRequireWildcard(require("react"));var _reactNative=require("react-native");var _WebView=_interopRequireDefault(require("./WebView.styles"));var _jsxRuntime=require("react/jsx-runtime");var _this=this,_jsxFileName="/home/runner/work/react-native-webview/react-native-webview/src/WebViewShared.tsx";function _interopRequireWildcard(e,t){if("function"==typeof WeakMap)var r=new WeakMap(),n=new WeakMap();return(_interopRequireWildcard=function _interopRequireWildcard(e,t){if(!t&&e&&e.__esModule)return e;var o,i,f={__proto__:null,default:e};if(null===e||"object"!=typeof e&&"function"!=typeof e)return f;if(o=t?n:r){if(o.has(e))return o.get(e);o.set(e,f);}for(var _t in e)"default"!==_t&&{}.hasOwnProperty.call(e,_t)&&((i=(o=Object.defineProperty)&&Object.getOwnPropertyDescriptor(e,_t))&&(i.get||i.set)?o(f,_t,i):f[_t]=e[_t]);return f;})(e,t);}var defaultOriginWhitelist=exports.defaultOriginWhitelist=['http://*','https://*'];var extractOrigin=function extractOrigin(url){var result=/^[A-Za-z][A-Za-z0-9+\-.]+:(\/\/)?[^/]*/.exec(url);return result===null?'':result[0];};var originWhitelistToRegex=function originWhitelistToRegex(originWhitelist){return`^${(0,_escapeStringRegexp.default)(originWhitelist).replace(/\\\*/g,'.*')}`;};var passesWhitelist=function passesWhitelist(compiledWhitelist,url){var origin=extractOrigin(url);return compiledWhitelist.some(function(x){return new RegExp(x).test(origin);});};var compileWhitelist=function compileWhitelist(originWhitelist){return['about:blank'].concat((0,_toConsumableArray2.default)(originWhitelist||[])).map(originWhitelistToRegex);};var createOnShouldStartLoadWithRequest=exports.createOnShouldStartLoadWithRequest=function createOnShouldStartLoadWithRequest(loadRequest,originWhitelist,onShouldStartLoadWithRequest){return function(_ref){var nativeEvent=_ref.nativeEvent;var shouldStart=true;var url=nativeEvent.url,lockIdentifier=nativeEvent.lockIdentifier;if(!passesWhitelist(compileWhitelist(originWhitelist),url)){_reactNative.Linking.canOpenURL(url).then(function(){var _ref2=(0,_asyncToGenerator2.default)(function*(supported){if(supported){return _reactNative.Linking.openURL(url);}console.warn(`Can't open url: ${url}`);return undefined;});return function(_x){return _ref2.apply(this,arguments);};}()).catch(function(e){console.warn('Error opening URL: ',e);});shouldStart=false;}else if(onShouldStartLoadWithRequest){shouldStart=onShouldStartLoadWithRequest(nativeEvent);}loadRequest(shouldStart,url,lockIdentifier);};};var defaultRenderLoading=exports.defaultRenderLoading=function defaultRenderLoading(){return(0,_jsxRuntime.jsx)(_reactNative.View,{style:_WebView.default.loadingOrErrorView,children:(0,_jsxRuntime.jsx)(_reactNative.ActivityIndicator,{})});};var defaultRenderError=exports.defaultRenderError=function defaultRenderError(errorDomain,errorCode,errorDesc){return(0,_jsxRuntime.jsxs)(_reactNative.View,{style:_WebView.default.loadingOrErrorView,children:[(0,_jsxRuntime.jsx)(_reactNative.Text,{style:_WebView.default.errorTextTitle,children:"Error loading page"}),(0,_jsxRuntime.jsx)(_reactNative.Text,{style:_WebView.default.errorText,children:`Domain: ${errorDomain}`}),(0,_jsxRuntime.jsx)(_reactNative.Text,{style:_WebView.default.errorText,children:`Error Code: ${errorCode}`}),(0,_jsxRuntime.jsx)(_reactNative.Text,{style:_WebView.default.errorText,children:`Description: ${errorDesc}`})]});};var useWebViewLogic=exports.useWebViewLogic=function useWebViewLogic(_ref3){var startInLoadingState=_ref3.startInLoadingState,onNavigationStateChange=_ref3.onNavigationStateChange,onLoadStart=_ref3.onLoadStart,onMainFrameLoadStartProp=_ref3.onMainFrameLoadStartProp,onLoad=_ref3.onLoad,onLoadProgress=_ref3.onLoadProgress,onLoadEnd=_ref3.onLoadEnd,onError=_ref3.onError,onLoadSubResourceError=_ref3.onLoadSubResourceError,onHttpErrorProp=_ref3.onHttpErrorProp,onMessageProp=_ref3.onMessageProp,onOpenWindowProp=_ref3.onOpenWindowProp,onRenderProcessGoneProp=_ref3.onRenderProcessGoneProp,onContentProcessDidTerminateProp=_ref3.onContentProcessDidTerminateProp,originWhitelist=_ref3.originWhitelist,onShouldStartLoadWithRequestProp=_ref3.onShouldStartLoadWithRequestProp,onShouldStartLoadWithRequestCallback=_ref3.onShouldStartLoadWithRequestCallback;var _useState=(0,_react.useState)(startInLoadingState?'LOADING':'IDLE'),_useState2=(0,_slicedToArray2.default)(_useState,2),viewState=_useState2[0],setViewState=_useState2[1];var _useState3=(0,_react.useState)(null),_useState4=(0,_slicedToArray2.default)(_useState3,2),lastErrorEvent=_useState4[0],setLastErrorEvent=_useState4[1];var startUrl=(0,_react.useRef)(null);var updateNavigationState=(0,_react.useCallback)(function(event){onNavigationStateChange==null?void 0:onNavigationStateChange(event.nativeEvent);},[onNavigationStateChange]);var onLoadingStart=(0,_react.useCallback)(function(event){startUrl.current=event.nativeEvent.url;onLoadStart==null?void 0:onLoadStart(event);updateNavigationState(event);},[onLoadStart,updateNavigationState]);var onLoadingError=(0,_react.useCallback)(function(event){event.persist();if(onError){onError(event);}else{console.warn('Encountered an error loading page',event.nativeEvent);}onLoadEnd==null?void 0:onLoadEnd(event);if(event.isDefaultPrevented()){return;}setViewState('ERROR');setLastErrorEvent(event.nativeEvent);},[onError,onLoadEnd]);var onLoadingSubResourceError=(0,_react.useCallback)(function(event){onLoadSubResourceError==null?void 0:onLoadSubResourceError(event);},[onLoadSubResourceError]);var onHttpError=(0,_react.useCallback)(function(event){onHttpErrorProp==null?void 0:onHttpErrorProp(event);},[onHttpErrorProp]);var onMainFrameLoadStart=(0,_react.useCallback)(function(event){onMainFrameLoadStartProp==null?void 0:onMainFrameLoadStartProp(event);},[onMainFrameLoadStartProp]);var onRenderProcessGone=(0,_react.useCallback)(function(event){onRenderProcessGoneProp==null?void 0:onRenderProcessGoneProp(event);},[onRenderProcessGoneProp]);var onContentProcessDidTerminate=(0,_react.useCallback)(function(event){onContentProcessDidTerminateProp==null?void 0:onContentProcessDidTerminateProp(event);},[onContentProcessDidTerminateProp]);var onLoadingFinish=(0,_react.useCallback)(function(event){onLoad==null?void 0:onLoad(event);onLoadEnd==null?void 0:onLoadEnd(event);var url=event.nativeEvent.url;if(_reactNative.Platform.OS!=='android'||url===startUrl.current){setViewState('IDLE');}updateNavigationState(event);},[onLoad,onLoadEnd,updateNavigationState]);var onMessage=(0,_react.useCallback)(function(event){onMessageProp==null?void 0:onMessageProp(event);},[onMessageProp]);var onLoadingProgress=(0,_react.useCallback)(function(event){var progress=event.nativeEvent.progress;if(_reactNative.Platform.OS==='android'&&progress===1){setViewState(function(prevViewState){return prevViewState==='LOADING'?'IDLE':prevViewState;});}onLoadProgress==null?void 0:onLoadProgress(event);},[onLoadProgress]);var onShouldStartLoadWithRequest=(0,_react.useMemo)(function(){return createOnShouldStartLoadWithRequest(onShouldStartLoadWithRequestCallback,originWhitelist,onShouldStartLoadWithRequestProp);},[originWhitelist,onShouldStartLoadWithRequestProp,onShouldStartLoadWithRequestCallback]);var onOpenWindow=(0,_react.useCallback)(function(event){onOpenWindowProp==null?void 0:onOpenWindowProp(event);},[onOpenWindowProp]);return{onShouldStartLoadWithRequest:onShouldStartLoadWithRequest,onLoadingStart:onLoadingStart,onMainFrameLoadStart:onMainFrameLoadStart,onLoadingProgress:onLoadingProgress,onLoadingError:onLoadingError,onLoadingSubResourceError:onLoadingSubResourceError,onLoadingFinish:onLoadingFinish,onHttpError:onHttpError,onRenderProcessGone:onRenderProcessGone,onContentProcessDidTerminate:onContentProcessDidTerminate,onMessage:onMessage,onOpenWindow:onOpenWindow,viewState:viewState,setViewState:setViewState,lastErrorEvent:lastErrorEvent};};
+\ No newline at end of file
 diff --git a/node_modules/react-native-webview/lib/WebViewTypes.d.ts b/node_modules/react-native-webview/lib/WebViewTypes.d.ts
-index f666e81..7b12c0e 100644
+index f666e81..3fa2722 100644
 --- a/node_modules/react-native-webview/lib/WebViewTypes.d.ts
 +++ b/node_modules/react-native-webview/lib/WebViewTypes.d.ts
-@@ -868,6 +868,12 @@ export interface AndroidWebViewProps extends WebViewSharedProps {
+@@ -60,7 +60,7 @@ export interface WebViewNavigation extends WebViewNativeEvent {
+     mainDocumentURL?: string;
+ }
+ export interface ShouldStartLoadRequest extends WebViewNavigation {
+-    isTopFrame: boolean;
++    isTopFrame?: boolean;
+ }
+ export interface FileDownload {
+     downloadUrl: string;
+@@ -777,6 +777,9 @@ export interface MacOSWebViewProps extends WebViewSharedProps {
+     onContentProcessDidTerminate?: (event: WebViewTerminatedEvent) => void;
+ }
+ export interface AndroidWebViewProps extends WebViewSharedProps {
++    /** Exact HTTPS origins for the native Android navigation policy, including bridge fallback. */
++    androidNavigationAllowedOrigins?: readonly string[];
++
+     onNavigationStateChange?: (event: WebViewNavigation) => void;
+     onContentSizeChange?: (event: WebViewEvent) => void;
+     /**
+@@ -868,6 +871,12 @@ export interface AndroidWebViewProps extends WebViewSharedProps {
       * @platform android
       */
      androidLayerType?: AndroidLayerType;
@@ -399,10 +872,34 @@ index f666e81..7b12c0e 100644
      /**
       * Boolean value to enable third party cookies in the `WebView`.
       * The default value is `true`.
+@@ -972,6 +981,14 @@ export interface AndroidWebViewProps extends WebViewSharedProps {
+      * @platform android
+      */
+     onLoadSubResourceError?: (event: WebViewErrorEvent) => void;
++    /**
++     * Function that is invoked when the Android `WebView` starts loading a main-frame document
++     * (`WebViewClient.onPageStarted`).
++     *
++     * @param event
++     * @platform android
++     */
++    onMainFrameLoadStart?: (event: WebViewNavigationEvent) => void;
+ }
+ export interface WebViewSharedProps extends ViewProps {
+     /**
 diff --git a/node_modules/react-native-webview/src/RNCWebViewNativeComponent.ts b/node_modules/react-native-webview/src/RNCWebViewNativeComponent.ts
-index ca3af15..8862a81 100644
+index ca3af15..823a1d5 100644
 --- a/node_modules/react-native-webview/src/RNCWebViewNativeComponent.ts
 +++ b/node_modules/react-native-webview/src/RNCWebViewNativeComponent.ts
+@@ -86,7 +86,7 @@ export type ShouldStartLoadRequestEvent = Readonly<{
+   lockIdentifier: Double;
+   navigationType: 'click' | 'formsubmit' | 'backforward' | 'reload' | 'formresubmit' | 'other';
+   mainDocumentURL?: string;
+-  isTopFrame: boolean;
++  isTopFrame?: boolean;
+ }>;
+ 
+ type ScrollEvent = Readonly<{
 @@ -136,6 +136,7 @@ export interface NativeProps extends ViewProps {
    allowsProtectedMedia?: boolean;
    allowsFullscreenVideo?: boolean;
@@ -411,11 +908,131 @@ index ca3af15..8862a81 100644
    cacheMode?: WithDefault<
      'LOAD_DEFAULT' | 'LOAD_CACHE_ELSE_NETWORK' | 'LOAD_NO_CACHE' | 'LOAD_CACHE_ONLY',
      'LOAD_DEFAULT'
+@@ -150,6 +151,7 @@ export interface NativeProps extends ViewProps {
+   mixedContentMode?: WithDefault<'never' | 'always' | 'compatibility', 'never'>;
+   nestedScrollEnabled?: boolean;
+   onContentSizeChange?: DirectEventHandler<WebViewNativeEvent>;
++  onMainFrameLoadStart?: DirectEventHandler<WebViewNavigationEvent>;
+   onRenderProcessGone?: DirectEventHandler<WebViewRenderProcessGoneEvent>;
+   overScrollMode?: string;
+   saveFormDataDisabled?: boolean;
+@@ -161,6 +163,8 @@ export interface NativeProps extends ViewProps {
+   thirdPartyCookiesEnabled?: WithDefault<boolean, true>;
+   // Workaround to watch if listener if defined
+   hasOnScroll?: boolean;
++  hasOnMainFrameLoadStart?: boolean;
++  androidNavigationAllowedOrigins?: ReadonlyArray<string>;
+   // !Android only
+ 
+   // iOS only
+diff --git a/node_modules/react-native-webview/src/WebView.android.tsx b/node_modules/react-native-webview/src/WebView.android.tsx
+index 15e9dee..6a383f4 100644
+--- a/node_modules/react-native-webview/src/WebView.android.tsx
++++ b/node_modules/react-native-webview/src/WebView.android.tsx
+@@ -78,6 +78,7 @@ const WebViewComponent = forwardRef<unknown, AndroidWebViewProps>(
+       startInLoadingState,
+       onNavigationStateChange,
+       onLoadStart,
++      onMainFrameLoadStart: onMainFrameLoadStartProp,
+       onError,
+       onLoad,
+       onLoadEnd,
+@@ -115,6 +116,7 @@ const WebViewComponent = forwardRef<unknown, AndroidWebViewProps>(
+ 
+     const {
+       onLoadingStart,
++      onMainFrameLoadStart,
+       onShouldStartLoadWithRequest,
+       onMessage,
+       viewState,
+@@ -136,6 +138,7 @@ const WebViewComponent = forwardRef<unknown, AndroidWebViewProps>(
+       onLoadEnd,
+       onLoadProgress,
+       onLoadStart,
++      onMainFrameLoadStartProp,
+       onRenderProcessGoneProp,
+       onMessageProp,
+       onOpenWindowProp,
+@@ -261,11 +264,13 @@ const WebViewComponent = forwardRef<unknown, AndroidWebViewProps>(
+         messagingEnabled={typeof onMessageProp === 'function'}
+         messagingModuleName={messagingModuleName}
+         hasOnScroll={!!otherProps.onScroll}
++        hasOnMainFrameLoadStart={typeof onMainFrameLoadStartProp === 'function'}
+         onLoadingError={onLoadingError}
+         onLoadingSubResourceError={onLoadingSubResourceError}
+         onLoadingFinish={onLoadingFinish}
+         onLoadingProgress={onLoadingProgress}
+         onLoadingStart={onLoadingStart}
++        onMainFrameLoadStart={onMainFrameLoadStart}
+         onHttpError={onHttpError}
+         onRenderProcessGone={onRenderProcessGone}
+         onMessage={onMessage}
+diff --git a/node_modules/react-native-webview/src/WebViewShared.tsx b/node_modules/react-native-webview/src/WebViewShared.tsx
+index b4c8ed8..3373d20 100644
+--- a/node_modules/react-native-webview/src/WebViewShared.tsx
++++ b/node_modules/react-native-webview/src/WebViewShared.tsx
+@@ -94,6 +94,7 @@ export const useWebViewLogic = ({
+   startInLoadingState,
+   onNavigationStateChange,
+   onLoadStart,
++  onMainFrameLoadStartProp,
+   onLoad,
+   onLoadProgress,
+   onLoadEnd,
+@@ -111,6 +112,7 @@ export const useWebViewLogic = ({
+   startInLoadingState?: boolean;
+   onNavigationStateChange?: (event: WebViewNavigation) => void;
+   onLoadStart?: (event: WebViewNavigationEvent) => void;
++  onMainFrameLoadStartProp?: (event: WebViewNavigationEvent) => void;
+   onLoad?: (event: WebViewNavigationEvent) => void;
+   onLoadProgress?: (event: WebViewProgressEvent) => void;
+   onLoadEnd?: (event: WebViewNavigationEvent | WebViewErrorEvent) => void;
+@@ -187,6 +189,13 @@ export const useWebViewLogic = ({
+   );
+ 
+   // Android Only
++  const onMainFrameLoadStart = useCallback(
++    (event: WebViewNavigationEvent) => {
++      onMainFrameLoadStartProp?.(event);
++    },
++    [onMainFrameLoadStartProp],
++  );
++
+   const onRenderProcessGone = useCallback(
+     (event: WebViewRenderProcessGoneEvent) => {
+       onRenderProcessGoneProp?.(event);
+@@ -263,6 +272,7 @@ export const useWebViewLogic = ({
+   return {
+     onShouldStartLoadWithRequest,
+     onLoadingStart,
++    onMainFrameLoadStart,
+     onLoadingProgress,
+     onLoadingError,
+     onLoadingSubResourceError,
 diff --git a/node_modules/react-native-webview/src/WebViewTypes.ts b/node_modules/react-native-webview/src/WebViewTypes.ts
-index 4e7247f..94cfb47 100644
+index 4e7247f..54d63c4 100644
 --- a/node_modules/react-native-webview/src/WebViewTypes.ts
 +++ b/node_modules/react-native-webview/src/WebViewTypes.ts
-@@ -1051,6 +1051,13 @@ export interface AndroidWebViewProps extends WebViewSharedProps {
+@@ -94,7 +94,7 @@ export interface WebViewNavigation extends WebViewNativeEvent {
+ }
+ 
+ export interface ShouldStartLoadRequest extends WebViewNavigation {
+-  isTopFrame: boolean;
++  isTopFrame?: boolean;
+ }
+ 
+ export interface FileDownload {
+@@ -947,6 +947,9 @@ export interface MacOSWebViewProps extends WebViewSharedProps {
+ }
+ 
+ export interface AndroidWebViewProps extends WebViewSharedProps {
++  /** Exact HTTPS origins for the native Android navigation policy, including bridge fallback. */
++  androidNavigationAllowedOrigins?: readonly string[];
++
+   onNavigationStateChange?: (event: WebViewNavigation) => void;
+   onContentSizeChange?: (event: WebViewEvent) => void;
+ 
+@@ -1051,6 +1054,13 @@ export interface AndroidWebViewProps extends WebViewSharedProps {
     */
    androidLayerType?: AndroidLayerType;
  
@@ -429,3 +1046,19 @@ index 4e7247f..94cfb47 100644
    /**
     * Boolean value to enable third party cookies in the `WebView`.
     * The default value is `true`.
+@@ -1169,6 +1179,15 @@ export interface AndroidWebViewProps extends WebViewSharedProps {
+    * @platform android
+    */
+   onLoadSubResourceError?: (event: WebViewErrorEvent) => void;
++
++  /**
++   * Function that is invoked when the Android `WebView` starts loading a main-frame document
++   * (`WebViewClient.onPageStarted`).
++   *
++   * @param event
++   * @platform android
++   */
++  onMainFrameLoadStart?: (event: WebViewNavigationEvent) => void;
+ }
+ 
+ export interface WebViewSharedProps extends ViewProps {

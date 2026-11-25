@@ -48,7 +48,8 @@ export function createReaderCommandQueue() {
     current(owner: AbortSignal) {
       return !owner.aborted && lifetime.signal === owner;
     },
-    restored(data: ReaderState, nextStatus: Exclude<ReaderStatus, 'loading'>) {
+    restored(data: ReaderState, nextStatus: 'ready' | 'recovery') {
+      if (status === 'restart-required') return;
       committed = data;
       status = nextStatus;
       project();
@@ -63,8 +64,8 @@ export function createReaderCommandQueue() {
     confirmed(change: ReaderChange) {
       committed = applyReaderChange(committed, change);
     },
-    recoveryRequired() {
-      status = 'recovery';
+    requireRestart() {
+      status = 'restart-required';
     },
     settled(operation: Readonly<Operation>) {
       pending = pending.filter((item) => item !== operation);

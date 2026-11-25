@@ -4,6 +4,7 @@ import { TextNode, HTMLElement } from 'node-html-parser';
 import {
   nodeTagName,
   decodeHtml,
+  decodeHtmlAttribute,
   createForumTextIndex,
   elementText,
   forumNodeText,
@@ -15,8 +16,11 @@ import {
   FORUM_TERMINAL_TAB_TAG,
   FORUM_VIDEO_STICKER_TAG,
   FORUM_VIDEO_TAG,
+  htmlElementAttribute,
   isAllowedDataImageUrl,
+  normalizeForumMarkupForSanitization,
   parseForumContentHtml,
+  setHtmlElementAttribute,
   transformForumElements,
   type ForumTextSegment,
   type ForumTextTape
@@ -71,20 +75,24 @@ function resolvePictureSources(root: HTMLElement, baseUrl: string) {
       const tag = nodeTagName(child);
       if (tag === 'img') {
         if (candidates.length) {
-          child.setAttribute('srcset', candidates.map(({ url, descriptor }) => `${url} ${descriptor}`).join(', '));
+          setHtmlElementAttribute(
+            child,
+            'srcset',
+            candidates.map(({ url, descriptor }) => `${url} ${descriptor}`).join(', ')
+          );
           if (type === 'image/svg+xml') svgCandidates.set(child, candidates);
-          if (!sanitizedUrlAttribute('src', child.getAttribute('src') || '', baseUrl)) {
-            child.setAttribute('src', candidates[0].url);
+          if (!sanitizedUrlAttribute('src', htmlElementAttribute(child, 'src') || '', baseUrl)) {
+            setHtmlElementAttribute(child, 'src', candidates[0].url);
           }
         }
         break;
       }
       if (tag !== 'source' || candidates.length) continue;
-      const media = child.getAttribute('media')?.trim().toLowerCase();
+      const media = htmlElementAttribute(child, 'media')?.trim().toLowerCase();
       if (media && media !== 'all') continue;
-      type = child.getAttribute('type')?.trim().toLowerCase();
+      type = htmlElementAttribute(child, 'type')?.trim().toLowerCase();
       if (type && !/^image\/(?:avif|bmp|gif|jpeg|png|svg\+xml|webp)$/.test(type)) continue;
-      candidates = parseSrcsetCandidates(child.getAttribute('srcset') || '').flatMap((candidate) => {
+      candidates = parseSrcsetCandidates(htmlElementAttribute(child, 'srcset') || '').flatMap((candidate) => {
         const [rawUrl, descriptor = '1x', extra] = candidate.trim().split(/\s+/);
         if (extra || !/^(?:[1-9]\d*w|(?:\d*\.)?\d+x)$/.test(descriptor) || parseFloat(descriptor) <= 0) return [];
         const url = sanitizedUrlAttribute('src', rawUrl, baseUrl);
@@ -112,13 +120,13 @@ function decodedCloudflareEmail(value: string) {
 
 function restoreCloudflareEmails(root: HTMLElement, baseUrl: string) {
   for (const node of root.querySelectorAll('a[href*="/cdn-cgi/l/email-protection#"]')) {
-    const url = parsedAbsoluteUrl(node.getAttribute('href'), baseUrl);
+    const url = parsedAbsoluteUrl(htmlElementAttribute(node, 'href'), baseUrl);
     if (!url || !['http:', 'https:'].includes(url.protocol) || url.pathname !== '/cdn-cgi/l/email-protection') continue;
     const email = decodedCloudflareEmail(url.hash.slice(1));
-    if (email !== undefined) node.setAttribute('href', `mailto:${email}`);
+    if (email !== undefined) setHtmlElementAttribute(node, 'href', `mailto:${email}`);
   }
   transformForumElements(root, root.querySelectorAll('.__cf_email__[data-cfemail]'), (node) => {
-    const email = decodedCloudflareEmail(node.getAttribute('data-cfemail') || '');
+    const email = decodedCloudflareEmail(htmlElementAttribute(node, 'data-cfemail') || '');
     if (email !== undefined) return [new TextNode(escapeHtmlText(email))];
   });
 }
@@ -516,7 +524,10 @@ function sanitizeDiscourseOneboxes(root: HTMLElement, baseUrl: string) {
     const sourceLink = node.querySelector('header a') || links[0];
     const titleLink = node.querySelector('h3 a') || links[1] || sourceLink;
     const rawHref =
-      node.getAttribute('data-onebox-src') || titleLink?.getAttribute('href') || sourceLink?.getAttribute('href') || '';
+      htmlElementAttribute(node, 'data-onebox-src') ||
+      htmlElementAttribute(titleLink, 'href') ||
+      htmlElementAttribute(sourceLink, 'href') ||
+      '';
     const href = sanitizedUrlAttribute('href', rawHref, baseUrl);
     if (!href) {
       return [];
@@ -526,17 +537,21 @@ function sanitizeDiscourseOneboxes(root: HTMLElement, baseUrl: string) {
     const description = oneboxText(node.querySelector('article p') || node.querySelector('p'), 220);
     const thumbnail = firstClassedImage(node, 'thumbnail');
     const siteIcon = firstClassedImage(node, 'site-icon');
-    const imageSrc = thumbnail ? sanitizedUrlAttribute('src', thumbnail.getAttribute('src') || '', baseUrl) || '' : '';
-    const iconSrc = siteIcon ? sanitizedUrlAttribute('src', siteIcon.getAttribute('src') || '', baseUrl) || '' : '';
+    const imageSrc = thumbnail
+      ? sanitizedUrlAttribute('src', htmlElementAttribute(thumbnail, 'src') || '', baseUrl) || ''
+      : '';
+    const iconSrc = siteIcon
+      ? sanitizedUrlAttribute('src', htmlElementAttribute(siteIcon, 'src') || '', baseUrl) || ''
+      : '';
     return replacementNodes(
-      `<${FORUM_LINK_CARD_TAG} href="${escapeHtmlAttribute(href)}" site="${escapeHtmlAttribute(site)}" title="${escapeHtmlAttribute(title)}" description="${escapeHtmlAttribute(description)}" image-src="${escapeHtmlAttribute(imageSrc)}" icon-src="${escapeHtmlAttribute(iconSrc)}"${referrerPolicyHtmlAttribute('image-referrerpolicy', thumbnail?.getAttribute('referrerpolicy'))}${referrerPolicyHtmlAttribute('icon-referrerpolicy', siteIcon?.getAttribute('referrerpolicy'))}></${FORUM_LINK_CARD_TAG}>`
+      `<${FORUM_LINK_CARD_TAG} href="${escapeHtmlAttribute(href)}" site="${escapeHtmlAttribute(site)}" title="${escapeHtmlAttribute(title)}" description="${escapeHtmlAttribute(description)}" image-src="${escapeHtmlAttribute(imageSrc)}" icon-src="${escapeHtmlAttribute(iconSrc)}"${referrerPolicyHtmlAttribute('image-referrerpolicy', htmlElementAttribute(thumbnail, 'referrerpolicy'))}${referrerPolicyHtmlAttribute('icon-referrerpolicy', htmlElementAttribute(siteIcon, 'referrerpolicy'))}></${FORUM_LINK_CARD_TAG}>`
     );
   });
 }
 
 function sanitizeIframes(root: HTMLElement, baseUrl: string) {
   transformForumElements(root, root.querySelectorAll('iframe'), (node) => {
-    const embed = nsEmbedFromUrl(node.getAttribute('src'), baseUrl);
+    const embed = nsEmbedFromUrl(htmlElementAttribute(node, 'src'), baseUrl);
     if (!embed) {
       return [];
     }
@@ -544,7 +559,7 @@ function sanitizeIframes(root: HTMLElement, baseUrl: string) {
       for (const name of Object.keys(node.attributes)) {
         node.removeAttribute(name);
       }
-      node.setAttribute('src', embed.embedUrl);
+      setHtmlElementAttribute(node, 'src', embed.embedUrl);
       node.setAttribute('allowfullscreen', 'true');
       return;
     }
@@ -556,7 +571,7 @@ function sanitizeIframes(root: HTMLElement, baseUrl: string) {
 
 function sanitizeNsVideoImages(root: HTMLElement, baseUrl: string) {
   transformForumElements(root, root.querySelectorAll('img'), (node) => {
-    const src = node.getAttribute('src');
+    const src = htmlElementAttribute(node, 'src');
     if (!/bilibili\.com/i.test(src || '')) return;
     const embedUrl = bilibiliEmbedUrlFromUrl(src, baseUrl);
     if (!embedUrl) {
@@ -598,28 +613,28 @@ function sanitizeNodeSeekStickerVideos(root: HTMLElement, baseUrl: string) {
     }
     const sourceNodes = node.querySelectorAll('source');
     const videoUrl = sourceNodes
-      .map((source) => nodeSeekStickerVideoUrl(source.getAttribute('src'), baseUrl))
+      .map((source) => nodeSeekStickerVideoUrl(htmlElementAttribute(source, 'src'), baseUrl))
       .find(Boolean);
     const fallbackUrl = sourceNodes
-      .map((source) => nodeSeekStickerPngUrl(source.getAttribute('src'), baseUrl))
+      .map((source) => nodeSeekStickerPngUrl(htmlElementAttribute(source, 'src'), baseUrl))
       .find(Boolean);
     if (!videoUrl && !fallbackUrl) {
       return;
     }
-    const width = safeStickerDimension(node.getAttribute('width'));
-    const height = safeStickerDimension(node.getAttribute('height'));
-    const alt = String(node.getAttribute('alt') || node.getAttribute('title') || 'sticker');
+    const width = safeStickerDimension(htmlElementAttribute(node, 'width'));
+    const height = safeStickerDimension(htmlElementAttribute(node, 'height'));
+    const alt = String(htmlElementAttribute(node, 'alt') || htmlElementAttribute(node, 'title') || 'sticker');
     const stickerSrc = videoUrl || fallbackUrl || '';
     return replacementNodes(
-      `<${FORUM_VIDEO_STICKER_TAG} class="sticker" src="${escapeHtmlAttribute(stickerSrc)}" data-fallback-src="${escapeHtmlAttribute(fallbackUrl || '')}" alt="${escapeHtmlAttribute(alt)}" width="${width}" height="${height}"${referrerPolicyHtmlAttribute('referrerpolicy', node.getAttribute('referrerpolicy'))}></${FORUM_VIDEO_STICKER_TAG}>`
+      `<${FORUM_VIDEO_STICKER_TAG} class="sticker" src="${escapeHtmlAttribute(stickerSrc)}" data-fallback-src="${escapeHtmlAttribute(fallbackUrl || '')}" alt="${escapeHtmlAttribute(alt)}" width="${width}" height="${height}"${referrerPolicyHtmlAttribute('referrerpolicy', htmlElementAttribute(node, 'referrerpolicy'))}></${FORUM_VIDEO_STICKER_TAG}>`
     );
   });
 }
 
 function mediaSourceUrl(node: HTMLElement, baseUrl: string) {
   const candidates = [
-    node.getAttribute('src'),
-    ...node.querySelectorAll('source').map((source) => source.getAttribute('src'))
+    htmlElementAttribute(node, 'src'),
+    ...node.querySelectorAll('source').map((source) => htmlElementAttribute(source, 'src'))
   ];
   return candidates.map((value) => sanitizedHttpMediaUrl(value, baseUrl)).find(Boolean) || '';
 }
@@ -634,7 +649,7 @@ function sanitizePlayableAudio(root: HTMLElement, baseUrl: string) {
     }
     const fallback = fallbackHtml || `<a href="${escapeHtmlAttribute(src)}">打开音频</a>`;
     return replacementNodes(
-      `<${FORUM_AUDIO_TAG} src="${escapeHtmlAttribute(src)}"${referrerPolicyHtmlAttribute('referrerpolicy', node.getAttribute('referrerpolicy'))}>${fallback}</${FORUM_AUDIO_TAG}>`
+      `<${FORUM_AUDIO_TAG} src="${escapeHtmlAttribute(src)}"${referrerPolicyHtmlAttribute('referrerpolicy', htmlElementAttribute(node, 'referrerpolicy'))}>${fallback}</${FORUM_AUDIO_TAG}>`
     );
   });
 }
@@ -645,9 +660,9 @@ function sanitizePlayableVideos(root: HTMLElement, baseUrl: string) {
     if (!src) {
       return [];
     }
-    const poster = sanitizedUrlAttribute('src', node.getAttribute('poster') || '', baseUrl) || '';
+    const poster = sanitizedUrlAttribute('src', htmlElementAttribute(node, 'poster') || '', baseUrl) || '';
     return replacementNodes(
-      `<${FORUM_VIDEO_TAG} src="${escapeHtmlAttribute(src)}"${poster ? ` poster="${escapeHtmlAttribute(poster)}"` : ''}${referrerPolicyHtmlAttribute('referrerpolicy', node.getAttribute('referrerpolicy'))}></${FORUM_VIDEO_TAG}>`
+      `<${FORUM_VIDEO_TAG} src="${escapeHtmlAttribute(src)}"${poster ? ` poster="${escapeHtmlAttribute(poster)}"` : ''}${referrerPolicyHtmlAttribute('referrerpolicy', htmlElementAttribute(node, 'referrerpolicy'))}></${FORUM_VIDEO_TAG}>`
     );
   });
 }
@@ -1039,7 +1054,7 @@ export function sanitizeContentHtmlWithRoot(
   baseUrl: string,
   transformRoot?: (root: HTMLElement) => void
 ) {
-  const normalizedHtml = sanitizeNodeSeekAnsiCodeBlocksHtml(html);
+  const normalizedHtml = sanitizeNodeSeekAnsiCodeBlocksHtml(normalizeForumMarkupForSanitization(html));
   const root = parseForumContentHtml(normalizedHtml);
   removeAutoClosedLightboxParagraphs(root, normalizedHtml);
   removeHiddenContent(root);
@@ -1067,9 +1082,9 @@ export function sanitizeContentHtmlWithRoot(
   const absoluteAttributeBase = parsedAbsoluteUrl(baseUrl, baseUrl) ? undefined : baseUrl;
   root.querySelectorAll('*').forEach((node) => {
     const tagName = nodeTagName(node);
-    for (const [name, rawValue] of Object.entries(node.attributes)) {
+    for (const [name, rawValue] of Object.entries(node.rawAttributes)) {
       const lower = name.toLowerCase();
-      const value = String(rawValue || '');
+      const value = rawValue === null || rawValue === undefined ? '' : decodeHtmlAttribute(rawValue);
       if (
         lower === FORUM_BOUNDED_INLINE_IMAGE_ATTRIBUTE ||
         lower === FORUM_FLOW_IMAGE_CONTEXT_ATTRIBUTE ||
@@ -1085,7 +1100,7 @@ export function sanitizeContentHtmlWithRoot(
       if (lower === 'style') {
         const next = sanitizedStyleAttribute(value);
         if (next) {
-          node.setAttribute(name, next);
+          setHtmlElementAttribute(node, name, next);
         } else {
           node.removeAttribute(name);
         }
@@ -1095,7 +1110,7 @@ export function sanitizeContentHtmlWithRoot(
         const next = normalizeMediaReferrerPolicy(value);
         if (next) {
           node.removeAttribute(name);
-          node.setAttribute(lower, next);
+          setHtmlElementAttribute(node, lower, next);
         } else {
           node.removeAttribute(name);
         }
@@ -1114,7 +1129,7 @@ export function sanitizeContentHtmlWithRoot(
             ? sanitizedHttpMediaUrl(value, attributeBase)
             : sanitizedUrlAttribute(lower === 'href' ? 'href' : 'src', value, attributeBase);
         if (next) {
-          node.setAttribute(name, next);
+          setHtmlElementAttribute(node, name, next);
         } else {
           node.removeAttribute(name);
         }
@@ -1123,7 +1138,7 @@ export function sanitizeContentHtmlWithRoot(
       if (lower === 'poster') {
         const next = tagName === FORUM_VIDEO_TAG ? sanitizedUrlAttribute('src', value, baseUrl) : undefined;
         if (next) {
-          node.setAttribute(name, next);
+          setHtmlElementAttribute(node, name, next);
         } else {
           node.removeAttribute(name);
         }

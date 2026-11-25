@@ -10,7 +10,15 @@ import {
   normalizeForumContentMediaNodes,
   selectImageOriginalSource
 } from '@/domain/forum/forumContentMedia';
-import { absoluteUrl, escapeHtmlAttribute, escapeHtmlText, textContentFromHtml } from '@/domain/forum/html';
+import {
+  absoluteUrl,
+  escapeHtmlAttribute,
+  escapeHtmlText,
+  htmlElementAttribute,
+  htmlElementAttributes,
+  setHtmlElementAttribute,
+  textContentFromHtml
+} from '@/domain/forum/html';
 import type { TopicDetail, TopicPoll } from '@/domain/forum/models';
 
 const MAX_CONTENT_LENGTH = 150_000;
@@ -21,7 +29,7 @@ function assertContentSize(html: string) {
   if (html.length > MAX_CONTENT_LENGTH) throw new Error('正文过长，无法生成完整分享图片，请分享链接。');
 }
 
-function smallImageDimensions(attributes: Record<string, string>) {
+function smallImageDimensions(attributes: Record<string, string | undefined>) {
   const dimension = (value = '') => {
     if (!/^\d+(?:\.\d+)?(?:px)?$/i.test(value.trim())) return undefined;
     const number = Number.parseFloat(value);
@@ -64,28 +72,32 @@ export function prepareTopicShareContent(topic: TopicDetail): { html: string; im
     // Keep safe embeds as visible references before the reading sanitizer removes unsupported players.
     for (const frame of content.querySelectorAll('iframe')) {
       frame.replaceWith(
-        `<forum-share-embed href="${escapeHtmlAttribute(frame.getAttribute('src') || '')}"></forum-share-embed>`
+        `<forum-share-embed href="${escapeHtmlAttribute(htmlElementAttribute(frame, 'src') || '')}"></forum-share-embed>`
       );
     }
     for (const image of content.querySelectorAll('img, forum-inline-image, forum-sticker')) {
       if (image.rawTagName.toLowerCase() !== 'img') {
-        if (!image.getAttribute('alt') && image.textContent) image.setAttribute('alt', image.textContent);
+        if (!htmlElementAttribute(image, 'alt') && image.textContent) {
+          setHtmlElementAttribute(image, 'alt', image.textContent);
+        }
         image.set_content('');
       }
       for (const name of ['data-src', 'data-original', 'data-forum-original-src']) {
-        const value = absoluteUrl(image.getAttribute(name), topic.url);
-        if (value) image.setAttribute(name, value);
+        const value = absoluteUrl(htmlElementAttribute(image, name), topic.url);
+        if (value) setHtmlElementAttribute(image, name, value);
       }
     }
     for (const font of content.querySelectorAll('font[color]')) {
-      font.setAttribute('style', `color: ${font.getAttribute('color')}; ${font.getAttribute('style') || ''}`);
+      const color = htmlElementAttribute(font, 'color') || '';
+      const style = htmlElementAttribute(font, 'style') || '';
+      setHtmlElementAttribute(font, 'style', `color: ${color}; ${style}`);
     }
   });
   normalizeForumContentMediaNodes(root);
   const includedPolls = new Set<TopicPoll>();
   for (const node of root.querySelectorAll('*').reverse()) {
     const tag = node.rawTagName.toLowerCase();
-    const attribute = (name: string) => node.getAttribute(name) || '';
+    const attribute = (name: string) => htmlElementAttribute(node, name) || '';
     if (tag === 'source' && node.parentNode?.rawTagName?.toLowerCase() === 'picture') {
       node.remove();
     } else if (tag === 'forum-link-card') {
@@ -110,7 +122,7 @@ export function prepareTopicShareContent(topic: TopicDetail): { html: string; im
           attribute('poster') || attribute('data-fallback-src'),
           attribute('alt'),
           attribute('referrerpolicy'),
-          smallImageDimensions(node.attributes)
+          smallImageDimensions(htmlElementAttributes(node))
         ) +
           linkedNotice(label, tag === 'forum-share-embed' ? attribute('href') : attribute('src')) +
           (tag === 'forum-audio' ? node.innerHTML : '')
@@ -153,13 +165,14 @@ export function prepareTopicShareContent(topic: TopicDetail): { html: string; im
   for (const node of root.querySelectorAll('*')) {
     const tag = node.rawTagName.toLowerCase();
     const isImage = IMAGE_TAGS.has(tag);
-    const dimensions = isImage ? smallImageDimensions(node.attributes) : undefined;
-    if (isImage) {
-      const source = selectImageOriginalSource(node.attributes);
-      if (source) node.setAttribute('src', source);
-      if (!node.getAttribute('alt') && node.textContent) node.setAttribute('alt', node.textContent);
+    const imageAttributes = isImage ? htmlElementAttributes(node) : undefined;
+    const dimensions = imageAttributes ? smallImageDimensions(imageAttributes) : undefined;
+    if (imageAttributes) {
+      const source = selectImageOriginalSource(imageAttributes);
+      if (source) setHtmlElementAttribute(node, 'src', source);
+      if (!imageAttributes.alt && node.textContent) setHtmlElementAttribute(node, 'alt', node.textContent);
       node.set_content('');
-      if (tag === 'img' && isInlineForumImage(node.attributes)) node.tagName = INLINE_FORUM_IMAGE_TAG;
+      if (tag === 'img' && isInlineForumImage(htmlElementAttributes(node))) node.tagName = INLINE_FORUM_IMAGE_TAG;
     }
     const allowedAttributes = [
       'style',
@@ -174,21 +187,21 @@ export function prepareTopicShareContent(topic: TopicDetail): { html: string; im
               ? ['start', 'reversed', 'type']
               : tag === 'li'
                 ? ['value']
-                : tag === 'font' && /^[1-7]$/.test(node.getAttribute('size') || '')
+                : tag === 'font' && /^[1-7]$/.test(htmlElementAttribute(node, 'size') || '')
                   ? ['size']
                   : [])
     ];
-    for (const name of Object.keys(node.attributes)) {
+    for (const name of Object.keys(node.rawAttributes)) {
       if (!allowedAttributes.includes(name.toLowerCase())) node.removeAttribute(name);
     }
     if (isImage) {
-      const src = node.getAttribute('src');
+      const src = htmlElementAttribute(node, 'src');
       if (src) {
         node.setAttribute('data-share-image-index', String(imageCount++));
         if (svgCandidates?.get(node)?.some(({ url }) => url === src)) node.setAttribute('data-share-svg', 'true');
         if (dimensions?.width) node.setAttribute('data-share-width', String(dimensions.width));
         if (dimensions?.height) node.setAttribute('data-share-height', String(dimensions.height));
-      } else node.replaceWith(`<span>${escapeHtmlText(node.getAttribute('alt') || '图片地址无效')}</span>`);
+      } else node.replaceWith(`<span>${escapeHtmlText(htmlElementAttribute(node, 'alt') || '图片地址无效')}</span>`);
     }
   }
   const html = root.toString();

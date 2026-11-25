@@ -1,15 +1,18 @@
+import { decodeHTMLAttribute } from 'entities';
 import {
-  decodeHtml,
   escapeHtmlFully,
   escapeQuotedHtmlTagDelimiters,
   FORUM_MATH_BLOCK_TAG,
   FORUM_VIDEO_STICKER_TAG,
   forumElementReplacementNodes,
+  htmlElementAttributes,
   isAllowedDataImageUrl,
   parseHtml,
+  setHtmlElementAttribute,
   transformForumElements,
   textContentFromHtml
 } from './html';
+import { transformHtmlSegments } from './htmlSegments';
 import { HTMLElement, TextNode, type Node } from 'node-html-parser';
 import { isNodeSeekHost } from './sourceCatalog';
 import { normalizeMediaReferrerPolicy, type MediaReferrerPolicy } from './mediaReferrer';
@@ -176,11 +179,7 @@ function createForumImageUrlResolver(): ForumImageUrlResolver {
 }
 
 function forumImageNodeAttributes(node: ParsedForumImageNode) {
-  if (!node.getAttribute || !node.rawAttributes) return node.attributes || {};
-  return Object.fromEntries(Object.keys(node.rawAttributes).map((name) => [name, node.getAttribute?.(name)])) as Record<
-    string,
-    string | undefined
-  >;
+  return htmlElementAttributes(node);
 }
 
 function createForumImageNodeAttributeResolver(): ForumImageNodeAttributeResolver {
@@ -363,7 +362,7 @@ function markStandaloneForumFlowImages(
       const image = line.images[0]!;
       if (!candidateImages.has(image)) return;
       const attributes = resolveNodeAttributes(image);
-      image.setAttribute?.(FORUM_FLOW_IMAGE_CONTEXT_ATTRIBUTE, 'standalone');
+      setHtmlElementAttribute(image, FORUM_FLOW_IMAGE_CONTEXT_ATTRIBUTE, 'standalone');
       attributes[FORUM_FLOW_IMAGE_CONTEXT_ATTRIBUTE] = 'standalone';
     });
   });
@@ -468,10 +467,11 @@ export function parseForumImageDimension(value: string) {
 
 export function forumImageAttributesFromText(value: string): Record<string, string> {
   const attributes: Record<string, string> = {};
-  const pattern = /([^\s"'=<>`]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+  const pattern = /([^\s"'=<>`/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>`]+)))?/g;
   let match = pattern.exec(value);
   while (match) {
-    attributes[match[1].toLowerCase()] = decodeHtml(match[2] || match[3] || match[4] || '');
+    const raw = match[2] ?? match[3] ?? match[4] ?? '';
+    attributes[match[1].toLowerCase()] = raw.includes('&') ? decodeHTMLAttribute(raw) : raw;
     match = pattern.exec(value);
   }
   return attributes;
@@ -480,19 +480,24 @@ export function forumImageAttributesFromText(value: string): Record<string, stri
 export function forumImagePreviewDescriptorsFromHtmlFallback(html: string): ForumImagePreviewDescriptor[] {
   const descriptors: ForumImagePreviewDescriptor[] = [];
   const resolveImageUrl = createForumImageUrlResolver();
-  const imagePattern = /<img\b([^>]*)>/gi;
-  let match = imagePattern.exec(html);
-  while (match) {
-    try {
-      const attributes = forumImageAttributesFromText(match[1] || '');
-      if (!isInlineForumImage(attributes, resolveImageUrl)) {
-        const descriptor = forumImagePreviewDescriptorFromAttributes(attributes, '', resolveImageUrl);
-        if (descriptor) descriptors.push(descriptor);
-      }
-    } catch {
-      return descriptors;
-    }
-    match = imagePattern.exec(html);
+  try {
+    transformHtmlSegments(
+      html,
+      () => '',
+      (tag) => {
+        if (!/^<img(?=[\t\n\f\r />])/i.test(tag)) return '';
+        const attributesText = tag.slice(4, -1);
+        const attributes = forumImageAttributesFromText(attributesText);
+        if (!isInlineForumImage(attributes, resolveImageUrl)) {
+          const descriptor = forumImagePreviewDescriptorFromAttributes(attributes, '', resolveImageUrl);
+          if (descriptor) descriptors.push(descriptor);
+        }
+        return '';
+      },
+      () => ''
+    );
+  } catch {
+    return descriptors;
   }
   return descriptors;
 }
@@ -577,12 +582,12 @@ function upgradeBlockImageSources(
     const lightboxHref = lightboxHrefByImage.get(image) || '';
     const originalUri = selectImageOriginalSource(attributes, lightboxHref, resolveImageUrl);
     if (originalUri && originalUri !== displaySource?.uri) {
-      image.setAttribute?.(ORIGINAL_IMAGE_SOURCE_ATTR, originalUri);
+      setHtmlElementAttribute(image, ORIGINAL_IMAGE_SOURCE_ATTR, originalUri);
       attributes[ORIGINAL_IMAGE_SOURCE_ATTR] = originalUri;
     }
     if (displaySource?.uri && forumImageAttributeValue(attributes, 'src') !== displaySource.uri) {
-      image.setAttribute?.(DISPLAY_CANDIDATE_KIND_ATTR, displaySource.candidateKind);
-      image.setAttribute?.('src', displaySource.uri);
+      setHtmlElementAttribute(image, DISPLAY_CANDIDATE_KIND_ATTR, displaySource.candidateKind);
+      setHtmlElementAttribute(image, 'src', displaySource.uri);
       attributes[DISPLAY_CANDIDATE_KIND_ATTR] = displaySource.candidateKind;
       attributes.src = displaySource.uri;
     }

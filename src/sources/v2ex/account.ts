@@ -8,6 +8,7 @@ import {
   parsePositiveInteger,
   sortTopicsByCreatedAt,
   textExcerpt,
+  textExcerptFromPlainText,
   toIsoString
 } from '@/domain/forum/html';
 import {
@@ -27,6 +28,7 @@ const atomParser = new XMLParser({
   attributeNamePrefix: '',
   textNodeName: '#text',
   cdataPropName: '#cdata',
+  parseTagValue: false,
   trimValues: true
 });
 
@@ -44,18 +46,28 @@ function parseV2exMemberTopics(root: ReturnType<typeof parseHtml>, username: str
     })) as Topic[];
 }
 
-function v2exMemberActivityDate(text: string) {
+const V2EX_TIMEZONE_OFFSET_MS = 8 * 60 * 60 * 1000;
+
+function v2exMemberActivityDate(text: string, referenceTimeMs = Date.now()) {
   const match = text.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
-  if (!match) {
+  if (!match || !Number.isFinite(referenceTimeMs)) {
     return '';
   }
-  const today = new Date();
-  const year = today.getFullYear();
+  const siteToday = new Date(referenceTimeMs + V2EX_TIMEZONE_OFFSET_MS);
+  const year = siteToday.getUTCFullYear();
+  const siteMonth = siteToday.getUTCMonth() + 1;
+  const siteDay = siteToday.getUTCDate();
   const month = Number(match[1]);
   const day = Number(match[2]);
-  const futureDay = month > today.getMonth() + 1 || (month === today.getMonth() + 1 && day > today.getDate());
-  const date = new Date(Date.UTC(futureDay ? year - 1 : year, month - 1, day));
-  return date.getUTCMonth() === month - 1 && date.getUTCDate() === day ? date.toISOString() : '';
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return '';
+  }
+  const futureDay = month > siteMonth || (month === siteMonth && day > siteDay);
+  const resolvedYear = futureDay ? year - 1 : year;
+  const date = new Date(Date.UTC(resolvedYear, month - 1, day));
+  return date.getUTCFullYear() === resolvedYear && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+    ? date.toISOString()
+    : '';
 }
 
 function v2exMemberActivityDisplayTime(text: string) {
@@ -106,6 +118,7 @@ function parseV2exMemberReplies(
   avatar: string | undefined,
   page: number
 ) {
+  const referenceTimeMs = Date.now();
   const occurrences = new Map<string, number>();
   const items = root
     .querySelectorAll('.dock_area')
@@ -125,7 +138,7 @@ function parseV2exMemberReplies(
         .map((part) => part.trim())
         .filter(Boolean);
       const category = elementText(categoryLink) || (parts.length >= 2 ? parts[parts.length - 2] : undefined);
-      const createdAt = v2exMemberActivityDate(text);
+      const createdAt = v2exMemberActivityDate(text, referenceTimeMs);
       const topicUrl = safeTopicUrl(topicId, href.split('#')[0]);
       const displayTimeText = v2exMemberActivityDisplayTime(text);
       const sibling = element.nextElementSibling;
@@ -186,8 +199,14 @@ function parseV2exAtomFeed(xml: string, username: string, avatar?: string) {
       }
       const updatedAt = toIsoString(entry.updated);
       const createdAt = toIsoString(entry.published) || updatedAt;
-      const content = isRecord(entry.content)
-        ? String(entry.content['#cdata'] || entry.content['#text'] || '')
+      const contentRecord = isRecord(entry.content) ? entry.content : undefined;
+      const isPlainTextContent =
+        (contentRecord?.type === undefined && contentRecord?.src === undefined) ||
+        String(contentRecord?.type || '')
+          .trim()
+          .toLowerCase() === 'text';
+      const content = contentRecord
+        ? String(contentRecord['#cdata'] || contentRecord['#text'] || '')
         : String(entry.content || '');
       return {
         source: 'v2ex' as const,
@@ -202,7 +221,7 @@ function parseV2exAtomFeed(xml: string, username: string, avatar?: string) {
         createdAt,
         lastReplyAt: updatedAt || createdAt || undefined,
         replyCount: Number.parseInt(href.match(/#reply(\d+)/)?.[1] || '0', 10) || 0,
-        excerpt: textExcerpt(content)
+        excerpt: isPlainTextContent ? textExcerptFromPlainText(content) : textExcerpt(content)
       };
     })
     .filter(Boolean) as Topic[];

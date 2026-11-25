@@ -1,5 +1,5 @@
-import { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
-import { StyleSheet, type StyleProp, type ViewStyle } from 'react-native';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import { WebView } from 'react-native-webview';
 import type { CompatibleSvgArtifact } from '@/platform/media/compatibleImageSources';
 import { escapeHtmlAttribute } from '@/domain/forum/html';
@@ -9,6 +9,14 @@ type CompatibleSvgDocumentViewProps = Readonly<{
   style?: StyleProp<ViewStyle>;
   onLoad?: () => void;
   onError?: () => void;
+  onRenderProcessGone?: () => void;
+}>;
+
+type CompatibleSvgDocumentFrameProps = Readonly<{
+  documentDataUri: string;
+  onLoad?: () => void;
+  onError?: () => void;
+  onRenderProcessGone?: () => void;
 }>;
 
 type CompatibleSvgNavigationRequest = Readonly<{
@@ -20,47 +28,85 @@ type CompatibleSvgMessageEvent = Readonly<{
   nativeEvent: Readonly<{ data?: string }>;
 }>;
 
-type DocumentSettlement = { identity: string; phase: 'waiting' | 'error' | 'load' };
-
 const EMPTY_SVG_DATA_URI = 'data:image/svg+xml;base64,PHN2Zy8+';
 const GUARDED_DOCUMENT_ORIGINS = ['*'];
 const SVG_READY_MESSAGE = 'wz-svg-ready';
 const SVG_ERROR_MESSAGE = 'wz-svg-error';
 
-export function CompatibleSvgDocumentView({ artifact, style, onLoad, onError }: CompatibleSvgDocumentViewProps) {
-  const identity = `${artifact.requestIdentity}\u0000${artifact.documentDataUri}`;
-  const settlementRef = useRef<DocumentSettlement>({ identity, phase: 'waiting' });
+let nextDocumentInstanceId = 0;
 
-  const validDocumentDataUri = isSvgDocumentDataUri(artifact.documentDataUri);
+export function CompatibleSvgDocumentView({
+  artifact,
+  style,
+  onLoad,
+  onError,
+  onRenderProcessGone
+}: CompatibleSvgDocumentViewProps) {
+  const identity = `${artifact.requestIdentity}\u0000${artifact.documentDataUri}`;
+  return (
+    <View testID="compatible-svg-document-container" pointerEvents="none" style={[componentStyles.container, style]}>
+      <CompatibleSvgDocumentFrame
+        key={identity}
+        documentDataUri={artifact.documentDataUri}
+        onError={onError}
+        onLoad={onLoad}
+        onRenderProcessGone={onRenderProcessGone}
+      />
+    </View>
+  );
+}
+
+function CompatibleSvgDocumentFrame({
+  documentDataUri,
+  onLoad,
+  onError,
+  onRenderProcessGone
+}: CompatibleSvgDocumentFrameProps) {
+  const [instanceId] = useState(() => {
+    nextDocumentInstanceId += 1;
+    return String(nextDocumentInstanceId);
+  });
+  const [rendererExited, setRendererExited] = useState(false);
+  const activeRef = useRef(true);
+  const initialSettlementRef = useRef<'pending' | 'load' | 'error'>('pending');
+  const rendererExitedRef = useRef(false);
+  const readyMessage = `${SVG_READY_MESSAGE}:${instanceId}`;
+  const errorMessage = `${SVG_ERROR_MESSAGE}:${instanceId}`;
+
+  const validDocumentDataUri = isSvgDocumentDataUri(documentDataUri);
   const source = useMemo(
     () => ({
       baseUrl: 'about:blank',
-      html: compatibleSvgDocumentHtml(validDocumentDataUri ? artifact.documentDataUri : EMPTY_SVG_DATA_URI)
+      html: compatibleSvgDocumentHtml(
+        validDocumentDataUri ? documentDataUri : EMPTY_SVG_DATA_URI,
+        readyMessage,
+        errorMessage
+      )
     }),
-    [artifact.documentDataUri, validDocumentDataUri]
+    [documentDataUri, errorMessage, readyMessage, validDocumentDataUri]
   );
 
   const settle = useCallback(
     (outcome: 'error' | 'load') => {
-      if (settlementRef.current.identity !== identity || settlementRef.current.phase !== 'waiting') {
+      if (!activeRef.current || rendererExitedRef.current || initialSettlementRef.current !== 'pending') {
         return;
       }
-      settlementRef.current = { identity, phase: outcome };
+      initialSettlementRef.current = outcome;
       if (outcome === 'load') {
         onLoad?.();
       } else {
         onError?.();
       }
     },
-    [identity, onError, onLoad]
+    [onError, onLoad]
   );
 
   useLayoutEffect(() => {
-    if (settlementRef.current.identity === identity) {
-      return;
-    }
-    settlementRef.current = { identity, phase: 'waiting' };
-  }, [identity]);
+    activeRef.current = true;
+    return () => {
+      activeRef.current = false;
+    };
+  }, []);
 
   useLayoutEffect(() => {
     if (!validDocumentDataUri) {
@@ -75,30 +121,44 @@ export function CompatibleSvgDocumentView({ artifact, style, onLoad, onError }: 
   );
   const handleMessage = useCallback(
     (event: CompatibleSvgMessageEvent) => {
-      if (event.nativeEvent.data === SVG_READY_MESSAGE) {
+      if (event.nativeEvent.data === readyMessage) {
         settle('load');
-      } else if (event.nativeEvent.data === SVG_ERROR_MESSAGE) {
+      } else if (event.nativeEvent.data === errorMessage) {
         settle('error');
       }
     },
-    [settle]
+    [errorMessage, readyMessage, settle]
   );
   const handleError = useCallback(() => settle('error'), [settle]);
+  const handleRenderProcessGone = useCallback(() => {
+    if (!activeRef.current || rendererExitedRef.current) {
+      return;
+    }
+    rendererExitedRef.current = true;
+    setRendererExited(true);
+    if (initialSettlementRef.current === 'error') return;
+    if (initialSettlementRef.current === 'pending') initialSettlementRef.current = 'error';
+    (onRenderProcessGone ?? onError)?.();
+  }, [onError, onRenderProcessGone]);
+
+  if (rendererExited) {
+    return null;
+  }
 
   return (
     <WebView
       testID="compatible-svg-document-view"
       source={source}
-      containerStyle={style}
-      style={[componentStyles.webView, style]}
+      containerStyle={componentStyles.webView}
+      style={componentStyles.webView}
       pointerEvents="none"
       originWhitelist={GUARDED_DOCUMENT_ORIGINS}
       onShouldStartLoadWithRequest={handleNavigation}
       onMessage={handleMessage}
       onError={handleError}
       onHttpError={handleError}
-      onRenderProcessGone={handleError}
-      onContentProcessDidTerminate={handleError}
+      onRenderProcessGone={handleRenderProcessGone}
+      onContentProcessDidTerminate={handleRenderProcessGone}
       javaScriptEnabled
       javaScriptCanOpenWindowsAutomatically={false}
       domStorageEnabled={false}
@@ -120,7 +180,7 @@ export function CompatibleSvgDocumentView({ artifact, style, onLoad, onError }: 
   );
 }
 
-function compatibleSvgDocumentHtml(documentDataUri: string) {
+function compatibleSvgDocumentHtml(documentDataUri: string, readyMessage: string, errorMessage: string) {
   return `<!doctype html>
 <html>
 <head>
@@ -145,12 +205,12 @@ img { display: block; width: 100%; height: 100%; object-fit: contain; background
     delivery = 'consumed';
     window.ReactNativeWebView.postMessage(message);
   };
-  const ready = () => requestAnimationFrame(() => requestAnimationFrame(() => post('${SVG_READY_MESSAGE}')));
+  const ready = () => requestAnimationFrame(() => requestAnimationFrame(() => post('${readyMessage}')));
   if (image.complete) {
-    image.naturalWidth > 0 ? ready() : post('${SVG_ERROR_MESSAGE}');
+    image.naturalWidth > 0 ? ready() : post('${errorMessage}');
   } else {
     image.addEventListener('load', ready, { once: true });
-    image.addEventListener('error', () => post('${SVG_ERROR_MESSAGE}'), { once: true });
+    image.addEventListener('error', () => post('${errorMessage}'), { once: true });
   }
 })();
 </script>
@@ -168,6 +228,10 @@ function isLocalBootstrapDocumentUrl(value: string) {
 }
 
 const componentStyles = StyleSheet.create({
+  container: {
+    flex: 1,
+    overflow: 'hidden'
+  },
   webView: {
     backgroundColor: 'transparent',
     flex: 1

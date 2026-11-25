@@ -48,6 +48,7 @@ type Record = {
   fullscreenExitedAt: number | null;
   fullscreenExitPosition: number | null;
   fullscreenExitPlaying: boolean | null;
+  fullscreenExitPlaybackRate: number | null;
 };
 type Scenario = { token: string; rounds: number; minSeconds: number; externalEvery: number };
 
@@ -117,7 +118,8 @@ function observations() {
             detachedAt: null,
             fullscreenExitedAt: null,
             fullscreenExitPosition: null,
-            fullscreenExitPlaying: null
+            fullscreenExitPlaying: null,
+            fullscreenExitPlaybackRate: null
           };
           live.set(player, record);
           counts.peakPlayers = Math.max(counts.peakPlayers, live.size);
@@ -156,6 +158,7 @@ function observations() {
                 record.fullscreenExitedAt = performance.now();
                 record.fullscreenExitPosition = player.currentTime;
                 record.fullscreenExitPlaying = player.playing;
+                record.fullscreenExitPlaybackRate = player.playbackRate;
               }
               record.fullscreen = fullscreen;
               record.fullscreenActive = fullscreen && active;
@@ -479,10 +482,13 @@ function Proof({ scenario }: { scenario: Scenario }) {
 
         if (index % scenario.externalEvery === 0 || index === scenario.rounds - 1) {
           const full = video()!;
+          const rate = index % 2 === 0 ? 1.5 : 2;
+          full.player.playbackRate = rate;
           full.player.play();
           await until('video plays before fullscreen', () => full.player.playing);
           write.current('await-fullscreen-enter', { round: index });
           await until('real native fullscreen entered', () => full.fullscreen && full.fullscreenActive, 120_000);
+          check(full.player.playbackRate === rate, 'Fullscreen entry reset the playback rate');
           setVideoVisible(false);
           await until(
             'inline video removal committed during fullscreen',
@@ -493,6 +499,7 @@ function Proof({ scenario }: { scenario: Scenario }) {
             'Fullscreen player released when inline row recycled'
           );
           await until('native fullscreen plays after inline removal', () => full.player.playing);
+          check(full.player.playbackRate === rate, 'Inline removal reset the fullscreen playback rate');
           fullscreenRetention = {
             serial: full.serial,
             committedAt: performance.now(),
@@ -509,6 +516,7 @@ function Proof({ scenario }: { scenario: Scenario }) {
             observation.counts.fullscreenEntries === observation.counts.fullscreenExits,
             'Fullscreen exit event missing'
           );
+          check(full.fullscreenExitPlaybackRate === rate, 'Fullscreen exit reset the playback rate');
           fullscreenRetention.retainedMs = (full.fullscreenExitedAt || 0) - fullscreenRetention.committedAt;
           fullscreenRetention.endPosition = full.fullscreenExitPosition ?? undefined;
           fullscreenRetention.endedPlaying = full.fullscreenExitPlaying ?? undefined;

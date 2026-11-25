@@ -17,7 +17,7 @@ import { ChevronDown, Star, Trash2, type LucideIcon } from 'lucide-react-native'
 import type { FeedSource, Topic, UserProfile, UserReference } from '@/domain/forum/models';
 import { topicKey, type FollowedUserRecord, type TopicRecord } from '@/domain/reader/readerData';
 import { type LibraryTab } from '@/domain/forum/feed';
-import { libraryCategoryFilterItems } from './model/libraryFilters';
+import type { libraryCategoryFilterItems } from './model/libraryFilters';
 import { formatDateTime, sourceLabel } from '@/domain/forum/presentation';
 import { sourceCatalog, sourceValues, type Source } from '@/domain/forum/sourceCatalog';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
@@ -165,15 +165,14 @@ export const LibraryScreen = memo(function LibraryScreen({
   libraryTab,
   sourceFilter,
   categoryFilter,
-  onSourceFilter: setSourceFilter,
-  onCategoryFilter: setCategoryFilter,
+  onSourceFilter,
+  onCategoryFilter,
   historyCountToClear,
   error,
   onRetry,
   onRetryCategories,
   onLoadMore,
-  categories,
-  categoriesReady = true,
+  categoryItems,
   enabledSources,
   favoriteRecords,
   followedUsers,
@@ -202,8 +201,7 @@ export const LibraryScreen = memo(function LibraryScreen({
   onRetryCategories?: () => void;
   onLoadMore: (tab: LibraryTab) => void;
   libraryTab: LibraryTab;
-  categories: Parameters<typeof libraryCategoryFilterItems>[0];
-  categoriesReady?: boolean;
+  categoryItems: ReturnType<typeof libraryCategoryFilterItems>;
   enabledSources: readonly Source[];
   favoriteRecords: TopicRecord[];
   followedUsers: FollowedUserRecord[];
@@ -240,10 +238,6 @@ export const LibraryScreen = memo(function LibraryScreen({
   } | null>(null);
   const enabledSourceOrderKey = enabledSources.join('|');
   const enabledMembershipKey = sourceValues.filter((source) => enabledSources.includes(source)).join('|');
-  const enabledSourceSet = useMemo(
-    () => new Set<Source>(enabledMembershipKey ? (enabledMembershipKey.split('|') as Source[]) : []),
-    [enabledMembershipKey]
-  );
   const sourceItems = useMemo(
     () => [
       { value: 'all', label: '全部' },
@@ -254,22 +248,15 @@ export const LibraryScreen = memo(function LibraryScreen({
     ],
     [enabledSourceOrderKey]
   );
-  const effectiveSourceFilter =
-    sourceFilter === 'all' || enabledSourceSet.has(sourceFilter as Source) ? sourceFilter : 'all';
-  const effectiveCategoryFilter = effectiveSourceFilter === sourceFilter ? categoryFilter : 'all';
   const userRecords = followedUsers;
-  const categoryItems = useMemo(
-    () => libraryCategoryFilterItems(categories, effectiveSourceFilter),
-    [categories, effectiveSourceFilter]
-  );
   const categoryLabel =
-    categoryItems.find((item) => item.value === effectiveCategoryFilter)?.label || categoryItems[0]?.label || '全部';
+    categoryItems.find((item) => item.value === categoryFilter)?.label || categoryItems[0]?.label || '全部';
   const favoriteListItems = useMemo<LibraryListItem[]>(
     () => createLibraryListItems(favoriteRecords),
     [favoriteRecords]
   );
   const historyListItems = useMemo<LibraryListItem[]>(() => createLibraryListItems(historyRecords), [historyRecords]);
-  const positionScope = `${enabledMembershipKey}:${effectiveSourceFilter}:${effectiveCategoryFilter}`;
+  const positionScope = `${enabledMembershipKey}:${sourceFilter}:${categoryFilter}`;
   const [historyAnchor, setHistoryAnchor] = useState<{ key: string; scope: string }>();
   useEffect(() => setHistoryAnchor(undefined), [enabledMembershipKey]);
   const openTopic = useLatestCallback((topic: Topic) => {
@@ -316,18 +303,15 @@ export const LibraryScreen = memo(function LibraryScreen({
     setHistoryAnchor(undefined);
     setMountedTabs((current) => (current.includes(nextTab) ? current : [...current, nextTab]));
     closeCategoryMenu();
-    setSourceFilter('all');
-    setCategoryFilter('all');
     scrollLibraryToTop(nextTab);
     onTabChange(nextTab);
     requestAnimationFrame(() => scrollLibraryToTop(nextTab));
   });
   const changeSourceFilter = useLatestCallback((value: string) => {
-    if (value === effectiveSourceFilter) return;
+    if (value === sourceFilter) return;
     setHistoryAnchor(undefined);
     closeCategoryMenu();
-    setCategoryFilter('all');
-    setSourceFilter(value as FeedSource);
+    onSourceFilter(value as FeedSource);
     scrollLibraryToTop(libraryTab);
   });
   const openCategoryMenu = useCallback(
@@ -375,27 +359,11 @@ export const LibraryScreen = memo(function LibraryScreen({
   const selectCategory = useLatestCallback((value: string) => {
     if (!active || getFocusOwner?.() === null) return;
     closeCategoryMenu();
-    if (value === effectiveCategoryFilter) return;
+    if (value === categoryFilter) return;
     setHistoryAnchor(undefined);
-    setCategoryFilter(value);
+    onCategoryFilter(value);
     scrollLibraryToTop(libraryTab);
   });
-  useEffect(() => {
-    if (sourceFilter !== 'all' && !enabledSourceSet.has(sourceFilter as Source)) {
-      closeCategoryMenu();
-      setSourceFilter('all');
-      setCategoryFilter('all');
-    }
-  }, [closeCategoryMenu, enabledMembershipKey, enabledSourceSet, sourceFilter, setSourceFilter, setCategoryFilter]);
-  useEffect(() => {
-    if (
-      categoriesReady &&
-      effectiveCategoryFilter !== 'all' &&
-      !categoryItems.some((item) => item.value === effectiveCategoryFilter)
-    ) {
-      setCategoryFilter('all');
-    }
-  }, [categoriesReady, categoryItems, effectiveCategoryFilter, setCategoryFilter]);
   const bindConfirmation = useCallback(
     (action: () => void) => {
       if (!getFocusOwner) return action;
@@ -468,21 +436,14 @@ export const LibraryScreen = memo(function LibraryScreen({
             readerState={readerState}
             scene={tab}
             renderTrailingAction={tab === 'favorites' ? renderFavoriteTrailingAction : renderHistoryTrailingAction}
-            showSource={effectiveSourceFilter === 'all'}
+            showSource={sourceFilter === 'all'}
             topic={record.topic}
             onOpenTopic={openTopic}
           />
         </View>
       );
     },
-    [
-      effectiveSourceFilter,
-      openTopic,
-      renderFavoriteTrailingAction,
-      renderHistoryTrailingAction,
-      styles,
-      topicStateIndex
-    ]
+    [sourceFilter, openTopic, renderFavoriteTrailingAction, renderHistoryTrailingAction, styles, topicStateIndex]
   );
   const renderFavoriteItem = useCallback<ListRenderItem<LibraryListItem>>(
     ({ item }) => renderTopicItem(item, 'favorites'),
@@ -512,7 +473,7 @@ export const LibraryScreen = memo(function LibraryScreen({
             </Text>
             <Text style={styles.meta} numberOfLines={2}>
               {[
-                effectiveSourceFilter === 'all' ? sourceLabel(item.user.source) : '',
+                sourceFilter === 'all' ? sourceLabel(item.user.source) : '',
                 item.user.levelLabel,
                 `关注于 ${formatDateTime(item.followedAt) || item.followedAt}`
               ]
@@ -526,7 +487,7 @@ export const LibraryScreen = memo(function LibraryScreen({
         </View>
       </View>
     ),
-    [effectiveSourceFilter, onOpenUser, onRemoveUser, styles]
+    [sourceFilter, onOpenUser, onRemoveUser, styles]
   );
 
   const renderHeader = useCallback(
@@ -561,7 +522,7 @@ export const LibraryScreen = memo(function LibraryScreen({
               <PillRail
                 variant="subtabs"
                 items={sourceItems}
-                value={effectiveSourceFilter}
+                value={sourceFilter}
                 testIDPrefix="library-source"
                 onChange={changeSourceFilter}
               />
@@ -589,7 +550,7 @@ export const LibraryScreen = memo(function LibraryScreen({
                       !categoryActionAvailable && styles.categoryFilterButtonTextDisabled
                     ]}
                   >
-                    {onRetryCategories ? '分类 · 重试' : effectiveCategoryFilter === 'all' ? '分类' : categoryLabel}
+                    {onRetryCategories ? '分类 · 重试' : categoryFilter === 'all' ? '分类' : categoryLabel}
                   </Text>
                   {viewportCategorySelectionAvailable && !onRetryCategories ? (
                     <ChevronDown size={14} color={theme.primary} strokeWidth={1.8} />
@@ -609,7 +570,7 @@ export const LibraryScreen = memo(function LibraryScreen({
                           compact
                           label={item.label}
                           last={index === categoryItems.length - 1}
-                          selected={item.value === effectiveCategoryFilter}
+                          selected={item.value === categoryFilter}
                           onPress={() => selectCategory(item.value)}
                         />
                       ))}
@@ -630,8 +591,8 @@ export const LibraryScreen = memo(function LibraryScreen({
       changeSourceFilter,
       closeCategoryMenu,
       confirmClearHistory,
-      effectiveCategoryFilter,
-      effectiveSourceFilter,
+      categoryFilter,
+      sourceFilter,
       loaded,
       openCategoryMenu,
       onRetryCategories,
@@ -680,11 +641,11 @@ export const LibraryScreen = memo(function LibraryScreen({
               actionLabel="管理内容源"
               onAction={onManageContentSources}
             />
-          ) : effectiveSourceFilter !== 'all' || effectiveCategoryFilter !== 'all' ? (
+          ) : sourceFilter !== 'all' || categoryFilter !== 'all' ? (
             <RecoverableEmptyState
               message="当前筛选下没有记录"
               actionLabel="清除筛选"
-              onAction={() => (effectiveSourceFilter === 'all' ? selectCategory('all') : changeSourceFilter('all'))}
+              onAction={() => (sourceFilter === 'all' ? selectCategory('all') : changeSourceFilter('all'))}
             />
           ) : (
             <EmptyText
@@ -699,8 +660,8 @@ export const LibraryScreen = memo(function LibraryScreen({
     [
       animatedEmptyTab,
       changeSourceFilter,
-      effectiveCategoryFilter,
-      effectiveSourceFilter,
+      categoryFilter,
+      sourceFilter,
       enabledSources.length,
       loaded,
       onManageContentSources,

@@ -164,6 +164,8 @@ Modal、BottomSheet、WebView、系统浏览器、文件选择器、系统分享
 
 ### FEED：首页与发现
 
+`FEED-01/02` 的聚合首页把每站条数当作候选上限。linux.do 交付去重后首个有可显示条目的上游页，后续普通条目由保留的游标续读。首页某站读取失败时，按该站实际续读位置判断是否仍在读首页。完全被过滤的上游页仍在已有扫描上限内续查。同一主题先后出现在普通首屏与置顶索引时，阅读进度按响应顺序合并。
+
 `FEED-02/04` 的单站列表以当前原站列表为准，在卡片元信息区标记「置顶」。NodeSeek 首页与各版块分别读取独立置顶，V2EX 读取主题行的原站角标，妖火读取帖子徽标。linux.do 的「最新」首屏限时补读当前范围的置顶。游客使用原站活动列表，已登录账号使用原站置顶筛选，读完公告后仍可在首页看到。全站仅展示全局置顶，分类仅展示本分类的置顶，原站按当前账号权限返回结果。普通主题仍按发帖时间和原页码读取，置顶读取失败时继续展示正常列表。
 
 `FEED-01` 的首页「全部」在分配各来源名额前过滤置顶主题，首屏预览、正式列表和分页缓存只使用普通主题。游标记录同一次分页中识别的置顶主题身份，后续页中的同一主题也会被过滤。刷新时重新按原站列表识别。已显示的首屏预览保留位置。
@@ -272,7 +274,7 @@ linux.do 筛选打开，或已应用的作者需要在摘要中显示昵称时�
 
 `SEARCH-02`、`NAV-01`：空关键词且存在最近搜索时，「最近搜索」标题与最多 20 条记录必须作为 `FlashList` 的稳定 typed items 参与虚拟化，不能塞回 `ListHeaderComponent`；Header 只拥有输入、来源、筛选与 AI 控件。迁移不得改变顺序、点击搜索、逐条删除、禁用态或无障碍文案；视觉继续是一张圆角分组面板和相邻 hairline 分隔，单行点击区至少 `48dp` 且不得通过负 margin 互相覆盖。
 
-Android 最近搜索行的 History/X 装饰图标使用 `modules/forum-platform/android/src/main/java/com/wz/reader/SearchHistoryIconViewManager.kt` 提供的系统 `ImageView` 和本地位图，避免每条记录创建两棵 SVG 子树；原始路径、描边和许可保存在 `modules/forum-platform/assets/` 与 `modules/forum-platform/lucide.LICENSE`。颜色随当前主题同步更新，图标不独立接收无障碍焦点；非 Android 保留原 Lucide 图标。点击、删除、尺寸和主题由既有 `tests/ui/search/search-screen.test.tsx` 承接，首挂载和预热帧时仍须按 runbook 分别验收，不能只凭节点减少判为性能通过。
+Android 最近搜索行的 History/X 装饰图标使用 `modules/forum-platform/android/src/main/java/com/wz/reader/SearchHistoryIconViewManager.kt` 提供的系统 `ImageView` 和本地位图。同资源、主题色和密度共用已着色的像素，首次需要时创建缓存。原始路径、描边和许可保存在 `modules/forum-platform/assets/` 与 `modules/forum-platform/lucide.LICENSE`。首尾圆角行通过 `modules/forum-platform/android/src/main/java/com/wz/reader/SearchHistoryFrameViewManager.kt` 绘制边框和分隔线，中间行使用直线边框。装饰不独立接收无障碍焦点。非 Android 保留原 Lucide 图标和常规边框。点击、删除、尺寸和主题由 `tests/ui/search/search-screen.test.tsx` 验证，首挂载和暖切帧时分别按维护手册验收。
 
 `SEARCH-01/02` 共享 Android TextInput：`patches/react-native+0.86.3.patch` 在 underline 完全透明时只移除系统原生底图，保存该 Drawable，并在恢复非透明或默认颜色时重新接入。React 自有填充、边框、阴影及既有 padding 不变；连续透明更新不重建已移除的层，主题和样式更新不得丢失保存的原生底图。此规则也覆盖其他默认透明 underline 的 RN 输入框。Canonical native owner 为补丁内 `ReactTextInputUnderlineBackgroundTest`，由 `scripts/native-test-plan.mjs` 的 RN 测试组运行；Search 的输入、清空与主题交互仍归 `tests/ui/search/search-screen.test.tsx`。原生 Drawable 不再绘制不等于整个 Search 首挂载通过，cold 与 warm 门槛分别验收。
 
@@ -287,6 +289,8 @@ Android 最近搜索行的 History/X 装饰图标使用 `modules/forum-platform/
 `SEARCH-02`、`NAV-01` 的等价运行时更新应保留搜索输入头、已结算列表和既有请求。`useSearchController` 为标签和作者分别持有读取计划，候选查询键和延迟回调均取自对应计划。SearchRoute 的来源切换入口调用最新 controller，AppComposition 的路由通知函数也调用最新处理函数。`tests/ui/search/search-screen.test.tsx` 和 `tests/ui/app/app-composition.test.tsx` 核对 React 提交次数与请求次数，切页帧时另行实测。
 
 ### TOPIC：主题详情与阅读
+
+`TOPIC-01/03` 的阅读、楼层定位和普通翻页复用已返回的楼层。回复缺少 Markdown 时，点编辑才读取该楼原文并核对身份与编辑许可。找楼的失败或取消按当次定位请求结算，随后普通分页可补入该楼内容。
 
 `TOPIC-03` 在详情页左下的按钮和楼层菜单显示视口最下方有实际内容的楼层，正序和倒序都按画面顺序，只有主楼可见时显示「主楼」。楼层判断排除分隔间距，回复正文分段时取所属楼层。L 站续读仍按视口顶部的可读内容记录，也排除分隔间距。初次续读定位完成后开放楼层选择。楼层入口与右下「回复」随手动阅读方向显隐。自动续读或选楼后的程序滚动保留两个按钮，手指重新滚动时从落点判断方向。只读主题有评论时也可使用。点楼层入口就在上方展开选择和输入，键盘弹出时避开键盘。选择或输入原站楼层编号共用引用楼层的定位流程，清除会挡住目标的评论筛选，按当前排序加载目标附近的回复。
 
@@ -375,7 +379,7 @@ Canonical evidence：`src/domain/forum/discourseReading.test.ts`、`src/platform
 | ID | 用户入口与行为契约 | 主要代码入口 | 自动测试 | 模拟器路径 |
 | --- | --- | --- | --- | --- |
 | `TOPIC-01` | 四站主题详情展示来源、分类、标题、作者、时间、正文、适用统计和回复；Discourse 主题展示关闭、归档、置顶、已解决、采纳楼层和慢速模式等原站状态，正文后展示可折叠的已采纳答案；当前页缺少采纳楼层时静默精确补取并可就地展开全文，受限主题不得补取。linux.do emoji 目录必须经 `ReadGateway` 复用代理 fetcher、站点凭据、诊断和取消信号，迟到结果不得落地。详情请求进入后台且进程存活时不得因 AppState 被取消，后台墙钟继续计入原 timeout；deadline 内先结算则复用原请求，逾期则恢复时立即进入既有 typed timeout/fallback/recovery，不重置预算或全局 refetch；读取本地 Cookie 的 `cookie-loaded` 观察事件不得取消正在执行的同站 Query，新凭据的 `session-updated` 及其他真实身份变化必须清除该来源旧详情、释放 Loading 并保留可重试目标；来源失败或 `parse_empty` 应给出可重试状态且不得覆盖可信详情。 | `src/features/topic/TopicRoute.tsx`、`src/features/topic/TopicScreen.tsx`、`src/features/topic/components/TopicContentList.tsx`、`src/features/topic/components/ReplyItem.tsx`、`src/features/topic/useTopicController.ts`、`src/platform/query/serverState.ts`、`src/sources/discourse/reactions.ts`、`src/sources/linuxdo/reader.ts`、`src/sources/readGateway.ts` | `src/features/topic/model/replyPagination.test.ts`、`src/features/account/sessionQueryOwnership.test.ts`、`src/features/account/browserFetchQueue.test.ts`、`tests/integration/query-session-contracts.test.ts`、`src/sources/discourse/reactions.test.ts`、`src/sources/yaohuo/parser.test.ts`、`src/features/topic/model/topicDerivedData.test.ts`、`tests/integration/source-read-contracts/`、`src/sources/readGatewayContract.test.ts`、`tests/ui/app/app-lifecycle-request-timeout.test.tsx`、`tests/ui/topic/topic-components.test.tsx`、`tests/ui/topic/topic-reply-filters.test.tsx`、`tests/ui/topic/topic-session-controller.test.tsx` | 从四站首页或搜索各打开一个主题；请求仍在飞时按 Home，分别在 deadline 内与超过 deadline 后返回，前者原请求只结算一次，后者不得再等待完整 timeout；linux.do 另核对主题状态、回应图片和采纳预览/完整回复。 |
-| `TOPIC-02` | 正文正确呈现 HTML、链接、表格、代码、图片、附件、音频、视频、Emoji、贴纸、SVG 和站点格式；可信站内用户链接进入 App User route。块图先显示适屏版本并可渐进升级原图，失败时保留可读底图；预览支持相邻页、缩放、下拉关闭、重试、Back、无障碍翻页和按授权保存。安全 HTTP(S) 音频在主楼、回复、展开引用和采纳答案的原位置显示原生播放器，空源保留来源 fallback，危险源拒绝；播放器不自动播放，支持播放/暂停、连续拖动跳转、时间、失败重试与无障碍进度操作。同一 Topic 的原生音视频统一互斥，切换时保存各自位置；缓冲中仍可暂停与拖动，暂停不计入无进展超时；播放中的音频行被回收后继续播放，重新进入直接显示当前进度；route/App inactive 或媒体 paused 时暂停并保留位置，恢复后不自动续播，只有离开或切换 Topic 才释放。正文视频使用平台原生 controls 提供内联进度拖动、暂停与全屏，加载时只显示不挡控件的 loading，不请求或展示 HTML 临时 poster；视频先挂载空 player，视图完成非零布局后只加载一次；VideoView 的 onFirstFrameRender 确认实际首帧后撤下首次 loading，readyToPlay 不代表已出画面；同一 player 后续 seek 保留视频画面；中央播放/暂停保留简洁图形，内联 40 dp、全屏 48 dp，触控范围 56 dp。视频行回收时暂停并记住位置，重新加载首次 ready 后恢复进度；全屏期间保留 player 与网络 lease，退出后按行生命周期释放；帖子外层与主楼选择行固定原生容器，App 活跃状态切换不折叠/重建视频祖先。音视频使用最多 256 MiB 的 LRU 临时缓存，按来源、会话和有效请求语义分区，网络切代不改变缓存身份；缓存淘汰或损坏后允许回源，不承诺永久离线。inline 媒体保持文字基线，表格与代码可横滑且不破坏文字选择；Android 当前实际显示的主楼正文可跨虚拟 row 连续拖动、全选和复制，回收不改变复制顺序或原布局；起止端点使用与同页原生标题一致的平台方向手柄和 caret hotspot，手柄主体不得压住端点文字，拖动只在逻辑端点真实变化时给出系统选择触感。所有媒体遵守来源 Referrer、身份隔离、取消、有限并发和有限重试；不可信 URL、恶意或超大正文必须有限结算，安全文字不得被静默删除。 | `src/features/topic/components/TopicContentList.tsx`、`src/features/topic/components/TopicContentBlock.tsx`、`src/features/topic/selection/TopicSelectionSurface.tsx`、`modules/forum-content-selection`、`src/features/topic/rendering/useHtmlRenderingController.tsx`、`src/features/topic/media/TopicAudioSession.tsx`、`src/ui/content/ForumContentAudio.tsx`、`src/ui/content/ForumContentVideo.tsx`、`src/platform/media/imagePreviewCatalog.ts`、`src/platform/media/mediaRequestContext.ts` | `src/domain/forum/topicContentSplit.test.ts`、`src/platform/media/mediaRequestContext.test.ts`、`tests/integration/html-sanitization-contracts.test.ts`、`tests/ui/topic/topic-rich-text-selection.test.tsx`、`tests/ui/topic/topic-image-loading.test.tsx`、`tests/ui/topic/image-preview.test.tsx`、`tests/ui/topic/topic-table-rendering.test.tsx`、`npm run test:native:forum-selection`、`npm run test:instrumented:forum-selection` | 打开含表格、代码、图片、音频、视频和引用的四站主题，检查阅读、主楼跨 row 选择/复制、横滑、音频控制、预览/返回、失败重试与页面位置；选择手柄另与同页原生标题对照形状、热点和触感；保存或其他写入需另获授权。 |
+| `TOPIC-02` | 正文正确呈现 HTML、链接、表格、代码、图片、附件、音频、视频、Emoji、贴纸、SVG 和站点格式；可信站内用户链接进入 App User route。块图先显示适屏版本并可渐进升级原图，失败时保留可读底图；预览支持相邻页、缩放、下拉关闭、重试、Back、无障碍翻页和按授权保存。安全 HTTP(S) 音频在主楼、回复、展开引用和采纳答案的原位置显示原生播放器，空源保留来源 fallback，危险源拒绝；播放器不自动播放，支持播放/暂停、连续拖动跳转、时间、失败重试与无障碍进度操作。同一 Topic 的原生音视频统一互斥，切换时保存各自位置；缓冲中仍可暂停与拖动，暂停不计入无进展超时；播放中的音频行被回收后继续播放，重新进入直接显示当前进度；route/App inactive 或媒体 paused 时暂停并保留位置，恢复后不自动续播，只有离开或切换 Topic 才释放。正文视频使用平台原生 controls 提供内联进度拖动、暂停与全屏，加载时可先显示原站封面和不挡控件的 loading，封面遵循正文媒体预算及请求身份；视频先挂载空 player，视图完成非零布局后只加载一次；VideoView 的 onFirstFrameRender 确认实际首帧后撤下首次 loading，readyToPlay 不代表已出画面；同一 player 后续 seek 保留视频画面；中央播放/暂停保留简洁图形，内联 40 dp、全屏 48 dp，触控范围 56 dp。视频行回收时暂停并记住位置，重新加载首次 ready 后恢复进度；全屏期间保留 player 与网络 lease，退出后按行生命周期释放；帖子外层与主楼选择行固定原生容器，App 活跃状态切换不折叠/重建视频祖先。音视频使用最多 256 MiB 的 LRU 临时缓存，按来源、会话和有效请求语义分区，网络切代不改变缓存身份；缓存淘汰或损坏后允许回源，不承诺永久离线。inline 媒体保持文字基线，表格与代码可横滑且不破坏文字选择；Android 当前实际显示的主楼正文可跨虚拟 row 连续拖动、全选和复制，回收不改变复制顺序或原布局；起止端点使用与同页原生标题一致的平台方向手柄和 caret hotspot，手柄主体不得压住端点文字，拖动只在逻辑端点真实变化时给出系统选择触感。所有媒体遵守来源 Referrer、身份隔离、取消、有限并发和有限重试；不可信 URL、恶意或超大正文必须有限结算，安全文字不得被静默删除。 | `src/features/topic/components/TopicContentList.tsx`、`src/features/topic/components/TopicContentBlock.tsx`、`src/features/topic/selection/TopicSelectionSurface.tsx`、`modules/forum-content-selection`、`src/features/topic/rendering/useHtmlRenderingController.tsx`、`src/features/topic/media/TopicAudioSession.tsx`、`src/ui/content/ForumContentAudio.tsx`、`src/ui/content/ForumContentVideo.tsx`、`src/platform/media/imagePreviewCatalog.ts`、`src/platform/media/mediaRequestContext.ts` | `src/domain/forum/topicContentSplit.test.ts`、`src/platform/media/mediaRequestContext.test.ts`、`tests/integration/html-sanitization-contracts.test.ts`、`tests/ui/topic/topic-rich-text-selection.test.tsx`、`tests/ui/topic/topic-image-loading.test.tsx`、`tests/ui/topic/image-preview.test.tsx`、`tests/ui/topic/topic-table-rendering.test.tsx`、`npm run test:native:forum-selection`、`npm run test:instrumented:forum-selection` | 打开含表格、代码、图片、音频、视频和引用的四站主题，检查阅读、主楼跨 row 选择/复制、横滑、音频控制、预览/返回、失败重试与页面位置；选择手柄另与同页原生标题对照形状、热点和触感；保存或其他写入需另获授权。 |
 | `TOPIC-03` | 回复区支持分页、正序/倒序、全部/只看楼主/只看带图、评论内查找、引用关系和楼层定位；筛选、查找、刷新及嵌套返回后保持一致。四站定位后均按当前顺序双向续读，前插页面、分页控件变化和后续行高变化不顶走阅读内容；真实拖动、再次定位、返回顶部及选择自动滚动优先于旧锚点。可信作者、回复目标、引用和签名用户链接进入 App User route。评论引用默认显示简介，可展开完整内容；跨主题引用按来源、主题和楼层隔离并共享同一读取。Android 回复、评论和已采纳答案不注册主楼连续选择，继续使用原有整条长按复制。回复身份优先使用原站实体 ID，同楼层不同实体不得互相覆盖。采纳答案保留普通回复能力；系统动作显示可读事件行。分页、定位和写后刷新只能合并已确认窗口，失败保留已加载内容与原 cursor。 | `src/features/topic/components/ReplyItem.tsx`、`src/features/topic/components/TopicContentList.tsx`、`src/features/topic/model/replyPagination.ts`、`src/features/topic/useTopicSessionController.ts`、`src/sources/readGateway.ts`、`patches/@shopify+flash-list+2.3.2.patch`、`patches/react-native+0.86.3.patch` | `src/features/topic/model/replyPagination.test.ts`、`src/domain/forum/quotedPosts.test.ts`、`tests/integration/source-read-contracts/`、`tests/ui/topic/topic-components.test.tsx`、`tests/ui/topic/topic-reply-filters.test.tsx`、`tests/ui/topic/topic-session-controller.test.tsx`、Native `MaintainVisibleScrollPositionHelperTest` | 组合四站的回复筛选、查找、顺序、双向分页、楼层定位和同/跨主题引用，核对补页及晚测高前后同一回复的坐标、主动操作接管；确认回复/评论/采纳答案仍是整条长按复制、不进入主楼连续选择；进入作者或嵌套主题后返回，确认原位置和状态。 |
 | `TOPIC-04` | 详情提供本机收藏；主题菜单提供分享、仅刷新评论、完整刷新、阅读设置和原站打开；操作后保持当前详情上下文。V2EX 超过 100 条时首屏只读取并展示第一页，保留可信总数与显式下一页游标；仅在用户触底或点击「加载更多回复」时读取下一页。「仅刷新评论」重建当前顺序的 start 窗口，「完整刷新」重取正文并复用新的 Topic 首页窗口。后续页失败保留可信正文、已加载评论和同游标评论级重试；静置不自动补齐、重试或轮询。 | `src/features/topic/components/TopicMenu.tsx`、`src/features/topic/useTopicController.ts`、`src/features/topic/useTopicSessionController.ts`、`src/sources/sourceRead.ts`、`src/app/useReaderRuntime.ts` | `src/app/AppNavigator.test.ts`、`src/features/topic/model/replyPagination.test.ts`、`src/features/topic/useTopicSessionController.test.ts`、`src/app/useReaderRuntime.test.ts`、`tests/integration/source-read-contracts/`、`tests/ui/shared/topic-and-more-controls.test.tsx`、`tests/ui/topic/topic-reply-filters.test.tsx`、`tests/ui/topic/topic-session-controller.test.tsx`、`tests/ui/app/app-navigator.test.tsx` | 打开右上菜单；分享后取消，按授权检查可恢复的本机收藏；V2EX 只读核对首屏不后台补齐、触底只追加相邻页、两种刷新不清空正文和已确认评论；阅读设置返回回归。 |
 
@@ -487,6 +491,8 @@ Canonical evidence：`src/domain/forum/discourseReading.test.ts`、`src/platform
 `TOPIC-02/03`：四站 HTML 表格只显示一层周界和一套内部网格，末行末列不得叠出更粗边缘；分段表格保持连续，表头、列宽、`colspan`、横滑和 Markdown 语义不变。表格外框样式只依赖主题，列表密度、正文宽度和前后台动作变化不重建表格 renderer 或滚动宿主；宽度经现有内容边界更新。`tests/ui/topic/topic-rich-text-selection.test.tsx` 拥有实例连续性证据，`src/features/topic/styles.test.ts` 与 `tests/ui/topic/topic-table-rendering.test.tsx` 分别验证样式和布局。
 
 `TOPIC-01/02/03`：正文、原图、预览、保存、音频、视频、贴纸和卡片图共用媒体首跳 Referrer 规则；最终策略由元素、文档和真实 URL 关系决定，不能从站点名猜测。视频按固有比例显示并使用平台 controls；音频使用受控原生卡片且不自动播放，提供播放/暂停、时间、连续拖动和手动重试。音频离窗继续播放，route/App inactive 时暂停但保留 player、lease 与位置，返回后保持暂停；只有 Topic 改变或卸载才释放。错误或超时后等待用户重试，卸载后不再访问已释放资源；poster、暂停帧、附件语义和已显示图片在滚动或 Tab 切换后保持稳定。
+
+Android 正文视频的内联和全屏共用 Media3 控件。内联紧凑布局提供原生设置入口，可打开播放速度菜单。全屏交接保留同一播放器的速率、位置和播放状态。独立视频行与富文本视频都使用原站 `poster`，在现有媒体预算内独立备图，收到匹配播放器的真实首帧后移除封面。播放中重新缓冲保留最新画面。无原站封面时等待播放器首帧，额外抽帧请求为零。音频进度条只在正常提交拖动时跳转，系统取消时复位拖动状态。
 
 `TOPIC-01/02/03`：主楼、回复、完整引用和采纳答案共用同一内容守恒协议；净化后的安全文字、链接、图片、表格、代码及其顺序不得因展示分类而删除。`compileForumContent()` 一次产出不可变的 `row.html`、`selectionToken` 与 `previewImages`，renderer 只投影，不在运行期重新分类或 materialize。图片位置来自作者 DOM 锚点、换行、块容器和显式对齐，无信号时从行首开始；图片尺寸不得反向改变位置。普通 textual 图片按自然尺寸并受正文宽度限制，来源明确标记的有界内联图按自然比例限制最长边且不随正文字号放大；无法选源或最终加载失败时显示完全转义且可重试的降级内容，不得空白消失或重新注入节点。
 
@@ -621,6 +627,8 @@ linux.do summary 的 `post_count` 是排除主题首帖的回复数，直接映�
 
 ### ACCOUNT：账号、Cookie 与站点会话
 
+`ACCOUNT-01/02` 的手动登录交接等待 Cookie 交接、身份核对和持久化回执。NodeSeek 与妖火检测成功后先卸载登录 WebView，再核对身份并等待持久化回执。失败时保留待交接标记，用户可从账号核对入口重试。从手动登录接入的恢复任务重新打开验证页时，新的页面持有自己的交接票据。NodeSeek 填入只处理当前已加载的登录表单。LDC WebView 对原生主帧和认证桥接使用同一组受信来源。
+
 `ACCOUNT-01/02` 的 L 站掉登录修复覆盖当前用户核对和原生 Cookie 回写。认证 Cookie 续期后，明确由旧值发出的回包只处理其普通 Cookie 更新。当前值确认被原站删除时发起会话核对，仍以站点身份接口的结果发布账号状态。
 
 冷启动读取本机账号快照或迁移标记出错时，只重读该键一次。仍读取失败则显示「重试启动」，保留磁盘记录。成功读取到已有迁移标记后，继续按普通冷启动处理，零原站账号核对。受控验证归 `tests/ui/account/account-status-controller.test.tsx` 与 `tests/ui/account/account-runtime.test.tsx`。
@@ -734,6 +742,8 @@ LDC 使用 [Linux DO Credit 官方服务](https://github.com/linux-do/credit) �
 
 ### NOTIFY：统一消息与 Android 通知
 
+`NOTIFY-01/02` 列表只在当前路由聚焦、App 前台且查询身份匹配时发起读取。聚合刷新局部失败时保留各站可读缓存，把部分有效条目合入列表，并按失败来源的实际游标定点重试。NodeSeek 私信列表的摘要与无障碍标签使用 Markdown 链接文字，私信详情继续按原格式渲染。`NOTIFY-03` 的后台同步继续使用自己的开关与生命周期。NodeSeek 登录窗口临时恢复前台读取时，Android 通知注册、摘要投递和投递记录仍等待账号交接完成。
+
 linux.do 单条、批量已读和 NodeSeek 单条已读都须取得原站明确的成功回执。Android 后台任务从入口起共用 50 秒预算，首次读取来源设置也计入其中。超时后不再开始新的来源请求，已开始的读取结算后关闭临时连接。
 
 `NOTIFY-03` 的后台扫描每轮共用一条本机资料连接。各次权限检查都重新读取来源设置，用户在本轮停用来源后，后续检查能立即生效。
@@ -790,7 +800,9 @@ linux.do 单条、批量已读和 NodeSeek 单条已读都须取得原站明确�
 
 `NOTIFY-02`、`TOPIC-01/03`、`WRITE-01` 的 linux.do 公告阅读确认使用共享 `DiscoursePostPolicy`。通知的 `unread=false` 只代表通知已读，不能推导 policy 已接受。2026-10-03 原站公告 [社区准则更新公告](https://linux.do/t/topic/293017) 的 policy 版本为 `2604181600`，接受文案为「我已知晓此更新内容」，撤销文案为「等我再仔细阅读一番」；当时该通知已读，但原站接受按钮仍可用。App 从帖子 serializer 的明确状态与权限、policy 的版本和文案生成原生面板，保留公告正文并移除网页注入的操作和用户统计装饰。按钮分别调用 `/policy/accept` 与 `/policy/unaccept`，只有明确成功响应才确认提交；提交后重新读取原站状态，不乐观更改已接受状态。成功提交但回读失败时禁用旧动作，离页返回同一身份仍保留待核对状态，直到读取成功；撤销需要独立确认，重复点击、后台、换号和迟到对话框不能产生额外写入。消息详情与完整主题、回复共用模型、parser 和动作，不能以通知已读代替公告确认。原站 serializer 与动作契约依据 [Discourse policy serializer](https://github.com/discourse/discourse/blob/main/plugins/discourse-policy/lib/extensions/post_serializer_extension.rb) 和 [policy controller](https://github.com/discourse/discourse/blob/main/plugins/discourse-policy/app/controllers/discourse_policy/policy_controller.rb)；2026-10-03 在用户本次明确授权下，消息详情的接受、撤销与原站状态回读已取得下述 `LIVE_PASS`。
 
-公告提交成功后，Topic 显式重新读取当前主题和回复，不以仅标记缓存失效代替状态核对。消息详情取得当前认证身份的权威 policy GET 后，通过 `src/platform/query/discoursePolicyCache.ts` 同步已有 Topic、单条回复与分页回复缓存中同一 post ID、同一 policy 版本的状态；只更新当前 authenticated session epoch，不创建缓存、不改正文或页参数，也不影响匿名、其他身份或旧版本。同步依据是原站 GET，不是接受或撤销动作的本地预期。提交响应不明确时，只有当前动作的权威回读确认同一帖子、同一版本已达到目标状态，才清除过期的未确认提示。
+公告提交成功后，Topic 显式重新读取当前主题和回复，不以仅标记缓存失效代替状态核对。消息详情取得当前认证身份的权威 policy GET 后，通过 `src/platform/query/discoursePolicyCache.ts` 同步已有 Topic、单条回复与分页回复缓存中同一 post ID、同一 policy 版本的状态；只更新当前 authenticated session epoch，不创建缓存、不改正文或页参数，也不影响匿名、其他身份或旧版本。同步依据是原站 GET，不是接受或撤销动作的本地预期。提交响应不明确时，只有当前动作的权威回读确认同一帖子、同一版本已达到目标状态，才清除过期的未确认提示。待核对期间阻止同帖其他版本的旧按钮提交。确认回读前已开始的读取迟到时，沿用同版本的权威确认状态，或隐藏过期版本的动作。
+
+linux.do 公告确认和 NodeSeek 投票、封盘的待核对回执在当前进程按账号与会话保留。关闭再启用内容源会清理旧的读取缓存，同时保留待核对回执。重新进入时继续核对原站状态，真实会话切换后清理属于旧会话的回执。
 
 私信对方主页入口放在会话标题的头像和姓名中：NodeSeek、妖火使用原生导航标题，linux.do 保留独立话题标题并在正文上方显示紧凑的对方信息。普通通知可点击可靠作者信息。入口只采用当前可访问详情中的原站身份：NodeSeek、妖火使用明确数字 ID，linux.do 使用明确 username；显示名不能猜作账号，缺少可靠身份不显示可点击主页入口。linux.do 会话不把自己当作对方，近期菜单仅在参与者身份完整且只有一位非本人时提供对方主页，多人或身份不完整的会话保持中性标题。导航继续进入已有 User route，换号或访问失效后不保留旧身份动作。
 
@@ -818,7 +830,11 @@ linux.do 单条、批量已读和 NodeSeek 单条已读都须取得原站明确�
 
 `NOTIFY-01` 与 `ACCOUNT-01/02` 共用恢复入口：分类、单站和聚合列表保留结构化错误，登录失效显示「去登录」、验证挑战显示「去验证」，仅在用户点击后打开现有站点面板。三站普通失败重试均先核验账号，明确 anonymous 才打开登录，核验被验证阻断时打开验证，unknown 保留身份并报告原因。单站和聚合列表逐站判断身份。已确认的游客可直接登录，身份未知的站点可单独重试核对。L 站可选分类探测不得吞掉登录、验证或取消。通知 runtime 只维护按来源/epoch 的内存暂停标记，阻止受阻来源列表与前台未读轮询继续请求；其他站照常工作，不增加账号事实或恢复状态机。L 站验证复用 exact Query recovery，每轮手动或已授权的自动检测只恢复一次；离页、切站或身份变更使旧恢复失效，关闭面板不自动再弹，正常登录仍由 Account 关闭后核验。新恢复的通知读取须等待 Account 私有访问屏障释放；已因登录/验证暂停的 Query 保留观察者供原恢复动作使用。分类读取失败时列表尚未启动，不得显示永久「正在读取消息」。canonical evidence 为 `tests/ui/notifications/notifications-route.test.tsx`、`tests/ui/notifications/notifications-runtime.test.tsx` 与共享 Account owner。
 
-`NOTIFY-03` 的本机事务边界以 native `notify()` ack 为提交前提：ack pending 时 Store 水位与 identifier 均不变；ack 后一次 compound write 原子提交二者，随后才 exact-dismiss 旧槽。native present/exact dismiss 共享 graceful-draining 的单线程 Executor；顶层 deadline 可以 bounded 返回，但同身份 single-flight lane 必须持有到已开始的槽位对账、channel 初始化、native present、Store 写入与必要 exact dismiss 全部结算。对账中单个撤销失败也要等其余已启动的撤销结束；超时前尚未开始 commit 的迟到 present 必须先等待 ack 再 exact-dismiss，不能先清理后显示。强杀在 ack 与 Store commit 之间最多导致下轮重复覆盖，不得永久漏报。
+同一次 linux.do 验证恢复共用一个取消信号，覆盖精确 Query、聚合消息补读和主题刷新。关闭验证时停止在途读取，迟到结果不能更新缓存或解除该来源的读取限制。用户再次验证会发起新的读取。
+
+`NOTIFY-03` 的本机事务边界以 native `notify()` ack 为提交前提：ack pending 时 Store 水位与 identifier 均不变；ack 后一次 compound write 原子提交二者，随后才 exact-dismiss 旧槽。调用 native 前最后一次读取 Store，校验通知开关版本、来源水位和当前槽均与发送计划一致。native present/exact dismiss 共享 graceful-draining 的单线程 Executor；顶层 deadline 可以 bounded 返回，但同身份 single-flight lane 必须持有到已开始的槽位对账、channel 初始化、native present、Store 写入与必要 exact dismiss 全部结算。对账中单个撤销失败也要等其余已启动的撤销结束；超时前尚未开始 commit 的迟到 present 必须先等待 ack 再 exact-dismiss，不能先清理后显示。强杀在 ack 与 Store commit 之间最多导致下轮重复覆盖，不得永久漏报。
+
+每个来源的摘要扫描绑定持久化的投递设置版本。总开关或单站通知开关改变后，旧扫描不得建立静默基线、提交水位或显示摘要。重新开启后由新一轮有效扫描静默建基线。
 
 冷启动时通知设置和本机调度状态可以立即恢复，但前台远端 snapshot 必须等本机账号终态恢复且首页首次内容 settled 后再启动；它不等待或触发 Account batch。headless 401 只停止本轮任务，不写 canonical Account snapshot。
 
@@ -855,6 +871,8 @@ linux.do 单条、批量已读和 NodeSeek 单条已读都须取得原站明确�
 `NOTIFY-02/WRITE-01` 的消息详情 owner：`StructuredReplyComposer` 是 snapshot 唯一发布者，Topic/Notification wrapper 只等待请求完成；LinuxDo 模板列表、usage accounting 与 poll capabilities 由 `notificationGateway` 接收 route 捕获的 `identityKey + AbortSignal`，并经现有 `withFetchGuard` 在每个 GET、CSRF 和 POST 前后复核。App runtime 不再直接实现这三套协议，离开 route、换号或 unmount 必须取消在途请求。
 
 ### WRITE：发帖、回复、编辑、删除、互动与上传
+
+`WRITE-01/02` 的编辑保存用实际提交正文核对 NodeSeek 星辰卡片与当前账号。linux.do 的分类和标签编辑先核对原站变化，再校验新增标签。主帖保存逐步保留确认的字段，区分发送前拦截、部分保存与可能已发送的未知结果。
 
 主帖编辑按提交时的草稿版本处理回执。发送中保存的新正文可在重开后继续编辑，妖火已确认的悬赏不会随新稿重复发送。读取远端版本期间继续输入也会保留本地新文字。linux.do 发帖和编辑主帖时插入动态模板，都以当前账号登记一次该模板的使用。
 
@@ -1024,6 +1042,8 @@ Reanimated 键盘补丁在 Android `onPrepare` 接管过渡，禁止把布局阶
 历史回复数量和最高楼号是两个独立可缺失字段；旧版备份缺 `replyWatermark` 继续兼容，不能解释为 0 或按数量推断逐楼新回复。ReaderData 导入、清空与恢复不得触碰独立的投票防重复 journal。`DATA-02` 首次读取旧资料或旧设置失败、超过 3 秒时停止迁移并保留旧键。恢复页导入会重读仍可读取的旧资料与设置，合并合法备份，经新连接逐项核对后才清理旧键。备份字段类型或记录格式不符时拒绝导入。标题从站点解析为文字之后，收藏、历史与备份均保留字面实体。旧键清理另有 3 秒 I/O 上限；SQLite 事务和恢复保护保持原边界。Canonical owner 为 `src/platform/storage/readerDataStore.test.ts`。
 
 `DATA-02`、`MORE-05`：ReaderRuntime 的 `loading | ready | recovery` 分别表达未结算、可信可修改与只读恢复。读取或回滚失败进入 recovery，失败导入不放行，成功导入才进入 ready；本地路由与账号本地恢复可结算。AppRuntime 只从 ready 设置派生有效来源和缓存 key，各页面消费同一投影；recovery 下来源业务请求为空，Notifications 的设置可信标志仍为 false，不将未知许可当作用户停用而清理持久状态。更多显示恢复说明并允许导入；普通修改和导出受保护。首次安装成功读取的默认设置仍可信。owner：`tests/ui/library/reader-data-controller.test.tsx`、`tests/ui/app/app-runtime-startup.test.tsx`、`tests/ui/notifications/notifications-runtime.test.tsx`。
+
+`DATA-02/03` 的本机资料读取失败时暂停来源访问，仍可在「备份 / 恢复」导入备份。SQLite 无法确认事务是否回滚时，当前进程保留已知资料并停用修改、导入和导出，提示先重启再恢复。
 
 `DATA-03`：导入先用完整删除标记并集解决记录冲突，时间相等时删除优先，再裁剪至每类 1000 条删除标记；不承诺超过保留窗口的永久删除历史。领域 owner 覆盖三类集合与 999/1000/1001 边界，storage owner 验证实际导入并重开数据库。
 

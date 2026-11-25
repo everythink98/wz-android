@@ -3,9 +3,16 @@ import { getNodeSeekCategories, getNodeSeekFeed } from '@/sources/nodeseek/reade
 import { yaohuoCategoriesResponse } from '@/sources/yaohuo/feedParser';
 import { getV2exCategories, getV2exFeed } from '@/sources/v2ex/reader';
 import { getYaohuoFeedDirect } from '@/sources/yaohuo/reader';
-import { getLinuxDoCategories, getLinuxDoFeed, type LinuxDoReadAuth } from '@/sources/linuxdo/reader';
+import {
+  applyFeedTopicUpdate,
+  getLinuxDoCategories,
+  getLinuxDoFeed,
+  mergeTopicsWithLinuxDoMetadata,
+  stripLinuxDoTopicReading,
+  type LinuxDoReadAuth
+} from '@/sources/linuxdo/reader';
 import { isDiscourseSource, sourceValues } from '@/domain/forum/sourceCatalog';
-import { balanceTopicsBySource, mergeTopics } from '@/domain/forum/feed';
+import { balanceTopicsBySource } from '@/domain/forum/feed';
 import { nextPagePosition, pagePosition, type PagePosition } from '@/domain/forum/pagination';
 import type {
   CategoriesResponse,
@@ -36,20 +43,53 @@ import {
 } from './readAggregation';
 
 type AllFeedCursorWire = {
+  bind?: string;
   buffers?: Partial<Record<Source, Topic[]>>;
   nextPages?: Partial<Record<Source, number | null>>;
   sourceCursors?: Partial<Record<Source, string | null>>;
   pinnedTopicKeys?: string[];
+  manualSources?: Source[];
 };
 
 type AllFeedSourceState = {
   source: Source;
   buffer: Topic[];
   continuation?: PagePosition;
+  manualContinuation?: true;
 };
 
 type AggregateFeedSourcePlan = Readonly<AllFeedSourceState> &
   ({ kind: 'buffer-only' } | { kind: 'fetch'; request: PagePosition });
+
+function aggregateFeedCursorBinding(
+  sources: readonly Source[],
+  scopes: Partial<Record<Source, string>> | undefined,
+  discourseAuth: LinuxDoReadAuth | undefined,
+  nodeSeekAuthenticated: boolean | undefined,
+  category: string | undefined,
+  feedFilter: SourceFeedFilter | undefined
+) {
+  const directScopes = {
+    linuxdo:
+      discourseAuth?.authenticated === true
+        ? JSON.stringify([
+            'authenticated',
+            discourseAuth.identityKey,
+            discourseAuth.sessionEpoch,
+            discourseAuth.categoryCacheScope,
+            discourseAuth.readingScope
+          ])
+        : 'public',
+    nodeseek: nodeSeekAuthenticated ? 'authenticated' : 'public',
+    v2ex: 'public',
+    yaohuo: 'public'
+  };
+  return JSON.stringify([
+    sources.map((source) => [source, scopes?.[source] ?? directScopes[source]]),
+    category?.trim() || '',
+    feedFilter || ''
+  ]);
+}
 
 function excludePinnedTopics(items: Topic[], pinnedKeys = new Set<string>()) {
   for (const topic of items) {
@@ -72,48 +112,60 @@ function isCursorTopic(value: unknown, source: Source): value is Topic {
   );
 }
 
-function decodeAllFeedCursor(cursor: string | undefined, sources: readonly Source[]) {
-  const empty = () => ({
+function decodeAllFeedCursor(cursor: string | undefined, sources: readonly Source[], binding: string) {
+  const empty = (restart = false) => ({
     sourceStates: sources.map<AllFeedSourceState>((source) => ({ source, buffer: [] })),
-    pinnedKeys: new Set<string>()
+    pinnedKeys: new Set<string>(),
+    restart
   });
   if (!cursor) return empty();
   try {
     const parsed = JSON.parse(decodeURIComponent(cursor)) as AllFeedCursorWire;
+    if (!isRecord(parsed) || ('bind' in parsed && parsed.bind !== binding)) return empty(true);
+    const bound = parsed.bind === binding;
     const pinnedKeys = new Set(
-      Array.isArray(parsed.pinnedTopicKeys)
+      bound && Array.isArray(parsed.pinnedTopicKeys)
         ? parsed.pinnedTopicKeys.filter(
             (key) => typeof key === 'string' && sources.some((source) => key.startsWith(`${source}:`))
           )
         : []
     );
-    const sourceStates = sources.map((source) => {
+    const sourceStates = sources.map<AllFeedSourceState>((source) => {
       const buffer = parsed.buffers?.[source];
-      const items = Array.isArray(buffer) ? buffer.filter((topic) => isCursorTopic(topic, source)) : [];
-      const cursor = parsed.sourceCursors?.[source];
+      const items = bound && Array.isArray(buffer) ? buffer.filter((topic) => isCursorTopic(topic, source)) : [];
+      const sourceCursor = parsed.sourceCursors?.[source];
+      const continuation = pagePosition(
+        parsed.nextPages?.[source],
+        typeof sourceCursor === 'string' ? sourceCursor : undefined
+      );
+      const manualContinuation =
+        bound && continuation && Array.isArray(parsed.manualSources) && parsed.manualSources.includes(source);
       return {
         source,
-        buffer: excludePinnedTopics(items, pinnedKeys),
-        continuation: pagePosition(parsed.nextPages?.[source], typeof cursor === 'string' ? cursor : undefined)
+        buffer: excludePinnedTopics(items, pinnedKeys).map(stripLinuxDoTopicReading),
+        continuation,
+        ...(manualContinuation ? { manualContinuation: true } : {})
       };
     });
-    return { sourceStates, pinnedKeys };
+    return { sourceStates, pinnedKeys, restart: !bound && !sourceStates.some((state) => state.continuation) };
   } catch {
-    return empty();
+    return empty(true);
   }
 }
 
-function encodeAllFeedCursor(states: readonly AllFeedSourceState[], pinnedKeys: ReadonlySet<string>) {
+function encodeAllFeedCursor(states: readonly AllFeedSourceState[], pinnedKeys: ReadonlySet<string>, binding: string) {
   const buffers: Partial<Record<Source, Topic[]>> = {};
   const nextPages: Partial<Record<Source, number | null>> = {};
   const sourceCursors: Partial<Record<Source, string | null>> = {};
-  for (const { source, buffer, continuation } of states) {
+  const manualSources: Source[] = [];
+  for (const { source, buffer, continuation, manualContinuation } of states) {
     if (buffer.length) {
-      buffers[source] = buffer;
+      buffers[source] = buffer.map(stripLinuxDoTopicReading);
     }
     if (continuation) {
       nextPages[source] = continuation.page;
       if (continuation.cursor) sourceCursors[source] = continuation.cursor;
+      if (manualContinuation) manualSources.push(source);
     }
   }
   if (!Object.keys(buffers).length && !Object.keys(nextPages).length && !Object.keys(sourceCursors).length) {
@@ -121,10 +173,12 @@ function encodeAllFeedCursor(states: readonly AllFeedSourceState[], pinnedKeys: 
   }
   return encodeURIComponent(
     JSON.stringify({
+      bind: binding,
       buffers,
       nextPages,
       sourceCursors,
-      pinnedTopicKeys: pinnedKeys.size ? [...pinnedKeys] : undefined
+      pinnedTopicKeys: pinnedKeys.size ? [...pinnedKeys] : undefined,
+      manualSources: manualSources.length ? manualSources : undefined
     })
   );
 }
@@ -133,6 +187,50 @@ function includedAggregateSources(includedSources: readonly Source[] | undefined
   const included = new Set(includedSources || sources);
   return sources.filter((source) => included.has(source));
 }
+
+function readSourceFeed({
+  source,
+  mode,
+  discourseAuth,
+  feedFilter,
+  ...options
+}: {
+  source: Source;
+  mode: 'direct' | 'aggregate';
+  page: number;
+  limit: number;
+  cursor?: string;
+  category?: string;
+  feedFilter?: SourceFeedFilter;
+  fetcher?: Fetcher;
+  authenticated?: boolean;
+  nodeSeekUserAgent?: string;
+  discourseAuth?: LinuxDoReadAuth;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}): Promise<FeedResponse> {
+  const { category, cursor, fetcher, limit, page, signal, timeoutMs } = options;
+  if (isDiscourseSource(source)) {
+    return getLinuxDoFeed({
+      linuxDoAccess: discourseAuth,
+      aggregateHead: mode === 'aggregate' && page === 1 && !cursor,
+      category,
+      cursor,
+      fetcher,
+      linuxDoFilter: feedFilter as DiscourseFeedFilter | undefined,
+      limit,
+      page,
+      signal,
+      timeoutMs
+    });
+  }
+  return dispatchSourceRead(source, {
+    nodeseek: () => getNodeSeekFeed({ ...options, feedFilter: feedFilter as NodeSeekFeedFilter | undefined }),
+    v2ex: () => getV2exFeed({ ...options, feedFilter: feedFilter as V2exFeedFilter | undefined }),
+    yaohuo: () => getYaohuoFeedDirect({ category, page, limit, yaohuoFetcher: fetcher, signal, timeoutMs })
+  });
+}
+
 export async function getFeed({
   source,
   page = 1,
@@ -149,6 +247,7 @@ export async function getFeed({
   preparation = { deadline: Date.now() + READ_PREPARATION_BUDGET_MS },
   includedSources,
   unavailableSources,
+  aggregateFeedScopes,
   signal,
   timeoutMs,
   onProgress
@@ -168,6 +267,7 @@ export async function getFeed({
   preparation?: ReadPreparation;
   includedSources?: readonly Source[];
   unavailableSources?: readonly Source[];
+  aggregateFeedScopes?: Partial<Record<Source, string>>;
   signal?: AbortSignal;
   timeoutMs?: number;
   onProgress?: (response: FeedResponse) => void;
@@ -191,20 +291,30 @@ export async function getFeed({
         const sources = includedAggregateSources(includedSources, sourceValues).filter(
           (item) => !unavailableSourceSet.has(item)
         );
-        const { sourceStates, pinnedKeys } = decodeAllFeedCursor(cursor, sources);
+        const binding = aggregateFeedCursorBinding(
+          sources,
+          aggregateFeedScopes,
+          discourseAuth,
+          nodeSeekAuthenticated,
+          category,
+          feedFilter
+        );
+        const { sourceStates, pinnedKeys, restart } = decodeAllFeedCursor(cursor, sources, binding);
+        const currentPage = restart ? 1 : page;
+        const continuing = Boolean(cursor) && !restart;
         const bufferedItems = sourceStates.flatMap((state) => state.buffer);
         const hasRetryableCursor = Boolean(
-          cursor && sourceStates.some((state) => state.buffer.length || state.continuation)
+          continuing && sourceStates.some((state) => state.buffer.length || state.continuation)
         );
         const plans = sourceStates.map<AggregateFeedSourcePlan>((state) => {
           const { continuation } = state;
-          if (cursor && (!continuation || state.buffer.length >= limit)) {
+          if (continuing && (!continuation || state.buffer.length >= limit)) {
             return { ...state, kind: 'buffer-only' };
           }
           return {
             ...state,
             kind: 'fetch',
-            request: continuation ?? { page }
+            request: continuation ?? { page: currentPage }
           };
         });
         const adapterLimit = limit < 30 ? limit * sources.length : limit;
@@ -227,10 +337,10 @@ export async function getFeed({
               signal,
               (sourceSignal) => {
                 const readSource = (sourceFetcher: Fetcher) =>
-                  getFeed({
+                  readSourceFeed({
                     ...options,
                     source: item,
-                    nodeSeekAuthenticated,
+                    mode: 'aggregate',
                     discourseAuth,
                     cursor: plan.request.cursor,
                     fetcher: sourceFetcher,
@@ -246,14 +356,22 @@ export async function getFeed({
               { prepare, preparation, trace: diagnosticTrace, timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS }
             ).then(
               (value) => {
-                if (onProgress && page === 1 && !cursor && !signal?.aborted && value.items.length && previewLimit) {
+                if (
+                  onProgress &&
+                  currentPage === 1 &&
+                  !continuing &&
+                  !signal?.aborted &&
+                  value.items.length &&
+                  previewLimit
+                ) {
                   // Reserve each source's share so already visible posts survive the final balanced page.
-                  const preview = sortTopicsByTime(mergeTopics([], excludePinnedTopics(value.items))).slice(
+                  const previewCandidates = excludePinnedTopics(value.items);
+                  const preview = sortTopicsByTime(mergeTopicsWithLinuxDoMetadata([], previewCandidates)).slice(
                     0,
                     previewLimit
                   );
                   if (preview.length) {
-                    visibleItems = mergeTopics(visibleItems, preview);
+                    visibleItems = mergeTopicsWithLinuxDoMetadata(visibleItems, preview);
                     onProgress({ items: visibleItems, errors: {} });
                   }
                 }
@@ -286,18 +404,39 @@ export async function getFeed({
           })
         );
         if (signal?.aborted) throw new Error(REQUEST_CANCELED_MESSAGE);
-        const candidates = [
-          ...bufferedItems,
-          ...results.flatMap((result) => (result.status === 'fulfilled' ? result.value.items : []))
-        ];
+        const incomingItems = results.flatMap((result) => (result.status === 'fulfilled' ? result.value.items : []));
+        const incomingUpdates = results.flatMap((result) =>
+          result.status === 'fulfilled' && result.value.topicUpdates ? result.value.topicUpdates : []
+        );
+        const updatesByKey = new Map<string, Topic>();
+        for (const update of incomingUpdates) {
+          const key = topicKey(update);
+          if (update.pinned === true) pinnedKeys.add(key);
+          const existing = updatesByKey.get(key);
+          updatesByKey.set(key, existing ? applyFeedTopicUpdate(existing, update) : update);
+        }
+        const matchedUpdateKeys = new Set<string>();
+        const updatedBufferedItems = bufferedItems.map((topic) => {
+          const key = topicKey(topic);
+          const update = updatesByKey.get(key);
+          if (!update) return topic;
+          matchedUpdateKeys.add(key);
+          return applyFeedTopicUpdate(topic, update);
+        });
+        const candidates = [...updatedBufferedItems, ...incomingItems];
         const unpinnedCandidates = excludePinnedTopics(candidates, pinnedKeys);
-        const items = mergeTopics([], sortTopicsByTime(unpinnedCandidates));
+        const mergedCandidates = mergeTopicsWithLinuxDoMetadata([], unpinnedCandidates).map((topic) => {
+          const key = topicKey(topic);
+          const update = updatesByKey.get(key);
+          if (!update) return topic;
+          matchedUpdateKeys.add(key);
+          return applyFeedTopicUpdate(topic, update);
+        });
+        const items = sortTopicsByTime(excludePinnedTopics(mergedCandidates, pinnedKeys));
         const balanced = balanceTopicsBySource(items).slice(0, limit);
         const balancedKeys = new Set(balanced.map(topicKey));
-        const selected = mergeTopics(
-          visibleItems.filter((item) => balancedKeys.has(topicKey(item))),
-          balanced
-        );
+        const visiblePreferred = visibleItems.filter((item) => balancedKeys.has(topicKey(item)));
+        const selected = mergeTopicsWithLinuxDoMetadata(visiblePreferred, balanced);
         const selectedKeys = new Set(selected.map(topicKey));
         const nextBuffers: Partial<Record<Source, Topic[]>> = {};
         for (const item of items) {
@@ -306,15 +445,25 @@ export async function getFeed({
           }
           (nextBuffers[item.source] ??= []).push(item);
         }
+        const forwardedTopicUpdates: Topic[] = [];
+        for (const [key, update] of updatesByKey.entries()) {
+          if (matchedUpdateKeys.has(key)) continue;
+          forwardedTopicUpdates.push(update);
+        }
         const hasFulfilledSource = results.some((result) => result.status === 'fulfilled');
         const nextStates = plans.map<AllFeedSourceState>((plan, index) => {
           const result = results[index];
           const buffer = nextBuffers[plan.source] ?? [];
           if (result?.status === 'fulfilled') {
+            const continuation =
+              plan.kind === 'fetch' ? nextPagePosition(result.value, plan.request) : plan.continuation;
+            const manualContinuation =
+              plan.kind === 'fetch' ? result.value.manualContinuation : plan.manualContinuation;
             return {
               source: plan.source,
               buffer,
-              continuation: plan.kind === 'fetch' ? nextPagePosition(result.value, plan.request) : plan.continuation
+              continuation,
+              manualContinuation
             };
           }
           const aggregateTimedOut =
@@ -325,18 +474,25 @@ export async function getFeed({
           return {
             source: plan.source,
             buffer,
+            manualContinuation: plan.manualContinuation,
             continuation:
               plan.kind === 'fetch' && (hasRetryableCursor || hasFulfilledSource || aggregateTimedOut)
                 ? plan.request
                 : undefined
           };
         });
-        const nextCursor = encodeAllFeedCursor(nextStates, pinnedKeys);
-        const response = {
+        const nextCursor = encodeAllFeedCursor(nextStates, pinnedKeys, binding);
+        // Draining a full buffer does not consume the protected source position.
+        const manualContinuation = nextStates.some(
+          (state) => state.manualContinuation && state.continuation && state.buffer.length < limit
+        );
+        const response: FeedResponse = {
           items: selected,
+          ...(forwardedTopicUpdates.length ? { topicUpdates: forwardedTopicUpdates } : {}),
           errors: mergeSettledSourceErrors(results, sources),
           hasMore: Boolean(nextCursor),
-          nextPage: nextCursor ? page + 1 : null,
+          ...(manualContinuation ? { manualContinuation: true } : {}),
+          nextPage: nextCursor ? currentPage + 1 : null,
           nextCursor
         };
         const facts = settledDiagnosticFacts(results);
@@ -350,34 +506,19 @@ export async function getFeed({
             droppedCount: facts.droppedCount,
             partialErrorCount: facts.partialErrorCount,
             missingFloorCount: facts.missingFloorCount,
-            hasRepeatedCursor: facts.hasRepeatedCursor || response.nextPage === page || response.nextCursor === cursor,
+            hasRepeatedCursor:
+              facts.hasRepeatedCursor || response.nextPage === currentPage || response.nextCursor === cursor,
             isExpectedEmpty:
               selected.length === 0 &&
               (candidates.length > unpinnedCandidates.length ||
-                (facts.droppedCount === 0 && (page > 1 || Boolean(category))))
+                (facts.droppedCount === 0 && (currentPage > 1 || Boolean(category) || Boolean(nextCursor))))
           }
         );
       },
       () => signal?.aborted !== true
     );
   }
-  if (isDiscourseSource(source)) {
-    return getLinuxDoFeed({
-      linuxDoAccess: discourseAuth,
-      category,
-      fetcher,
-      linuxDoFilter: feedFilter as DiscourseFeedFilter | undefined,
-      limit,
-      page,
-      signal,
-      timeoutMs
-    });
-  }
-  return dispatchSourceRead(source, {
-    nodeseek: () => getNodeSeekFeed({ ...options, feedFilter: feedFilter as NodeSeekFeedFilter | undefined }),
-    v2ex: () => getV2exFeed({ ...options, feedFilter: feedFilter as V2exFeedFilter | undefined }),
-    yaohuo: () => getYaohuoFeedDirect({ category, page, limit, yaohuoFetcher: fetcher, signal, timeoutMs })
-  });
+  return readSourceFeed({ ...options, source, mode: 'direct', discourseAuth, feedFilter });
 }
 
 export async function getCategories({

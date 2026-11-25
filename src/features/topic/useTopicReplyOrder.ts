@@ -40,9 +40,9 @@ export function useTopicReplyOrder({
 }) {
   const current = useRef<MenuState>({ phase: 'closed', placement: DEFAULT_PLACEMENT });
   const [menu, publish] = useState(current.current);
-  const pendingOrderScroll = useRef(false);
+  const pendingOrderScroll = useRef<ReplyOrder | null>(null);
   const cancelPendingScroll = useCallback(() => {
-    pendingOrderScroll.current = false;
+    pendingOrderScroll.current = null;
   }, []);
   const close = useCallback(() => {
     const next: MenuState = { phase: 'closed', placement: current.current.placement };
@@ -81,18 +81,18 @@ export function useTopicReplyOrder({
     (next: ReplyOrder) => {
       close();
       if (next === order) return;
-      pendingOrderScroll.current = true;
+      pendingOrderScroll.current = next;
       changeOrder(next);
     },
     [changeOrder, close, order]
   );
   useEffect(() => {
-    if (!active || !listReady || !pendingOrderScroll.current || repliesLoading || repliesError) return;
+    if (!active || !listReady || pendingOrderScroll.current !== order || repliesLoading || repliesError) return;
+    pendingOrderScroll.current = null;
     const index = items.findIndex((item) => item.type === 'reply' || item.type === 'replyStart');
     if (index < 0) return;
-    pendingOrderScroll.current = false;
     recordScroll('reply-order', { targetIndex: index });
     void list.current?.scrollToIndex({ animated: true, index, viewPosition: 0 });
-  }, [active, items, list, listReady, recordScroll, repliesError, repliesLoading]);
+  }, [active, items, list, listReady, order, recordScroll, repliesError, repliesLoading]);
   return { open, close, select, cancelPendingScroll, visible: menu.phase === 'open', placement: menu.placement };
 }

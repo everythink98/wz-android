@@ -132,7 +132,7 @@ class TopicAudioSession {
     return 'run' in this.sourceState ? this.sourceState.run : null;
   }
 
-  private get activeId() {
+  private get currentRunId() {
     return this.currentRun?.id ?? null;
   }
 
@@ -163,6 +163,9 @@ class TopicAudioSession {
     }
     if (this.sourceState !== owner) return false;
     this.sourceState = { phase: 'idle' };
+    if (run && this.getSnapshot(run.id).status === 'loading') {
+      this.updateSnapshot(run.id, { playing: false, playWhenReady: false, status: 'idle' });
+    }
     return true;
   }
 
@@ -179,7 +182,7 @@ class TopicAudioSession {
   };
 
   attach(id: string, key: string, descriptor: TopicAudioDescriptor, admission: TopicAudioAdmission) {
-    const previous = this.activeId ? this.sources.get(this.activeId) : null;
+    const previous = this.currentRunId ? this.sources.get(this.currentRunId) : null;
     if (
       previous &&
       previous.mediaContext.contentSource === descriptor.mediaContext.contentSource &&
@@ -200,10 +203,10 @@ class TopicAudioSession {
         } else {
           admission.settle('error');
         }
-      } else if (this.activeId === id) {
+      } else if (this.currentRunId === id) {
         if (snapshot.status === 'ready') admission.settle('displayed');
         else if (snapshot.status === 'idle') this.load(id, false);
-      } else if (this.activeId === null) {
+      } else if (this.currentRunId === null) {
         this.load(id, false);
       } else {
         admission.settle('displayed');
@@ -223,16 +226,23 @@ class TopicAudioSession {
     if (becameInactive) this.pauseActive();
     if (runtimeGeneration > this.runtimeGeneration) {
       this.runtimeGeneration = runtimeGeneration;
-      if (this.activeId && this.getSnapshot(this.activeId).status === 'loading') this.load(this.activeId, false);
+      const run = this.currentRun;
+      if (run && this.getSnapshot(run.id).status === 'loading') this.load(run.id, run.pendingPlay);
     }
   }
 
   play(id: string) {
     if (!this.active || this.paused) return;
     const snapshot = this.getSnapshot(id);
-    if (this.activeId === id && (snapshot.status === 'ready' || snapshot.status === 'buffering') && this.player) {
-      this.playbackHandle?.intent(true);
-      if (this.currentRun) this.currentRun.pendingPlay = false;
+    const state = this.sourceState;
+    if (
+      state.phase === 'active' &&
+      state.run.id === id &&
+      (snapshot.status === 'ready' || snapshot.status === 'buffering') &&
+      this.player
+    ) {
+      state.handle.intent(true);
+      state.run.pendingPlay = false;
       if (snapshot.duration > 0 && snapshot.position >= snapshot.duration) {
         this.player.replay();
         this.updateSnapshot(id, { position: 0 });
@@ -246,15 +256,16 @@ class TopicAudioSession {
   }
 
   pause(id: string) {
-    if (this.activeId !== id) return;
+    if (this.currentRunId !== id) return;
     this.pauseActive();
   }
 
   seek(id: string, position: number) {
     const snapshot = this.getSnapshot(id);
     const nextPosition = Math.min(snapshot.duration || Number.POSITIVE_INFINITY, safeMediaTime(position));
-    if (this.activeId === id && this.player) {
-      this.playbackHandle?.seek();
+    const state = this.sourceState;
+    if (state.phase === 'active' && state.run.id === id && this.player) {
+      state.handle.seek();
       this.player.currentTime = nextPosition;
     }
     this.updateSnapshot(id, { position: nextPosition });
@@ -301,7 +312,7 @@ class TopicAudioSession {
   private load(id: string, playWhenReady: boolean) {
     const descriptor = this.sources.get(id);
     if (!descriptor || this.isDisposed()) return;
-    if (this.activeId) this.rememberActivePosition();
+    this.rememberActivePosition();
     if (!this.retireSource()) return;
     const generation = this.runtimeGeneration;
     const run: AudioLoadRun = {
@@ -468,12 +479,14 @@ class TopicAudioSession {
     } catch {
       // A route deactivation must still complete if native playback has already ended.
     }
-    if (this.activeId) this.updateSnapshot(this.activeId, { playing: false, playWhenReady: false });
+    const id = this.currentRunId;
+    if (id) this.updateSnapshot(id, { playing: false, playWhenReady: false });
   }
 
   private rememberActivePosition() {
-    const id = this.activeId;
-    if (!id || !this.player) return;
+    const state = this.sourceState;
+    if (!('handle' in state) || !state.handle || !this.player) return;
+    const id = state.run.id;
     const duration = safeMediaTime(this.player.duration || this.getSnapshot(id).duration);
     const position = Math.min(duration || Number.POSITIVE_INFINITY, safeMediaTime(this.player.currentTime));
     this.player.pause();

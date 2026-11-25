@@ -477,6 +477,28 @@ export function draftFromTopicEdit(context: TopicEditContext): TopicDraft {
   } as TopicDraft;
 }
 
+const linuxDoMetadataFields = ['categoryId', 'tags'] as const;
+
+export function hasLinuxDoTopicMetadataConflict(draft: TopicDraft, context: TopicEditContext) {
+  const edit = draft.edit;
+  if (
+    draft.source !== 'linuxdo' ||
+    context.source !== 'linuxdo' ||
+    !edit?.postId ||
+    edit.postId !== context.postId ||
+    edit.topicId !== context.topicId ||
+    draft.identityKey !== context.identityKey
+  )
+    return false;
+  const changes = topicEditChanges(draft);
+  const changedFields = linuxDoMetadataFields.filter((field) => changes[field] !== undefined);
+  return (
+    changedFields.length > 0 &&
+    changedFields.every((field) => context.permissions[field]) &&
+    linuxDoMetadataFields.some((field) => !sameTopicField(edit.original[field], context.original[field]))
+  );
+}
+
 export function validateTopicEdit(draft: TopicDraft, context: TopicEditContext): Record<string, string> {
   if (
     !draft.edit ||
@@ -487,6 +509,11 @@ export function validateTopicEdit(draft: TopicDraft, context: TopicEditContext):
     return { body: '编辑目标或账号不一致，请重新进入' };
   const changes = topicEditChanges(draft);
   const validation = validateTopicDraft(draft, context.rules, context.original.tags);
+  if (hasLinuxDoTopicMetadataConflict(draft, context)) {
+    // Let the adapter return the current remote fields for conflict resolution.
+    delete validation.categoryId;
+    delete validation.tags;
+  }
   const errors: Record<string, string> = {};
   for (const key of Object.keys(changes) as (keyof TopicEditableFields)[]) {
     if (!context.permissions[key]) errors[key] = '原站不允许修改此字段';

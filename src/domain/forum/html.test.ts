@@ -3,15 +3,19 @@ import { HTMLElement, TextNode } from 'node-html-parser';
 import { withHtmlWorkBudget } from '../../../tests/helpers/htmlWorkBudget';
 import {
   createForumTextIndex,
+  decodeHtml,
+  decodeHtmlEntities,
   elementText,
   escapeHtmlAttribute,
   escapeHtmlFully,
   escapeHtmlText,
+  escapeQuotedHtmlTagDelimiters,
   forumElementReplacementNodes,
   forumNodeText,
   hasRenderableHtmlContent,
   parseForumContentHtml,
   parseHtml,
+  textContentFromHtml,
   transformForumElements,
   textExcerpt,
   textExcerptFromPlainText,
@@ -20,6 +24,7 @@ import {
   toIsoString,
   type ForumTextSegment
 } from './html';
+import { compileForumContent } from './topicContentSplit';
 
 function materializeText(segments: ForumTextSegment[]) {
   return segments.map((segment) => segment.tape.text.slice(segment.start, segment.end)).join('');
@@ -30,6 +35,224 @@ describe('scoped HTML queries', () => {
     expect(textExcerpt("left 3 < 5, 'inline <b>keep</b>' <i>end</i> after")).toBe(
       "left 3 < 5, 'inline keep ' end after"
     );
+    expect(textExcerpt("x<y, 'inline <b>keep</b>' <i>end</i>")).toBe("x<y, 'inline keep ' end");
+    expect(textContentFromHtml("x<y 'inline <b>keep</b>' <i>end</i>")).toBe("x<y 'inline keep ' end");
+    expect(textContentFromHtml('x<y and z<b>keep</b>')).toBe('x<y and z keep');
+    expect(textContentFromHtml("a</b, 'inline <b>keep</b>'")).toBe("a</b, 'inline keep '");
+  });
+
+  it('skips HTML comments with quotes or greater-than signs in summaries and escaped tag markup', () => {
+    expect(textContentFromHtml("<!-- don't --><b>keep</b>")).toBe('keep');
+    expect(textExcerpt("<!-- don't --><b>keep</b> 'later' <i>end</i>")).toBe("keep 'later' end");
+    expect(textContentFromHtml('<!-- a > b --><b>keep</b>')).toBe('keep');
+    expect(textContentFromHtml('<p><a title="1 > 0" data-x=\'a > b\'>keep</a></p>')).toBe('keep');
+    expect(textContentFromHtml('<!DOCTYPE html><p>keep</p>')).toBe('keep');
+    expect(escapeQuotedHtmlTagDelimiters('<!-- don\'t > --><a title="1 > 0">x<y</a>')).toBe(
+      '<!-- don\'t > --><a title="1 &gt; 0">x&lt;y</a>'
+    );
+  });
+
+  it('closes raw-text script and style elements independently of literal comment markers in linear time', () => {
+    expect(textContentFromHtml('<script>var x = "<!--";</script><p>visible</p><!-- real comment -->')).toBe('visible');
+    expect(textContentFromHtml('<style>/* <!-- */</style><p>visible</p><!-- real comment -->')).toBe('visible');
+    expect(textExcerpt('<script>var x = "<!--";</script><p>visible</p><!-- real comment -->')).toBe('visible');
+    expect(textExcerpt('<style>/* <!-- */</style><p>visible</p><!-- real comment -->')).toBe('visible');
+    expect(
+      textContentFromHtml('<SCRIPT type="module">var x = "</style> </scriptx> <!--";</SCRIPT ><p>visible</p><!-- c -->')
+    ).toBe('visible');
+    expect(textContentFromHtml('<StYlE media="all">/* </script> <!-- */</StYlE\n><p>visible</p><!-- c -->')).toBe(
+      'visible'
+    );
+    expect(textContentFromHtml('<script>var x = "<a title=\\"";</script><p>visible</p><a title="y">end</a>')).toBe(
+      'visible end'
+    );
+    expect(textContentFromHtml('<!-- <script> --><p>visible</p>')).toBe('visible');
+    expect(textContentFromHtml('<p>before</p><script>var x = "<!--";<p>hidden</p><!-- c -->')).toBe('before');
+    expect(
+      escapeQuotedHtmlTagDelimiters('<script>var x = "<!--";</script><p><a title="1 > 0">x<y</a></p><!-- real -->')
+    ).toBe('<script>var x = "&lt;!--";</script><p><a title="1 &gt; 0">x&lt;y</a></p><!-- real -->');
+
+    const repeatedScripts = '<script>var x = "<!--";</script>'.repeat(2_000) + '<p>visible</p><!-- real comment -->';
+    const indexOfSpy = vi.spyOn(String.prototype, 'indexOf');
+    try {
+      expect(textContentFromHtml(repeatedScripts)).toBe('visible');
+      const commentCloseSearches = indexOfSpy.mock.calls.filter(([needle]) => needle === '-->').length;
+      expect(commentCloseSearches).toBeLessThanOrEqual(1);
+    } finally {
+      indexOfSpy.mockRestore();
+    }
+  });
+
+  it('extracts summaries from consecutive incomplete tags and long body text linearly', () => {
+    const incompleteTags = '<a '.repeat(4_000) + '<b>keep</b>';
+    expect(textContentFromHtml(incompleteTags)).toBe('<a '.repeat(4_000) + 'keep');
+
+    const unclosedComments = '<!--'.repeat(4_000) + '<b>keep</b>';
+    expect(textContentFromHtml(unclosedComments)).toBe('<!--'.repeat(4_000) + ' keep');
+
+    const longBody = Array.from(
+      { length: 2_000 },
+      (_, index) => `<p><a title="i > ${index}">item ${index}</a> <!-- don't > ${index} --></p>`
+    ).join('');
+    expect(textContentFromHtml(longBody)).toBe(Array.from({ length: 2_000 }, (_, index) => `item ${index}`).join(' '));
+  });
+
+  it('preserves unquoted URL attributes in helpers and compiled topic bodies while rejecting invalid comparisons', () => {
+    expect(escapeQuotedHtmlTagDelimiters('<a href=/search?q=boards>boards</a>')).toBe(
+      '<a href=/search?q=boards>boards</a>'
+    );
+    expect(escapeQuotedHtmlTagDelimiters('<a href=https://example.com/path?a=1&b=2#top>go</a>')).toBe(
+      '<a href=https://example.com/path?a=1&b=2#top>go</a>'
+    );
+    expect(textContentFromHtml('<a href=/search?q=boards>boards</a>')).toBe('boards');
+    expect(textExcerpt('<a href=/search?q=boards&amp;page=2>boards</a>')).toBe('boards');
+    expect(textContentFromHtml('x<y a=b<c>keep</c>')).toBe('x<y a=b keep');
+    expect(textContentFromHtml("x<y a=b 'inline <b>keep</b>'")).toBe("x<y a=b 'inline keep '");
+    expect(textContentFromHtml("x<y a=b'inline <b>keep</b>'")).toBe("x<y a=b'inline keep '");
+  });
+
+  it('keeps unquoted URL links clickable in compiled topic content instead of escaping them as text', () => {
+    for (const html of ['<a href=/search?q=boards>boards</a>', '<p><a href=/search?q=boards>boards</a></p>']) {
+      const compiled = compileForumContent({ html, role: 'opening', source: 'v2ex' });
+      const rowHtml = compiled.rows
+        .filter((row): row is Extract<(typeof compiled.rows)[number], { html: string }> => 'html' in row)
+        .map((row) => row.html)
+        .join('');
+      const link = parseHtml(rowHtml).querySelector('a');
+      expect(link?.getAttribute('href')).toBe('/search?q=boards');
+      expect(link?.textContent).toBe('boards');
+      expect(rowHtml).not.toContain('&lt;a href=/search?q=boards');
+    }
+  });
+
+  it('recognizes tags with non-ASCII Unicode attribute names without misparsing ASCII comparison operators', () => {
+    expect(textContentFromHtml('<span data-分类="x">标题</span>')).toBe('标题');
+    expect(textContentFromHtml('<div data-分类>标题</div>')).toBe('标题');
+    expect(textContentFromHtml('<span 分类="1" data-提示="a > b">标题</span>')).toBe('标题');
+    expect(textExcerpt('<span data-分类="x">标题</span>')).toBe('标题');
+    expect(escapeQuotedHtmlTagDelimiters('<span data-分类="1 > 0">x<y</span>')).toBe(
+      '<span data-分类="1 &gt; 0">x&lt;y</span>'
+    );
+    expect(textContentFromHtml('a<b && c>d')).toBe('a<b && c>d');
+    expect(textContentFromHtml('a<b + c > d')).toBe('a<b + c > d');
+    expect(textContentFromHtml('<span data-\u0085="x">标题</span>')).toBe('<span data-\u0085="x">标题');
+  });
+
+  it('decodes named HTML5 entities once in text and image alt labels without corrupting URLs or double decoding', () => {
+    expect(textContentFromHtml('<img alt="&hearts;" src="/heart.png">', { includeImageAlt: true })).toBe('♥');
+    expect(textContentFromHtml('<img alt="&amp;hearts;" src="/heart.png">', { includeImageAlt: true })).toBe(
+      '&hearts;'
+    );
+    expect(
+      textContentFromHtml('<img data-分类="x" src=/emoji?name=heart alt="&hearts; &copy; &mdash;">', {
+        includeImageAlt: true
+      })
+    ).toBe('♥ © —');
+    expect(textContentFromHtml('<img alt="&lt;b&gt;tag&lt;/b&gt;">', { includeImageAlt: true })).toBe('<b>tag</b>');
+    expect(textContentFromHtml('<img alt="&notanentity; &ampfoo; &semi;">', { includeImageAlt: true })).toBe(
+      '&notanentity; &ampfoo; ;'
+    );
+    expect(decodeHtml('https://example.com/?a=1&copy=2&reg=3')).toBe('https://example.com/?a=1&copy=2&reg=3');
+    expect(decodeHtml('How to type &amp;copy; and &hearts; in HTML')).toBe('How to type &copy; and ♥ in HTML');
+    expect(decodeHtml('&hearts; &amp;hearts; &constructor; &notanentity; &semi;')).toBe(
+      '♥ &hearts; &constructor; &notanentity; ;'
+    );
+    expect(decodeHtmlEntities('&hearts; &amp;hearts; &constructor; &unknownref; &semi;')).toBe(
+      '♥ &hearts; &constructor; &unknownref; ;'
+    );
+    expect(textContentFromHtml('<p>&hearts; &amp;hearts; &constructor; &unknownref; &semi;</p>')).toBe(
+      '♥ &hearts; &constructor; &unknownref; ;'
+    );
+  });
+
+  it('recognizes bracketed and atypical HTML5 attribute names, Word conditionals, and script/style raw-text states linearly', () => {
+    expect(textContentFromHtml('<a [foo]="boards" href="/guides/boards">boards</a>')).toBe('boards');
+    expect(textContentFromHtml('<a [foo] href="/guides/boards">boards</a>')).toBe('boards');
+    expect(
+      textContentFromHtml(
+        '<span [(ngModel)]="x" (click)="go()" @tap="y" :href="/guides/boards" #ref *ngIf="ok" ?disabled .prop="1" $id="a" data-[foo]="1 > 0">boards</span>'
+      )
+    ).toBe('boards');
+    expect(
+      textContentFromHtml('<img [foo]="1" src="/guides/boards.png" alt="&amp;copy;">', { includeImageAlt: true })
+    ).toBe('&copy;');
+    expect(escapeQuotedHtmlTagDelimiters('<a [foo]="1 > 0" href="/guides/boards">x<y</a>')).toBe(
+      '<a [foo]="1 &gt; 0" href="/guides/boards">x&lt;y</a>'
+    );
+    expect(textContentFromHtml('a<b - c > d')).toBe('a<b - c > d');
+    expect(textContentFromHtml('a<b * c > d')).toBe('a<b * c > d');
+    expect(textContentFromHtml('a<b != c > d')).toBe('a<b != c > d');
+
+    expect(textContentFromHtml('<![if !supportLists]><p>boards</p><![endif]>')).toBe('boards');
+    expect(textExcerpt('<![if gte mso 9]><a href="/guides/boards">boards</a><![endif]>')).toBe('boards');
+    expect(textContentFromHtml('<![IF (gte mso 9)|(IE)]><span>kept</span><![ENDIF]>')).toBe('kept');
+    expect(escapeQuotedHtmlTagDelimiters('<![if !vml]><p>x<y</p><![endif]>')).toBe(
+      '<![if !vml]><p>x&lt;y</p><![endif]>'
+    );
+
+    expect(textContentFromHtml('<script>var boards = 1;</script/><p>boards</p>')).toBe('boards');
+    expect(textContentFromHtml('<style>.boards{color:red}</style unused><p>boards</p>')).toBe('boards');
+    expect(textContentFromHtml('<style>.x{}</style data-note="1 > 0"><p>visible</p>')).toBe('visible');
+    expect(
+      textContentFromHtml(
+        '<script><!-- <script>var x = "</script><a href=\'/guides/boards\'>hidden</a>"; --> </script><p>boards</p>'
+      )
+    ).toBe('boards');
+    expect(textContentFromHtml('<script><!-- <script>var a = 1;</script>var b = 2;</script><p>visible</p>')).toBe(
+      'visible'
+    );
+    expect(textContentFromHtml('<p>before</p><script><!-- <script>var a = 1;</script> --><p>still hidden</p>')).toBe(
+      'before'
+    );
+
+    const compiled = compileForumContent({
+      html: '<![if !vml]><p><a [foo]="boards" href="/guides/boards">boards</a></p><![endif]>',
+      role: 'opening',
+      source: 'v2ex'
+    });
+    const rowHtml = compiled.rows
+      .filter((row): row is Extract<(typeof compiled.rows)[number], { html: string }> => 'html' in row)
+      .map((row) => row.html)
+      .join('');
+    const link = parseHtml(rowHtml).querySelector('a');
+    expect(link?.getAttribute('href')).toBe('/guides/boards');
+    expect(link?.textContent).toBe('boards');
+
+    const unclosedConditionals = '<![if !mso '.repeat(4_000) + '<b>keep</b>';
+    expect(textContentFromHtml(unclosedConditionals)).toBe('<![if !mso '.repeat(4_000) + 'keep');
+
+    const repeatedEscapedScripts =
+      '<script><!-- <script>var x = 1;</script> --></script>'.repeat(2_000) + '<p>visible</p><!-- real comment -->';
+    const indexOfSpy = vi.spyOn(String.prototype, 'indexOf');
+    try {
+      expect(textContentFromHtml(repeatedEscapedScripts)).toBe('visible');
+      const commentCloseSearches = indexOfSpy.mock.calls.filter(([needle]) => needle === '-->').length;
+      expect(commentCloseSearches).toBeLessThanOrEqual(1);
+    } finally {
+      indexOfSpy.mockRestore();
+    }
+  });
+
+  it('decodes full HTML5 named, numeric, Windows-1252, and legacy entities once via entities@8.0.0', () => {
+    expect(textContentFromHtml('<p>&#128; &#0; &#x1F600 &Lt; &Gt; &copy &amp;copy; &unknownref; &Apos;</p>')).toBe(
+      '€ \uFFFD 😀 ≪ ≫ © &copy; &unknownref; &Apos;'
+    );
+    expect(
+      textContentFromHtml(
+        '<img alt="&#128; &#0; &#x1F600 &Lt; &Gt; &amp;copy; &unknownref; https://example.com/?a=1&copy=2&reg=3">',
+        { includeImageAlt: true }
+      )
+    ).toBe('€ \uFFFD 😀 ≪ ≫ &copy; &unknownref; https://example.com/?a=1&copy=2&reg=3');
+    expect(decodeHtmlEntities('&#128; &#0; &#x1F600 &Lt; &Gt; &copy &amp;copy; &unknownref;')).toBe(
+      '€ \uFFFD 😀 ≪ ≫ © &copy; &unknownref;'
+    );
+    expect(decodeHtml('&#128; &#0; &#x1F600 &Lt; &Gt; &amp;copy; &unknownref; https://example.com/?a=1&copy=2')).toBe(
+      '€ \uFFFD 😀 ≪ ≫ &copy; &unknownref; https://example.com/?a=1&copy=2'
+    );
+  });
+
+  it('keeps complete unknown names in HTML summaries', () => {
+    expect(textContentFromHtml('<p>&notanentity; &ampfoo; &copycat;</p>')).toBe('&notanentity; &ampfoo; &copycat;');
   });
 
   it('leaves an unselected document untouched without reading its nodes', () => {

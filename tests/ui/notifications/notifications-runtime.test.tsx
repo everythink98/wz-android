@@ -14,18 +14,23 @@ import {
   createSiteSessionStates
 } from '@/domain/session/siteSessionState';
 import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
-import { useNotificationsRuntime } from '@/features/notifications/useNotificationsRuntime';
-import { useAccountRuntime } from '@/features/account/useAccountRuntime';
 import {
-  NotificationDetailRoute,
+  useNotificationsRuntime,
+  type NotificationOperationOutcome
+} from '@/features/notifications/useNotificationsRuntime';
+import { useAccountRuntime } from '@/features/account/useAccountRuntime';
+import { NotificationDetailRoute } from '@/features/notifications/NotificationRoute';
+import {
   NotificationRouteRuntimeProvider,
   type NotificationRouteRuntimeValue
-} from '@/features/notifications/NotificationRoute';
+} from '@/features/notifications/NotificationRouteRuntime';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import {
   clearNotificationSourceForContentDisable,
   defaultNotificationState,
   loadNotificationState,
+  markAndroidNotificationPermissionRequestStarted,
+  readNotificationDeliveryScope,
   recordNotificationDelivery,
   recordNotificationSnapshot,
   resetNotificationSourceIdentity,
@@ -39,6 +44,7 @@ import { render, fireEvent } from '../render';
 import {
   dismissSourceNotification,
   dismissSourceNotificationExact,
+  ensureMessageNotificationChannel,
   notificationPermissionGranted,
   presentSourceNotification,
   requestNotificationPermission,
@@ -100,6 +106,7 @@ jest.mock('expo-notifications', () => ({
 jest.mock('@/platform/notifications/notificationSystem', () => ({
   dismissSourceNotification: jest.fn(async () => undefined),
   dismissSourceNotificationExact: jest.fn(async () => undefined),
+  ensureMessageNotificationChannel: jest.fn(async () => undefined),
   notificationPermissionGranted: jest.fn(async () => false),
   openNotificationSystemSettings: jest.fn(async () => undefined),
   presentSourceNotification: jest.fn(async (_source: string, _digest: unknown, identifier: string) => identifier),
@@ -134,6 +141,7 @@ jest.mock('@/platform/notifications/notificationStore', () => {
         })
     ),
     loadNotificationState: jest.fn(actual.loadNotificationState),
+    markAndroidNotificationPermissionRequestStarted: jest.fn(actual.markAndroidNotificationPermissionRequestStarted),
     recordNotificationDelivery: jest.fn(actual.recordNotificationDelivery),
     recordNotificationSnapshot: jest.fn(actual.recordNotificationSnapshot),
     resetNotificationSourceIdentity: jest.fn(actual.resetNotificationSourceIdentity),
@@ -261,6 +269,7 @@ async function settleStartedRuntimeTasks(unmount = true) {
       const tasks = [
         ...jest.mocked(clearNotificationSourceForContentDisable).mock.results,
         ...jest.mocked(loadNotificationState).mock.results,
+        ...jest.mocked(markAndroidNotificationPermissionRequestStarted).mock.results,
         ...jest.mocked(recordNotificationDelivery).mock.results,
         ...jest.mocked(recordNotificationSnapshot).mock.results,
         ...jest.mocked(resetNotificationSourceIdentity).mock.results,
@@ -625,7 +634,10 @@ describe('notification runtime', () => {
     try {
       await waitFor(() => expect(hook.result.current.initializationError).toContain('权限'));
       await act(async () => {
-        await expect(hook.result.current.setGlobalEnabled(true)).resolves.toBe(true);
+        await expect(hook.result.current.setGlobalEnabled(true)).resolves.toEqual({
+          status: 'completed',
+          granted: true
+        });
       });
       expect(hook.result.current.permission).toBe('granted');
       expect(hook.result.current.initializationError).toBe('');
@@ -906,6 +918,7 @@ describe('notification runtime', () => {
     jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
     jest.mocked(AsyncStorage.setItem).mockResolvedValue(undefined);
     jest.mocked(Notifications.getLastNotificationResponse).mockReturnValue(null);
+    jest.mocked(ensureMessageNotificationChannel).mockResolvedValue(undefined);
     jest.mocked(notificationPermissionGranted).mockResolvedValue(false);
     jest.mocked(requestNotificationPermission).mockResolvedValue(false);
     jest.mocked(presentSourceNotification).mockImplementation(async (_source, _digest, identifier) => identifier);
@@ -1053,6 +1066,7 @@ describe('notification runtime', () => {
       expect(hook.result.current.state.sources.nodeseek).toEqual({
         intentEnabled: true,
         identityKey: 'nodeseek:42',
+        deliveryGeneration: 1,
         baselineReady: false,
         deliveredIds: []
       })
@@ -2097,6 +2111,598 @@ describe('notification runtime', () => {
     await settleStartedRuntimeTasks();
   });
 
+  it.each(['granted', 'denied', 'native-error', 'native-error-after-probe-failure', 'storage-error'] as const)(
+    'handles first Android notification opt-in for %s while keeping persisted intent and background reconciliation consistent',
+    async (outcome) => {
+      const initial = defaultNotificationState();
+      initial.sources.nodeseek.identityKey = 'nodeseek:42';
+      let persisted = JSON.stringify(initial);
+      jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
+      jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
+        persisted = value;
+      });
+      if (outcome === 'native-error-after-probe-failure') {
+        jest.mocked(notificationPermissionGranted).mockRejectedValueOnce(new Error('startup probe failed'));
+      } else {
+        jest.mocked(notificationPermissionGranted).mockResolvedValue(false);
+      }
+
+      const sessions =
+        outcome === 'native-error-after-probe-failure'
+          ? projectTestAccountSessions(createSiteSessionStates())
+          : nodeSeekSessions('confirmed');
+      const hook = await renderHook(
+        () => useNotificationsRuntime(runtimeOptions(undefined, sessions, ['nodeseek', 'linuxdo', 'yaohuo'])),
+        { wrapper: QueryTestWrapper }
+      );
+      try {
+        await waitFor(() => expect(hook.result.current.ready).toBe(true));
+        if (outcome === 'native-error-after-probe-failure') {
+          await waitFor(() => expect(hook.result.current.permission).toBe('unavailable'));
+        } else {
+          await waitFor(() => expect(hook.result.current.permission).toBe('denied'));
+        }
+        jest.mocked(syncNotificationBackgroundRegistration).mockClear();
+        jest.mocked(requestNotificationPermission).mockClear();
+
+        if (outcome === 'granted') {
+          jest.mocked(requestNotificationPermission).mockResolvedValueOnce(true);
+        } else if (outcome === 'denied') {
+          jest.mocked(requestNotificationPermission).mockResolvedValueOnce(false);
+        } else if (outcome === 'native-error' || outcome === 'native-error-after-probe-failure') {
+          jest
+            .mocked(requestNotificationPermission)
+            .mockRejectedValueOnce(new Error('native permission bridge failed'));
+        } else {
+          jest.mocked(AsyncStorage.setItem).mockRejectedValueOnce(new Error('disk full'));
+        }
+
+        if (outcome === 'storage-error') {
+          await act(async () => {
+            await expect(hook.result.current.setGlobalEnabled(true)).rejects.toThrow('disk full');
+          });
+          expect(requestNotificationPermission).not.toHaveBeenCalled();
+          expect(hook.result.current.state).toMatchObject({ globalEnabled: false, hasOptedIn: false });
+          expect(JSON.parse(persisted)).toMatchObject({ globalEnabled: false, hasOptedIn: false });
+          return;
+        }
+
+        let enableOutcome: NotificationOperationOutcome | undefined;
+        await act(async () => {
+          enableOutcome = await hook.result.current.setGlobalEnabled(true);
+        });
+
+        expect(requestNotificationPermission).toHaveBeenCalledTimes(1);
+        const saved = JSON.parse(persisted);
+        expect(saved).toMatchObject({
+          globalEnabled: true,
+          hasOptedIn: true,
+          androidPermissionRequestStarted: true,
+          sources: {
+            nodeseek: expect.objectContaining({ intentEnabled: true }),
+            linuxdo: expect.objectContaining({ intentEnabled: true }),
+            yaohuo: expect.objectContaining({ intentEnabled: true })
+          }
+        });
+        expect(hook.result.current.ready).toBe(true);
+
+        if (outcome === 'granted') {
+          expect(enableOutcome).toEqual({ status: 'completed', granted: true });
+          expect(hook.result.current.permission).toBe('granted');
+          expect(hook.result.current.initializationError).toBe('');
+          expect(hook.result.current.backgroundEnabled).toBe(true);
+          expect(syncNotificationBackgroundRegistration).toHaveBeenLastCalledWith(
+            expect.objectContaining({ globalEnabled: true, hasOptedIn: true, androidPermissionRequestStarted: true }),
+            true,
+            ['nodeseek']
+          );
+          return;
+        }
+
+        expect(enableOutcome).toEqual(
+          outcome === 'denied' ? { status: 'completed', granted: false } : { status: 'permission-read-failed' }
+        );
+        expect(hook.result.current.backgroundEnabled).toBe(false);
+        expect(syncNotificationBackgroundRegistration).toHaveBeenCalled();
+        for (const call of jest.mocked(syncNotificationBackgroundRegistration).mock.calls) {
+          expect(call[1]).toBe(false);
+        }
+        expect(syncNotificationBackgroundRegistration).toHaveBeenLastCalledWith(
+          expect.objectContaining({ globalEnabled: true, hasOptedIn: true }),
+          false,
+          outcome === 'native-error-after-probe-failure' ? [] : ['nodeseek']
+        );
+
+        if (outcome === 'denied') {
+          expect(hook.result.current.permission).toBe('denied');
+          expect(hook.result.current.initializationError).toBe('');
+          return;
+        }
+
+        expect(hook.result.current.permission).toBe('unavailable');
+        expect(hook.result.current.initializationError).toBe('系统通知权限读取失败，请重试；站内消息仍可使用。');
+
+        // Repeatedly toggling must not re-trigger first-time authorization prompt.
+        await act(async () => {
+          await hook.result.current.setGlobalEnabled(false);
+          await hook.result.current.setGlobalEnabled(true);
+        });
+        expect(requestNotificationPermission).toHaveBeenCalledTimes(1);
+
+        // Retrying initialization re-reads permission and clears the error on success.
+        jest.mocked(notificationPermissionGranted).mockResolvedValueOnce(true);
+        await act(async () => {
+          await hook.result.current.retryInitialization();
+        });
+        expect(hook.result.current.permission).toBe('granted');
+        expect(hook.result.current.initializationError).toBe('');
+        expect(hook.result.current.backgroundEnabled).toBe(outcome !== 'native-error-after-probe-failure');
+      } finally {
+        await settleStartedRuntimeTasks();
+      }
+    }
+  );
+
+  it.each(['after-unmount', 'while-superseded'] as const)(
+    'does not let a replaced runtime instance revoke the new runtime background registration when its old permission request rejects (%s)',
+    async (replacementMode) => {
+      const initial = defaultNotificationState();
+      initial.sources.nodeseek.identityKey = 'nodeseek:42';
+      let persisted = JSON.stringify(initial);
+      jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
+      jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
+        persisted = value;
+      });
+
+      let taskRegistered = false;
+      let trackingRevocations = false;
+      let revocationsAfterNewRegistration = 0;
+      jest
+        .mocked(syncNotificationBackgroundRegistration)
+        .mockImplementation(async (state, permissionGranted, eligibleSources) => {
+          const shouldRun =
+            state.globalEnabled &&
+            permissionGranted &&
+            eligibleSources.some((source) => state.sources[source].intentEnabled && state.sources[source].identityKey);
+          if (trackingRevocations && taskRegistered && !shouldRun) {
+            revocationsAfterNewRegistration += 1;
+          }
+          taskRegistered = shouldRun;
+          return shouldRun;
+        });
+
+      const oldPermissionRequest = Promise.withResolvers<boolean>();
+      jest.mocked(notificationPermissionGranted).mockResolvedValue(false);
+      jest.mocked(requestNotificationPermission).mockReturnValueOnce(oldPermissionRequest.promise);
+
+      const sessions = nodeSeekSessions('confirmed');
+      const oldHook = await renderHook(
+        () => useNotificationsRuntime(runtimeOptions(undefined, sessions, ['nodeseek', 'linuxdo', 'yaohuo'])),
+        { wrapper: QueryTestWrapper }
+      );
+      let newHook: Awaited<ReturnType<typeof renderHook<ReturnType<typeof useNotificationsRuntime>, unknown>>> | null =
+        null;
+      try {
+        await waitFor(() => expect(oldHook.result.current.ready).toBe(true));
+        await waitFor(() => expect(oldHook.result.current.permission).toBe('denied'));
+
+        let oldEnablePromise: Promise<NotificationOperationOutcome> | undefined;
+        await act(async () => {
+          oldEnablePromise = oldHook.result.current.setGlobalEnabled(true);
+        });
+        await waitFor(() => expect(requestNotificationPermission).toHaveBeenCalledTimes(1));
+
+        if (replacementMode === 'after-unmount') {
+          await oldHook.unmount();
+        }
+
+        // Fresh root runtime mounts with permission granted and registers the background task.
+        jest.mocked(notificationPermissionGranted).mockResolvedValue(true);
+        newHook = await renderHook(
+          () => useNotificationsRuntime(runtimeOptions(undefined, sessions, ['nodeseek', 'linuxdo', 'yaohuo'])),
+          { wrapper: QueryTestWrapper }
+        );
+        await waitFor(() => expect(newHook!.result.current.backgroundEnabled).toBe(true));
+        await waitFor(() => expect(taskRegistered).toBe(true));
+
+        trackingRevocations = true;
+        const syncCallsBeforeOldRejection = jest.mocked(syncNotificationBackgroundRegistration).mock.calls.length;
+
+        // The stale permission request from the old runtime now throws/rejects.
+        await act(async () => {
+          oldPermissionRequest.reject(new Error('native permission bridge failed'));
+          await expect(oldEnablePromise).resolves.toEqual({ status: 'invalidated' });
+        });
+
+        expect(revocationsAfterNewRegistration).toBe(0);
+        expect(taskRegistered).toBe(true);
+        expect(jest.mocked(syncNotificationBackgroundRegistration).mock.calls).toHaveLength(
+          syncCallsBeforeOldRejection
+        );
+        expect(newHook.result.current.permission).toBe('granted');
+        expect(newHook.result.current.backgroundEnabled).toBe(true);
+        expect(newHook.result.current.initializationError).toBe('');
+      } finally {
+        oldPermissionRequest.resolve(false);
+        await settleStartedRuntimeTasks();
+      }
+    }
+  );
+
+  it.each(['during-channel-creation', 'after-os-request', 'before-background-registration'] as const)(
+    'handles runtime replacement at %s with explicit outcomes, single-flight OS permission, and active-only background registration',
+    async (replacementPoint) => {
+      const initial = defaultNotificationState();
+      initial.sources.nodeseek.identityKey = 'nodeseek:42';
+      let persisted = JSON.stringify(initial);
+      const pendingMarkWrite = Promise.withResolvers<void>();
+      let blockMarkWrite = false;
+      let markWriteEntered = false;
+      jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
+      jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
+        const parsed = JSON.parse(value);
+        if (blockMarkWrite && parsed.androidPermissionRequestStarted === true) {
+          markWriteEntered = true;
+          await pendingMarkWrite.promise;
+        }
+        persisted = value;
+      });
+      jest.mocked(notificationPermissionGranted).mockResolvedValue(false);
+
+      const channelPending = Promise.withResolvers<void>();
+      const osPermissionPending = Promise.withResolvers<boolean>();
+      if (replacementPoint === 'during-channel-creation') {
+        jest.mocked(ensureMessageNotificationChannel).mockReturnValueOnce(channelPending.promise);
+        jest.mocked(requestNotificationPermission).mockResolvedValueOnce(true);
+      } else if (replacementPoint === 'after-os-request') {
+        jest.mocked(requestNotificationPermission).mockReturnValueOnce(osPermissionPending.promise);
+      } else {
+        blockMarkWrite = true;
+        jest.mocked(requestNotificationPermission).mockResolvedValueOnce(true);
+      }
+
+      const sessions = nodeSeekSessions('confirmed');
+      const oldHook = await renderHook(
+        () => useNotificationsRuntime(runtimeOptions(undefined, sessions, ['nodeseek', 'linuxdo', 'yaohuo'])),
+        { wrapper: QueryTestWrapper }
+      );
+      let newHook: Awaited<ReturnType<typeof renderHook<ReturnType<typeof useNotificationsRuntime>, unknown>>> | null =
+        null;
+      try {
+        await waitFor(() => expect(oldHook.result.current.ready).toBe(true));
+        await waitFor(() => expect(oldHook.result.current.permission).toBe('denied'));
+        jest.mocked(syncNotificationBackgroundRegistration).mockClear();
+
+        let oldOperation: Promise<unknown> | undefined;
+        await act(async () => {
+          oldOperation = oldHook.result.current.setGlobalEnabled(true);
+        });
+
+        if (replacementPoint === 'during-channel-creation') {
+          await waitFor(() => expect(ensureMessageNotificationChannel).toHaveBeenCalledTimes(1));
+          expect(requestNotificationPermission).not.toHaveBeenCalled();
+          expect(JSON.parse(persisted)).toMatchObject({
+            globalEnabled: true,
+            hasOptedIn: true,
+            androidPermissionRequestStarted: false
+          });
+
+          // Replace runtime BEFORE OS permission call is issued.
+          newHook = await renderHook(
+            () => useNotificationsRuntime(runtimeOptions(undefined, sessions, ['nodeseek', 'linuxdo', 'yaohuo'])),
+            { wrapper: QueryTestWrapper }
+          );
+          await waitFor(() => expect(newHook!.result.current.ready).toBe(true));
+          expect(newHook.result.current.state).toMatchObject({
+            globalEnabled: true,
+            hasOptedIn: true,
+            androidPermissionRequestStarted: false
+          });
+
+          const syncCallsBeforeOldChannel = jest.mocked(syncNotificationBackgroundRegistration).mock.calls.length;
+          await act(async () => {
+            channelPending.resolve();
+            const oldOutcome = await oldOperation;
+            expect(oldOutcome).toEqual({ status: 'invalidated' });
+          });
+          expect(requestNotificationPermission).not.toHaveBeenCalled();
+          expect(JSON.parse(persisted).androidPermissionRequestStarted).toBe(false);
+          expect(jest.mocked(syncNotificationBackgroundRegistration).mock.calls).toHaveLength(
+            syncCallsBeforeOldChannel
+          );
+
+          // User-initiated action on the new runtime triggers exactly 1 OS permission request.
+          let newOutcome: unknown;
+          await act(async () => {
+            newOutcome = await (
+              newHook!.result.current as unknown as { requestPermission: () => Promise<unknown> }
+            ).requestPermission();
+          });
+          expect(newOutcome).toEqual({ status: 'completed', granted: true });
+          expect(requestNotificationPermission).toHaveBeenCalledTimes(1);
+          expect(JSON.parse(persisted)).toMatchObject({
+            globalEnabled: true,
+            hasOptedIn: true,
+            androidPermissionRequestStarted: true
+          });
+          expect(newHook.result.current.backgroundEnabled).toBe(true);
+          expect(syncNotificationBackgroundRegistration).toHaveBeenLastCalledWith(
+            expect.objectContaining({
+              globalEnabled: true,
+              hasOptedIn: true,
+              androidPermissionRequestStarted: true
+            }),
+            true,
+            ['nodeseek']
+          );
+          return;
+        }
+
+        if (replacementPoint === 'after-os-request') {
+          await waitFor(() => expect(requestNotificationPermission).toHaveBeenCalledTimes(1));
+          await waitFor(() => expect(JSON.parse(persisted).androidPermissionRequestStarted).toBe(true));
+
+          // Replace runtime AFTER OS permission request is issued while OS prompt is still pending.
+          newHook = await renderHook(
+            () => useNotificationsRuntime(runtimeOptions(undefined, sessions, ['nodeseek', 'linuxdo', 'yaohuo'])),
+            { wrapper: QueryTestWrapper }
+          );
+          await waitFor(() => expect(newHook!.result.current.ready).toBe(true));
+          expect(newHook.result.current.state).toMatchObject({
+            globalEnabled: true,
+            hasOptedIn: true,
+            androidPermissionRequestStarted: true
+          });
+
+          // Even if the new runtime triggers a permission request while the first OS call is still pending,
+          // process-wide single-flight keeps total OS permission requests at 1.
+          const syncCallsBeforeSettlement = jest.mocked(syncNotificationBackgroundRegistration).mock.calls.length;
+          await act(async () => {
+            osPermissionPending.resolve(false);
+            const oldOutcome = await oldOperation;
+            expect(oldOutcome).toEqual({ status: 'invalidated' });
+          });
+          expect(requestNotificationPermission).toHaveBeenCalledTimes(1);
+          expect(jest.mocked(syncNotificationBackgroundRegistration).mock.calls).toHaveLength(
+            syncCallsBeforeSettlement
+          );
+          return;
+        }
+
+        // Replacement point (c): OS permission resolved, replaced BEFORE background registration runs.
+        await waitFor(() => expect(requestNotificationPermission).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(markWriteEntered).toBe(true));
+        expect(syncNotificationBackgroundRegistration).not.toHaveBeenCalledWith(
+          expect.anything(),
+          true,
+          expect.anything()
+        );
+
+        jest.mocked(notificationPermissionGranted).mockResolvedValue(true);
+        newHook = await renderHook(
+          () => useNotificationsRuntime(runtimeOptions(undefined, sessions, ['nodeseek', 'linuxdo', 'yaohuo'])),
+          { wrapper: QueryTestWrapper }
+        );
+        await waitFor(() => expect(newHook!.result.current.ready).toBe(true));
+        await waitFor(() => expect(newHook!.result.current.backgroundEnabled).toBe(true));
+        const syncCallsBeforeOldSettles = jest.mocked(syncNotificationBackgroundRegistration).mock.calls.length;
+
+        await act(async () => {
+          pendingMarkWrite.resolve();
+          const oldOutcome = await oldOperation;
+          expect(oldOutcome).toEqual({ status: 'invalidated' });
+        });
+        expect(requestNotificationPermission).toHaveBeenCalledTimes(1);
+        expect(jest.mocked(syncNotificationBackgroundRegistration).mock.calls).toHaveLength(syncCallsBeforeOldSettles);
+        expect(JSON.parse(persisted)).toMatchObject({
+          globalEnabled: true,
+          hasOptedIn: true,
+          androidPermissionRequestStarted: true
+        });
+      } finally {
+        channelPending.resolve();
+        osPermissionPending.resolve(false);
+        pendingMarkWrite.resolve();
+        await settleStartedRuntimeTasks();
+      }
+    }
+  );
+
+  it('reuses the process-wide in-flight OS permission call when a replacement runtime requests permission before settlement', async () => {
+    const initial = defaultNotificationState();
+    initial.sources.nodeseek.identityKey = 'nodeseek:42';
+    let persisted = JSON.stringify(initial);
+    const pendingMarkWrite = Promise.withResolvers<void>();
+    let markWriteStarted = false;
+    jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
+    jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
+      if (JSON.parse(value).androidPermissionRequestStarted === true && !markWriteStarted) {
+        markWriteStarted = true;
+        await pendingMarkWrite.promise;
+      }
+      persisted = value;
+    });
+    jest.mocked(notificationPermissionGranted).mockResolvedValue(false);
+    const sharedOsRequest = Promise.withResolvers<boolean>();
+    jest.mocked(requestNotificationPermission).mockReturnValueOnce(sharedOsRequest.promise);
+
+    const sessions = nodeSeekSessions('confirmed');
+    const oldHook = await renderHook(
+      () => useNotificationsRuntime(runtimeOptions(undefined, sessions, ['nodeseek', 'linuxdo', 'yaohuo'])),
+      { wrapper: QueryTestWrapper }
+    );
+    let newHook: Awaited<ReturnType<typeof renderHook<ReturnType<typeof useNotificationsRuntime>, unknown>>> | null =
+      null;
+    try {
+      await waitFor(() => expect(oldHook.result.current.ready).toBe(true));
+      let oldOp: Promise<NotificationOperationOutcome> | undefined;
+      await act(async () => {
+        oldOp = oldHook.result.current.setGlobalEnabled(true);
+      });
+      await waitFor(() => expect(requestNotificationPermission).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(markWriteStarted).toBe(true));
+
+      // Replacement runtime mounts while old OS call is still pending and markWrite has not persisted yet.
+      newHook = await renderHook(
+        () => useNotificationsRuntime(runtimeOptions(undefined, sessions, ['nodeseek', 'linuxdo', 'yaohuo'])),
+        { wrapper: QueryTestWrapper }
+      );
+      await waitFor(() => expect(newHook!.result.current.ready).toBe(true));
+      expect(newHook.result.current.state.androidPermissionRequestStarted).toBe(false);
+
+      // User initiates permission request on the new runtime: joins process-wide single-flight (total OS calls stays 1!).
+      let newOp: Promise<NotificationOperationOutcome> | undefined;
+      await act(async () => {
+        newOp = newHook!.result.current.requestPermission();
+      });
+      expect(requestNotificationPermission).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        pendingMarkWrite.resolve();
+        sharedOsRequest.resolve(true);
+        const [oldOutcome, newOutcome] = await Promise.all([oldOp, newOp]);
+        expect(oldOutcome).toEqual({ status: 'invalidated' });
+        expect(newOutcome).toEqual({ status: 'completed', granted: true });
+      });
+
+      expect(requestNotificationPermission).toHaveBeenCalledTimes(1);
+      expect(ensureMessageNotificationChannel).toHaveBeenCalledTimes(1);
+      expect(newHook.result.current.permission).toBe('granted');
+      expect(newHook.result.current.backgroundEnabled).toBe(true);
+      expect(JSON.parse(persisted)).toMatchObject({
+        globalEnabled: true,
+        hasOptedIn: true,
+        androidPermissionRequestStarted: true
+      });
+    } finally {
+      pendingMarkWrite.resolve();
+      sharedOsRequest.resolve(false);
+      await settleStartedRuntimeTasks();
+    }
+  });
+
+  it.each(['system-settled-first', 'granted-after-replacement', 'marker-write-failed'] as const)(
+    'does not repeat an Android permission request and lets the current runtime settle it after %s',
+    async (scenario) => {
+      const initial = defaultNotificationState();
+      initial.sources.nodeseek.identityKey = 'nodeseek:42';
+      let persisted = JSON.stringify(initial);
+      const markerRelease = Promise.withResolvers<void>();
+      const osRequest = Promise.withResolvers<boolean>();
+      let markerWrites = 0;
+      let granted = false;
+      jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
+      jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
+        if (JSON.parse(value).androidPermissionRequestStarted && ++markerWrites === 1) {
+          if (scenario === 'marker-write-failed') throw new Error('storage unavailable');
+          if (scenario === 'system-settled-first') await markerRelease.promise;
+        }
+        persisted = value;
+      });
+      jest.mocked(notificationPermissionGranted).mockImplementation(async () => granted);
+      jest.mocked(requestNotificationPermission).mockReturnValueOnce(osRequest.promise);
+      const options = { ...runtimeOptions(undefined, nodeSeekSessions('confirmed'), ['nodeseek']), appActive: true };
+      const renderRuntime = () => renderHook(() => useNotificationsRuntime(options), { wrapper: QueryTestWrapper });
+      const first = await renderRuntime();
+      try {
+        await waitFor(() => expect(first.result.current.ready).toBe(true));
+        let firstRequest: Promise<NotificationOperationOutcome> | undefined;
+        await act(async () => {
+          firstRequest = first.result.current.setGlobalEnabled(true);
+        });
+        await waitFor(() => expect(markerWrites).toBe(1));
+        expect(requestNotificationPermission).toHaveBeenCalledTimes(1);
+
+        if (scenario !== 'granted-after-replacement') {
+          await act(async () => osRequest.resolve(false));
+          if (scenario === 'marker-write-failed') await act(async () => void (await firstRequest));
+        } else {
+          expect(JSON.parse(persisted).androidPermissionRequestStarted).toBe(true);
+        }
+        const replacement = await renderRuntime();
+        await waitFor(() => expect(replacement.result.current.ready).toBe(true));
+        expect(replacement.result.current.permission).toBe('denied');
+
+        if (scenario === 'granted-after-replacement') {
+          granted = true;
+          await act(async () => osRequest.resolve(true));
+          await waitFor(() => expect(replacement.result.current.permission).toBe('granted'));
+          await waitFor(() => expect(replacement.result.current.backgroundEnabled).toBe(true));
+        } else {
+          let replacementRequest: Promise<NotificationOperationOutcome> | undefined;
+          await act(async () => {
+            replacementRequest = replacement.result.current.requestPermission();
+          });
+          markerRelease.resolve();
+          await act(async () => {
+            await Promise.all([firstRequest, replacementRequest]);
+          });
+        }
+
+        expect(requestNotificationPermission).toHaveBeenCalledTimes(1);
+        expect(JSON.parse(persisted).androidPermissionRequestStarted).toBe(true);
+      } finally {
+        markerRelease.resolve();
+        osRequest.resolve(false);
+        await settleStartedRuntimeTasks();
+      }
+    }
+  );
+
+  it('keeps androidPermissionRequestStarted false when channel preparation fails before OS permission is issued and allows retry', async () => {
+    const initial = defaultNotificationState();
+    initial.sources.nodeseek.identityKey = 'nodeseek:42';
+    let persisted = JSON.stringify(initial);
+    jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
+    jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
+      persisted = value;
+    });
+    jest.mocked(notificationPermissionGranted).mockResolvedValue(false);
+    jest
+      .mocked(ensureMessageNotificationChannel)
+      .mockRejectedValueOnce(new Error('channel creation failed'))
+      .mockResolvedValueOnce(undefined);
+    jest.mocked(requestNotificationPermission).mockResolvedValueOnce(true);
+
+    const sessions = nodeSeekSessions('confirmed');
+    const hook = await renderHook(
+      () => useNotificationsRuntime(runtimeOptions(undefined, sessions, ['nodeseek', 'linuxdo', 'yaohuo'])),
+      { wrapper: QueryTestWrapper }
+    );
+    try {
+      await waitFor(() => expect(hook.result.current.ready).toBe(true));
+      let firstOutcome: NotificationOperationOutcome | undefined;
+      await act(async () => {
+        firstOutcome = await hook.result.current.setGlobalEnabled(true);
+      });
+      expect(firstOutcome).toEqual({ status: 'permission-read-failed' });
+      expect(requestNotificationPermission).not.toHaveBeenCalled();
+      expect(JSON.parse(persisted)).toMatchObject({
+        globalEnabled: true,
+        hasOptedIn: true,
+        androidPermissionRequestStarted: false
+      });
+      expect(hook.result.current.permission).toBe('unavailable');
+      expect(hook.result.current.backgroundEnabled).toBe(false);
+
+      let retryOutcome: NotificationOperationOutcome | undefined;
+      await act(async () => {
+        retryOutcome = await hook.result.current.requestPermission();
+      });
+      expect(retryOutcome).toEqual({ status: 'completed', granted: true });
+      expect(requestNotificationPermission).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(persisted)).toMatchObject({
+        globalEnabled: true,
+        hasOptedIn: true,
+        androidPermissionRequestStarted: true
+      });
+      expect(hook.result.current.permission).toBe('granted');
+      expect(hook.result.current.backgroundEnabled).toBe(true);
+    } finally {
+      await settleStartedRuntimeTasks();
+    }
+  });
+
   it.each(['global', 'source'] as const)(
     'retries a failed Android digest dismissal on resume after disabling %s notifications',
     async (scope) => {
@@ -2218,12 +2824,13 @@ describe('notification runtime', () => {
       await waitFor(() => expect(dismissSourceNotificationExact).toHaveBeenCalledWith('old-android-id'));
       await act(async () => {
         await hook.result.current.setSourceEnabled('nodeseek', true);
-        await recordNotificationDelivery('nodeseek', 'nodeseek:42', ['baseline'], {
+        const scope = readNotificationDeliveryScope(await loadNotificationState(), 'nodeseek')!;
+        await recordNotificationDelivery('nodeseek', scope, ['baseline'], {
           lastSuccessAt: '2026-11-20T00:00:00Z'
         });
         const replacement = await recordNotificationDelivery(
           'nodeseek',
-          'nodeseek:42',
+          scope,
           ['new'],
           { lastSuccessAt: '2026-11-20T00:01:00Z' },
           { expectedNewIds: ['new'], previousIdentifier: 'old-android-id', notificationIdentifier: 'new-android-id' }
@@ -2337,7 +2944,8 @@ describe('notification runtime', () => {
         body: 'Alice 回复了你的主题',
         data: { source: 'nodeseek' }
       },
-      'wz-message-nodeseek-nodeseek%3A42'
+      'wz-message-nodeseek-nodeseek%3A42',
+      async () => undefined
     );
     expect(presentSourceNotification).toHaveBeenCalledTimes(1);
     await dependencies.system.dismissDigest('nodeseek', 'wz-message-nodeseek-nodeseek%3A42');
@@ -2634,12 +3242,89 @@ describe('notification runtime', () => {
         expect(presentSourceNotification).toHaveBeenCalledWith(
           source,
           expect.objectContaining({ body: `${source}-replacement回复了你的主题` }),
-          state.sources[source].notificationIdentifier
+          state.sources[source].notificationIdentifier,
+          expect.any(Function)
         );
       }
       expect(listPage.mock.calls.length).toBeLessThanOrEqual(4);
     } finally {
       acknowledgment.resolve();
+      await settleStartedRuntimeTasks();
+    }
+  });
+
+  it('holds Android registration and delivery until a provisional read handoff commits', async () => {
+    const actual = jest.requireActual<typeof import('@/platform/notifications/notificationWorker')>(
+      '@/platform/notifications/notificationWorker'
+    );
+    const stored = defaultNotificationState();
+    stored.globalEnabled = true;
+    stored.hasOptedIn = true;
+    stored.sources.nodeseek = {
+      intentEnabled: true,
+      identityKey: 'nodeseek:42',
+      baselineReady: true,
+      deliveredIds: ['known']
+    };
+    let persisted = JSON.stringify(stored);
+    jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
+    jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
+      persisted = value;
+    });
+    jest.mocked(notificationPermissionGranted).mockResolvedValue(true);
+    const listPage = jest.fn(async () => ({
+      quality: 'complete' as const,
+      items: [
+        {
+          source: 'nodeseek' as const,
+          id: 'new-reply',
+          kind: 'reply' as const,
+          actor: { name: 'Fixture' },
+          title: 'A reply',
+          createdAt: null,
+          unread: true,
+          target: { type: 'information' as const }
+        }
+      ],
+      cursor: null,
+      hasMore: false
+    }));
+    jest
+      .mocked(runNotificationBackgroundWorker)
+      .mockImplementation((dependencies) =>
+        actual.runNotificationBackgroundWorker({ ...dependencies, network: { ...dependencies.network, listPage } })
+      );
+    const options = runtimeOptions(undefined, nodeSeekSessions('confirmed'), ['nodeseek']);
+    const fetcher = jest.fn(async () => Response.json({ atMe: 0, reply: 1, message: 0 }));
+    let handoffPending = true;
+    const hook = await renderHook(
+      () =>
+        useNotificationsRuntime({
+          ...options,
+          appActive: true,
+          fetcher,
+          privateAccessAllowed: (source, identity, access) =>
+            (access !== 'settled-session' || !handoffPending) && options.privateAccessAllowed(source, identity)
+        }),
+      { wrapper: QueryTestWrapper }
+    );
+    try {
+      await waitFor(() => expect(hook.result.current.unreadTotal).toBe(1));
+      await settleStartedRuntimeTasks(false);
+      expect(hook.result.current.activeSources).toEqual(['nodeseek']);
+      expect(hook.result.current.backgroundEnabled).toBe(false);
+      expect(syncNotificationBackgroundRegistration).toHaveBeenLastCalledWith(expect.anything(), true, []);
+      expect(listPage).not.toHaveBeenCalled();
+      expect(presentSourceNotification).not.toHaveBeenCalled();
+      expect((await loadNotificationState()).sources.nodeseek.deliveredIds).toEqual(['known']);
+
+      handoffPending = false;
+      await act(async () => hook.rerender({}));
+      await waitFor(() => expect(hook.result.current.backgroundEnabled).toBe(true));
+      expect(syncNotificationBackgroundRegistration).toHaveBeenLastCalledWith(expect.anything(), true, ['nodeseek']);
+      await waitFor(() => expect(presentSourceNotification).toHaveBeenCalledTimes(1));
+      expect((await loadNotificationState()).sources.nodeseek.deliveredIds).toContain('new-reply');
+    } finally {
       await settleStartedRuntimeTasks();
     }
   });
@@ -2741,7 +3426,8 @@ describe('notification runtime', () => {
           body: 'Alice 回复了你的主题',
           data: { source: 'nodeseek' }
         },
-        'wz-message-nodeseek-nodeseek%3A42'
+        'wz-message-nodeseek-nodeseek%3A42',
+        async () => undefined
       )
     ).resolves.toBe('wz-message-nodeseek-nodeseek%3A42');
     expect(presentSourceNotification).toHaveBeenCalledTimes(1);
@@ -2891,7 +3577,8 @@ describe('notification runtime', () => {
       await act(async () => hook.rerender({}));
       await settleStartedRuntimeTasks(false);
 
-      const receipt = await recordNotificationDelivery('nodeseek', 'nodeseek:42', ['reply:known'], {
+      const scope = readNotificationDeliveryScope(await loadNotificationState(), 'nodeseek')!;
+      const receipt = await recordNotificationDelivery('nodeseek', scope, ['reply:known'], {
         lastSuccessAt: '2026-11-20T00:00:00.000Z'
       });
       expect({

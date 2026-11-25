@@ -266,6 +266,7 @@ export function LinuxDoVerifyModal(props: Props) {
           injectedJavaScript={LINUXDO_WEBVIEW_PROBE_SCRIPT}
           injectedJavaScriptBeforeContentLoaded={LINUXDO_SESSION_INIT_OBSERVER_SCRIPT}
           onLoadProgress={page.webViewProps.onLoadProgress}
+          onMainFrameLoadStart={page.webViewProps.onMainFrameLoadStart}
           onLoadStart={page.webViewProps.onLoadStart}
           onLoadEnd={page.webViewProps.onLoadEnd}
           onMessage={page.webViewProps.onMessage}

@@ -1,4 +1,4 @@
-import { getCurrentUserIdentity } from '@/sources/readGateway';
+import { getCurrentUserIdentity } from '@/sources/sourceRead';
 import { summarizeCookieHeader } from '@/platform/network/cookieHeaderNames';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 import { isCanceledRequest } from '@/platform/network/errors';

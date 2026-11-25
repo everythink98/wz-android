@@ -40,6 +40,45 @@ jest.mock('@/features/account/components/LinuxDoVerifyModal', () => ({
 }));
 
 import { AccountHost } from '@/features/account/AccountHost';
+import { SiteLoginHost } from '@/features/account/components/SiteLoginHost';
+
+it('probes a NodeSeek login form already loaded before fill mode changes', async () => {
+  const injectJavaScript = jest.fn();
+  const props = {
+    site: 'nodeseek',
+    checking: false,
+    credentialAttempt: 0,
+    credentialFillPending: false,
+    credentialSaved: true,
+    loginFormMode: false,
+    loading: false,
+    visible: true,
+    webViewBlockMessage: '',
+    webViewRef: { current: { injectJavaScript } as unknown as WebView },
+    session: createAccountSessionViewModel(createAccountSessionSnapshot('nodeseek')),
+    styles: createAccountHostStyles(
+      createTheme({ theme: 'light' }),
+      resolveReaderStyleSettings(createEmptyReaderData().settings)
+    ),
+    onCheck: jest.fn(),
+    onClear: jest.fn(),
+    onClose: jest.fn(),
+    onLoginFormMessage: jest.fn(() => false),
+    onNavigation: jest.fn(() => true),
+    onRequestCredentialFill: jest.fn(),
+    onSetLoading: jest.fn(),
+    onWebViewState: jest.fn()
+  } satisfies ComponentProps<typeof SiteLoginHost>;
+  const view = await render(<SiteLoginHost {...props} />);
+  const loadEnd = nodeImageWebViewProps.onLoadEnd as (event: { nativeEvent: { url: string } }) => void;
+  await act(() => loadEnd({ nativeEvent: { url: 'https://www.nodeseek.com/signIn.html' } }));
+  const fill = <SiteLoginHost {...props} credentialAttempt={1} loginFormMode />;
+  await view.rerender(fill);
+  expect(injectJavaScript).toHaveBeenCalledTimes(1);
+  await view.rerender(<SiteLoginHost {...props} credentialAttempt={1} loginFormMode />);
+  expect(injectJavaScript).toHaveBeenCalledTimes(1);
+  await view.unmount();
+});
 
 describe('AccountHost NodeImage authorization boundary', () => {
   beforeEach(() => {

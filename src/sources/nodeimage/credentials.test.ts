@@ -251,6 +251,100 @@ describe('NodeImage credential persistence', () => {
     expect(values.get(NODEIMAGE_API_KEY_STORAGE_KEY)).toBe(previousCredential);
   });
 
+  it.each([
+    { name: 'empty prior storage', priorValue: null },
+    {
+      name: 'existing prior key',
+      priorValue: JSON.stringify({
+        apiKey: 'previous-key',
+        ownership: { kind: 'verified', identityKey: 'nodeseek:alice' },
+        version: 1
+      })
+    }
+  ])(
+    'preserves a newer key written during a paused save instead of rolling back over it ($name)',
+    async ({ priorValue }) => {
+      const values = new Map<string, string>(priorValue ? [[NODEIMAGE_API_KEY_STORAGE_KEY, priorValue]] : []);
+      const newerCredential = JSON.stringify({
+        apiKey: 'newer-authorized-key',
+        ownership: { kind: 'verified', identityKey: 'nodeseek:alice' },
+        version: 1
+      });
+      const candidateWritten = Promise.withResolvers<void>();
+      const finishCandidateWrite = Promise.withResolvers<void>();
+      let authorizationCurrent = true;
+      let writeCount = 0;
+      vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => values.get(key) ?? null);
+      vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+        values.set(key, value);
+        if (++writeCount === 1) {
+          candidateWritten.resolve();
+          await finishCandidateWrite.promise;
+        }
+      });
+      vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+        values.delete(key);
+      });
+
+      const generation = beginNodeImageApiKeyAuthorization();
+      const saving = saveNodeImageApiKeyForGeneration(
+        generation,
+        'stale-authorized-key',
+        'nodeseek:alice',
+        'nodeseek:alice',
+        () => authorizationCurrent
+      );
+      await candidateWritten.promise;
+      authorizationCurrent = false;
+      values.set(NODEIMAGE_API_KEY_STORAGE_KEY, newerCredential);
+      finishCandidateWrite.resolve();
+
+      await expect(saving).resolves.toBeUndefined();
+      expect(values.get(NODEIMAGE_API_KEY_STORAGE_KEY)).toBe(newerCredential);
+      expect(SecureStore.deleteItemAsync).not.toHaveBeenCalled();
+      expect(writeCount).toBe(1);
+    }
+  );
+
+  it.each([
+    { name: 'empty prior storage', priorValue: null },
+    {
+      name: 'existing prior key',
+      priorValue: JSON.stringify({
+        apiKey: 'previous-key',
+        ownership: { kind: 'verified', identityKey: 'nodeseek:alice' },
+        version: 1
+      })
+    }
+  ])(
+    'rolls back the written key when the synchronous post-write commit callback rejects ($name)',
+    async ({ priorValue }) => {
+      const values = new Map<string, string>(priorValue ? [[NODEIMAGE_API_KEY_STORAGE_KEY, priorValue]] : []);
+      vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => values.get(key) ?? null);
+      vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+        values.set(key, value);
+      });
+      vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+        values.delete(key);
+      });
+
+      const generation = beginNodeImageApiKeyAuthorization();
+      const onCommit = vi.fn(() => false);
+      const saving = saveNodeImageApiKeyForGeneration(
+        generation,
+        'rejected-commit-key',
+        'nodeseek:alice',
+        'nodeseek:alice',
+        () => true,
+        onCommit
+      );
+
+      await expect(saving).resolves.toBeUndefined();
+      expect(onCommit).toHaveBeenCalledWith('rejected-commit-key');
+      expect(values.get(NODEIMAGE_API_KEY_STORAGE_KEY)).toBe(priorValue ?? undefined);
+    }
+  );
+
   it.each(['same authorization', 'new authorization'])(
     'retries an old read after a newer key is saved in the %s',
     async (authorization) => {

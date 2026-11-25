@@ -1,11 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createAccountSessionSnapshot, type AccountSessionSnapshot } from '@/domain/session/siteSessionState';
 import { createAuthSurfacePreparation } from './authSurfacePreparation';
-
-const confirmedSnapshot: AccountSessionSnapshot = {
-  ...createAccountSessionSnapshot('linuxdo'),
-  identityTrust: 'none'
-};
 
 describe('auth surface preparation', () => {
   it('requires the owning runtime to observe the captured marker before admitting a new page', async () => {
@@ -19,7 +13,6 @@ describe('auth surface preparation', () => {
     preparation.prepared();
     expect(preparation.ready).toBe(true);
     expect(preparation.pending).toBe(true);
-    expect(preparation.confirmed).toBeUndefined();
   });
 
   it.each(['fulfilled', 'rejected'] as const)(
@@ -27,7 +20,6 @@ describe('auth surface preparation', () => {
     async (outcome) => {
       const marker = outcome === 'fulfilled' ? Promise.resolve() : Promise.reject(new Error('storage failure'));
       const preparation = createAuthSurfacePreparation(false, marker);
-      preparation.confirm(confirmedSnapshot);
       preparation.persisted();
       const observe = () =>
         preparation.promise.then(
@@ -41,7 +33,6 @@ describe('auth surface preparation', () => {
       expect(preparation.ready).toBe(outcome === 'fulfilled');
       expect(preparation.error).toBe(outcome === 'rejected' ? '登录会话保存失败' : '');
       expect(preparation.pending).toBe(false);
-      expect(preparation.confirmed).toBe(confirmedSnapshot);
     }
   );
 
@@ -51,7 +42,6 @@ describe('auth surface preparation', () => {
     expect(preparation.ready).toBe(true);
     expect(preparation.pending).toBe(true);
     expect(preparation.error).toBe('');
-    preparation.confirm(confirmedSnapshot);
 
     await preparation.promise.catch(() => preparation.failed('登录会话保存失败'));
 
@@ -59,10 +49,8 @@ describe('auth surface preparation', () => {
     expect(preparation.error).toBe('登录会话保存失败');
     expect(preparation.pending).toBe(true);
     preparation.persisted();
-    preparation.confirm(undefined);
     expect(preparation.ready).toBe(true);
     expect(preparation.error).toBe('登录会话保存失败');
     expect(preparation.pending).toBe(false);
-    expect(preparation.confirmed).toBeUndefined();
   });
 });

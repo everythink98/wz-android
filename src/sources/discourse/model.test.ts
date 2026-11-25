@@ -233,7 +233,7 @@ describe('portable Discourse fields', () => {
     expect(
       discourseTopicFields({
         id: 42,
-        unicode_title: '共享 &amp; 标题',
+        unicode_title: '共享 & 标题',
         created_at: '2026-01-02T03:04:05Z',
         bumped_at: '2026-01-03T03:04:05Z',
         posts_count: 3,
@@ -278,6 +278,71 @@ describe('portable Discourse fields', () => {
         excerpt: '[!warning]- 注意 正文'
       })?.excerpt
     ).toBe('注意 正文');
+  });
+
+  it('preserves literal named entities in plain Discourse JSON titles while decoding HTML fallback titles and excerpts once', () => {
+    expect(
+      discourseTopicFields({
+        id: 42,
+        title: 'How to type &copy; in HTML',
+        created_at: '2026-01-02T03:04:05Z',
+        posts_count: 1,
+        excerpt: '<p>&copy; &amp;copy; &hearts; &amp;hearts;</p>'
+      })
+    ).toMatchObject({
+      title: 'How to type &copy; in HTML',
+      excerpt: '© &copy; ♥ &hearts;'
+    });
+    expect(
+      discourseTopicFields({
+        id: 43,
+        unicode_title: 'How to type &hearts; and &copy; in HTML',
+        title: 'ignored fallback',
+        created_at: '2026-01-02T03:04:05Z',
+        posts_count: 1
+      })?.title
+    ).toBe('How to type &hearts; and &copy; in HTML');
+    expect(
+      discourseTopicFields({
+        id: 44,
+        fancy_title:
+          'How to type &copy; &amp;copy; <img class="emoji" alt="&hearts;" src="/heart.png"> <img class="emoji" alt="&amp;hearts;" src="/heart.png">',
+        created_at: '2026-01-02T03:04:05Z',
+        posts_count: 1
+      })?.title
+    ).toBe('How to type © &copy; ♥ &hearts;');
+  });
+
+  it('keeps plain Discourse title and unicode_title verbatim while decoding fancy_title fallback and HTML excerpt once', () => {
+    expect(
+      discourseTopicFields({
+        id: 45,
+        title: 'How to type &copy; &amp; &#128; &#129765; &#x1F600 &Lt; in HTML',
+        created_at: '2026-01-02T03:04:05Z',
+        posts_count: 1,
+        excerpt: '<p>&amp;copy; &#128; &#0; &#x1F600 &Lt; &Gt; &unknownref;</p>'
+      })
+    ).toMatchObject({
+      title: 'How to type &copy; &amp; &#128; &#129765; &#x1F600 &Lt; in HTML',
+      excerpt: '&copy; € \uFFFD 😀 ≪ ≫ &unknownref;'
+    });
+    expect(
+      discourseTopicFields({
+        id: 46,
+        unicode_title: 'Literal &amp; &copy; &#128; title',
+        created_at: '2026-01-02T03:04:05Z',
+        posts_count: 1
+      })?.title
+    ).toBe('Literal &amp; &copy; &#128; title');
+    expect(
+      discourseTopicFields({
+        id: 47,
+        fancy_title:
+          '&#128; &#0; &#x1F600 &Lt; &Gt; &unknownref; &amp;copy; <img class="emoji" alt="&amp;copy; &Lt;" src="/e.png">',
+        created_at: '2026-01-02T03:04:05Z',
+        posts_count: 1
+      })?.title
+    ).toBe('€ \uFFFD 😀 ≪ ≫ &unknownref; &copy; &copy; ≪');
   });
 
   it('resolves the original poster from a Discourse topic list payload', () => {

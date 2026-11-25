@@ -20,7 +20,9 @@ import { useAccountCredentialController } from '@/features/account/useAccountCre
 import { useLinuxDoCredit } from '@/features/more/useLinuxDoCredit';
 import { NodeSeekServicesPanel } from '@/features/more/components/NodeSeekServicesPanel';
 import { nativeSecureRandomHex } from '@/platform/android/secureRandom';
-import { accountQueryKeys, appQueryClient } from '@/platform/query/serverState';
+import { accountQueryKeys, appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
+import { resumeInfiniteQueryPage } from '@/platform/query/useFirstPageInfiniteQuery';
+import { DEFAULT_SEARCH_FILTERS } from '@/domain/forum/searchFilters';
 import { discourseReadingQueryKey } from '@/platform/query/discourseReadingRuntime';
 import { accountSessionSnapshotFromEvent, createAccountSessionSnapshot } from '@/domain/session/siteSessionState';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
@@ -32,7 +34,7 @@ import { createNotificationGateway } from '@/sources/notificationGateway';
 import { readForegroundNotificationAccess } from '@/sources/notificationForegroundAccess';
 import type { DiagnosticEvent } from '@/platform/diagnostics/diagnosticPolicy';
 import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
-import type { Source } from '@/domain/forum/models';
+import type { SearchResponse, Source } from '@/domain/forum/models';
 import { LOGIN_FORM_ADAPTERS } from '@/domain/session/loginFormAdapters';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { fireEvent, render } from '../render';
@@ -53,7 +55,12 @@ jest.mock('react-native-webview', () => {
     WebView: React.forwardRef(function MockWebView(props: Record<string, unknown>, ref: unknown) {
       React.useImperativeHandle(
         ref,
-        () => ({ stopLoading: mockWebViewStopLoading, injectJavaScript: mockWebViewInjectJavaScript }),
+        () => ({
+          stopLoading: mockWebViewStopLoading,
+          injectJavaScript: mockWebViewInjectJavaScript,
+          reload: () => undefined,
+          postMessage: mockWebViewPostMessage
+        }),
         []
       );
       React.useEffect(() => {
@@ -65,6 +72,7 @@ jest.mock('react-native-webview', () => {
 });
 let mockWebViewLoads: string[] = [];
 const mockWebViewInjectJavaScript = jest.fn<void, [string]>();
+const mockWebViewPostMessage = jest.fn<void, [string]>();
 const mockWebViewStopLoading = jest.fn<void, []>();
 jest.mock('@/platform/network/managedCookies', () => ({
   ...jest.requireActual('@/platform/network/managedCookies'),
@@ -112,6 +120,7 @@ beforeEach(async () => {
   jest.spyOn(SecureStore, 'deleteItemAsync').mockResolvedValue(undefined);
   mockWebViewLoads = [];
   mockWebViewInjectJavaScript.mockReset();
+  mockWebViewPostMessage.mockReset();
   mockWebViewStopLoading.mockReset();
   jest.mocked(nativeSecureRandomHex).mockResolvedValue('a'.repeat(32));
   events = [];
@@ -453,6 +462,197 @@ describe('LDC website authorization', () => {
     expect(view.getByText(/HTTP 500/)).toBeTruthy();
   });
 
+  it('keeps the visible Credit homepage operable without an App error banner on top-level HTTP 403', async () => {
+    const fetcher = jest.fn<ReturnType<Fetcher>, Parameters<Fetcher>>(async () =>
+      Response.json({ current_user: { id: 7, username: 'alice' } })
+    );
+    const { view, runtime } = await renderCreditHosts(fetcher);
+    await act(async () => runtime().center.linuxDoCredit.open());
+    const browser = view.getByTestId('login-webview');
+    const homeUrl = 'https://credit.linux.do/home';
+    await fireEvent(browser, 'mainFrameLoadStart', { nativeEvent: { url: homeUrl, loading: true } });
+    await fireEvent(browser, 'httpError', { nativeEvent: { url: homeUrl, statusCode: 403 } });
+    await fireEvent(browser, 'loadStart', { nativeEvent: { url: homeUrl, loading: true } });
+    await fireEvent(browser, 'loadEnd', { nativeEvent: { url: homeUrl } });
+
+    expect(view.getByTestId('login-webview')).toBe(browser);
+    expect(view.queryByText('正在打开 LDC…')).toBeNull();
+    expect(view.queryByText(/HTTP 403/)).toBeNull();
+    expect(view.queryByText(/页面加载失败/)).toBeNull();
+    expect(fetcher).not.toHaveBeenCalled();
+
+    await fireEvent.press(view.getByLabelText('完成并刷新'));
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(runtime().hosts.surfaces.linuxdoCredit).toBe(false));
+  });
+
+  it('shows the visible Credit error banner for non-home HTTP 403 and other HTTP or network failures across POST and redirects', async () => {
+    const { view, runtime } = await renderCreditHosts();
+    await act(async () => runtime().center.linuxDoCredit.open());
+    const browser = view.getByTestId('login-webview');
+
+    const nonHome403 = 'https://credit.linux.do/oauth/callback';
+    await fireEvent(browser, 'mainFrameLoadStart', { nativeEvent: { url: nonHome403, loading: true } });
+    await fireEvent(browser, 'httpError', { nativeEvent: { url: nonHome403, statusCode: 403 } });
+    await fireEvent(browser, 'loadStart', { nativeEvent: { url: nonHome403, loading: true } });
+    await fireEvent(browser, 'loadEnd', { nativeEvent: { url: nonHome403 } });
+    expect(view.getByText(/HTTP 403/)).toBeTruthy();
+
+    const nonHome500 = 'https://connect.linux.do/oauth2/authorize';
+    await fireEvent(browser, 'mainFrameLoadStart', { nativeEvent: { url: nonHome500, loading: true } });
+    await fireEvent(browser, 'httpError', { nativeEvent: { url: nonHome500, statusCode: 500 } });
+    await fireEvent(browser, 'loadStart', { nativeEvent: { url: nonHome500, loading: true } });
+    await fireEvent(browser, 'loadEnd', { nativeEvent: { url: nonHome500 } });
+    expect(view.getByText(/HTTP 500/)).toBeTruthy();
+
+    await fireEvent(browser, 'mainFrameLoadStart', {
+      nativeEvent: { url: 'https://credit.linux.do/home', loading: true }
+    });
+    await fireEvent(browser, 'error', { nativeEvent: { description: 'net::ERR_CONNECTION_RESET' } });
+    await fireEvent(browser, 'loadEnd', { nativeEvent: { url: 'https://credit.linux.do/home', code: -2 } });
+    expect(view.getByText(/net::ERR_CONNECTION_RESET/)).toBeTruthy();
+  });
+
+  it('ignores stale authorization page HTTP errors and history callbacks after navigating back to the Credit homepage', async () => {
+    const fetcher = jest.fn<ReturnType<Fetcher>, Parameters<Fetcher>>(async () =>
+      Response.json({ current_user: { id: 7, username: 'alice' } })
+    );
+    const { view, runtime } = await renderCreditHosts(fetcher);
+    await act(async () => runtime().center.linuxDoCredit.open());
+    const browser = view.getByTestId('login-webview');
+    const authUrl = 'https://connect.linux.do/oauth2/authorize?client_id=ldc';
+    const callbackUrl = 'https://credit.linux.do/oauth/callback?code=stale';
+    const homeUrl = 'https://credit.linux.do/home';
+
+    await fireEvent(browser, 'mainFrameLoadStart', { nativeEvent: { url: authUrl, loading: true } });
+    await fireEvent(browser, 'loadEnd', { nativeEvent: { url: authUrl } });
+    await fireEvent(browser, 'mainFrameLoadStart', { nativeEvent: { url: homeUrl, loading: true } });
+    await fireEvent(browser, 'httpError', { nativeEvent: { url: authUrl, statusCode: 403 } });
+    await fireEvent(browser, 'loadEnd', { nativeEvent: { url: homeUrl } });
+    await fireEvent(browser, 'loadStart', { nativeEvent: { url: authUrl, loading: true } });
+    await fireEvent(browser, 'httpError', { nativeEvent: { url: authUrl, statusCode: 403 } });
+
+    expect(view.getByTestId('login-webview')).toBe(browser);
+    expect(view.queryByText('正在打开 LDC…')).toBeNull();
+    expect(view.queryByText(/HTTP 403/)).toBeNull();
+    expect(view.queryByText(/页面加载失败/)).toBeNull();
+
+    await fireEvent(browser, 'httpError', { nativeEvent: { url: callbackUrl, statusCode: 500 } });
+    expect(view.queryByText(/HTTP 500/)).toBeNull();
+    expect(view.queryByText(/页面加载失败/)).toBeNull();
+
+    await fireEvent(browser, 'httpError', { nativeEvent: { url: homeUrl, statusCode: 500 } });
+    expect(view.queryByText(/HTTP 500/)).toBeNull();
+    // A new main-frame load can receive its HTTP response before committing the same URL.
+    await fireEvent(browser, 'mainFrameLoadStart', { nativeEvent: { url: homeUrl, loading: true } });
+    expect(view.getByText(/HTTP 500/)).toBeTruthy();
+
+    await fireEvent(browser, 'mainFrameLoadStart', { nativeEvent: { url: homeUrl, loading: true } });
+    await fireEvent(browser, 'httpError', { nativeEvent: { url: homeUrl, statusCode: 403 } });
+    await fireEvent(browser, 'loadEnd', { nativeEvent: { url: homeUrl } });
+    expect(view.queryByText(/HTTP 403/)).toBeNull();
+    expect(view.queryByText(/页面加载失败/)).toBeNull();
+
+    await fireEvent.press(view.getByLabelText('完成并刷新'));
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(runtime().hosts.surfaces.linuxdoCredit).toBe(false));
+  });
+
+  it('does not let a stale authorization page loadEnd rewind ownership or expose a late HTTP 403 on the homepage', async () => {
+    const { view, runtime } = await renderCreditHosts();
+    await act(async () => runtime().center.linuxDoCredit.open());
+    const browser = view.getByTestId('login-webview');
+    const authUrl = 'https://connect.linux.do/oauth2/authorize?client_id=ldc';
+    const homeUrl = 'https://credit.linux.do/home';
+
+    await fireEvent(browser, 'mainFrameLoadStart', { nativeEvent: { url: authUrl, loading: true } });
+    await fireEvent(browser, 'mainFrameLoadStart', { nativeEvent: { url: homeUrl, loading: true } });
+    await fireEvent(browser, 'loadEnd', { nativeEvent: { url: authUrl } });
+    await fireEvent(browser, 'httpError', { nativeEvent: { url: authUrl, statusCode: 403 } });
+
+    expect(view.getByTestId('login-webview')).toBe(browser);
+    expect(view.getByText('正在打开 LDC…')).toBeTruthy();
+    expect(view.queryByText(/HTTP 403/)).toBeNull();
+    expect(view.queryByText(/页面加载失败/)).toBeNull();
+
+    await fireEvent(browser, 'loadEnd', { nativeEvent: { url: homeUrl } });
+    expect(view.queryByText('正在打开 LDC…')).toBeNull();
+    expect(view.queryByText(/页面加载失败/)).toBeNull();
+  });
+
+  it('ignores confirmed retired authorization network errors while keeping current and ambiguous same-URL errors', async () => {
+    const { view, runtime } = await renderCreditHosts();
+    await act(async () => runtime().center.linuxDoCredit.open());
+    const browser = view.getByTestId('login-webview');
+    const authUrl = 'https://connect.linux.do/oauth2/authorize?client_id=ldc';
+    const homeUrl = 'https://credit.linux.do/home';
+
+    await fireEvent(browser, 'mainFrameLoadStart', { nativeEvent: { url: authUrl, loading: true } });
+    await fireEvent(browser, 'mainFrameLoadStart', { nativeEvent: { url: homeUrl, loading: true } });
+    const loadingStalePreventDefault = jest.fn();
+    await fireEvent(browser, 'error', {
+      nativeEvent: { url: authUrl, description: 'net::ERR_ABORTED' },
+      preventDefault: loadingStalePreventDefault
+    });
+    await fireEvent(browser, 'loadEnd', { nativeEvent: { url: authUrl, code: -3 } });
+
+    expect(loadingStalePreventDefault).toHaveBeenCalledTimes(1);
+    expect(view.getByTestId('login-webview')).toBe(browser);
+    expect(view.getByText('正在打开 LDC…')).toBeTruthy();
+    expect(view.queryByText(/ERR_ABORTED/)).toBeNull();
+    expect(view.queryByText(/页面加载失败/)).toBeNull();
+
+    await fireEvent(browser, 'loadEnd', { nativeEvent: { url: homeUrl } });
+    expect(view.queryByText('正在打开 LDC…')).toBeNull();
+
+    const settledStalePreventDefault = jest.fn();
+    await fireEvent(browser, 'error', {
+      nativeEvent: { url: authUrl, description: 'net::ERR_ABORTED' },
+      preventDefault: settledStalePreventDefault
+    });
+    expect(settledStalePreventDefault).toHaveBeenCalledTimes(1);
+    expect(view.queryByText(/ERR_ABORTED/)).toBeNull();
+    expect(view.queryByText(/页面加载失败/)).toBeNull();
+
+    // Navigating back to previously retired authUrl makes same-URL error ownership ambiguous -> retain native handling.
+    await fireEvent(browser, 'mainFrameLoadStart', { nativeEvent: { url: authUrl, loading: true } });
+    await fireEvent(browser, 'loadEnd', { nativeEvent: { url: authUrl } });
+    const ambiguousPreventDefault = jest.fn();
+    await fireEvent(browser, 'error', {
+      nativeEvent: { url: authUrl, description: 'net::ERR_CONNECTION_RESET' },
+      preventDefault: ambiguousPreventDefault
+    });
+    await fireEvent(browser, 'loadEnd', { nativeEvent: { url: authUrl, code: -2 } });
+    expect(ambiguousPreventDefault).not.toHaveBeenCalled();
+    expect(view.getByText(/net::ERR_CONNECTION_RESET/)).toBeTruthy();
+  });
+
+  it('shows a pre-onLoadStart network error after approving an official Credit authorization navigation', async () => {
+    const fetcher = jest.fn<ReturnType<Fetcher>, Parameters<Fetcher>>(async () =>
+      Response.json({ current_user: { id: 7, username: 'alice' } })
+    );
+    const { view, runtime } = await renderCreditHosts(fetcher);
+    await act(async () => runtime().center.linuxDoCredit.open());
+    const browser = view.getByTestId('login-webview');
+    const homeUrl = 'https://credit.linux.do/home';
+    const authUrl = 'https://connect.linux.do/oauth2/authorize?client_id=ldc';
+
+    await fireEvent(browser, 'mainFrameLoadStart', { nativeEvent: { url: homeUrl, loading: true } });
+    await fireEvent(browser, 'loadEnd', { nativeEvent: { url: homeUrl } });
+
+    expect(browser.props.onShouldStartLoadWithRequest({ url: authUrl, isTopFrame: true })).toBe(true);
+    const pendingPreventDefault = jest.fn();
+    await fireEvent(browser, 'error', {
+      nativeEvent: { url: authUrl, code: -2, description: 'net::ERR_NAME_NOT_RESOLVED' },
+      preventDefault: pendingPreventDefault
+    });
+    await fireEvent(browser, 'loadEnd', { nativeEvent: { url: authUrl, code: -2 } });
+
+    expect(pendingPreventDefault).not.toHaveBeenCalled();
+    expect(view.getByText('LDC 页面加载失败：net::ERR_NAME_NOT_RESOLVED')).toBeTruthy();
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it('keeps a silent Credit 403 page mounted for passive verification and stops other HTTP failures', async () => {
     const { view, runtime } = await renderCreditHosts();
     let pending!: Promise<void>;
@@ -497,7 +697,9 @@ describe('LDC website authorization', () => {
         });
         expect(view.getByTestId('login-webview').props.source.uri).toBe('https://linux.do/latest');
         expect(jest.mocked(setLinuxDoCookieResponseBarrier).mock.calls.every(([blocked]) => blocked)).toBe(true);
-        expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice')).toBe(false);
+        expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice', 'foreground-read')).toBe(
+          false
+        );
         if (finish === 'close')
           jest.mocked(setLinuxDoCookieResponseBarrier).mockImplementationOnce(() => handoff.promise);
         await fireEvent.press(view.getByText('检测登录'));
@@ -508,7 +710,9 @@ describe('LDC website authorization', () => {
           });
         await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
         await waitFor(() =>
-          expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice')).toBe(true)
+          expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice', 'foreground-read')).toBe(
+            true
+          )
         );
         expect(view.queryByTestId('login-webview')).toBeNull();
         expect(jest.mocked(setLinuxDoCookieResponseBarrier).mock.calls.at(-1)?.[0]).toBe(false);
@@ -528,7 +732,9 @@ describe('LDC website authorization', () => {
       const { view, runtime } = await renderCreditHosts(fetcher);
       const handoff = Promise.withResolvers<void>();
       const resume = jest.fn(async () => {
-        expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice')).toBe(true);
+        expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice', 'foreground-read')).toBe(
+          true
+        );
         expect(fetcher).toHaveBeenCalledTimes(1);
         return 'completed' as const;
       });
@@ -562,7 +768,9 @@ describe('LDC website authorization', () => {
           });
         await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
         await waitFor(() =>
-          expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice')).toBe(true)
+          expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice', 'foreground-read')).toBe(
+            true
+          )
         );
         if (finish === 'check') await waitFor(() => expect(resume).toHaveBeenCalledTimes(1));
         else expect(resume).not.toHaveBeenCalled();
@@ -672,7 +880,9 @@ describe('LDC website authorization', () => {
           handoff.resolve();
         });
         expect(resume).not.toHaveBeenCalled();
-        expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice')).toBe(false);
+        expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice', 'foreground-read')).toBe(
+          false
+        );
         if (outcome === 'replaced') {
           expect(fetcher).not.toHaveBeenCalled();
           expect(jest.mocked(setLinuxDoCookieResponseBarrier)).not.toHaveBeenCalled();
@@ -682,7 +892,9 @@ describe('LDC website authorization', () => {
             await runtime().center.handleAccountCenterCommand({ type: 'refresh' });
           });
           await waitFor(() =>
-            expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice')).toBe(true)
+            expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice', 'foreground-read')).toBe(
+              true
+            )
           );
         } else {
           await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
@@ -714,7 +926,7 @@ describe('LDC website authorization', () => {
     await act(async () => runtime().center.linuxDoCredit.open());
     expect(runtime().hosts.surfaces.linuxdoCredit).toBe(true);
     expect(runtime().hosts.surfaces.linuxdo).toBe(true);
-    expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice')).toBe(false);
+    expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice', 'foreground-read')).toBe(false);
     expect(appQueryClient.getQueryData(accountQueryKeys.snapshot('linuxdo'))).toEqual(snapshot);
     expect(fetcher).not.toHaveBeenCalled();
     const browser = view.getByTestId('login-webview');
@@ -740,7 +952,9 @@ describe('LDC website authorization', () => {
     expect(mockWebViewInjectJavaScript).not.toHaveBeenCalled();
     await fireEvent.press(view.getByLabelText('完成并刷新'));
     await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice')).toBe(true));
+    await waitFor(() =>
+      expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice', 'foreground-read')).toBe(true)
+    );
     expect(runtime().hosts.surfaces.linuxdoCredit).toBe(false);
     expect(appQueryClient.getQueryState(balance)?.isInvalidated).toBe(true);
     expect(appQueryClient.getQueryState(transactions)?.isInvalidated).toBe(true);
@@ -833,6 +1047,7 @@ describe('LDC website authorization', () => {
         view.queryAllByTestId('login-webview').some((page) => page.props.source.uri === 'https://credit.linux.do/home')
       ).toBe(false);
       await act(async () => {
+        oldPage.props.onMainFrameLoadStart({ nativeEvent: { url: 'https://credit.linux.do/home', loading: true } });
         oldPage.props.onLoadStart({ nativeEvent: { url: 'https://credit.linux.do/home', loading: true } });
         oldPage.props.onLoadEnd({ nativeEvent: { url: 'https://credit.linux.do/home' } });
       });
@@ -1750,6 +1965,185 @@ async function renderSiteRuntime(
   };
 }
 
+it.each(['credential-read', 'probe-message'] as const)(
+  'allows a fresh NodeSeek fill after reload invalidates an old %s',
+  async (interruption) => {
+    const pending = Promise.withResolvers<Awaited<ReturnType<typeof credentialVault.readForFill>>>();
+    const saved = { site: 'nodeseek' as const, account: 'local-fixture', password: 'local-fixture', updatedAt: 1 };
+    const read = jest.spyOn(credentialVault, 'readForFill').mockResolvedValue(saved);
+    if (interruption === 'credential-read') read.mockReturnValueOnce(pending.promise);
+    const summary = jest
+      .spyOn(credentialVault, 'getSummary')
+      .mockImplementation(async (site) =>
+        site === 'nodeseek'
+          ? { site, state: 'saved', hasCredential: true, protection: 'device' }
+          : emptyCredentialSummaries()[site]
+      );
+    const { view, runtime, notify } = await renderSiteRuntime('nodeseek', async () => {
+      throw new Error('Unexpected request while filling the login form');
+    });
+    const url = LOGIN_FORM_ADAPTERS.nodeseek.loginUrl;
+    const webView = () => view.getByTestId('login-webview');
+    const toolbar = () => view.getByLabelText('填入已保存登录信息');
+    const completePage = async () => {
+      await act(async () => webView().props.onMainFrameLoadStart({ nativeEvent: { url, loading: true } }));
+      await act(async () => webView().props.onLoadEnd({ nativeEvent: { url, loading: false } }));
+    };
+    const emitMessage = (type: 'probe' | 'fill', attempt: number) =>
+      act(async () =>
+        webView().props.onMessage({
+          nativeEvent: {
+            url,
+            data: JSON.stringify({ type: `login-form-${type}`, site: 'nodeseek', attempt, ok: true, url })
+          }
+        })
+      );
+    try {
+      await act(async () => runtime().center.handleAccountCenterCommand({ type: 'open-login', site: 'nodeseek' }));
+      await waitFor(() => expect(webView()).toBeTruthy());
+      await completePage();
+      await fireEvent.press(toolbar());
+      expect(mockWebViewInjectJavaScript.mock.calls.length).toBe(1);
+      if (interruption === 'credential-read') await emitMessage('probe', 1);
+      const readsBeforeReload = interruption === 'credential-read' ? 1 : 0;
+      expect(read).toHaveBeenCalledTimes(readsBeforeReload);
+
+      mockWebViewInjectJavaScript.mockClear();
+      await fireEvent.press(view.getByLabelText('刷新页面'));
+      await completePage();
+      await act(async () => pending.resolve(saved));
+      await emitMessage('probe', 1);
+      await emitMessage('fill', 1);
+      expect(read).toHaveBeenCalledTimes(readsBeforeReload);
+      expect(mockWebViewInjectJavaScript.mock.calls.length).toBe(0);
+      expect(notify).not.toHaveBeenCalled();
+
+      await fireEvent.press(toolbar());
+      expect(mockWebViewInjectJavaScript.mock.calls.length).toBe(1);
+      await emitMessage('probe', 2);
+      expect(read).toHaveBeenCalledTimes(readsBeforeReload + 1);
+      expect(mockWebViewInjectJavaScript.mock.calls.length).toBe(2);
+      await emitMessage('fill', 2);
+      expect(notify).toHaveBeenCalledWith('已填入保存的登录信息，请完成验证后手动提交。');
+    } finally {
+      pending.resolve(null);
+      read.mockRestore();
+      summary.mockRestore();
+      await view.unmount();
+    }
+  }
+);
+
+it('discards a linux.do credential read when its login document is replaced', async () => {
+  const site = 'linuxdo';
+  const url = LOGIN_FORM_ADAPTERS[site].loginUrl;
+  const saved = { site, account: 'local-fixture', password: 'local-fixture', updatedAt: 1 } as const;
+  const pending = Promise.withResolvers<Awaited<ReturnType<typeof credentialVault.readForFill>>>();
+  const read = jest.spyOn(credentialVault, 'readForFill').mockReturnValueOnce(pending.promise).mockResolvedValue(saved);
+  const { view, runtime } = await renderSiteRuntime(site, async () => {
+    throw new Error('Unexpected request while filling the login form');
+  });
+  const webView = () => view.getByTestId('login-webview');
+  const load = () => act(async () => webView().props.onLoadEnd({ nativeEvent: { url, loading: false } }));
+  const probe = (attempt: number) =>
+    act(async () =>
+      webView().props.onMessage({
+        nativeEvent: { url, data: JSON.stringify({ type: 'login-form-probe', site, attempt, ok: true, url }) }
+      })
+    );
+  const fills = () => mockWebViewInjectJavaScript.mock.calls.filter(([script]) => script.includes('login-form-fill'));
+  try {
+    await act(async () => runtime().center.handleAccountCenterCommand({ type: 'open-login-with-fill', site }));
+    await waitFor(() => expect(webView()).toBeTruthy());
+    await load();
+    await probe(1);
+    expect(read).toHaveBeenCalledTimes(1);
+
+    const mounted = mockWebViewLoads.length;
+    await fireEvent.press(view.getByLabelText('刷新页面'));
+    await waitFor(() => expect(mockWebViewLoads).toHaveLength(mounted + 1));
+    await load();
+    await act(async () => pending.resolve(saved));
+    expect(fills().length).toBe(0);
+
+    await act(async () => runtime().center.handleAccountCenterCommand({ type: 'open-login-with-fill', site }));
+    await waitFor(() => expect(webView()).toBeTruthy());
+    await load();
+    await probe(2);
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(fills().length).toBe(1);
+  } finally {
+    pending.resolve(null);
+    read.mockRestore();
+    await view.unmount();
+  }
+});
+
+it('keeps the confirmed NodeSeek attendance board when an earlier refresh finishes late', async () => {
+  seedNodeSeekAccount();
+  let signed = false;
+  const record = { id: 91, member_id: 42, day_id: 120, gain: 3, created_at: '2026-10-01T17:14:50.000Z' };
+  const unsigned = { source: 'nodeseek' as const, userId: '42', list: [], record: null, order: null, total: 0 };
+  const post = jest.fn();
+  const { view, runtime } = await renderSiteRuntime(
+    'nodeseek',
+    async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/api/attendance/board') {
+        return Response.json({
+          list: [],
+          order: signed ? 1 : null,
+          total: signed ? 1 : 0,
+          record: signed ? record : null
+        });
+      }
+      if (url.pathname === '/api/attendance' && init?.method === 'POST') {
+        post();
+        signed = true;
+        return Response.json({ success: true });
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`);
+    },
+    'more'
+  );
+  const key = forumQueryKeys.accountData({
+    source: 'nodeseek',
+    kind: 'attendance',
+    userId: '42',
+    sessionEpoch: runtime().read.forumSessionEpochs.nodeseek,
+    readPlanScope: runtime().read.readGateway.getReadPlan('nodeseek', 'account-data').cacheScope
+  });
+  const pending = Promise.withResolvers<typeof unsigned>();
+  const read = jest.fn(() => pending.promise);
+  appQueryClient.setQueryData(key, unsigned);
+  const observer = new QueryObserver(appQueryClient, { queryKey: key, queryFn: read });
+  const unsubscribe = observer.subscribe(({ data }) => {
+    if (data) runtime().center.nodeSeek.observeBoard(data);
+  });
+  let refresh: Promise<void> | undefined;
+  try {
+    await act(async () => {
+      refresh = appQueryClient.invalidateQueries({ queryKey: key, exact: true }, { cancelRefetch: false });
+    });
+    expect(read).toHaveBeenCalledTimes(1);
+    await act(async () => runtime().center.nodeSeek.checkIn(false));
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(runtime().center.nodeSeek.state.kind).toBe('signed');
+
+    await act(async () => {
+      pending.resolve(unsigned);
+      await refresh;
+    });
+    expect(appQueryClient.getQueryData(key)).toMatchObject({ record: { id: '91' } });
+    expect(runtime().center.nodeSeek.state.kind).toBe('signed');
+  } finally {
+    pending.resolve(unsigned);
+    unsubscribe();
+    appQueryClient.removeQueries({ queryKey: key, exact: true });
+    await view.unmount();
+  }
+});
+
 async function renderStrictSiteRuntime(source: 'nodeseek' | 'linuxdo') {
   const notify = jest.fn();
   let runtime!: ReturnType<typeof useAccountRuntime>;
@@ -1798,6 +2192,44 @@ async function renderStrictSiteRuntime(source: 'nodeseek' | 'linuxdo') {
   };
 }
 
+it('removes the saved credential affordance after a partially completed deletion', async () => {
+  const site = 'linuxdo';
+  const storage = new Map<string, string>();
+  const read = jest.mocked(SecureStore.getItemAsync);
+  const remove = jest.mocked(SecureStore.deleteItemAsync);
+  const savedRead = read.getMockImplementation()!;
+  const savedRemove = remove.getMockImplementation()!;
+  const save = jest.spyOn(SecureStore, 'setItemAsync').mockImplementation(async (key, value) => {
+    storage.set(key, value);
+  });
+  read.mockImplementation(async (key) => storage.get(key) ?? null);
+  remove.mockImplementation(async (key) => {
+    if (key === 'site-login-credential.linuxdo.summary') throw new Error('metadata removal failed');
+    storage.delete(key);
+  });
+  let view: Awaited<ReturnType<typeof renderSiteRuntime>>['view'] | undefined;
+  try {
+    await credentialVault.save(site, { account: 'fixture-user', password: 'fixture-value', allowUnprotected: true });
+    const rendered = await renderSiteRuntime(site, async () => {
+      throw new Error('Unexpected network access for a local credential deletion');
+    });
+    view = rendered.view;
+    const readSummary = () => rendered.runtime().center.credentials.credentialSummaries.linuxdo;
+    await waitFor(() => expect(readSummary().hasCredential).toBe(true));
+    await act(async () => {
+      await expect(
+        rendered.runtime().center.handleAccountCenterCommand({ type: 'delete-credential', site })
+      ).rejects.toThrow('metadata removal failed');
+    });
+    expect(readSummary()).toMatchObject({ hasCredential: false, state: 'invalidated' });
+  } finally {
+    if (view) await view.unmount();
+    save.mockRestore();
+    read.mockImplementation(savedRead);
+    remove.mockImplementation(savedRemove);
+  }
+});
+
 describe('credential observer lifetime', () => {
   async function renderStrictCredentials(
     start: (
@@ -1831,13 +2263,10 @@ describe('credential observer lifetime', () => {
         changeLinuxDoPanel: () => true,
         changeNodeSeekLoginPanel: () => undefined,
         changeYaohuoLoginPanel: () => undefined,
-        linuxDoWebViewRef: webViewRef,
         notify: notifyCallback,
         refreshAccountStatus: async () => undefined,
         setYaohuoLoginPrompt: () => undefined,
-        webViewRef,
-        webViewBlockMessage: '',
-        yaohuoWebViewRef: webViewRef
+        webViewBlockMessage: ''
       });
       useLayoutEffect(() => {
         effectRuns += 1;
@@ -1847,7 +2276,10 @@ describe('credential observer lifetime', () => {
         <WebView
           ref={webViewRef}
           source={{ uri: LOGIN_FORM_ADAPTERS.linuxdo.loginUrl }}
-          onMessage={controller.handleCredentialLoginFormMessage}
+          onMessage={(event) => {
+            const document = webViewRef.current;
+            controller.handleCredentialLoginFormMessage(event, () => document);
+          }}
         />
       );
     }
@@ -2068,6 +2500,7 @@ describe('credential observer lifetime', () => {
         });
         await waitFor(() => expect(view.getByTestId('login-webview')).toBeTruthy());
         const browser = view.getByTestId('login-webview');
+        await fireEvent(browser, 'loadEnd', { nativeEvent: { url: LOGIN_FORM_ADAPTERS.linuxdo.loginUrl } });
         await fireEvent(browser, 'message', {
           nativeEvent: {
             url: LOGIN_FORM_ADAPTERS.linuxdo.loginUrl,
@@ -2322,9 +2755,13 @@ it('shows the current NodeImage authorization when a matching source is re-enabl
   try {
     expect(view.getByLabelText('NodeImage 授权，已授权')).toBeTruthy();
     await hook.rerender({ enabledSources: [] });
-    expect(hook.result.current.read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42')).toBe(false);
+    expect(
+      hook.result.current.read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42', 'foreground-read')
+    ).toBe(false);
     await hook.rerender({ enabledSources: ['nodeseek'] });
-    expect(hook.result.current.read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42')).toBe(true);
+    expect(
+      hook.result.current.read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42', 'foreground-read')
+    ).toBe(true);
     await view.rerender(panel());
     expect(view.getByLabelText('NodeImage 授权，已授权')).toBeTruthy();
     expect(view.queryByLabelText('NodeImage 授权，未授权')).toBeNull();
@@ -2388,22 +2825,30 @@ it.each(['nodeseek', 'linuxdo', 'yaohuo', 'nodeimage', 'linuxdo-credit'] as cons
     try {
       await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
       expect(second.runtime().read.accountSessionViewModels[site].currentUser?.id).toBe(id);
-      expect(second.runtime().read.notificationPrivateAccessAllowed(site, `${site}:${id}`)).toBe(false);
+      expect(second.runtime().read.notificationPrivateAccessAllowed(site, `${site}:${id}`, 'foreground-read')).toBe(
+        false
+      );
       expect(second.runtime().read.readGateway.getReadPlan(site, 'account-data').state).toBe('blocked');
       await act(async () => finish(response()));
       await waitFor(() =>
-        expect(second.runtime().read.notificationPrivateAccessAllowed(site, `${site}:${id}`)).toBe(true)
+        expect(second.runtime().read.notificationPrivateAccessAllowed(site, `${site}:${id}`, 'foreground-read')).toBe(
+          true
+        )
       );
       expect(second.runtime().read.forumSessionEpochs[site]).toBe(0);
       expect(JSON.parse((await AsyncStorage.getItem(`account-session.v1.${site}`))!).handoffPending).toBeUndefined();
       await second.enabled(false);
       await second.enabled(true);
       expect(fetcher).toHaveBeenCalledTimes(1);
-      expect(second.runtime().read.notificationPrivateAccessAllowed(site, `${site}:${id}`)).toBe(true);
+      expect(second.runtime().read.notificationPrivateAccessAllowed(site, `${site}:${id}`, 'foreground-read')).toBe(
+        true
+      );
       await second.view.unmount();
       appQueryClient.clear();
       const third = await renderSiteRuntime(site, fetcher);
-      expect(third.runtime().read.notificationPrivateAccessAllowed(site, `${site}:${id}`)).toBe(true);
+      expect(third.runtime().read.notificationPrivateAccessAllowed(site, `${site}:${id}`, 'foreground-read')).toBe(
+        true
+      );
       expect(fetcher).toHaveBeenCalledTimes(1);
       await third.view.unmount();
     } finally {
@@ -2427,18 +2872,20 @@ it.each(['nodeseek', 'linuxdo', 'yaohuo', 'nodeimage'] as const)(
       });
       await waitFor(() => expect(view.getByTestId('login-webview')).toBeTruthy());
       const previousProbes = fetcher.mock.calls.length;
-      expect(runtime().read.notificationPrivateAccessAllowed(site, `${site}:${id}`)).toBe(false);
+      expect(runtime().read.notificationPrivateAccessAllowed(site, `${site}:${id}`, 'foreground-read')).toBe(false);
       await enabled(false);
       await enabled(true);
       expect(fetcher).toHaveBeenCalledTimes(previousProbes);
-      expect(runtime().read.notificationPrivateAccessAllowed(site, `${site}:${id}`)).toBe(false);
+      expect(runtime().read.notificationPrivateAccessAllowed(site, `${site}:${id}`, 'foreground-read')).toBe(false);
       expect(runtime().read.readGateway.getReadPlan(site, 'account-data')).toMatchObject({
         state: 'blocked',
         reason: 'identity-pending'
       });
 
       await act(async () => runtime().center.handleAccountCenterCommand({ type: 'refresh' }));
-      await waitFor(() => expect(runtime().read.notificationPrivateAccessAllowed(site, `${site}:${id}`)).toBe(true));
+      await waitFor(() =>
+        expect(runtime().read.notificationPrivateAccessAllowed(site, `${site}:${id}`, 'foreground-read')).toBe(true)
+      );
       expect(runtime().read.forumSessionEpochs[site]).toBe(epoch);
       expect(runtime().read.accountSessionViewModels[site].currentUser?.id).toBe(id);
       expect(fetcher).toHaveBeenCalledTimes(previousProbes + 1);
@@ -2469,9 +2916,13 @@ it.each(['nodeseek', 'linuxdo', 'yaohuo'] as const)(
     const restored = await renderSiteRuntime(site, fetcher, 'more', false);
     try {
       expect(fetcher).not.toHaveBeenCalled();
-      expect(restored.runtime().read.notificationPrivateAccessAllowed(site, `${site}:${id}`)).toBe(false);
+      expect(restored.runtime().read.notificationPrivateAccessAllowed(site, `${site}:${id}`, 'foreground-read')).toBe(
+        false
+      );
       await restored.enabled(true);
-      expect(restored.runtime().read.notificationPrivateAccessAllowed(site, `${site}:${id}`)).toBe(false);
+      expect(restored.runtime().read.notificationPrivateAccessAllowed(site, `${site}:${id}`, 'foreground-read')).toBe(
+        false
+      );
       expect(restored.runtime().read.readGateway.getReadPlan(site, 'account-data')).toMatchObject({
         state: 'blocked',
         reason: 'identity-pending'
@@ -2481,7 +2932,9 @@ it.each(['nodeseek', 'linuxdo', 'yaohuo'] as const)(
       expect(fetcher).not.toHaveBeenCalled();
       await act(async () => restored.runtime().center.handleAccountCenterCommand({ type: 'refresh' }));
       expect(fetcher).toHaveBeenCalledTimes(1);
-      expect(restored.runtime().read.notificationPrivateAccessAllowed(site, `${site}:${id}`)).toBe(true);
+      expect(restored.runtime().read.notificationPrivateAccessAllowed(site, `${site}:${id}`, 'foreground-read')).toBe(
+        true
+      );
       expect(JSON.parse((await AsyncStorage.getItem(key))!).handoffPending).toBeUndefined();
     } finally {
       await restored.view.unmount();
@@ -2509,7 +2962,9 @@ it.each(['same', 'changed', 'anonymous', 'storage-failed'] as const)(
     try {
       await waitFor(() => expect(runtime().read.accountSessionViewModels.linuxdo.lastError).toBeTruthy());
       expect(runtime().read.accountSessionViewModels.linuxdo.currentUser?.id).toBe('alice');
-      expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice')).toBe(false);
+      expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice', 'foreground-read')).toBe(
+        false
+      );
       expect(fetcher).toHaveBeenCalledTimes(1);
       expect(mockWebViewLoads).toEqual([]);
       recover = true;
@@ -2529,14 +2984,17 @@ it.each(['same', 'changed', 'anonymous', 'storage-failed'] as const)(
             identityTrust: 'unknown',
             canWrite: false
           });
-          expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice')).toBe(false);
+          expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice', 'foreground-read')).toBe(
+            false
+          );
           expect(JSON.parse((await AsyncStorage.getItem('account-session.v1.linuxdo'))!).handoffPending).toBe(true);
         } else {
           expect(runtime().read.forumSessionEpochs.linuxdo).toBe(outcome === 'same' ? 0 : 1);
           expect(
             runtime().read.notificationPrivateAccessAllowed(
               'linuxdo',
-              outcome === 'changed' ? 'linuxdo:bob' : 'linuxdo:alice'
+              outcome === 'changed' ? 'linuxdo:bob' : 'linuxdo:alice',
+              'foreground-read'
             )
           ).toBe(outcome !== 'anonymous');
           expect(
@@ -2577,7 +3035,9 @@ it.each(['nodeseek', 'linuxdo', 'yaohuo'] as const)(
       appQueryClient.clear();
       const restarted = await renderSiteRuntime(site, fetcher);
       try {
-        expect(restarted.runtime().read.notificationPrivateAccessAllowed(site, `${site}:${id}`)).toBe(true);
+        expect(
+          restarted.runtime().read.notificationPrivateAccessAllowed(site, `${site}:${id}`, 'foreground-read')
+        ).toBe(true);
         expect(fetcher).not.toHaveBeenCalled();
       } finally {
         await restarted.view.unmount();
@@ -2618,7 +3078,9 @@ it('recovers a new login after clearing the account in the still-open login page
   const restarted = await renderSiteRuntime(site, fetcher);
   try {
     await waitFor(() =>
-      expect(restarted.runtime().read.notificationPrivateAccessAllowed(site, 'nodeseek:84')).toBe(true)
+      expect(restarted.runtime().read.notificationPrivateAccessAllowed(site, 'nodeseek:84', 'foreground-read')).toBe(
+        true
+      )
     );
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(JSON.parse((await AsyncStorage.getItem(`account-session.v1.${site}`))!)).toMatchObject({
@@ -2651,7 +3113,7 @@ it('does not reuse a closed login marker failure for the next dedicated reading 
       await runtime().hosts.showLinuxDoVerification('读取需要验证', {
         queryKey: ['next-reading'],
         isCurrent: () => true,
-        resume: async () => 'completed'
+        resume: async () => 'completed' as const
       });
     });
     await act(async () => jest.advanceTimersByTimeAsync(100));
@@ -2678,7 +3140,7 @@ it('does not mount a login document until its durable marker is saved and preser
     await act(async () => runtime().center.handleAccountCenterCommand({ type: 'open-login', site: 'nodeseek' }));
     await waitFor(() => expect(write).toHaveBeenCalled());
     expect(view.queryByTestId('login-webview')).toBeNull();
-    expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42')).toBe(false);
+    expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42', 'foreground-read')).toBe(false);
     await act(async () => fail(new Error('disk unavailable')));
     expect(view.queryByTestId('login-webview')).toBeNull();
     expect(view.getByText('登录会话保存失败，请关闭后重试')).toBeTruthy();
@@ -3003,7 +3465,7 @@ it.each(['pending', 'failed', 'unknown', 'reopened'] as const)(
       await fireEvent.press(view.getByLabelText('关闭'));
       await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
       expect(runtime().hosts.surfaces.yaohuo).toBe(false);
-      expect(runtime().read.notificationPrivateAccessAllowed('yaohuo', 'yaohuo:7')).toBe(false);
+      expect(runtime().read.notificationPrivateAccessAllowed('yaohuo', 'yaohuo:7', 'foreground-read')).toBe(false);
       if (previousCheck === 'failed' || previousCheck === 'unknown')
         await waitFor(() =>
           expect(
@@ -3026,7 +3488,7 @@ it.each(['pending', 'failed', 'unknown', 'reopened'] as const)(
         else await expect(access).resolves.toMatchObject({ source: 'yaohuo', identityKey: 'yaohuo:7' });
       });
       expect(fetcher).toHaveBeenCalledTimes(previousCheck === 'pending' || previousCheck === 'reopened' ? 1 : 2);
-      expect(runtime().read.notificationPrivateAccessAllowed('yaohuo', 'yaohuo:7')).toBe(
+      expect(runtime().read.notificationPrivateAccessAllowed('yaohuo', 'yaohuo:7', 'foreground-read')).toBe(
         previousCheck !== 'unknown' && previousCheck !== 'reopened'
       );
       expect(runtime().read.accountSessionViewModels.yaohuo.isLoggedIn).toBe(true);
@@ -3048,6 +3510,21 @@ it.each(['nodeseek', 'yaohuo'] as const)(
         )
     );
     const { view, runtime } = await renderSiteRuntime(site, fetcher);
+    const probe = fetcher.getMockImplementation()!;
+    const attachedAtProbe: boolean[] = [];
+    fetcher.mockImplementation(() => {
+      attachedAtProbe.push(view.queryByTestId('login-webview') !== null);
+      return probe();
+    });
+    const storage = jest.spyOn(AsyncStorage, 'setItem');
+    const write = storage.getMockImplementation()!;
+    const attachedAtHandoffCommit: boolean[] = [];
+    storage.mockImplementation(async (key, value) => {
+      if (key === 'account-session.v1.' + site && !JSON.parse(value).handoffPending) {
+        attachedAtHandoffCommit.push(view.queryByTestId('login-webview') !== null);
+      }
+      return write(key, value);
+    });
     try {
       await act(async () => runtime().center.handleAccountCenterCommand({ type: 'open-login', site }));
       const webView = view.getByTestId('login-webview');
@@ -3072,9 +3549,11 @@ it.each(['nodeseek', 'yaohuo'] as const)(
       expect(mockWebViewLoads).toHaveLength(1);
       await fireEvent.press(view.getByText('检测登录'));
       await waitFor(() => expect(runtime().hosts.surfaces[site]).toBe(false));
-      expect(fetcher).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(attachedAtHandoffCommit).toEqual([false]));
+      expect(attachedAtProbe).toEqual([true, false]);
       expect(runtime().read.accountSessionViewModels[site].currentUser?.id).toBe(site === 'nodeseek' ? '42' : '7');
     } finally {
+      storage.mockRestore();
       await view.unmount();
     }
   }
@@ -3082,13 +3561,35 @@ it.each(['nodeseek', 'yaohuo'] as const)(
 
 it('keeps the same NodeSeek window through a rejected exact recovery and closes only after its explicit retry succeeds', async () => {
   seedNodeSeekAccount();
-  const fetcher: Fetcher = async () => new Response('<html><a class="Username" href="/space/42">alice</a></html>');
+  await saveAccountSessionSnapshot(appQueryClient.getQueryData(accountQueryKeys.snapshot('nodeseek'))!);
+  const accountResponse = () => new Response('<html><a class="Username" href="/space/42">alice</a></html>');
+  const closingProbe = Promise.withResolvers<Response>();
+  const fetcher = jest
+    .fn<ReturnType<Fetcher>, Parameters<Fetcher>>()
+    .mockImplementationOnce(async () => accountResponse())
+    .mockImplementationOnce(async () => accountResponse());
   const { view, runtime } = await renderSiteRuntime('nodeseek', fetcher);
+  let webViewAttachedAtClosingProbe = true;
+  fetcher.mockImplementation(() => {
+    webViewAttachedAtClosingProbe = view.queryByTestId('login-webview') !== null;
+    return closingProbe.promise;
+  });
+  const loadDisk = async () => JSON.parse((await AsyncStorage.getItem('account-session.v1.nodeseek'))!);
   const pending = Promise.withResolvers<'verification-required'>();
+  const recoveryLanes: string[] = [];
+  const transientResume = jest.fn(async () => 'completed' as const);
   const resume = jest
     .fn()
-    .mockImplementationOnce(() => pending.promise)
-    .mockResolvedValue('completed');
+    .mockImplementationOnce(() => {
+      const plan = runtime().read.readGateway.getReadPlan('nodeseek', 'topic');
+      if (plan.state === 'ready') recoveryLanes.push(plan.lane);
+      return pending.promise;
+    })
+    .mockImplementation(async () => {
+      const plan = runtime().read.readGateway.getReadPlan('nodeseek', 'topic');
+      if (plan.state === 'ready') recoveryLanes.push(plan.lane);
+      return 'completed';
+    });
   await act(async () =>
     runtime().hosts.requestNodeSeekVerification('需要验证', {
       queryKey: ['blocked-topic'],
@@ -3096,33 +3597,67 @@ it('keeps the same NodeSeek window through a rejected exact recovery and closes 
       resume
     })
   );
-  expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42')).toBe(false);
+  await act(async () =>
+    runtime().hosts.requestNodeSeekVerification('临时公开读取也需要验证', {
+      queryKey: ['public:omit', 'blocked-topic'],
+      isCurrent: () => true,
+      resume: transientResume
+    })
+  );
+  expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42', 'foreground-read')).toBe(false);
   await fireEvent.press(view.getByText('检测并继续'));
   expect(resume).toHaveBeenCalledTimes(1);
+  expect(transientResume).not.toHaveBeenCalled();
   expect(runtime().hosts.surfaces.nodeseek).toBe(true);
   expect(view.getByTestId('login-webview')).toBeTruthy();
-  expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42')).toBe(true);
+  expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42', 'foreground-read')).toBe(true);
+  expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42', 'settled-session')).toBe(false);
+  await expect(runtime().write.ensureWritableSession('nodeseek')).rejects.toMatchObject({ reason: 'identity_pending' });
+  expect((await loadDisk()).handoffPending).toBe(true);
+  await expect(accountSessionStore.loadAccountSessionSnapshot('nodeseek')).resolves.toMatchObject({
+    identityTrust: 'unknown'
+  });
   expect(view.getByLabelText('正在检测…').props.accessibilityState.disabled).toBe(true);
-  const marker = Promise.withResolvers<void>();
-  const mark = jest.spyOn(accountSessionStore, 'markAccountSessionHandoffPending').mockReturnValueOnce(marker.promise);
+  const mark = jest
+    .spyOn(accountSessionStore, 'markAccountSessionHandoffPending')
+    .mockRejectedValue(new Error('new marker unavailable'));
   try {
     await act(async () => pending.resolve('verification-required'));
-    expect(mark).toHaveBeenCalledTimes(1);
+    expect(mark).not.toHaveBeenCalled();
     expect(runtime().hosts.element.props.authSurfaceBlockMessages?.nodeseek).toBe('');
     expect(view.getByTestId('login-webview')).toBeTruthy();
-    expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42')).toBe(false);
-    await act(async () => marker.reject(new Error('replacement marker unavailable')));
-    expect(runtime().hosts.element.props.authSurfaceBlockMessages?.nodeseek).toBe('');
-    expect(view.getByTestId('login-webview')).toBeTruthy();
+    expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42', 'foreground-read')).toBe(false);
+    expect((await loadDisk()).handoffPending).toBe(true);
     expect(runtime().hosts.surfaces.nodeseek).toBe(true);
-    expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42')).toBe(false);
+    expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42', 'foreground-read')).toBe(false);
     expect(runtime().read.accountSessionViewModels.nodeseek.isLoggedIn).toBe(true);
     expect(mockWebViewLoads).toEqual(['https://www.nodeseek.com']);
     await fireEvent.press(view.getByText('检测并继续'));
     expect(resume).toHaveBeenCalledTimes(2);
+    expect(recoveryLanes).toEqual(['authenticated', 'authenticated']);
     expect(runtime().hosts.surfaces.nodeseek).toBe(false);
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3));
+    expect(webViewAttachedAtClosingProbe).toBe(false);
+    expect(view.queryByTestId('login-webview')).toBeNull();
+    expect((await loadDisk()).handoffPending).toBe(true);
+    expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42', 'foreground-read')).toBe(false);
+    await act(async () => closingProbe.resolve(accountResponse()));
+    await waitFor(() =>
+      expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42', 'settled-session')).toBe(true)
+    );
+    expect((await loadDisk()).handoffPending).toBeUndefined();
+    await expect(runtime().write.ensureWritableSession('nodeseek')).resolves.toMatchObject({
+      identityKey: 'nodeseek:42'
+    });
+
+    await act(async () => runtime().center.handleAccountCenterCommand({ type: 'open-login', site: 'nodeseek' }));
+    await waitFor(() =>
+      expect(runtime().hosts.element.props.authSurfaceBlockMessages?.nodeseek).toBe('登录会话保存失败，请关闭后重试')
+    );
+    expect(mark).toHaveBeenCalledTimes(1);
+    expect(view.queryByTestId('login-webview')).toBeNull();
   } finally {
-    marker.resolve();
+    closingProbe.resolve(accountResponse());
     mark.mockRestore();
     await view.unmount();
   }
@@ -3141,22 +3676,104 @@ it.each(['reopened', 'background'] as const)('does not let a late NodeSeek recov
   );
   await fireEvent.press(view.getByText('检测并继续'));
   expect(resume).toHaveBeenCalledTimes(1);
-  expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42')).toBe(true);
+  expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42', 'foreground-read')).toBe(true);
   if (exit === 'reopened') {
     await fireEvent.press(view.getByLabelText('关闭'));
     await act(async () => runtime().hosts.requestNodeSeekVerification());
   } else {
     await active(false);
-    expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42')).toBe(false);
+    expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42', 'foreground-read')).toBe(false);
     await active(true);
   }
-  expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42')).toBe(false);
+  expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42', 'foreground-read')).toBe(false);
   await act(async () => pending.resolve('completed'));
   expect(runtime().hosts.surfaces.nodeseek).toBe(true);
   expect(view.getByTestId('login-webview')).toBeTruthy();
   expect(view.queryByLabelText('正在检测…')).toBeNull();
-  expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42')).toBe(false);
+  expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42', 'foreground-read')).toBe(false);
   await view.unmount();
+});
+
+it('cancels an exact NodeSeek page when verification closes before its response', async () => {
+  seedNodeSeekAccount();
+  await saveAccountSessionSnapshot(appQueryClient.getQueryData(accountQueryKeys.snapshot('nodeseek'))!);
+  const blockedSearch = Promise.withResolvers<Response>();
+  let transportSignal: AbortSignal | null | undefined;
+  const fetcher: Fetcher = async (url, init) => {
+    if (new URL(url).pathname === '/search') {
+      transportSignal = init?.signal;
+      return blockedSearch.promise;
+    }
+    return new Response('<html><a class="Username" href="/space/42">alice</a></html>');
+  };
+  const { view, runtime } = await renderSiteRuntime('nodeseek', fetcher);
+  const query = 'needle';
+  const gateway = runtime().read.readGateway;
+  const plan = gateway.getReadPlan('nodeseek', 'search');
+  const queryKey = forumQueryKeys.search({
+    source: 'nodeseek',
+    lane: 'pages',
+    query,
+    readPlanScope: plan.cacheScope,
+    sort: 'relevance',
+    filter: DEFAULT_SEARCH_FILTERS.nodeseek,
+    scope: runtime().read.forumSessionEpochs
+  });
+  const oldPage: SearchResponse = { errors: {}, items: [], hasMore: true, nextPage: 2 };
+  appQueryClient.setQueryData(queryKey, { pages: [oldPage], pageParams: [1] });
+  let recoveryRead: ReturnType<typeof resumeInfiniteQueryPage<SearchResponse, number>> | undefined;
+  try {
+    await act(async () =>
+      runtime().hosts.requestNodeSeekVerification('需要验证', {
+        queryKey,
+        isCurrent: () => true,
+        resume: async (signal) => {
+          recoveryRead = resumeInfiniteQueryPage<SearchResponse, number>(
+            appQueryClient,
+            {
+              queryKey,
+              enabled: true,
+              initialPageParam: 1,
+              getNextPageParam: (page) => page.nextPage ?? undefined,
+              queryFn: ({ pageParam, signal }) =>
+                gateway.searchTopics({ source: 'nodeseek', query, page: pageParam, signal }, { plan })
+            },
+            { kind: 'next', pageParam: 2 },
+            () => gateway.getReadPlan('nodeseek', 'search').cacheScope === plan.cacheScope,
+            signal
+          );
+          const outcome = await recoveryRead;
+          return outcome.kind === 'success' ? 'completed' : outcome.kind;
+        }
+      })
+    );
+    await fireEvent.press(view.getByText('检测并继续'));
+    await waitFor(() => expect(transportSignal).toBeTruthy());
+    await fireEvent.press(view.getByLabelText('关闭'));
+    await waitFor(() =>
+      expect(runtime().read.readGateway.getReadPlan('nodeseek', 'search').cacheScope).toBe(plan.cacheScope)
+    );
+
+    const wasAborted = transportSignal?.aborted;
+    let result;
+    await act(async () => {
+      blockedSearch.resolve(
+        new Response(
+          '<ul class="post-list"><li class="post-list-item"><div class="post-title"><a href="/post-202-1">needle result</a></div></li></ul>'
+        )
+      );
+      result = await recoveryRead;
+    });
+    const cached = appQueryClient.getQueryData<{ pages: SearchResponse[] }>(queryKey);
+    expect({ wasAborted, result, pages: cached?.pages }).toEqual({
+      wasAborted: true,
+      result: { kind: 'stale' },
+      pages: [oldPage]
+    });
+  } finally {
+    blockedSearch.resolve(new Response('<ul class="post-list"></ul>'));
+    await view.unmount();
+  }
 });
 
 it.each(['complete', 'reopened', 'background'] as const)(
@@ -3199,8 +3816,13 @@ it.each(['complete', 'reopened', 'background'] as const)(
       expect(runtime().hosts.surfaces.yaohuo).toBe(false);
     }
     if (exit === 'complete') {
+      expect(runtime().read.notificationPrivateAccessAllowed('yaohuo', 'yaohuo:7', 'settled-session')).toBe(false);
+      await act(async () => next.resolve());
+      await waitFor(() =>
+        expect(runtime().read.notificationPrivateAccessAllowed('yaohuo', 'yaohuo:7', 'settled-session')).toBe(true)
+      );
       expect(runtime().read.accountSessionViewModels.yaohuo.currentUser?.id).toBe('7');
-      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(fetcher).toHaveBeenCalledTimes(2);
     }
     await view.unmount();
   }
@@ -4135,7 +4757,7 @@ it('pauses reading behind read recovery and resumes without replacing account pr
     await act(async () => {
       await runtime().hosts.showLinuxDoVerification('读取需要验证', {
         queryKey,
-        resume: async () => 'completed'
+        resume: async () => 'completed' as const
       });
     });
     expect(runtime().hosts.linuxDoVerificationVisible).toBe(true);
@@ -4312,7 +4934,7 @@ it.each([
   { source: 'nodeseek', entry: 'vote', status: 401, outcome: 'expired' },
   { source: 'yaohuo', entry: 'favorite', status: 401, outcome: 'expired' }
 ] as const)(
-  'settles $source $entry HTTP $status through real Account $outcome and restores only a read after login',
+  'preserves account ownership for $source $entry HTTP $status with outcome $outcome',
   async ({ source, entry, status, outcome }) => {
     const username = source === 'linuxdo' ? `chain-${entry}-${status}-${outcome}` : 'alice';
     const userId = source === 'nodeseek' ? '42' : source === 'yaohuo' ? '7' : username;
@@ -4431,6 +5053,18 @@ it.each([
       });
     };
     try {
+      if (entry === 'editable-reply') {
+        await act(async () => {
+          await expect(read()).resolves.toMatchObject({
+            id: topicId,
+            replies: [{ commentId: 1002, canEdit: true }]
+          });
+        });
+        expect(fetcher.mock.calls.filter(([url]) => url.endsWith('/posts/1002.json'))).toHaveLength(0);
+        expect(probes()).toHaveLength(0);
+        expect(runtime().read.forumSessionEpochs.linuxdo).toBe(epoch);
+        return;
+      }
       let failedRead!: Awaited<ReturnType<typeof read>>;
       if (source === 'linuxdo' && status === 401) probe.resolve(json({ current_user: null }));
       await act(async () => {
@@ -4481,6 +5115,7 @@ it.each([
       if (outcome === 'unknown') expect(runtime().read.accountSessionViewModels[source].lastError).toBeTruthy();
       if (loggedOut) {
         const beforeLogin = probes().length;
+        const expectedLoginProbes = beforeLogin + (source === 'linuxdo' ? 1 : 2);
         await act(async () => runtime().center.handleAccountCenterCommand({ type: 'open-login', site: source }));
         await waitFor(() => expect(view.getByTestId('login-webview')).toBeTruthy());
         expect(probes()).toHaveLength(beforeLogin);
@@ -4493,7 +5128,7 @@ it.each([
           currentUser: { id: userId, username }
         });
         expect(runtime().read.forumSessionEpochs[source]).toBe(epoch + 2);
-        expect(probes()).toHaveLength(beforeLogin + 1);
+        await waitFor(() => expect(probes()).toHaveLength(expectedLoginProbes));
         let recovered!: Awaited<ReturnType<typeof read>>;
         await act(async () => {
           recovered = await read();
@@ -4503,15 +5138,13 @@ it.each([
             ? { items: [{ category: 'Recovered category' }], errors: {} }
             : entry === 'csrf'
               ? { items: [], errors: {} }
-              : entry === 'editable-reply'
-                ? { replies: [{ contentMarkdown: 'restored raw reply' }] }
-                : entry === 'vote'
-                  ? { polls: [{ id: '100', title: 'Recovered vote' }] }
-                  : entry === 'favorite'
-                    ? { bookmarked: false, contentHtml: '<p>opening</p>' }
-                    : { id: topicId, contentHtml: '<p>opening</p>' }
+              : entry === 'vote'
+                ? { polls: [{ id: '100', title: 'Recovered vote' }] }
+                : entry === 'favorite'
+                  ? { bookmarked: false, contentHtml: '<p>opening</p>' }
+                  : { id: topicId, contentHtml: '<p>opening</p>' }
         );
-        expect(probes()).toHaveLength(beforeLogin + 1);
+        expect(probes()).toHaveLength(expectedLoginProbes);
       }
       expect(fetcher.mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);
     } finally {
@@ -4554,7 +5187,8 @@ it.each(['anonymous', 'same', 'unknown'] as const)(
     };
     const gateway = createNotificationGateway({
       sourceAllowed: (source) => source === 'nodeseek',
-      privateAccessAllowed: (source, identity) => runtime().read.notificationPrivateAccessAllowed(source, identity),
+      privateAccessAllowed: (source, identity) =>
+        runtime().read.notificationPrivateAccessAllowed(source, identity, 'foreground-read'),
       requestSessionEpoch: (source) => runtime().read.forumSessionEpochs[source],
       onSessionExpired: (source, requestEpoch) => runtime().write.onSessionExpired(source, requestEpoch),
       requestAccountRecheck: (source, requestEpoch, trace) =>
@@ -4645,7 +5279,7 @@ it.each(['anonymous', 'same', 'unknown'] as const)(
           await expect(list()).resolves.toMatchObject({ items: [], hasMore: false });
           await expect(gateway.readUnreadSnapshot('nodeseek')).resolves.toMatchObject({ total: 0 });
         });
-        expect(probes()).toHaveLength(2);
+        expect(probes()).toHaveLength(3);
       }
       expect(fetcher.mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);
     } finally {
@@ -4865,10 +5499,14 @@ it.each(['open-login', 'open-login-with-fill', 'open-linuxdo-verification'] as c
       expect(view.getByTestId('login-webview')).toBe(newPage);
       expect(jest.mocked(setLinuxDoCookieResponseBarrier).mock.calls).toHaveLength(barriers);
       expect(fetcher).not.toHaveBeenCalled();
-      expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice')).toBe(false);
+      expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice', 'foreground-read')).toBe(
+        false
+      );
       await fireEvent.press(view.getByText(verification ? '检测并继续' : '检测登录'));
       await waitFor(() =>
-        expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice')).toBe(true)
+        expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice', 'foreground-read')).toBe(
+          true
+        )
       );
       expect(runtime().hosts.linuxDoVerificationVisible).toBe(false);
     } finally {
@@ -4989,7 +5627,7 @@ it('reopens the login host during closing after a failed cookie handoff', async 
     expect(view.getByText('linux.do 登录')).toBeTruthy();
     expect(view.getByTestId('login-webview').props.source.uri).toBe('https://linux.do/latest');
     expect(fetcher).not.toHaveBeenCalled();
-    expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice')).toBe(false);
+    expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice', 'foreground-read')).toBe(false);
   } finally {
     await view.unmount();
     jest.useRealTimers();
@@ -5040,7 +5678,9 @@ it('retries a failed close handoff before the account-center refresh and release
   });
   expect(fetcher).not.toHaveBeenCalled();
   await waitFor(() => expect(hook.result.current.read.statusBusy).toBe(false));
-  expect(hook.result.current.read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice')).toBe(false);
+  expect(hook.result.current.read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice', 'foreground-read')).toBe(
+    false
+  );
   const gate = Promise.withResolvers<void>();
   jest.mocked(setLinuxDoCookieResponseBarrier).mockImplementationOnce(() => gate.promise);
   let refresh!: Promise<void>;
@@ -5053,7 +5693,9 @@ it('retries a failed close handoff before the account-center refresh and release
     await refresh;
   });
   expect(fetcher).toHaveBeenCalledTimes(1);
-  expect(hook.result.current.read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice')).toBe(true);
+  expect(hook.result.current.read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice', 'foreground-read')).toBe(
+    true
+  );
   await AsyncStorage.removeItem('account-session.migration.v1');
 });
 
@@ -5087,10 +5729,12 @@ it('reconciles an initialized login on close without requiring the detection but
     expect(view.queryByTestId('login-webview')).toBeNull();
     expect(runtime().hosts.linuxDoVerificationVisible).toBe(false);
     expect(identityFetch).not.toHaveBeenCalled();
-    expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice')).toBe(false);
+    expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice', 'foreground-read')).toBe(false);
 
     await act(async () => handoff.resolve());
-    await waitFor(() => expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice')).toBe(true));
+    await waitFor(() =>
+      expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice', 'foreground-read')).toBe(true)
+    );
     expect(identityFetch).toHaveBeenCalledTimes(1);
     expect(runtime().read.accountSessionViewModels.linuxdo).toMatchObject({
       identityTrust: 'confirmed',
@@ -5133,7 +5777,7 @@ it('closes an unfinished login immediately without confirming its identity or re
       identityTrust: 'unknown',
       currentUser: { username: 'alice' }
     });
-    expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice')).toBe(false);
+    expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice', 'foreground-read')).toBe(false);
     expect(runtime().read.readGateway.getReadPlan('linuxdo', 'account-data')).toMatchObject({
       state: 'blocked',
       reason: 'identity-pending'
@@ -5160,9 +5804,11 @@ it('retries an unknown identity on close after login initialization already pass
     await waitFor(() => expect(view.getByText(/登录状态暂时无法确认/)).toBeTruthy());
     expect(view.queryByTestId('login-webview')).toBeNull();
     expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice')).toBe(false);
+    expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice', 'foreground-read')).toBe(false);
     await fireEvent.press(view.getByLabelText('关闭'));
-    await waitFor(() => expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice')).toBe(true));
+    await waitFor(() =>
+      expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice', 'foreground-read')).toBe(true)
+    );
     expect(fetcher).toHaveBeenCalledTimes(2);
   } finally {
     await view.unmount();
@@ -5336,3 +5982,539 @@ it.each(['background', 'disabled', 'close', 'failure'] as const)(
     }
   }
 );
+
+describe('manual linux.do login with attached read recovery', () => {
+  async function renderLinuxDoAccountHosts(
+    fetcher: Fetcher,
+    initial: 'anonymous' | 'logged-in' | 'unknown',
+    enabledSources: readonly Source[] = ['v2ex', 'linuxdo']
+  ) {
+    if (initial === 'logged-in') {
+      await saveAccountSessionSnapshot(seedLinuxDoAccount('alice'));
+    } else if (initial === 'anonymous') {
+      const anonymous = {
+        ...createAccountSessionSnapshot('linuxdo'),
+        status: 'anonymous' as const,
+        identityTrust: 'none' as const
+      };
+      appQueryClient.setQueryData(accountQueryKeys.snapshot('linuxdo'), anonymous);
+      await saveAccountSessionSnapshot(anonymous);
+    } else {
+      appQueryClient.setQueryData(accountQueryKeys.snapshot('linuxdo'), createAccountSessionSnapshot('linuxdo'));
+    }
+    let runtime!: ReturnType<typeof useAccountRuntime>;
+    const notify = jest.fn();
+    function Harness({ sources = enabledSources }: { sources?: readonly Source[] }) {
+      runtime = useAccountRuntime({
+        appActive: true,
+        enabledSources: sources,
+        fetcher,
+        loginNavigation: { linuxdo: () => true, nodeseek: () => true, yaohuo: () => true, nodeimage: () => true },
+        notify,
+        nodeSeekRecoveryThreshold: 1,
+        openUser: async () => undefined,
+        ready: true,
+        screen: 'topic',
+        webViewBlockMessage: ''
+      });
+      return runtime.hosts.element;
+    }
+    const view = await render(<Harness />, { wrapper: QueryTestWrapper });
+    await waitFor(() => expect(runtime.read.sessionsReady).toBe(true));
+    await act(async () => {
+      await runtime.center.handleAccountCenterCommand({ type: 'open-login', site: 'linuxdo' });
+    });
+    await waitFor(() => expect(view.getByTestId('login-webview')).toBeTruthy());
+    return {
+      view,
+      runtime: () => runtime,
+      notify,
+      rerender: (sources: readonly Source[]) => view.rerender(<Harness sources={sources} />)
+    };
+  }
+
+  it.each(['persistence', 'delayed persistence', 'reopen'] as const)(
+    'keeps the handoff barrier during %s',
+    async (scenario) => {
+      jest.useFakeTimers();
+      const fetcher = jest.fn<ReturnType<Fetcher>, Parameters<Fetcher>>(async (url) => {
+        if (url === 'https://linux.do/session/current.json')
+          return Response.json({ current_user: { id: 42, username: 'alice' } });
+        throw new Error(`Unexpected request ${url}`);
+      });
+      const { view, runtime } = await renderLinuxDoAccountHosts(fetcher, 'logged-in');
+      const originalSave = AsyncStorage.setItem;
+      const storageWrite = Promise.withResolvers<void>();
+      const saveStarted = jest.fn();
+      const save = jest.spyOn(AsyncStorage, 'setItem').mockImplementation(async (key, value) => {
+        if (key === 'account-session.v1.linuxdo' && !JSON.parse(value).handoffPending) {
+          if (scenario === 'persistence') throw new Error('read-only store');
+          if (scenario === 'delayed persistence') {
+            saveStarted();
+            await storageWrite.promise;
+          }
+        }
+        return originalSave(key, value);
+      });
+      const resume = jest.fn(async () => 'verification-required' as const);
+      try {
+        await act(async () => {
+          await runtime().hosts.showLinuxDoVerification('继续读取', {
+            kind: 'reading',
+            batchId: 9,
+            isCurrent: () => true,
+            cancel: jest.fn(),
+            resume
+          });
+        });
+        await fireEvent.press(view.getByText('检测并继续'));
+        if (scenario === 'delayed persistence') await waitFor(() => expect(saveStarted).toHaveBeenCalledTimes(1));
+        else await waitFor(() => expect(view.getByText('重新验证')).toBeTruthy());
+        if (scenario === 'reopen') {
+          expect(resume).toHaveBeenCalledTimes(1);
+          await fireEvent.press(view.getByText('重新验证'));
+          await waitFor(() => expect(view.getByTestId('login-webview')).toBeTruthy());
+        } else {
+          expect(resume).not.toHaveBeenCalled();
+        }
+        expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice', 'foreground-read')).toBe(
+          false
+        );
+        await expect(runtime().write.ensureWritableSession('linuxdo')).rejects.toBeDefined();
+        expect(JSON.parse((await AsyncStorage.getItem('account-session.v1.linuxdo'))!).handoffPending).toBe(true);
+        if (scenario === 'delayed persistence') {
+          await act(async () => storageWrite.resolve());
+          await waitFor(() => expect(resume).toHaveBeenCalledTimes(1));
+          expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice', 'foreground-read')).toBe(
+            true
+          );
+        }
+      } finally {
+        storageWrite.resolve();
+        save.mockRestore();
+        await view.unmount();
+        jest.useRealTimers();
+      }
+    }
+  );
+
+  it.each(['topic', 'feed', 'aggregate-feed'] as const)(
+    'resumes an attached public %s read once when a confirmed anonymous user stays anonymous',
+    async (kind) => {
+      jest.useFakeTimers();
+      const order: string[] = [];
+      const postCalls: string[] = [];
+      const fetcher = jest.fn<ReturnType<Fetcher>, Parameters<Fetcher>>(async (url, init) => {
+        if ((init?.method || 'GET').toUpperCase() !== 'GET') postCalls.push(url);
+        if (url === 'https://linux.do/session/current.json') {
+          order.push('verify-account');
+          return new Response('', { status: 404 });
+        }
+        throw new Error(`Unexpected request ${url}`);
+      });
+      const { view, runtime } = await renderLinuxDoAccountHosts(fetcher, 'anonymous');
+      try {
+        const epochs = runtime().read.forumSessionEpochs;
+        const plan =
+          kind === 'topic'
+            ? runtime().read.readGateway.getReadPlan('linuxdo', 'topic')
+            : runtime().read.readGateway.getReadPlan('linuxdo', 'feed');
+        expect(plan).toMatchObject({ state: 'ready', lane: 'public', cacheScope: 'public:omit' });
+        const queryKey =
+          kind === 'topic'
+            ? forumQueryKeys.topic({
+                source: 'linuxdo',
+                topicId: '777',
+                scope: epochs,
+                readPlanScope: plan.cacheScope
+              })
+            : kind === 'feed'
+              ? forumQueryKeys.feed({
+                  source: 'linuxdo',
+                  scope: epochs,
+                  readPlanScope: plan.cacheScope
+                })
+              : forumQueryKeys.feed({
+                  source: 'all',
+                  enabledSourcesKey: 'v2ex,linuxdo',
+                  scope: epochs,
+                  readPlanScope: `v2ex:public:omit,linuxdo:${plan.cacheScope}`
+                });
+        const cancel = jest.fn();
+        const resume = jest.fn(async () => {
+          order.push('resume-read');
+          return 'completed' as const;
+        });
+        await act(async () => {
+          expect(
+            await runtime().hosts.showLinuxDoVerification('公开读取需要验证', {
+              queryKey,
+              isCurrent: () => true,
+              cancel,
+              resume
+            })
+          ).toBe(true);
+        });
+        jest.mocked(setLinuxDoCookieResponseBarrier).mockImplementationOnce(async (blocked, reason) => {
+          expect(blocked).toBe(false);
+          expect(reason).toBe('surface-close');
+          order.push('handoff-cookies');
+        });
+        await fireEvent.press(view.getByText('检测并继续'));
+        await waitFor(() => expect(runtime().hosts.linuxDoVerificationVisible).toBe(false));
+
+        expect(order).toEqual(['handoff-cookies', 'verify-account', 'resume-read']);
+        expect(runtime().read.forumSessionEpochs.linuxdo).toBe(epochs.linuxdo);
+        expect(resume).toHaveBeenCalledTimes(1);
+        expect(cancel).not.toHaveBeenCalled();
+        expect(postCalls).toEqual([]);
+        expect(JSON.parse((await AsyncStorage.getItem('account-session.v1.linuxdo'))!).handoffPending).toBeUndefined();
+      } finally {
+        await view.unmount();
+        jest.useRealTimers();
+      }
+    }
+  );
+
+  it.each([
+    'account-switch',
+    'logged-in-to-anonymous',
+    'identity-still-unknown',
+    'leaving-original-page',
+    'stale-webview-callback'
+  ] as const)('does not resume attached reads or replay writes on %s from manual linux.do login', async (scenario) => {
+    jest.useFakeTimers();
+    const postCalls: string[] = [];
+    const deferredVerify = Promise.withResolvers<Response>();
+    const fetcher = jest.fn<ReturnType<Fetcher>, Parameters<Fetcher>>(async (url, init) => {
+      if ((init?.method || 'GET').toUpperCase() !== 'GET') postCalls.push(url);
+      if (url === 'https://linux.do/session/current.json') {
+        if (scenario === 'stale-webview-callback') return deferredVerify.promise;
+        if (scenario === 'account-switch') return Response.json({ current_user: { id: 88, username: 'bob' } });
+        if (scenario === 'logged-in-to-anonymous' || scenario === 'leaving-original-page')
+          return new Response('', { status: 404 });
+        return new Response('server unavailable', { status: 503 });
+      }
+      throw new Error(`Unexpected request ${url}`);
+    });
+    const initial =
+      scenario === 'account-switch' || scenario === 'logged-in-to-anonymous'
+        ? 'logged-in'
+        : scenario === 'identity-still-unknown'
+          ? 'unknown'
+          : 'anonymous';
+    const { view, runtime } = await renderLinuxDoAccountHosts(fetcher, initial);
+    try {
+      const epochs = runtime().read.forumSessionEpochs;
+      let pageCurrent = true;
+      const cancel = jest.fn();
+      const resume = jest.fn(async () => 'completed' as const);
+      await act(async () => {
+        await runtime().hosts.showLinuxDoVerification('读取需要验证', {
+          queryKey: forumQueryKeys.topic({
+            source: 'linuxdo',
+            topicId: '888',
+            scope: epochs,
+            readPlanScope: 'public:omit'
+          }),
+          isCurrent: () => pageCurrent,
+          cancel,
+          resume
+        });
+      });
+      if (scenario === 'leaving-original-page') pageCurrent = false;
+      const oldWebView = view.getByTestId('login-webview');
+      await fireEvent.press(view.getByText('检测并继续'));
+      if (scenario === 'stale-webview-callback') {
+        await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+        await fireEvent.press(view.getByLabelText('关闭'));
+        await act(async () => {
+          oldWebView.props.onMessage({
+            nativeEvent: {
+              url: 'https://linux.do/latest',
+              data: JSON.stringify({
+                type: 'linuxdo-webview',
+                documentKey: 'https://linux.do/latest:9999',
+                status: 'logged-out',
+                hasChallengeMarker: false,
+                userAgent: 'late-agent'
+              })
+            }
+          });
+          deferredVerify.resolve(new Response('', { status: 404 }));
+        });
+      }
+      await waitFor(() => expect(cancel).toHaveBeenCalledTimes(1));
+      expect(resume).not.toHaveBeenCalled();
+      expect(postCalls).toEqual([]);
+    } finally {
+      deferredVerify.resolve(new Response('', { status: 404 }));
+      await view.unmount();
+      jest.useRealTimers();
+    }
+  });
+});
+
+describe('NodeImage mount-gated authorization timers and interruptions', () => {
+  async function renderNodeSeekRuntime(fetcher: Fetcher, initialBlockMessage = '') {
+    const { response } = accountClearFixture('nodeseek');
+    await saveAccountSessionSnapshot(appQueryClient.getQueryData(accountQueryKeys.snapshot('nodeseek'))!);
+    let runtime!: ReturnType<typeof useAccountRuntime>;
+    const notify = jest.fn();
+    function Harness({ blockedMessage = initialBlockMessage }: { blockedMessage?: string }) {
+      runtime = useAccountRuntime({
+        appActive: true,
+        enabledSources: ['nodeseek'],
+        fetcher,
+        loginNavigation: { linuxdo: () => true, nodeseek: () => true, yaohuo: () => true, nodeimage: () => true },
+        notify,
+        nodeSeekRecoveryThreshold: 1,
+        openUser: async () => undefined,
+        ready: true,
+        screen: 'more',
+        webViewBlockMessage: blockedMessage
+      });
+      return runtime.hosts.element;
+    }
+    const view = await render(<Harness blockedMessage={initialBlockMessage} />, { wrapper: QueryTestWrapper });
+    await waitFor(() => expect(runtime.read.sessionsReady).toBe(true));
+    return {
+      view,
+      runtime: () => runtime,
+      response,
+      setBlockedMessage: (blockedMessage: string) => view.rerender(<Harness blockedMessage={blockedMessage} />)
+    };
+  }
+
+  function sendNodeImageMessage(
+    webView: { props: { injectedJavaScript?: string; onMessage?: (event: unknown) => void } },
+    sourceUrl: string,
+    documentUrl: string,
+    type: string,
+    data: Record<string, unknown> = {}
+  ) {
+    const nonce = webView.props.injectedJavaScript?.match(/const nonce = "([0-9a-f]{32})";/)?.[1];
+    if (!nonce) throw new Error('NodeImage nonce missing from WebView');
+    webView.props.onMessage?.({
+      nativeEvent: {
+        data: JSON.stringify({ ...data, documentUrl, nonce, type }),
+        url: sourceUrl
+      }
+    });
+  }
+
+  it('does not time out stage 1 during global proxy block and mounts normally after unblock', async () => {
+    const { response } = accountClearFixture('nodeseek');
+    const fetcher = jest.fn(async () => response());
+    const { view, runtime, setBlockedMessage } = await renderNodeSeekRuntime(fetcher, '代理状态切换中');
+    try {
+      jest.useFakeTimers();
+      await act(async () => {
+        runtime().center.nodeImage.key.authorize();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(view.getByText('代理状态切换中')).toBeTruthy();
+      expect(view.queryByTestId('login-webview')).toBeNull();
+
+      await act(async () => {
+        jest.advanceTimersByTime(30_001);
+        await Promise.resolve();
+      });
+      expect(view.getByText('代理状态切换中')).toBeTruthy();
+      expect(view.queryByText(/NodeImage 登录态检查超时/)).toBeNull();
+
+      await act(async () => {
+        await setBlockedMessage('');
+        await Promise.resolve();
+      });
+      expect(view.getByTestId('login-webview').props.source).toEqual({ uri: 'https://www.nodeimage.com/' });
+      expect(view.queryByText(/NodeImage 登录态检查超时/)).toBeNull();
+
+      await act(async () => {
+        jest.advanceTimersByTime(29_999);
+        await Promise.resolve();
+      });
+      expect(view.getByTestId('login-webview')).toBeTruthy();
+
+      await act(async () => {
+        jest.advanceTimersByTime(1);
+        await Promise.resolve();
+      });
+      expect(view.queryByTestId('login-webview')).toBeNull();
+      expect(view.getByText(/本次未发起 NodeSeek Connect/)).toBeTruthy();
+    } finally {
+      await view.unmount();
+      jest.useRealTimers();
+    }
+  });
+
+  it('does not time out stage 1 during pending NodeSeek handoff marker block and mounts after save completes', async () => {
+    const { response } = accountClearFixture('nodeseek');
+    const fetcher = jest.fn(async () => response());
+    const { view, runtime } = await renderNodeSeekRuntime(fetcher, '');
+    const handoffDeferred = Promise.withResolvers<void>();
+    const handoffSpy = jest
+      .spyOn(accountSessionStore, 'markAccountSessionHandoffPending')
+      .mockImplementation(() => handoffDeferred.promise);
+    try {
+      jest.useFakeTimers();
+      await act(async () => {
+        runtime().center.nodeImage.key.authorize();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(view.getByText('正在保存登录交接状态…')).toBeTruthy();
+      expect(view.queryByTestId('login-webview')).toBeNull();
+
+      await act(async () => {
+        jest.advanceTimersByTime(30_001);
+        await Promise.resolve();
+      });
+      expect(view.getByText('正在保存登录交接状态…')).toBeTruthy();
+      expect(view.queryByText(/NodeImage 登录态检查超时/)).toBeNull();
+
+      await act(async () => {
+        handoffDeferred.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(view.getByTestId('login-webview').props.source).toEqual({ uri: 'https://www.nodeimage.com/' });
+      expect(view.queryByText(/NodeImage 登录态检查超时/)).toBeNull();
+
+      await act(async () => {
+        jest.advanceTimersByTime(29_999);
+        await Promise.resolve();
+      });
+      expect(view.getByTestId('login-webview')).toBeTruthy();
+
+      await act(async () => {
+        jest.advanceTimersByTime(1);
+        await Promise.resolve();
+      });
+      expect(view.queryByTestId('login-webview')).toBeNull();
+      expect(view.getByText(/本次未发起 NodeSeek Connect/)).toBeTruthy();
+    } finally {
+      handoffDeferred.resolve();
+      handoffSpy.mockRestore();
+      await view.unmount();
+      jest.useRealTimers();
+    }
+  });
+
+  it.each(['connect-started', 'verify-mounted'] as const)(
+    'retains unknown-result state without remounting after mid-flow proxy block during %s',
+    async (stage) => {
+      const { response } = accountClearFixture('nodeseek');
+      const fetcher = jest.fn(async () => response());
+      const { view, runtime, setBlockedMessage } = await renderNodeSeekRuntime(fetcher, '');
+      const setItemSpy = jest.spyOn(SecureStore, 'setItemAsync').mockResolvedValue(undefined);
+      try {
+        jest.useFakeTimers();
+        await act(async () => {
+          runtime().center.nodeImage.key.authorize();
+          await Promise.resolve();
+          await Promise.resolve();
+          await Promise.resolve();
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        const stage1WebView = view.getByTestId('login-webview');
+        await act(async () => {
+          sendNodeImageMessage(
+            stage1WebView,
+            'https://www.nodeimage.com',
+            'https://www.nodeimage.com/',
+            'nodeimage-session-expired',
+            { status: 401 }
+          );
+          await Promise.resolve();
+        });
+        const stage2WebView = view.getByTestId('login-webview');
+        expect(stage2WebView.props.source).toEqual({ uri: 'https://www.nodeseek.com/connect?target=NodeImage' });
+        await act(async () => {
+          sendNodeImageMessage(
+            stage2WebView,
+            'https://www.nodeseek.com',
+            'https://www.nodeseek.com/connect?target=NodeImage',
+            'nodeimage-connect-ready'
+          );
+          await Promise.resolve();
+        });
+        expect(mockWebViewPostMessage).toHaveBeenCalledTimes(1);
+
+        let interruptedWebView = stage2WebView;
+        if (stage === 'verify-mounted') {
+          await act(async () => {
+            sendNodeImageMessage(
+              stage2WebView,
+              'https://www.nodeseek.com',
+              'https://www.nodeseek.com/connect?target=NodeImage',
+              'nodeimage-auth-data',
+              { data: 'auth-data', sign: 'auth-sign', wtf: 'auth-wtf' }
+            );
+            await Promise.resolve();
+          });
+          interruptedWebView = view.getByTestId('login-webview');
+          expect(interruptedWebView.props.source).toEqual({ uri: 'https://www.nodeimage.com/' });
+        }
+
+        await act(async () => {
+          await setBlockedMessage('代理状态切换中');
+          jest.advanceTimersByTime(1_000);
+          await Promise.resolve();
+        });
+        expect(view.queryByTestId('login-webview')).toBeNull();
+        expect(view.getByText('代理状态切换中')).toBeTruthy();
+
+        await act(async () => {
+          await setBlockedMessage('');
+          await Promise.resolve();
+        });
+        expect(view.queryByTestId('login-webview')).toBeNull();
+        expect(
+          view.getByText(stage === 'connect-started' ? /可能已占用一次连接额度/ : /API Key 结果未知/)
+        ).toBeTruthy();
+        expect(view.queryByText(/超时/)).toBeNull();
+
+        await act(async () => {
+          jest.advanceTimersByTime(60_001);
+          await Promise.resolve();
+        });
+        expect(view.queryByText(/超时/)).toBeNull();
+
+        await act(async () => {
+          if (stage === 'connect-started') {
+            sendNodeImageMessage(
+              interruptedWebView,
+              'https://www.nodeseek.com',
+              'https://www.nodeseek.com/connect?target=NodeImage',
+              'nodeimage-connect-ready'
+            );
+          } else {
+            sendNodeImageMessage(
+              interruptedWebView,
+              'https://www.nodeimage.com',
+              'https://www.nodeimage.com/',
+              'nodeimage-api-key',
+              { apiKey: 'late-key-after-block' }
+            );
+          }
+          await Promise.resolve();
+        });
+        expect(mockWebViewPostMessage).toHaveBeenCalledTimes(1);
+        expect(setItemSpy).not.toHaveBeenCalled();
+      } finally {
+        setItemSpy.mockRestore();
+        await view.unmount();
+        jest.useRealTimers();
+      }
+    }
+  );
+});

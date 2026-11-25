@@ -1,4 +1,4 @@
-import { type RefObject, useEffect, useState } from 'react';
+import { type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 import { Text, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
@@ -9,8 +9,12 @@ import { NODESEEK_LOGIN_PROBE_SCRIPT } from '@/platform/network/loginWebViewScri
 import { KeyRound, LogOut, RefreshCw, ShieldCheck } from 'lucide-react-native';
 import { LoginWebViewAction, LoginWebViewModal } from '@/ui/navigation/LoginWebViewModal';
 import type { AccountHostStyles } from '../accountHostStyles';
+import type { LoginFormMessageHandler } from '../credentialFillSession';
 import type { LoginWebViewDiagnosticState } from '../useAccountController';
+import { useLoginFormProbe } from './useLoginFormProbe';
 import { useLoginWebViewLifecycle } from './useLoginWebViewLifecycle';
+
+type LoadedLoginDocument = { key: number; url: string };
 
 export function SiteLoginHost({
   site,
@@ -31,6 +35,7 @@ export function SiteLoginHost({
   onClear,
   onClose,
   onHandleMessage,
+  onLoginFormDocumentRetired,
   onLoginFormMessage,
   onNavigation,
   onRequestCredentialFill,
@@ -55,7 +60,8 @@ export function SiteLoginHost({
   onClear: () => void;
   onClose: () => void;
   onHandleMessage?: (event: WebViewMessageEvent) => void;
-  onLoginFormMessage: (event: WebViewMessageEvent) => boolean;
+  onLoginFormDocumentRetired?: (attempt: number) => void;
+  onLoginFormMessage: LoginFormMessageHandler;
   onNavigation: (request: LoginNavigationRequest) => boolean;
   onRequestCredentialFill: () => void;
   onSetLoading: (value: boolean) => void;
@@ -69,7 +75,9 @@ export function SiteLoginHost({
       : session.isLoggedIn
         ? YAOHUO_URL + '/wapindex.aspx?sid=-2'
         : YAOHUO_URL + '/waplogin.aspx?siteid=1000';
-  const [loadedDocument, setLoadedDocument] = useState<{ key: number; source: string; url: string } | null>(null);
+  const [loadedDocument, setLoadedDocument] = useState<LoadedLoginDocument | null>(null);
+  const currentDocument = useRef<LoadedLoginDocument | null>(null);
+  const mainFrame = useRef<{ key: number; url: string } | null>(null);
   const page = useLoginWebViewLifecycle({
     checking,
     recoveryPending,
@@ -83,32 +91,44 @@ export function SiteLoginHost({
     onSetLoading,
     onWebViewState
   });
+  const {
+    currentDocument: currentForm,
+    probe,
+    retire
+  } = useLoginFormProbe({
+    adapter,
+    enabled: visible && !webViewBlockMessage && loginFormMode,
+    webViewKey: page.key,
+    webViewRef,
+    onRetired: onLoginFormDocumentRetired
+  });
+
+  const retireDocument = useCallback(
+    (url = '') => {
+      mainFrame.current = { key: page.key, url };
+      const retired = currentDocument.current;
+      if (!retired) return;
+      currentDocument.current = null;
+      setLoadedDocument(null);
+      retire();
+    },
+    [page.key, retire]
+  );
+  useEffect(() => {
+    const document = currentDocument.current;
+    if (document && (!visible || webViewBlockMessage || document.key !== page.key)) retireDocument();
+  }, [page.key, retireDocument, visible, webViewBlockMessage]);
 
   useEffect(() => {
-    if (
-      visible &&
-      !webViewBlockMessage &&
-      loginFormMode &&
-      !loading &&
-      credentialAttempt > 0 &&
-      loadedDocument?.key === page.key &&
-      loadedDocument.source === sourceUri &&
-      adapter.matchesUrl(loadedDocument.url)
-    ) {
-      webViewRef.current?.injectJavaScript(adapter.probeScript(credentialAttempt));
-    }
-  }, [
-    adapter,
-    credentialAttempt,
-    loadedDocument,
-    loading,
-    loginFormMode,
-    page.key,
-    sourceUri,
-    visible,
-    webViewBlockMessage,
-    webViewRef
-  ]);
+    if (!loading && loadedDocument?.key === page.key && loadedDocument === currentDocument.current)
+      probe(loadedDocument.url, credentialAttempt);
+  }, [credentialAttempt, loadedDocument, loading, page.key, probe]);
+
+  const refresh = () => {
+    if (!page.isCurrent() || checking) return;
+    retireDocument();
+    page.refresh();
+  };
 
   return (
     <LoginWebViewModal
@@ -136,17 +156,11 @@ export function SiteLoginHost({
                   : '检测登录'
           }
           loading={checking}
-          onPress={page.needsRemount ? page.refresh : page.check}
+          onPress={page.needsRemount ? refresh : page.check}
         />
       }
       refreshAction={
-        <LoginWebViewAction
-          icon={RefreshCw}
-          label="刷新页面"
-          displayLabel=""
-          disabled={checking}
-          onPress={page.refresh}
-        />
+        <LoginWebViewAction icon={RefreshCw} label="刷新页面" displayLabel="" disabled={checking} onPress={refresh} />
       }
       footer={prompt ? <Text style={styles.verificationHint}>{prompt}</Text> : undefined}
       actions={
@@ -178,23 +192,44 @@ export function SiteLoginHost({
             injectedJavaScript={site === 'nodeseek' ? NODESEEK_LOGIN_PROBE_SCRIPT : undefined}
             onLoadEnd={(event) => {
               if (!page.isCurrent()) return;
-              page.loadEnd('code' in event.nativeEvent);
-              if ('code' in event.nativeEvent || !event.nativeEvent.url) return;
-              setLoadedDocument({ key: page.key, source: sourceUri, url: event.nativeEvent.url });
+              const { url } = event.nativeEvent;
+              const frame = mainFrame.current;
+              if (frame?.key === page.key && frame.url && url && frame.url.split('#', 1)[0] !== url.split('#', 1)[0])
+                return;
+              const failed = 'code' in event.nativeEvent;
+              page.loadEnd(failed);
+              const current = currentDocument.current;
+              if (failed || !url || (current?.key === page.key && current.url === url)) return;
+              const document = { key: page.key, url };
+              currentDocument.current = document;
+              setLoadedDocument(document);
+            }}
+            onMainFrameLoadStart={(event) => {
+              if (page.isCurrent()) retireDocument(event.nativeEvent.url);
             }}
             onLoadStart={(event) => {
               if (!page.isCurrent()) return;
-              setLoadedDocument(null);
-              page.start(event?.nativeEvent.url, event?.nativeEvent.loading !== false);
+              const loading = event?.nativeEvent.loading !== false;
+              if (loading) retireDocument(event?.nativeEvent.url);
+              page.start(event?.nativeEvent.url, loading);
             }}
             onMessage={(event) => {
-              if (!page.isCurrent() || onLoginFormMessage(event)) return;
+              if (!page.isCurrent()) return;
+              if (onLoginFormMessage(event, currentForm())) return;
               if (site === 'nodeseek') onHandleMessage?.(event);
               page.message(event);
             }}
-            onError={(event) => page.fail(event.nativeEvent.description)}
+            onError={(event) => {
+              if (!page.isCurrent()) return;
+              page.fail(event.nativeEvent.description);
+              retireDocument();
+            }}
             renderError={() => <View style={styles.webViewErrorPlaceholder} />}
-            onRenderProcessGone={page.rendererGone}
+            onRenderProcessGone={() => {
+              if (!page.isCurrent()) return;
+              page.rendererGone();
+              retireDocument();
+            }}
             onShouldStartLoadWithRequest={onNavigation}
           />
         </View>

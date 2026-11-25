@@ -1017,7 +1017,7 @@ class NetworkProxyRuntimeTest {
         override fun lookup(hostname: String) = listOf(InetAddress.getByName("127.0.0.1"))
       })
       .cookieJar(JavaNetCookieJar(handler))
-      .addInterceptor(ForumMediaRequestInterceptor(sourceForUri = sourceForUri, defaultUserAgent = {
+      .addInterceptor(ForumMediaRequestInterceptor(sourceForUrl = { sourceForUri(java.net.URI("https", it.host, null, null)) }, defaultUserAgent = {
         defaultReads.incrementAndGet()
         "provider-user-agent"
       }))
@@ -1133,7 +1133,7 @@ class NetworkProxyRuntimeTest {
         override fun lookup(hostname: String) = listOf(InetAddress.getByName("127.0.0.1"))
       })
       .cookieJar(JavaNetCookieJar(handler))
-      .addInterceptor(ForumMediaRequestInterceptor(sourceForUri = sourceForUri, defaultUserAgent = { "provider-user-agent" }))
+      .addInterceptor(ForumMediaRequestInterceptor(sourceForUrl = { sourceForUri(java.net.URI("https", it.host, null, null)) }, defaultUserAgent = { "provider-user-agent" }))
       .build()
 
     try {
@@ -1179,14 +1179,14 @@ class NetworkProxyRuntimeTest {
       val request = Request.Builder().url(target.toString()).header(FORUM_MEDIA_SOURCE_HEADER, "nodeseek").build()
       val innerFailure = IOException("nested media request failed")
       val inner = OkHttpClient.Builder()
-        .addInterceptor(ForumMediaRequestInterceptor(sourceForUri, { "provider-user-agent" }))
+        .addInterceptor(ForumMediaRequestInterceptor({ sourceForUri(java.net.URI("https", it.host, null, null)) }, { "provider-user-agent" }))
         .addInterceptor(Interceptor {
           assertEquals(cookieHeaders, handler.get(target, emptyMap()))
           throw innerFailure
         })
         .build()
       val outer = OkHttpClient.Builder()
-        .addInterceptor(ForumMediaRequestInterceptor(sourceForUri, { "provider-user-agent" }))
+        .addInterceptor(ForumMediaRequestInterceptor({ sourceForUri(java.net.URI("https", it.host, null, null)) }, { "provider-user-agent" }))
         .addInterceptor(Interceptor { chain ->
           assertTrue(handler.get(target, emptyMap()).isEmpty())
           assertEquals(cookieHeaders, handler.get(target, emptyMap()))
@@ -1332,7 +1332,7 @@ class NetworkProxyRuntimeTest {
       })
       .cache(cache)
       .cookieJar(JavaNetCookieJar(handler))
-      .addInterceptor(ForumMediaRequestInterceptor(sourceForUri = sourceForUri, defaultUserAgent = { "provider-user-agent" }))
+      .addInterceptor(ForumMediaRequestInterceptor(sourceForUrl = { sourceForUri(java.net.URI("https", it.host, null, null)) }, defaultUserAgent = { "provider-user-agent" }))
       .build()
     fun read(path: String, marker: String?): String {
       val request = Request.Builder().url("http://media.test:${server.localPort}$path")
@@ -1871,6 +1871,33 @@ class NetworkProxyRuntimeTest {
       assertEquals("image", otherResponse.body!!.string())
     } finally { sameResponse.close(); otherResponse.close() }
     awaitImageRuntimeRetirement(before)
+  }
+
+  @Test
+  fun otherSourceImageCanEnterTheNetworkAfterRuntimeRotation() = withImageServer { url ->
+    val field = NetworkProxyRuntime::class.java.getDeclaredField("baseClientTemplate").apply { isAccessible = true }
+    val original = field.get(NetworkProxyRuntime) as OkHttpClient
+    val started = CountDownLatch(1)
+    val proceed = CountDownLatch(1)
+    val executor = Executors.newSingleThreadExecutor()
+    field.set(NetworkProxyRuntime, original.newBuilder().eventListener(object : okhttp3.EventListener() {
+      override fun callStart(call: Call) { started.countDown(); check(proceed.await(5, TimeUnit.SECONDS)) }
+    }).build())
+    NetworkProxyRuntime.recoverForumReadChannel("linuxdo")
+    val call = NetworkProxyRuntime.imageCallFactory.newCall(Request.Builder().url(url)
+      .header(FORUM_MEDIA_SOURCE_HEADER, "nodeseek").header("User-Agent", "fixture-provider-identity").build())
+    try {
+      val result = executor.submit<String> { call.execute().use { it.body!!.string() } }
+      assertTrue(started.await(5, TimeUnit.SECONDS))
+      NetworkProxyRuntime.recoverForumReadChannel("linuxdo")
+      assertFalse(call.isCanceled())
+      proceed.countDown()
+      assertEquals("image", result.get(5, TimeUnit.SECONDS))
+    } finally {
+      proceed.countDown(); call.cancel(); executor.shutdownNow()
+      field.set(NetworkProxyRuntime, original)
+      NetworkProxyRuntime.recoverForumReadChannel("linuxdo")
+    }
   }
 
   @Test
@@ -2520,6 +2547,7 @@ class NetworkProxyRuntimeTest {
       NetworkProxyRuntime.setLocalProxyPort(null)
       assertNull(NetworkProxyRuntime.currentLocalProxy())
       assertSame(systemProxy, selector.select(remote).single())
+      assertSame(Proxy.NO_PROXY, selector.select(java.net.URI("http://localhost/probe")).single())
       assertSame(Proxy.NO_PROXY, NetworkProxySelector().select(remote).single())
       selector.setDelegate(null)
       assertSame(Proxy.NO_PROXY, selector.select(remote).single())

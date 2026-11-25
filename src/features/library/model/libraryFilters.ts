@@ -7,6 +7,31 @@ interface LibrarySection {
   records: TopicRecord[];
 }
 
+export interface LibraryFilters {
+  source: FeedSource;
+  category: string;
+}
+
+export const allLibraryFilters: LibraryFilters = { source: 'all', category: 'all' };
+
+export function resolveLibraryFilters(
+  selection: LibraryFilters,
+  enabledSources: readonly Source[],
+  categories: Category[],
+  categoriesReady: boolean
+) {
+  const source = selection.source === 'all' || enabledSources.includes(selection.source) ? selection.source : 'all';
+  const categoryItems = libraryCategoryFilterItems(
+    categories.filter((item) => enabledSources.includes(item.source)),
+    source
+  );
+  const category =
+    source === selection.source && (!categoriesReady || categoryItems.some((item) => item.value === selection.category))
+      ? selection.category
+      : 'all';
+  return { source, category, categoryItems };
+}
+
 function libraryCategoryLabel(category: Category) {
   if (category.source === 'linuxdo' && category.id === 'uncategorized') {
     return '未分类';

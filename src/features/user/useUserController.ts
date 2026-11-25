@@ -1,5 +1,17 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { hashKey, useQuery, useQueryClient, type InfiniteData, type Query, type QueryKey } from '@tanstack/react-query';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  CancelledError,
+  hashKey,
+  isCancelledError,
+  notifyManager,
+  skipToken,
+  useQuery,
+  useQueryClient,
+  type InfiniteData,
+  type Query,
+  type QueryKey,
+  type QueryState
+} from '@tanstack/react-query';
 import { mergeTopics } from '@/domain/forum/feed';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { diagnosticRef, normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
@@ -18,16 +30,38 @@ import type {
   UserReplyActivity
 } from '@/domain/forum/models';
 import type { ReadGateway } from '@/sources/readGateway';
-import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
+import type { LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
+import type { ReadRecovery } from '@/platform/query/readRecovery';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import { isCanceledRequest } from '@/platform/network/errors';
 import { forumQueryKeys } from '@/platform/query/serverState';
-import { useFirstPageInfiniteQuery } from '@/platform/query/useFirstPageInfiniteQuery';
+import {
+  resumeExactQuery,
+  resumeInfiniteQueryPage,
+  useFirstPageInfiniteQuery,
+  type FirstPageInfiniteQueryOptions
+} from '@/platform/query/useFirstPageInfiniteQuery';
 import { isSessionSource, type SessionSource } from '@/domain/forum/sourceCatalog';
 
 type UserLane = 'topics' | 'replies';
-type UserErrorLane = 'resolution' | 'profile' | UserLane;
+type UserRefreshLane = 'profile' | UserLane;
+type UserErrorLane = 'resolution' | UserRefreshLane;
 type UserActivityPage = Partial<UserTopicsPage & UserRepliesPage>;
 type UserActivityData = InfiniteData<UserActivityPage>;
+type ResumeUserRead = (ownsRead: () => boolean, signal?: AbortSignal) => ReturnType<typeof resumeExactQuery>;
+
+class UserRefreshError extends Error {
+  constructor(
+    readonly lanes: Partial<Record<UserRefreshLane, { cause: unknown; queryState: QueryState | undefined }>>
+  ) {
+    super('用户页刷新失败');
+  }
+
+  currentFailure(lane: UserRefreshLane, current: QueryState | undefined) {
+    const failure = this.lanes[lane];
+    return failure && failure.queryState === current ? failure : undefined;
+  }
+}
 
 function mergeUserReplies(incoming: UserReplyActivity[]) {
   const seen = new Set<string>();
@@ -77,16 +111,14 @@ export function useUserController({
   notify: (message: string) => void;
   onRetryIdentityStatus?: (source: SessionSource) => Promise<unknown> | unknown;
   readerData: ReaderView;
-  showLinuxDoVerification: (
-    message?: string,
-    recovery?: LinuxDoReadRecovery
-  ) => void | boolean | Promise<void | boolean>;
-  showNodeSeekVerification: (message?: string, recovery?: LinuxDoReadRecovery) => void;
+  showLinuxDoVerification: (message?: string, recovery?: ReadRecovery) => void | boolean | Promise<void | boolean>;
+  showNodeSeekVerification: (message?: string, recovery?: ReadRecovery) => void;
   showYaohuoLogin: (message?: string) => void;
   readGateway: ReadGateway;
   user: UserReference;
 }) {
   const queryClient = useQueryClient();
+  const refreshOwner = useId();
   const [handledUserErrors] = useState<Record<UserErrorLane, WeakMap<Query, number>>>(() => ({
     profile: new WeakMap(),
     resolution: new WeakMap(),
@@ -124,11 +156,11 @@ export function useUserController({
     [resolutionReadPlan.cacheScope, sessionEpochs.nodeseek, selectedUsername]
   );
   const resolutionEnabled = Boolean(selectedNeedsResolution && active);
-  const resolutionQuery = useQuery({
+  const resolutionOptions = {
     queryKey: resolutionKey,
     enabled: resolutionEnabled,
     subscribed: active,
-    queryFn: async ({ signal }) => {
+    queryFn: async ({ signal }: { signal: AbortSignal }) => {
       const trace = beginDiagnosticTrace('user', 'resolveUser', {
         source: 'nodeseek',
         userRef: diagnosticRef('user', `nodeseek:${selectedUsername}`)
@@ -155,7 +187,8 @@ export function useUserController({
         throw error;
       }
     }
-  });
+  };
+  const resolutionQuery = useQuery(resolutionOptions);
   const canonicalUser = selectedNeedsResolution ? resolutionQuery.data || null : selectedUser;
   const identity = canonicalUser?.id || '';
   const loginReadKey = `${selectedSource}:${identity}`;
@@ -174,25 +207,36 @@ export function useUserController({
   );
   const topicKey = useMemo(() => forumQueryKeys.userLane(profileKey, 'topics'), [profileKey]);
   const replyKey = useMemo(() => forumQueryKeys.userLane(profileKey, 'replies'), [profileKey]);
+  const refreshKey = useMemo(() => [...profileKey, 'refresh', refreshOwner] as const, [profileKey, refreshOwner]);
   const readScope = hashKey([profileKey, selectedNeedsResolution ? resolutionKey : null]);
+  const recoveryScope = hashKey([selectedSource, selectedUser?.id, selectedUsername, profileSessionEpoch]);
+  const activeRecovery = useRef<object | null>(null);
   const activeRead = useRef<{ scope: string } | null>(null);
+  const refreshingRead = useRef<{ scope: string } | null>(null);
   useLayoutEffect(() => {
     activeRead.current = active ? { scope: readScope } : null;
     return () => {
       activeRead.current = null;
     };
   }, [active, readScope]);
+  useLayoutEffect(() => {
+    activeRecovery.current = active ? { scope: recoveryScope } : null;
+    return () => {
+      activeRecovery.current = null;
+    };
+  }, [active, recoveryScope]);
   const currentRead = useCallback(
     () => (activeRead.current?.scope === readScope ? activeRead.current : null),
     [readScope]
   );
   const enabled = Boolean(canonicalUser && identity && active);
+  const refreshQuery = useQuery<true>({ queryKey: refreshKey, queryFn: skipToken, enabled: false, subscribed: active });
 
-  const profileQuery = useQuery({
+  const profileOptions = {
     queryKey: profileKey,
     enabled,
     subscribed: active,
-    queryFn: async ({ signal }) => {
+    queryFn: async ({ signal }: { signal: AbortSignal }) => {
       const user = canonicalUser;
       if (!user?.id) throw new Error('用户信息不完整');
       const trace = beginDiagnosticTrace('user', 'open', {
@@ -227,7 +271,20 @@ export function useUserController({
         throw error;
       }
     }
-  });
+  };
+  const profileQuery = useQuery(profileOptions);
+
+  async function readActivity(lane: UserLane, details: UserDetails, cursor: string | null, signal: AbortSignal) {
+    const options = { source: details.source, profile: details, cursor, signal };
+    const context = { plan: profileReadPlan };
+    const page =
+      lane === 'topics'
+        ? await readGateway.getUserTopics(options, context)
+        : await readGateway.getUserReplies(options, context);
+    if (sourceDiagnosticSummary(page)?.isParseEmpty)
+      throw new Error(`用户${lane === 'topics' ? '主题' : '回复'}响应无法解析`);
+    return page;
+  }
 
   const createLaneQuery = (lane: UserLane, queryKey: QueryKey, details = profileQuery.data) => ({
     queryKey,
@@ -242,15 +299,7 @@ export function useUserController({
       signal: AbortSignal;
     }): Promise<UserActivityPage> => {
       if (!details) throw new Error('用户资料尚未读取');
-      const options = { source: details.source, profile: details, cursor: pageParam, signal };
-      const context = { plan: profileReadPlan };
-      const page =
-        lane === 'topics'
-          ? await readGateway.getUserTopics(options, context)
-          : await readGateway.getUserReplies(options, context);
-      if (sourceDiagnosticSummary(page)?.isParseEmpty)
-        throw new Error(`用户${lane === 'topics' ? '主题' : '回复'}响应无法解析`);
-      return page;
+      return readActivity(lane, details, pageParam, signal);
     },
     getNextPageParam: (
       lastPage: UserActivityPage,
@@ -259,15 +308,26 @@ export function useUserController({
       cursors: (string | null)[]
     ) => nextUserActivityCursor(lastPage, lane, cursors)
   });
+  const topicOptions = createLaneQuery('topics', topicKey);
+  const replyOptions = createLaneQuery('replies', replyKey);
   const [topicsQuery, refreshTopicsFirstPage] = useFirstPageInfiniteQuery<UserActivityPage, string | null>(
-    createLaneQuery('topics', topicKey)
+    topicOptions
   );
   const [repliesQuery, refreshRepliesFirstPage] = useFirstPageInfiniteQuery<UserActivityPage, string | null>(
-    createLaneQuery('replies', replyKey)
+    replyOptions
   );
-  const retryTopicsRead = topicsQuery.isFetchNextPageError ? topicsQuery.fetchNextPage : refreshTopicsFirstPage;
-  const retryRepliesRead = repliesQuery.isFetchNextPageError ? repliesQuery.fetchNextPage : refreshRepliesFirstPage;
+  const refreshFailure = refreshQuery.error instanceof UserRefreshError ? refreshQuery.error : null;
+  const profileRefreshFailure = refreshFailure?.currentFailure('profile', queryClient.getQueryState(profileKey));
+  const topicsRefreshFailure = refreshFailure?.currentFailure('topics', queryClient.getQueryState(topicKey));
+  const repliesRefreshFailure = refreshFailure?.currentFailure('replies', queryClient.getQueryState(replyKey));
+  const topicsError = topicsRefreshFailure?.cause ?? topicsQuery.error;
+  const repliesError = repliesRefreshFailure?.cause ?? repliesQuery.error;
+  const retryTopicsNext = topicsQuery.isFetchNextPageError && !topicsRefreshFailure;
+  const retryRepliesNext = repliesQuery.isFetchNextPageError && !repliesRefreshFailure;
+  const retryTopicsRead = retryTopicsNext ? topicsQuery.fetchNextPage : refreshTopicsFirstPage;
+  const retryRepliesRead = retryRepliesNext ? repliesQuery.fetchNextPage : refreshRepliesFirstPage;
   const resolutionErrorCount = queryClient.getQueryState(resolutionKey)?.errorUpdateCount ?? 0;
+  const refreshErrorCount = queryClient.getQueryState(refreshKey)?.errorUpdateCount ?? 0;
   const profileErrorCount = queryClient.getQueryState(profileKey)?.errorUpdateCount ?? 0;
   const topicsErrorCount = queryClient.getQueryState(topicKey)?.errorUpdateCount ?? 0;
   const repliesErrorCount = queryClient.getQueryState(replyKey)?.errorUpdateCount ?? 0;
@@ -312,7 +372,8 @@ export function useUserController({
     [nextRepliesCursor, nextTopicsCursor, profile, replies, topics]
   );
   const resolutionError = selectedNeedsResolution ? resolutionQuery.error : null;
-  const queryError = resolutionError || profileQuery.error;
+  const profileError = profileRefreshFailure?.cause ?? profileQuery.error;
+  const queryError = resolutionError || profileError;
   const userError = queryError && selectedUser ? sourceErrorFromUnknown(selectedUser.source, queryError) : null;
   const currentUserFollowed = Boolean(userProfile && isUserFollowed(readerData, userProfile));
 
@@ -325,25 +386,36 @@ export function useUserController({
     [currentRead, loginReadKey, showYaohuoLogin]
   );
   const handleError = useCallback(
-    (error: unknown, lane: UserErrorLane, resume: () => Promise<{ error: unknown; isError: boolean }>) => {
-      const owner = currentRead();
-      if (!active || !owner || !selectedUser || (lane === 'resolution' && !selectedNeedsResolution)) return;
+    (error: unknown, lane: UserErrorLane, resume: ResumeUserRead, transactionError?: UserRefreshError | null) => {
+      const route = activeRecovery.current;
+      if (!currentRead() || !route || !selectedUser || (lane === 'resolution' && !selectedNeedsResolution)) return;
       const queryKey = { resolution: resolutionKey, profile: profileKey, topics: topicKey, replies: replyKey }[lane];
-      if (!claimUserError(lane, queryKey, error)) return;
+      if (!claimUserError(lane, transactionError ? refreshKey : queryKey, transactionError ?? error)) return;
       const { source } = selectedUser;
       const sourceError = sourceErrorFromUnknown(source, error);
       const target = userSourceRecoveryTarget(source, sourceError);
       if (target === 'linuxdo-verification' || target === 'nodeseek-verification') {
-        const isCurrent = () => activeRead.current === owner;
-        const recovery: LinuxDoReadRecovery = {
+        const canonicalMatches = () =>
+          !selectedNeedsResolution ||
+          queryClient.getQueryData<UserReference>(resolutionKey)?.id === (identity || undefined);
+        const ownsRoute = () => activeRecovery.current === route;
+        const isCurrent = () => ownsRoute() && canonicalMatches();
+        const plan = lane === 'resolution' ? resolutionReadPlan : profileReadPlan;
+        const recovery: ReadRecovery = {
           queryKey,
           isCurrent,
-          resume: async () => {
+          resume: async (signal) => {
             if (!isCurrent()) return 'stale';
-            const result = await resume();
-            if (!isCurrent()) return 'stale';
-            claimUserError(lane, queryKey, result.error);
-            return result.isError ? sourceReadRecoveryOutcome(source, result.error) : 'completed';
+            const ownsRead = () =>
+              ownsRoute() &&
+              (lane === 'resolution' || canonicalMatches()) &&
+              readGateway.getReadPlan(source, plan.operation).cacheScope === plan.cacheScope;
+            const result = await resume(ownsRead, signal);
+            if (result.kind === 'failed') {
+              claimUserError(lane, queryKey, result.error);
+              return sourceReadRecoveryOutcome(source, result.error);
+            }
+            return result.kind === 'success' ? 'completed' : 'stale';
           }
         };
         if (target === 'linuxdo-verification') void showLinuxDoVerification(sourceError.message, recovery);
@@ -357,13 +429,18 @@ export function useUserController({
       }
     },
     [
-      active,
       claimUserError,
       currentRead,
+      identity,
       notify,
       profileKey,
+      profileReadPlan,
+      queryClient,
+      readGateway,
+      refreshKey,
       replyKey,
       resolutionKey,
+      resolutionReadPlan,
       selectedNeedsResolution,
       selectedUser,
       showLinuxDoVerification,
@@ -375,82 +452,199 @@ export function useUserController({
 
   useEffect(() => {
     if (resolutionError) {
-      handleError(resolutionError, 'resolution', () => resolutionQuery.refetch({ cancelRefetch: false }));
+      handleError(resolutionError, 'resolution', (ownsRead, signal) =>
+        resumeExactQuery(queryClient, resolutionOptions, ownsRead, signal)
+      );
     }
-  }, [handleError, resolutionError, resolutionErrorCount, resolutionQuery.refetch]);
+  }, [handleError, queryClient, resolutionError, resolutionErrorCount, resolutionOptions]);
 
   useEffect(() => {
-    if (profileQuery.error) {
-      handleError(profileQuery.error, 'profile', () => profileQuery.refetch({ cancelRefetch: false }));
+    if (profileError) {
+      handleError(
+        profileError,
+        'profile',
+        (ownsRead, signal) => resumeExactQuery(queryClient, profileOptions, ownsRead, signal),
+        profileRefreshFailure ? refreshFailure : null
+      );
     }
-  }, [handleError, profileErrorCount, profileQuery.error, profileQuery.refetch]);
+  }, [
+    handleError,
+    queryClient,
+    profileError,
+    profileErrorCount,
+    profileOptions,
+    profileRefreshFailure,
+    refreshErrorCount,
+    refreshFailure
+  ]);
+
+  const resumeActivity = useCallback(
+    (
+      options: FirstPageInfiniteQueryOptions<UserActivityPage, string | null>,
+      next: boolean,
+      cursor: string | null | undefined,
+      ownsRead: () => boolean,
+      signal?: AbortSignal
+    ): ReturnType<typeof resumeInfiniteQueryPage> => {
+      if (next && !cursor) return Promise.resolve({ kind: 'stale' });
+      return resumeInfiniteQueryPage(
+        queryClient,
+        options,
+        next && cursor ? { kind: 'next', pageParam: cursor } : { kind: 'first' },
+        ownsRead,
+        signal
+      );
+    },
+    [queryClient]
+  );
   useEffect(() => {
-    if (topicsQuery.error) {
-      handleError(topicsQuery.error, 'topics', () => retryTopicsRead({ cancelRefetch: false }));
+    if (topicsError) {
+      handleError(
+        topicsError,
+        'topics',
+        (ownsRead, signal) => resumeActivity(topicOptions, retryTopicsNext, nextTopicsCursor, ownsRead, signal),
+        topicsRefreshFailure ? refreshFailure : null
+      );
     }
-  }, [handleError, topicsQuery.error, topicsErrorCount, retryTopicsRead]);
+  }, [
+    handleError,
+    nextTopicsCursor,
+    refreshErrorCount,
+    refreshFailure,
+    resumeActivity,
+    retryTopicsNext,
+    topicOptions,
+    topicsError,
+    topicsErrorCount,
+    topicsRefreshFailure
+  ]);
   useEffect(() => {
-    if (repliesQuery.error) {
-      handleError(repliesQuery.error, 'replies', () => retryRepliesRead({ cancelRefetch: false }));
+    if (repliesError) {
+      handleError(
+        repliesError,
+        'replies',
+        (ownsRead, signal) => resumeActivity(replyOptions, retryRepliesNext, nextRepliesCursor, ownsRead, signal),
+        repliesRefreshFailure ? refreshFailure : null
+      );
     }
-  }, [handleError, repliesQuery.error, repliesErrorCount, retryRepliesRead]);
+  }, [
+    handleError,
+    nextRepliesCursor,
+    refreshErrorCount,
+    refreshFailure,
+    replyOptions,
+    repliesError,
+    repliesErrorCount,
+    repliesRefreshFailure,
+    resumeActivity,
+    retryRepliesNext
+  ]);
 
   const refreshUser = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
     const owner = currentRead();
-    if (!owner || !selectedUser) return 'stale';
-    if (selectedUser.source === 'yaohuo') handledYaohuoLoginReadKeyRef.current = null;
-    const blockedPlan = selectedNeedsResolution ? resolutionReadPlan : profileReadPlan;
-    if (blockedPlan.state === 'blocked') {
-      if (
-        (blockedPlan.reason === 'identity-pending' || blockedPlan.reason === 'identity-unavailable') &&
-        isSessionSource(selectedUser.source)
-      ) {
-        await onRetryIdentityStatus?.(selectedUser.source);
-      } else if (blockedPlan.reason === 'login-required' && selectedUser.source === 'yaohuo') {
-        showYaohuoLoginForRead('请先登录妖火后再读取。');
+    if (!owner || !selectedUser || refreshingRead.current === owner) return 'stale';
+    refreshingRead.current = owner;
+    try {
+      if (selectedUser.source === 'yaohuo') handledYaohuoLoginReadKeyRef.current = null;
+      const blockedPlan = selectedNeedsResolution ? resolutionReadPlan : profileReadPlan;
+      if (blockedPlan.state === 'blocked') {
+        if (
+          (blockedPlan.reason === 'identity-pending' || blockedPlan.reason === 'identity-unavailable') &&
+          isSessionSource(selectedUser.source)
+        ) {
+          await onRetryIdentityStatus?.(selectedUser.source);
+        } else if (blockedPlan.reason === 'login-required' && selectedUser.source === 'yaohuo') {
+          showYaohuoLoginForRead('请先登录妖火后再读取。');
+        }
+        return 'stale';
       }
-      return 'stale';
+      if (selectedNeedsResolution && !resolutionQuery.data) {
+        const result = await resolutionQuery.refetch({ cancelRefetch: true });
+        return result.isError ? 'failed' : 'completed';
+      }
+      if (!identity) return 'completed';
+      await Promise.all(
+        [profileKey, topicKey, replyKey].map((queryKey) => queryClient.cancelQueries({ queryKey, exact: true }))
+      );
+      if (activeRead.current !== owner) return 'stale';
+      const previous = queryClient.getQueryState(refreshKey);
+      const refreshEntry = queryClient.getQueryCache().find({ queryKey: refreshKey, exact: true });
+      let staged: { profile: UserDetails; topics: UserActivityPage; replies: UserActivityPage } | undefined;
+      await queryClient.fetchQuery({
+        queryKey: refreshKey,
+        staleTime: 0,
+        queryFn: async ({ signal }) => {
+          const cancel = (): never => {
+            if (!signal.aborted) void refreshEntry?.cancel({ revert: true });
+            throw new CancelledError({ revert: true });
+          };
+          const profile = await profileOptions.queryFn({ signal }).catch((error: unknown) => {
+            if (signal.aborted || activeRead.current !== owner || isCanceledRequest(error)) return cancel();
+            throw new UserRefreshError({
+              profile: { cause: error, queryState: queryClient.getQueryState(profileKey) }
+            });
+          });
+          if (signal.aborted || activeRead.current !== owner) return cancel();
+          const [topics, replies] = await Promise.allSettled([
+            readActivity('topics', profile, null, signal),
+            readActivity('replies', profile, null, signal)
+          ]);
+          if (signal.aborted || activeRead.current !== owner) return cancel();
+          if (topics.status === 'rejected' || replies.status === 'rejected') {
+            if (
+              (topics.status === 'rejected' && isCanceledRequest(topics.reason)) ||
+              (replies.status === 'rejected' && isCanceledRequest(replies.reason))
+            )
+              return cancel();
+            throw new UserRefreshError({
+              ...(topics.status === 'rejected'
+                ? { topics: { cause: topics.reason, queryState: queryClient.getQueryState(topicKey) } }
+                : {}),
+              ...(replies.status === 'rejected'
+                ? { replies: { cause: replies.reason, queryState: queryClient.getQueryState(replyKey) } }
+                : {})
+            });
+          }
+          staged = { profile, topics: topics.value, replies: replies.value };
+          return true;
+        }
+      });
+      const committed = queryClient.getQueryState(refreshKey);
+      if (
+        activeRead.current !== owner ||
+        !staged ||
+        !committed ||
+        committed.dataUpdateCount <= (previous?.dataUpdateCount ?? 0)
+      )
+        return 'stale';
+      const { profile, topics, replies } = staged;
+      notifyManager.batch(() => {
+        queryClient.setQueryData<UserDetails>(profileKey, profile);
+        queryClient.setQueryData<InfiniteData<UserActivityPage, string | null>>(topicKey, {
+          pages: [topics],
+          pageParams: [null]
+        });
+        queryClient.setQueryData<InfiniteData<UserActivityPage, string | null>>(replyKey, {
+          pages: [replies],
+          pageParams: [null]
+        });
+      });
+      return 'completed';
+    } catch (error) {
+      return activeRead.current !== owner || isCancelledError(error) || isCanceledRequest(error) ? 'stale' : 'failed';
+    } finally {
+      if (refreshingRead.current === owner) refreshingRead.current = null;
     }
-    if (selectedNeedsResolution && !resolutionQuery.data) {
-      const result = await resolutionQuery.refetch({ cancelRefetch: true });
-      return result.isError ? 'failed' : 'completed';
-    }
-    if (!identity) return 'completed';
-    await Promise.all([
-      queryClient.cancelQueries({ queryKey: topicKey, exact: true }),
-      queryClient.cancelQueries({ queryKey: replyKey, exact: true })
-    ]);
-    if (activeRead.current !== owner) return 'stale';
-    const before = queryClient.getQueryState(profileKey);
-    await queryClient.invalidateQueries({ queryKey: profileKey, exact: true, refetchType: 'active' });
-    if (activeRead.current !== owner) return 'stale';
-    const state = queryClient.getQueryState<UserDetails>(profileKey);
-    if (state?.status === 'error') return state.errorUpdateCount > (before?.errorUpdateCount ?? 0) ? 'failed' : 'stale';
-    if (
-      !state?.data ||
-      state.status !== 'success' ||
-      state.fetchStatus !== 'idle' ||
-      state.dataUpdateCount <= (before?.dataUpdateCount ?? 0)
-    )
-      return 'stale';
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: topicKey, exact: true, refetchType: 'none' }),
-      queryClient.invalidateQueries({ queryKey: replyKey, exact: true, refetchType: 'none' })
-    ]);
-    if (activeRead.current !== owner) return 'stale';
-    const outcomes = await Promise.allSettled([
-      queryClient.fetchInfiniteQuery({ ...createLaneQuery('topics', topicKey, state.data), pages: 1, staleTime: 0 }),
-      queryClient.fetchInfiniteQuery({ ...createLaneQuery('replies', replyKey, state.data), pages: 1, staleTime: 0 })
-    ]);
-    if (activeRead.current !== owner) return 'stale';
-    return outcomes.some((outcome) => outcome.status === 'rejected') ? 'failed' : 'completed';
   }, [
     currentRead,
     identity,
     onRetryIdentityStatus,
     profileKey,
+    profileOptions,
     profileReadPlan,
     queryClient,
+    readActivity,
+    refreshKey,
     replyKey,
     resolutionQuery.data,
     resolutionQuery.refetch,
@@ -463,7 +657,7 @@ export function useUserController({
 
   const loadMoreUserTopics = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
     const owner = currentRead();
-    if (!owner) return 'stale';
+    if (!owner || refreshingRead.current === owner) return 'stale';
     if (queryClient.getQueryState(profileKey)?.fetchStatus === 'fetching') return 'completed';
     if (topicsQuery.isFetchingNextPage || !profileQuery.data) return 'completed';
     if (queryClient.getQueryState(topicKey)?.fetchStatus === 'fetching') {
@@ -485,7 +679,7 @@ export function useUserController({
   ]);
   const loadMoreUserReplies = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
     const owner = currentRead();
-    if (!owner) return 'stale';
+    if (!owner || refreshingRead.current === owner) return 'stale';
     if (queryClient.getQueryState(profileKey)?.fetchStatus === 'fetching') return 'completed';
     if (repliesQuery.isFetchingNextPage || !profileQuery.data) return 'completed';
     if (queryClient.getQueryState(replyKey)?.fetchStatus === 'fetching') {
@@ -507,7 +701,8 @@ export function useUserController({
   ]);
 
   function retryUserRead(read: () => Promise<{ error: unknown; isError: boolean }>) {
-    if (!currentRead()) return;
+    const owner = currentRead();
+    if (!owner || refreshingRead.current === owner) return;
     if (selectedSource === 'yaohuo') handledYaohuoLoginReadKeyRef.current = null;
     return read();
   }
@@ -518,10 +713,12 @@ export function useUserController({
     loadMoreUserTopics,
     refreshUser,
     selectedUser,
-    userBusy: (resolutionQuery.isFetching && resolutionEnabled) || (profileQuery.isFetching && enabled),
+    userBusy:
+      (resolutionQuery.isFetching && resolutionEnabled) ||
+      (enabled && (profileQuery.isFetching || refreshQuery.isFetching)),
     userError,
-    userTopicsError: topicsQuery.error ? sourceErrorFromUnknown(selectedSource, topicsQuery.error) : null,
-    userRepliesError: repliesQuery.error ? sourceErrorFromUnknown(selectedSource, repliesQuery.error) : null,
+    userTopicsError: topicsError ? sourceErrorFromUnknown(selectedSource, topicsError) : null,
+    userRepliesError: repliesError ? sourceErrorFromUnknown(selectedSource, repliesError) : null,
     userTopicsBusy: topicsQuery.isFetching,
     userRepliesBusy: repliesQuery.isFetching,
     retryUserTopics: () => retryUserRead(() => retryTopicsRead({ cancelRefetch: false })),

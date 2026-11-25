@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type SetStateAction } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { WebView, WebViewMessageEvent } from 'react-native-webview';
 import type { AuthSurfaceCloseReason, AuthSurfaceTicket } from '@/domain/session/authSurfaceCoordinator';
 import type { AccountReconcileResult } from '@/domain/session/sessionContracts';
@@ -7,7 +7,7 @@ import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGat
 import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
 import { nativeSecureRandomHex } from '@/platform/android/secureRandom';
 import { isLinuxDoCreditAuthMessage } from '@/platform/network/linuxDoCreditAuthScript';
-import { appQueryClient } from '@/platform/query/serverState';
+import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 
 type CreditAuthMode = 'manual' | 'silent';
@@ -31,22 +31,16 @@ type CreditAuthState = {
   revision: number;
   manualIntent: number;
 };
-type CreditAuthPage = { phase: 'empty' | 'preparing' } | { phase: 'loading' | 'ready'; document: CreditAuthDocument };
+type CreditAuthPreparation =
+  | { phase: 'idle' | 'preparing' }
+  | { phase: 'prepared'; document: CreditAuthDocument }
+  | { phase: 'failed'; error: string };
 
 function creditOpening(state: CreditAuthState['opening']) {
   return state.phase === 'active' ? state.opening : null;
 }
 function creditClosing(state: CreditAuthState['closing']) {
   return state.phase === 'settling' ? state : null;
-}
-function creditDocument(page: CreditAuthPage) {
-  return 'document' in page ? page.document : null;
-}
-function creditPageLoading(page: CreditAuthPage) {
-  return page.phase === 'preparing' || page.phase === 'loading';
-}
-function creditPage(document: CreditAuthDocument | null, loading: boolean): CreditAuthPage {
-  return document ? { phase: loading ? 'loading' : 'ready', document } : { phase: loading ? 'preparing' : 'empty' };
 }
 
 export function useLinuxDoCreditAuthController({
@@ -85,20 +79,7 @@ export function useLinuxDoCreditAuthController({
   const screenActiveRef = useCommittedRef(screenActive);
   const appActiveRef = useCommittedRef(appActive);
   const [generation, setGeneration] = useState(0);
-  const [page, setPage] = useState<CreditAuthPage>({ phase: 'empty' });
-  const document = creditDocument(page);
-  const loading = creditPageLoading(page);
-  const setDocument = useCallback((next: CreditAuthDocument | null) => {
-    setPage((current) => (creditDocument(current) === next ? current : creditPage(next, creditPageLoading(current))));
-  }, []);
-  const setLoading = useCallback((action: SetStateAction<boolean>) => {
-    setPage((current) => {
-      const loading = creditPageLoading(current);
-      const next = typeof action === 'function' ? action(loading) : action;
-      return Object.is(loading, next) ? current : creditPage(creditDocument(current), next);
-    });
-  }, []);
-  const [error, setError] = useState('');
+  const [preparation, setPreparation] = useState<CreditAuthPreparation>({ phase: 'idle' });
   const [connectionFeedback, setConnectionFeedback] = useState<'idle' | 'connecting'>('idle');
   const busy = connectionFeedback === 'connecting';
   const close = useCallback(
@@ -113,8 +94,7 @@ export function useLinuxDoCreditAuthController({
       try {
         webViewRef.current?.stopLoading();
       } finally {
-        setDocument(null);
-        setLoading(false);
+        setPreparation({ phase: 'idle' });
         const reconciliation = finishSurface(reason);
         const closing = Promise.resolve(reconciliation)
           .then((result) => {
@@ -133,11 +113,10 @@ export function useLinuxDoCreditAuthController({
             )
               return;
             void appQueryClient.invalidateQueries({
-              predicate: ({ queryKey }) =>
-                queryKey[0] === 'forum' &&
-                queryKey[1] === 'linuxdo' &&
-                queryKey[2] === 'account-data' &&
-                (queryKey[3] === 'ldc-account' || queryKey[3] === 'ldc-transactions')
+              queryKey: forumQueryKeys.accountDataPrefix('linuxdo', 'ldc-account')
+            });
+            void appQueryClient.invalidateQueries({
+              queryKey: forumQueryKeys.accountDataPrefix('linuxdo', 'ldc-transactions')
             });
           })
           .catch(() => undefined)
@@ -152,12 +131,11 @@ export function useLinuxDoCreditAuthController({
       }
       return authRef.current.closing.promise;
     },
-    [finishSurface, readRuntime, setDocument, setLoading]
+    [finishSurface, readRuntime]
   );
   const prepareDocument = useCallback(
     async (opening: CreditAuthOpening) => {
-      setError('');
-      setLoading(true);
+      setPreparation({ phase: 'preparing' });
       try {
         const [, userAgent, nonce] = await Promise.all([
           prepareCookieBarrier(),
@@ -173,22 +151,22 @@ export function useLinuxDoCreditAuthController({
           runtime.sourceEnabled === false
         )
           return;
+        const document = { generation: opening.ticket.generation, userAgent };
         if (opening.mode === 'silent') {
           if (!nonce || !/^[0-9a-f]{32}$/.test(nonce)) throw new Error('Invalid authorization nonce');
           opening.nonce = { phase: 'issued', value: nonce };
-          setDocument({ generation: opening.ticket.generation, userAgent, mode: 'silent', nonce });
-        } else setDocument({ generation: opening.ticket.generation, userAgent, mode: 'manual' });
+          setPreparation({ phase: 'prepared', document: { ...document, mode: 'silent', nonce } });
+        } else setPreparation({ phase: 'prepared', document: { ...document, mode: 'manual' } });
       } catch {
         if (creditOpening(authRef.current.opening) !== opening || opening.controller.signal.aborted) return;
         if (opening.mode === 'silent') {
           void close('cancel');
           return;
         }
-        setLoading(false);
-        setError('LDC 页面准备失败，请刷新重试。');
+        setPreparation({ phase: 'failed', error: 'LDC 页面准备失败，请刷新重试。' });
       }
     },
-    [close, getUserAgent, prepareCookieBarrier, readRuntime, setDocument, setLoading]
+    [close, getUserAgent, prepareCookieBarrier, readRuntime]
   );
   const start = useCallback(
     (mode: CreditAuthMode) => {
@@ -292,12 +270,12 @@ export function useLinuxDoCreditAuthController({
   );
   const retry = useCallback(() => {
     const previous = creditOpening(authRef.current.opening);
-    if (!previous || document || loading || previous.mode !== 'manual') return;
+    if (!previous || preparation.phase !== 'failed' || previous.mode !== 'manual') return;
     previous.controller.abort();
     const opening = { ...previous, controller: new AbortController() };
     authRef.current.opening = { phase: 'active', opening };
     void prepareDocument(opening);
-  }, [document, loading, prepareDocument]);
+  }, [preparation.phase, prepareDocument]);
   useLayoutEffect(() => {
     const runtime = readRuntime();
     if (runtime.sourceEnabled === false) {
@@ -337,12 +315,11 @@ export function useLinuxDoCreditAuthController({
     busy,
     panel: {
       close,
-      document,
-      error,
+      document: preparation.phase === 'prepared' ? preparation.document : null,
+      error: preparation.phase === 'failed' ? preparation.error : '',
       generation,
-      loading,
+      preparing: preparation.phase === 'preparing',
       retry,
-      setLoading,
       visible: surfaceVisible,
       webViewRef,
       handleMessage,

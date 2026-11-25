@@ -1,13 +1,5 @@
-import { TextNode } from 'node-html-parser';
 import { positiveInteger } from '@/domain/forum/numericValues';
-import {
-  escapeHtmlText,
-  isRecord,
-  parseHtml,
-  recordText as text,
-  textContentFromHtml,
-  toIsoString
-} from '@/domain/forum/html';
+import { isRecord, recordText as text, textContentFromHtml, toIsoString } from '@/domain/forum/html';
 import type { DiscoursePostPolicy } from '@/domain/forum/discoursePolicy';
 import { discoursePostPolicy } from '@/sources/discourse/policy';
 import { notificationPageQuality } from '@/domain/notifications/notificationQuality';
@@ -32,6 +24,7 @@ import { LINUXDO_BASE_URL } from '@/sources/linuxdo/protocol';
 import { runLinuxDoAction } from '@/sources/linuxdo/actionClient';
 import { sanitizeLinuxDoContentHtml } from '@/sources/linuxdo/parser';
 import { buildDiscourseActionRequest, type DiscourseActionRequest } from '@/sources/discourse/actionRequest';
+import { discourseReplyReceipt } from './replyReceipt';
 import { sourceErrorFromUnknown } from './sourceErrors';
 import { isCanceledRequest } from '@/platform/network/errors';
 
@@ -148,12 +141,7 @@ function discourseNotificationTitle(value: Record<string, unknown>, data: Record
     text(value, 'title', 'topic_title', 'unicode_title') || text(data, 'topic_title', 'title', 'unicode_title');
   if (plain) return plain;
   const fancy = text(value, 'fancy_title') || text(data, 'fancy_title');
-  if (!/<img\b/i.test(fancy)) return textContentFromHtml(fancy);
-  const root = parseHtml(fancy);
-  for (const img of root.querySelectorAll('img[alt]')) {
-    img.replaceWith(new TextNode(escapeHtmlText(img.getAttribute('alt'))));
-  }
-  return textContentFromHtml(root.toString());
+  return textContentFromHtml(fancy, { includeImageAlt: true, preserveInlineText: true });
 }
 
 function parseNotification(value: unknown, ownUsername?: string): ForumNotification | null {
@@ -635,7 +623,9 @@ export const linuxDoNotificationAdapter = {
       timeoutMs: options.timeoutMs,
       userAgent: options.userAgent
     });
-    return positiveInteger(result.id)
+    const receipt = discourseReplyReceipt(result, item.target.conversationId);
+    if (receipt.kind === 'rejected') throw Object.assign(new Error(receipt.message), { serverRejected: true });
+    return receipt.kind === 'confirmed' && receipt.postId
       ? { confirmed: true }
       : { confirmed: false, message: '原站未确认发送成功，请刷新会话后确认。' };
   },

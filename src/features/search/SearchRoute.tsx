@@ -13,8 +13,6 @@ import { SearchFilterSheet, type SearchFilterPlacement } from './SearchFilterShe
 import { useSearchController } from './useSearchController';
 import { useSearchRouteRuntime } from './SearchRouteRuntime';
 
-export { SearchRouteRuntimeProvider, type SearchRouteRuntimeValue } from './SearchRouteRuntime';
-
 export function SearchRoute() {
   const runtime = useSearchRouteRuntime();
   const active = useIsFocused();
@@ -23,7 +21,6 @@ export function SearchRoute() {
   useScrollToTop(listRef);
   const enabledSearchSources = runtime.enabledSources;
   const notify = runtime.notify;
-  const requestNodeSeekVerification = runtime.account.requestNodeSeekVerification;
   const openExternalSearch = useCallback(
     async (url: string) => {
       if (!navigation.isFocused()) return;
@@ -38,10 +35,6 @@ export function SearchRoute() {
     },
     [navigation, notify]
   );
-  const showNodeSeekVerification = useCallback(
-    (message?: string) => requestNodeSeekVerification(message || 'NodeSeek 需要完成 Cloudflare 验证'),
-    [requestNodeSeekVerification]
-  );
   const controller = useSearchController({
     active,
     categories: runtime.catalogCategories,
@@ -50,11 +43,10 @@ export function SearchRoute() {
     linuxDoVerificationActive: runtime.account.linuxDoVerificationVisible,
     notify: runtime.notify,
     onOpenExternalSearch: openExternalSearch,
-    onNodeSeekSearchVerificationRequired: runtime.account.requestNodeSeekVerification,
     reconcileIdentityStatus: runtime.account.reconcileAccountStatus,
     sessionViewModels: runtime.account.sessionViewModels,
     showLinuxDoVerification: runtime.account.showLinuxDoVerification,
-    showNodeSeekVerification,
+    showNodeSeekVerification: runtime.account.requestNodeSeekVerification,
     showYaohuoLogin: runtime.account.showYaohuoLogin,
     readGateway: runtime.account.readGateway
   });

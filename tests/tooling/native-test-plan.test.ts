@@ -49,6 +49,8 @@ describe('Native behavior test selection', () => {
         'com.wz.reader.ComposerKeyboardHostTest',
         'com.wz.reader.ComposerWebViewInsetsTest',
         'com.wz.reader.ComposerWebViewPrewarmTest',
+        'com.wz.reader.CreditWebViewNavigationTest',
+        'com.reactnativecommunity.slider.ReaderSliderGestureTest',
         'com.wz.reader.DocumentPickerThreadingTest',
         'com.wz.reader.SharingModuleTest'
       ])
@@ -115,6 +117,7 @@ describe('Native behavior test selection', () => {
     ['patches/expo-image+57.0.4.patch', ':forum-platform:testDebugUnitTest'],
     ['tests/native/ComposerKeyboardTest.kt', ':app:testReleaseUnitTest'],
     ['tests/native/ComposerWebViewPrewarmTest.kt', ':app:testReleaseUnitTest'],
+    ['tests/native/CreditWebViewNavigationTest.kt', ':app:testReleaseUnitTest'],
     ['tests/native/composer-keyboard.gradle', ':app:testReleaseUnitTest']
   ])('schedules the owning JVM task for %s', (file, task) => {
     expect(relatedNativeTasks([file])).toContain(task);

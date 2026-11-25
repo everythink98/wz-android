@@ -1,6 +1,6 @@
 # 导航与启动性能实验的经验
 
-本文解释导航、滚动指示器和启动实验中哪些判断有证据，哪些方案没有达到采用条件，供以后选择小范围实验时复用。记录整理于 2026-10-19，不作为当前版本验收表。
+本文解释导航、滚动指示器和启动实验中哪些判断有证据，哪些方案没有达到采用条件，供以后选择小范围实验时复用。早期记录整理于 2026-10-19，后续实验按对应源码、APK 和设备身份记录。
 
 当前产品契约以[产品地图](../product-map.md)为准，事故状态以[回归记录](../regression-corpus.md)中的 `REG-PERF-024`、`REG-PERF-029`、`REG-NAV-010` 为准。设备、覆盖安装、隔离构建和采样的操作规则只见[维护手册](../operator-runbook.md)，本文不另建操作协议。
 
@@ -15,6 +15,59 @@
 | App 冷启动 | 进程创建、本地恢复、首个 App buffer、可见页面与首批内容分别耗时多少 | 同 PID 热恢复、仅 `page-ready` 的逻辑时刻 |
 
 首次 Search 做过独立 fresh process 采样、Native 创建归因，以及 VectorDrawable、PNG、合并图标 Path 对照。已验证首次创建和 shader 编译成本存在；未验证同一业务 View 被重复创建，也未找到稳定改善的图标替换。踩坑是把「原生节点更少」当成提速，因此这些替换没有采用，详情见 `REG-PERF-029`。
+
+## 2026-11-25 最近搜索首帧绘制
+
+范围为 `SEARCH-02` 和 `NAV-01`。对照是 `030daa3d` 加开工时的工作区，普通 APK SHA-256 `639ce651d18c90c8fefc54d2a8462d79133111bc182e9928bf78cf599c338909`。主 AVD 保持 1080×2400、420 dpi、90 Hz 和 AMD 模拟器 OpenGL 后端。原生树在当前 ScrollView 视口列出 15 条历史记录，其中最后一条部分可见。
+
+| 单独改变的绘制入口 | 结果 |
+| --- | --- |
+| 保留 Header 和底栏，拿掉历史条目 | 四次普通冷进程首帧约 22–23 ms。前三次从提交绘制到交换缓冲约 1.54–2.28 ms。独立轨迹在首挂载区间无着色器编译。 |
+| 保留记录与边框，仅取消 `overflow: hidden` | 四次最慢帧仍为 43.02–56.12 ms，独立轨迹仍有三处编译。 |
+| 保留文字、图标与点击尺寸，用等宽内边距替换边框和圆角 | 独立轨迹仅剩 `FillRectOp` 编译 4.48 ms。四次普通包测量中，两次仍超过 40 ms。 |
+| 保留圆角和图标，仅取消原生 `imageTintList` | 独立轨迹不再编译 `FillRectOp`，仍有 `FillRRectOp` 和 `AAConvexPathOp`。四次普通包测量中，两次仍超过 40 ms。 |
+
+React Native 的一般不等宽圆角边框会裁外路径、扣内路径并绘制各边。历史卡片的首尾圆角和位图染色由两个独立的绘制入口触发冷编译。在 Android 将专用画法收敛到首尾圆角，使用圆角矩形和矩形裁剪构造外形与分隔线。行尺寸仍由原布局保留。历史和删除图标按资源、主题色与密度缓存已着色位图，视图绘制时直接使用这些像素。缓存首次被调用时创建。搜索继续从底栏的 `getComponent` 按需加载，历史条目继续由同一 FlashList 虚拟化。[React Native Android 边框](https://github.com/facebook/react-native/blob/v0.86.3/packages/react-native/ReactAndroid/src/main/java/com/facebook/react/uimanager/drawable/BorderDrawable.kt#L362) · [FlashList 首次测量](https://github.com/Shopify/flash-list/blob/main/documentation/docs/fundamentals/usage.md?plain=1)
+
+Perfetto 结果在本机 `.codex-tmp/20261125-cold-search/`。用各次 JSON 的 `pid`、首个 `IntendedVsync` 和点击前 `action.start` 绑定帧与进程。下例在 `a-gfx-1` 等独立诊断轨迹比较首帧附近的实际编译操作，普通包帧时另行统计。
+
+```sql
+SELECT (s."ts" - FIRST_VSYNC_NS) / 1e6 AS relative_ms,
+       s.dur / 1e6 AS compile_ms, parent.name AS operation
+FROM slice s
+JOIN slice parent ON parent.id = s.parent_id
+JOIN thread_track tt ON tt.id = s.track_id
+JOIN thread t ON t.utid = tt.utid
+JOIN process p ON p.upid = t.upid
+WHERE p.pid = APP_PID AND s.name = 'shader_compile'
+  AND s."ts" BETWEEN FIRST_VSYNC_NS AND FIRST_VSYNC_NS + 120000000
+ORDER BY s."ts";
+```
+
+### 普通 Release 对照
+
+最终 APK `1.3.165 (169)` 的 SHA-256 为 `d77a214c26d4bcda14f2cc09c09852f08a213fc329f9b5f0ed3fff7cc6222fb9`。同签名覆盖安装后保持 UID 10214 和原首次安装时间。以下搜索数据来自无探针运行，每次点击后的窗口超过 3 秒。
+
+| 冷进程进入搜索 | 每次最慢帧范围 | 每次最慢帧的中位数 |
+| --- | --- | --- |
+| 原包 5 次 | 26.63–44.65 ms | 42.98 ms |
+| 回装原包 5 次 | 43.79–44.76 ms | 43.98 ms |
+| 最终包 5 次 | 26.96–34.40 ms | 32.60 ms |
+
+对比 `a-gfx-1` 与 `c-gfx-1`，首个有效帧后 120 ms 的编译从三处、共 18.72 ms 降到零。最终轨迹从启动覆盖到点击搜索，点击前没有创建 `WzSearchHistoryFrame` 或 `WzSearchHistoryIcon`，点击后分别创建 2 个和 38 个。先前每行增加专用背景的候选在同一轨迹窗口创建了 19 个背景，暖切也未通过门槛，最终只给首尾圆角行增加专用背景。
+
+| 暖切样本 | 整批 P95 | 整批最慢 | 相邻有效记录均过期 |
+| --- | --- | --- | --- |
+| 回装原包 10 个往返 | 25.56 ms | 46.35 ms | 1 对 |
+| 最终包第 1 批 10 个往返 | 22.75 ms | 34.08 ms | 1 对 |
+| 最终包第 2 批 10 个往返 | 22.57 ms | 37.21 ms | 2 对 |
+| 最终包第 3 批 10 个往返 | 22.91 ms | 45.08 ms | 1 对 |
+
+最终三批仍未通过完整暖切门槛。所有超期配对的两条记录均相隔 1,588.89 ms。原包回装后也有该模式。暖切的原因仍未闭合，保留其和冷挂载的独立证据。
+
+点击搜索前的 5 次启动记录中，回装原包与最终包的页面就绪中位数为 539 和 540 ms，系统首显为 688 和 737 ms。随后用项目启动 runner 只打开首页，两包各 3 批、每批 2 次。系统首显中位数为 863 和 639 ms，页面就绪为 677.5 和 501 ms，首页首批内容为 1,267.5 和 970.5 ms，首页终态为 2,939 和 2,592 ms。系统首显的差值在两种采样节奏下方向不同，网络结果时延也有波动。完整诊断轨迹确认搜索专用视图与绘制在点击后才出现。
+
+最终主 AVD 的 30 个历史搜索与删除入口，其标签、顺序和原生边界与基线完全相同。截图的输入栏和来源区逐像素相同。历史内容主体的 RGB 单通道最大差为 1，圆角边界的最大差为 5。实机点放大镜可打开系统键盘，返回键收起键盘，结束时回到首页。受影响的搜索和导航 Jest 103 项、领域和工具 Vitest 106 项、Android JVM 231 项通过。架构、TypeScript 和定向 ESLint 检查通过。
 
 ## React 渲染次数不能代表 Native 绘制
 

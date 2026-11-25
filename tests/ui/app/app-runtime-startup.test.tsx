@@ -10,7 +10,7 @@ import type { ReaderData } from '@/domain/reader/readerData';
 import { createEmptyReaderState, type ReaderChange, type ReaderCommand } from '@/domain/reader/readerRecordState';
 import { useFeedController } from '@/features/feed/useFeedController';
 import type { ReadGateway } from '@/sources/readGateway';
-import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
+import type { ReadRecovery } from '@/platform/query/readRecovery';
 import React from 'react';
 import { View } from 'react-native';
 import { defaultScheduler, notifyManager } from '@tanstack/react-query';
@@ -31,7 +31,7 @@ import { accountQueryKeys, appQueryClient } from '@/platform/query/serverState';
 import { formatAppUpdateDownloadProgress, type AppUpdateDownloadProgress } from '@/platform/update/appUpdate';
 
 const mockUseAccountRuntime = jest.fn();
-const mockShowLinuxDoVerification = jest.fn<(_message?: string, _recovery?: LinuxDoReadRecovery) => Promise<boolean>>(
+const mockShowLinuxDoVerification = jest.fn<(_message?: string, _recovery?: ReadRecovery) => Promise<boolean>>(
   async () => true
 );
 const mockNotify = jest.fn<(message?: string) => void>();
@@ -780,7 +780,7 @@ describe('app runtime startup', () => {
 
   it('forwards the exact create-topic read recovery to the existing linux.do verification host', async () => {
     const hook = await renderHook(() => useAppRuntime());
-    const recovery: LinuxDoReadRecovery = {
+    const recovery: ReadRecovery = {
       queryKey: ['create-topic', 'tags'],
       isCurrent: () => true,
       resume: async () => 'completed',

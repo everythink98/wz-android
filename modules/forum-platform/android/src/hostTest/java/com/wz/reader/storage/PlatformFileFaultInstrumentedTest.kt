@@ -68,7 +68,7 @@ class PlatformFileFaultInstrumentedTest {
     try {
       MockWebServer().use { server ->
         server.start(java.net.InetAddress.getByName("127.0.0.1"), 0)
-        server.enqueue(MockResponse().setHeader("Content-Type", "image/png").setBody(Buffer().write(ByteArray(65536))))
+        server.enqueue(MockResponse().setHeader("Content-Type", "image/png").setBody(Buffer().write(pngStreamFixture(65536))))
         val url = server.url("/quota.png").newBuilder().host("127.0.0.1").build()
         val call = NetworkProxyRuntime.imageCallFactory.newCall(Request.Builder().url(url)
           .tag(ImageRequestPurpose::class.java, ImageRequestPurpose.IMAGE_SAVE).build())

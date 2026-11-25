@@ -1776,10 +1776,8 @@ describe('Android release evidence guards', () => {
     expect(replayScript).toContain("console.log('DEVICE_REPLAY_PASS');");
   });
 
-  it('keeps diagnostic logging initialized and wired into the More screen', () => {
+  it('initializes diagnostic logging before importing and registering the app', () => {
     const entry = readProjectFile('index.ts');
-    const moreRoute = readProjectFile('src', 'features', 'more', 'MoreRoute.tsx');
-    const utilityPanels = readProjectFile('src', 'features', 'more', 'components', 'MoreUtilityPanels.tsx');
 
     const bootstrapImport = "import '@/platform/diagnostics/diagnosticBootstrap';";
     const bootstrap = readProjectFile('src', 'platform', 'diagnostics', 'diagnosticBootstrap.ts');
@@ -1825,11 +1823,5 @@ describe('Android release evidence guards', () => {
           .replace("import App from './App';", `import App from './App'; ${bootstrapImport}`)
       )
     ).not.toEqual(expected);
-    expect(moreRoute).toMatch(
-      /useDiagnosticLogController\(\{\s*getCurrentScreen: runtime\.diagnostics\.getCurrentScreen,\s*metadata: runtime\.diagnostics\.metadata,\s*notify: runtime\.notify\s*\}\)/
-    );
-    expect(utilityPanels).toContain('label="问题诊断"');
-    expect(utilityPanels).toContain('testID="more-diagnostics"');
-    expect(utilityPanels).toContain('onPress={runtime.diagnostics.exportLog}');
   });
 });

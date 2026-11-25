@@ -31,6 +31,10 @@ export function currentAppRoute() {
   };
 }
 
+export function isAccountCenterFocused() {
+  return navigationRef.getCurrentRoute()?.name === 'more';
+}
+
 export function openLibraryRoute(initialTab: LibraryTab = 'favorites') {
   if (!navigationRef.isReady()) return false;
   navigationRef.navigate('Library', { initialTab });

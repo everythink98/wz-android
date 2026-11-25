@@ -3,6 +3,7 @@ import { createContext, useContext, useCallback, useEffect, useLayoutEffect, use
 import {
   Image as NativeImage,
   PixelRatio,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -304,6 +305,7 @@ function ManagedOriginalImageLayer({
     <ExpoImage
       testID="topic-image-original"
       allowDownscaling
+      cacheSvgInHardwareLayer={Platform.OS === 'android' ? true : undefined}
       cachePolicy="disk"
       contentFit="contain"
       priority={forced ? 'high' : 'low'}
@@ -552,6 +554,7 @@ function AdmittedPreviewImageBlock({
       {!loadFailed ? (
         <ExpoImage
           allowDownscaling
+          cacheSvgInHardwareLayer={Platform.OS === 'android' ? true : undefined}
           cachePolicy={activeArtifact?.noStore ? 'none' : 'disk'}
           contentFit="contain"
           priority="normal"

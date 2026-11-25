@@ -4,6 +4,7 @@ import { HTMLElement } from 'node-html-parser';
 import { parseHtml } from './html';
 import {
   FORUM_BOUNDED_INLINE_IMAGE_ATTRIBUTE,
+  forumImagePreviewDescriptorsFromHtmlFallback,
   isBoundedInlineForumImage,
   normalizeForumContentMediaNodes,
   normalizeForumStickerMediaHtml
@@ -493,5 +494,94 @@ describe('forum content media normalization', () => {
     expect(result).toContain(`<forum-inline-image alt="" width="24" height="24" src="${avatar}" class="avatar">`);
     expect(result).toContain('<span class="quote-title__text-content">');
     expect(result).not.toContain(`<img alt="" width="24" height="24" src="${avatar}" class="avatar">`);
+  });
+
+  it('decodes media attributes once without double-decoding parsed DOM attributes, upgraded lazy URLs, stickers, or fallback tags', () => {
+    const html =
+      '<p><img src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" ' +
+      'data-src="https://cdn.example.com/lazy.png?label=&amp;copy;" ' +
+      'data-original="https://cdn.example.com/full.png?label=&amp;copy;" ' +
+      'alt="&amp;copy; &#128; &#0; &#x1F600 &Lt; &Gt; &unknownref;"></p>' +
+      '<p><img src="https://cdn.example.com/query.png?a=1&copy=2&reg=3" alt="&amp;copy;"></p>';
+    const root = parseHtml(html);
+    const { previewImages } = normalizeForumContentMediaNodes(root);
+
+    expect(previewImages).toEqual([
+      expect.objectContaining({
+        source: 'https://cdn.example.com/lazy.png?label=&copy;',
+        dataSource: 'https://cdn.example.com/lazy.png?label=&copy;',
+        dataOriginal: 'https://cdn.example.com/full.png?label=&copy;',
+        originalSource: 'https://cdn.example.com/full.png?label=&copy;',
+        alt: '&copy; € \uFFFD 😀 ≪ ≫ &unknownref;'
+      }),
+      expect.objectContaining({
+        source: 'https://cdn.example.com/query.png?a=1&copy=2&reg=3',
+        alt: '&copy;'
+      })
+    ]);
+
+    const reparsed = parseHtml(root.toString());
+    const reparsedImages = reparsed.querySelectorAll('img');
+    expect(reparsedImages[0]?.getAttribute('src')).toBe('https://cdn.example.com/lazy.png?label=&copy;');
+    expect(reparsedImages[0]?.getAttribute('data-forum-original-src')).toBe(
+      'https://cdn.example.com/full.png?label=&copy;'
+    );
+
+    const stickerHtml = normalizeForumStickerMediaHtml(
+      '<p><img class="sticker" src="https://www.nodeseek.com/static/image/sticker/ac/01.png?label=&amp;copy;" alt="&amp;copy;"></p>'
+    );
+    const sticker = parseHtml(stickerHtml).querySelector('forum-sticker');
+    expect(sticker?.getAttribute('src')).toBe('https://www.nodeseek.com/static/image/sticker/ac/01.png?label=&copy;');
+    expect(sticker?.getAttribute('alt')).toBe('&copy;');
+    expect(sticker?.textContent).toBe('&copy;');
+
+    const fallback = forumImagePreviewDescriptorsFromHtmlFallback(
+      '<p><img [foo]="1" title="1 > 0" src="https://cdn.example.com/fb.png?label=&amp;copy;" alt="&amp;copy; &#128; &#0; &#x1F600 &Lt; &Gt; &unknownref;"></p>'
+    );
+    expect(fallback).toEqual([
+      expect.objectContaining({
+        source: 'https://cdn.example.com/fb.png?label=&copy;',
+        alt: '&copy; € \uFFFD 😀 ≪ ≫ &unknownref;'
+      })
+    ]);
+
+    const syntheticRoot = {
+      tagName: 'DIV',
+      attributes: {},
+      childNodes: [
+        {
+          tagName: 'IMG',
+          attributes: {
+            src: 'https://cdn.example.com/already-decoded.png?label=&copy;',
+            alt: '&copy; &amp;copy;'
+          }
+        }
+      ],
+      querySelectorAll: () => []
+    };
+    const syntheticResult = normalizeForumContentMediaNodes(
+      syntheticRoot as unknown as Parameters<typeof normalizeForumContentMediaNodes>[0]
+    );
+    expect(syntheticResult.previewImages).toEqual([
+      expect.objectContaining({
+        source: 'https://cdn.example.com/already-decoded.png?label=&copy;',
+        alt: '&copy; &amp;copy;'
+      })
+    ]);
+  });
+
+  it('preserves a trailing slash within an unquoted URL in the image preview fallback', () => {
+    const descriptors = forumImagePreviewDescriptorsFromHtmlFallback(
+      '<img src=https://cdn.example.com/path/><img src="https://cdn.example.com/quoted.png"/>' +
+        '<img src=https://cdn.example.com/spaced.png />' +
+        '<img src=https://cdn.example.com/query.png?a=1&amp;b=2/>'
+    );
+
+    expect(descriptors.map((image) => image.source)).toEqual([
+      'https://cdn.example.com/path/',
+      'https://cdn.example.com/quoted.png',
+      'https://cdn.example.com/spaced.png',
+      'https://cdn.example.com/query.png?a=1&b=2/'
+    ]);
   });
 });

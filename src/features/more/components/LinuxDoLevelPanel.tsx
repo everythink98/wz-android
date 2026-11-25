@@ -2,7 +2,7 @@ import type { MoreScreenStyles } from '../styles';
 import { useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { RefreshCw } from 'lucide-react-native';
-import type { LinuxDoLevelProfile } from '@/sources/readGateway';
+import type { LinuxDoLevelProfile } from '@/sources/linuxdo/level';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
 import { type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';

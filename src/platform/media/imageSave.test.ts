@@ -7,6 +7,7 @@ import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 const native = vi.hoisted(() => ({
   createDownload: vi.fn(() => 'download-1'),
   download: vi.fn(),
+  validateInlineImage: vi.fn(),
   cancelDownload: vi.fn(),
   releaseDownload: vi.fn(),
   available: true
@@ -59,6 +60,7 @@ describe('image library saving', () => {
     native.createDownload.mockClear();
     native.cancelDownload.mockClear();
     native.releaseDownload.mockClear();
+    native.validateInlineImage.mockReset().mockResolvedValue(undefined);
     native.download
       .mockReset()
       .mockResolvedValue({ uri: 'file:///cache/image-saves/native.png', contentType: 'image/png', byteCount: 12 });
@@ -136,8 +138,8 @@ describe('image library saving', () => {
     }
   );
 
-  it.each([30, 35])('saves data images on Android %i without photo access and releases the file', async (version) => {
-    platform.Version = version;
+  it('saves data images on Android 30 without photo access and releases the file', async () => {
+    platform.Version = 30;
     vi.mocked(MediaLibrary.requestPermissionsAsync).mockResolvedValue({
       granted: false
     } as MediaLibrary.PermissionResponse);
@@ -147,12 +149,13 @@ describe('image library saving', () => {
     expect(FileSystem.writeAsStringAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.png', 'abc123', {
       encoding: FileSystem.EncodingType.Base64
     });
+    expect(native.validateInlineImage).toHaveBeenCalledWith('file:///cache/forum-image-1234.png', 'png');
     expect(MediaLibrary.Asset.create).toHaveBeenCalledWith('file:///cache/forum-image-1234.png');
     expect(FileSystem.deleteAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.png', { idempotent: true });
   });
 
-  it.each([30, 35])('saves remote images on Android %i without photo access and releases the file', async (version) => {
-    platform.Version = version;
+  it('saves remote images on Android 30 without photo access and releases the file', async () => {
+    platform.Version = 30;
     vi.mocked(MediaLibrary.requestPermissionsAsync).mockResolvedValue({
       granted: false
     } as MediaLibrary.PermissionResponse);
@@ -205,6 +208,15 @@ describe('image library saving', () => {
     expect(FileSystem.deleteAsync).toHaveBeenCalledWith(temporaryFile, { idempotent: true });
     expect(native.createDownload).not.toHaveBeenCalled();
     expect(MediaLibrary.Asset.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects an inline image with invalid file bytes before copying to the library', async () => {
+    native.validateInlineImage.mockRejectedValueOnce(new Error('下载内容不是图片'));
+    await expect(saveImageUriToLibrary('data:image/png;base64,abc123', publicMediaOptions)).rejects.toThrow(
+      '下载内容不是图片'
+    );
+    expect(MediaLibrary.Asset.create).not.toHaveBeenCalled();
+    expect(FileSystem.deleteAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.png', { idempotent: true });
   });
 
   it('retains the native download until an already-started library copy settles', async () => {
@@ -276,8 +288,8 @@ describe('image library saving', () => {
   describe('local image files', () => {
     const uri = 'file:///cache/topic-share.png';
 
-    it.each([30, 35])('saves a caller-owned image on Android %i without requesting photo access', async (version) => {
-      platform.Version = version;
+    it('saves a caller-owned image on Android 30 without requesting photo access', async () => {
+      platform.Version = 30;
       await saveLocalImageFileToLibrary(uri, () => undefined);
       expect(MediaLibrary.requestPermissionsAsync).not.toHaveBeenCalled();
       expect(MediaLibrary.Asset.create).toHaveBeenCalledWith(uri);

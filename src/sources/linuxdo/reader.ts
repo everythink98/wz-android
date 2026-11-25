@@ -11,8 +11,10 @@ import {
   type Fetcher
 } from '@/platform/network/request';
 import type {
+  AccessRequirement,
   CategoriesResponse,
   DiscourseFeedFilter,
+  DiscourseTopicReading,
   FeedResponse,
   Reply,
   RepliesResponse,
@@ -23,6 +25,7 @@ import type {
 } from '@/domain/forum/models';
 import { isRecord, parsePositiveInteger, recordText, textContentFromHtml } from '@/domain/forum/html';
 import { mergeTopics } from '@/domain/forum/feed';
+import { accessRequirementLevelValue, accessRequirementSpecificity } from '@/domain/forum/presentation';
 import { discoursePostPolicy } from '@/sources/discourse/policy';
 import { accessRequirementFromObject, accessRequirementFromText } from '@/domain/forum/accessRequirements';
 import { isCloudflareChallengeResponse, LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
@@ -63,6 +66,374 @@ import { AGGREGATE_SOURCE_BUDGET_MS } from '@/sources/readAggregation';
 
 export const LIST_PAGE_SIZE = 30;
 const LATEST_PINS_TIMEOUT_MS = 1_500;
+const LINUXDO_FEED_CURSOR_SEEN_LIMIT = 200;
+const LINUXDO_FEED_HISTORY_LIMIT = 64;
+const LINUXDO_FEED_MAX_STALLED_PAGES = 2;
+const LINUXDO_FEED_MAX_OVERLAP_PAGES = 6;
+
+type LinuxDoResponseReadingEvidence = {
+  scope: string;
+  trustworthyUnseen: boolean;
+  requiresBackfillConfirmation: boolean;
+  malformedReading: boolean;
+};
+
+const linuxDoResponseReadingEvidence = new WeakMap<Topic, LinuxDoResponseReadingEvidence>();
+
+function linuxDoResponseReadingScope(access?: LinuxDoReadAuth): string | null {
+  if (access?.authenticated !== true) return null;
+  return (
+    access.readingScope?.trim() || access.identityKey?.trim() || access.categoryCacheScope?.trim() || 'authenticated'
+  );
+}
+
+function hasValidHighestPostNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+function hasMalformedLinuxDoReadingField(raw: Record<string, unknown>) {
+  if (
+    raw.last_read_post_number !== undefined &&
+    raw.last_read_post_number !== null &&
+    !isNonNegativeSafeInteger(raw.last_read_post_number)
+  ) {
+    return true;
+  }
+  if (raw.unread_posts !== undefined && raw.unread_posts !== null && !isNonNegativeSafeInteger(raw.unread_posts)) {
+    return true;
+  }
+  if (raw.unseen === true) {
+    if (raw.last_read_post_number !== undefined && raw.last_read_post_number !== null) return true;
+    if (raw.unread !== undefined && raw.unread !== null && raw.unread !== false) return true;
+    if (raw.unread_posts !== undefined && raw.unread_posts !== null && raw.unread_posts !== 0) return true;
+    if (raw.new_posts !== undefined && raw.new_posts !== null && raw.new_posts !== 0) return true;
+  }
+  return false;
+}
+
+function mergeReadPostNumbers(current?: readonly number[], incoming?: readonly number[]) {
+  if (!incoming?.length) return current ? [...current] : [];
+  if (!current?.length) return [...new Set(incoming)];
+  const merged = new Set(current);
+  for (const floor of incoming) merged.add(floor);
+  return [...merged];
+}
+
+function sameNumberList(left?: readonly number[], right?: readonly number[]) {
+  const a = left ?? [];
+  const b = right ?? [];
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+function hasLinuxDoReadingChange(previous?: DiscourseTopicReading, next?: DiscourseTopicReading) {
+  if (previous === next) return false;
+  if (!previous || !next) return true;
+  return (
+    previous.lastReadPostNumber !== next.lastReadPostNumber ||
+    previous.highestPostNumber !== next.highestPostNumber ||
+    previous.unreadPosts !== next.unreadPosts ||
+    !sameNumberList(previous.readPostNumbers, next.readPostNumbers)
+  );
+}
+
+function readingEvidenceForTopic(value: unknown): LinuxDoResponseReadingEvidence | undefined {
+  return value && typeof value === 'object' ? linuxDoResponseReadingEvidence.get(value as Topic) : undefined;
+}
+
+function setLinuxDoResponseReadingEvidence(topic: Topic, evidence?: LinuxDoResponseReadingEvidence) {
+  if (!evidence || topic.source !== 'linuxdo' || topic.isPrivateMessage) return;
+  const trustworthyUnseen =
+    evidence.trustworthyUnseen &&
+    !evidence.requiresBackfillConfirmation &&
+    !evidence.malformedReading &&
+    topic.reading?.lastReadPostNumber === undefined &&
+    hasValidHighestPostNumber(topic.reading?.highestPostNumber) &&
+    !topic.reading.unreadPosts &&
+    !topic.reading.readPostNumbers?.length;
+  linuxDoResponseReadingEvidence.set(topic, {
+    scope: evidence.scope,
+    trustworthyUnseen,
+    requiresBackfillConfirmation: evidence.requiresBackfillConfirmation,
+    malformedReading: evidence.malformedReading
+  });
+}
+
+function sameResponseReadingConflict(
+  first: Topic,
+  second: Topic,
+  firstEvidence?: LinuxDoResponseReadingEvidence,
+  secondEvidence?: LinuxDoResponseReadingEvidence
+) {
+  if (
+    firstEvidence?.requiresBackfillConfirmation ||
+    secondEvidence?.requiresBackfillConfirmation ||
+    firstEvidence?.malformedReading ||
+    secondEvidence?.malformedReading
+  ) {
+    return true;
+  }
+  const firstLast = first.reading?.lastReadPostNumber;
+  const secondLast = second.reading?.lastReadPostNumber;
+  if (firstLast !== undefined && secondLast !== undefined && firstLast !== secondLast) {
+    return true;
+  }
+  const firstUnseen = firstEvidence?.trustworthyUnseen === true;
+  const secondUnseen = secondEvidence?.trustworthyUnseen === true;
+  if (firstUnseen !== secondUnseen) {
+    return true;
+  }
+  const firstUnread = first.reading?.unreadPosts;
+  const secondUnread = second.reading?.unreadPosts;
+  if (firstUnread !== undefined && secondUnread !== undefined && firstUnread !== secondUnread) {
+    return true;
+  }
+  const firstReadCount = first.reading?.readPostNumbers?.length ?? 0;
+  const secondReadCount = second.reading?.readPostNumbers?.length ?? 0;
+  if (
+    ((firstLast === null || firstLast === 0 || firstUnseen) && secondReadCount > 0) ||
+    ((secondLast === null || secondLast === 0 || secondUnseen) && firstReadCount > 0)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function mergeSameResponseDuplicateLinuxDoTopic(first: Topic, second: Topic): Topic {
+  const firstEvidence = readingEvidenceForTopic(first);
+  const secondEvidence = readingEvidenceForTopic(second);
+  const scope = secondEvidence?.scope || firstEvidence?.scope;
+  const pinned = first.pinned === true || second.pinned === true ? true : first.pinned;
+  const updatedAccess = shouldUpdateAccessRequirement(first.accessRequirement, second.accessRequirement);
+  const accessRequirement = updatedAccess ? second.accessRequirement : first.accessRequirement;
+
+  const firstHigh = first.reading?.highestPostNumber;
+  const secondHigh = second.reading?.highestPostNumber;
+  const highestPostNumber =
+    hasValidHighestPostNumber(firstHigh) && hasValidHighestPostNumber(secondHigh)
+      ? Math.max(firstHigh, secondHigh)
+      : hasValidHighestPostNumber(secondHigh)
+        ? secondHigh
+        : firstHigh;
+
+  const conflict = sameResponseReadingConflict(first, second, firstEvidence, secondEvidence);
+  let reading: DiscourseTopicReading | undefined;
+  let nextEvidence: LinuxDoResponseReadingEvidence | undefined;
+  if (conflict) {
+    reading =
+      highestPostNumber !== undefined ? { topicId: first.id, highestPostNumber, readPostNumbers: [] } : undefined;
+    if (scope) {
+      nextEvidence = {
+        scope,
+        trustworthyUnseen: false,
+        requiresBackfillConfirmation: true,
+        malformedReading: false
+      };
+    }
+  } else {
+    const firstLast = first.reading?.lastReadPostNumber;
+    const secondLast = second.reading?.lastReadPostNumber;
+    const lastReadPostNumber = firstLast !== undefined ? firstLast : secondLast;
+    const firstUnread = first.reading?.unreadPosts;
+    const secondUnread = second.reading?.unreadPosts;
+    const unreadPosts = firstUnread !== undefined ? firstUnread : secondUnread;
+    const readPostNumbers = mergeReadPostNumbers(first.reading?.readPostNumbers, second.reading?.readPostNumbers);
+    if (first.reading || second.reading) {
+      reading = {
+        topicId: first.reading?.topicId || second.reading?.topicId || first.id,
+        ...(lastReadPostNumber !== undefined ? { lastReadPostNumber } : {}),
+        ...(highestPostNumber !== undefined ? { highestPostNumber } : {}),
+        ...(unreadPosts !== undefined ? { unreadPosts } : {}),
+        readPostNumbers
+      };
+    }
+    if (scope) {
+      nextEvidence = {
+        scope,
+        trustworthyUnseen: Boolean(firstEvidence?.trustworthyUnseen && secondEvidence?.trustworthyUnseen),
+        requiresBackfillConfirmation: false,
+        malformedReading: false
+      };
+    }
+  }
+
+  const merged: Topic = {
+    ...first,
+    ...(pinned !== undefined ? { pinned } : {}),
+    ...(accessRequirement ? { accessRequirement } : {}),
+    ...(reading ? { reading } : {})
+  };
+  if (!reading && 'reading' in merged) {
+    delete merged.reading;
+  }
+  setLinuxDoResponseReadingEvidence(merged, nextEvidence);
+  return merged;
+}
+
+function mergeSequentialLinuxDoReading(
+  earlier?: DiscourseTopicReading,
+  later?: DiscourseTopicReading,
+  laterEvidence?: LinuxDoResponseReadingEvidence
+): DiscourseTopicReading | undefined {
+  if (laterEvidence?.requiresBackfillConfirmation) {
+    const highestPostNumber = hasValidHighestPostNumber(later?.highestPostNumber)
+      ? later.highestPostNumber
+      : earlier?.highestPostNumber;
+    return highestPostNumber !== undefined
+      ? { topicId: earlier?.topicId || later?.topicId || '', highestPostNumber, readPostNumbers: [] }
+      : undefined;
+  }
+  if (!later) return earlier;
+  if (!earlier) return later;
+  const lastReadPostNumber =
+    later.lastReadPostNumber !== undefined ? later.lastReadPostNumber : earlier.lastReadPostNumber;
+  const highestPostNumber = hasValidHighestPostNumber(later.highestPostNumber)
+    ? later.highestPostNumber
+    : earlier.highestPostNumber;
+  const floorChanged =
+    later.lastReadPostNumber !== undefined && later.lastReadPostNumber !== earlier.lastReadPostNumber;
+  const floorRegressed =
+    later.lastReadPostNumber !== undefined && (later.lastReadPostNumber || 0) < (earlier.lastReadPostNumber || 0);
+  const unreadPosts =
+    later.unreadPosts !== undefined ? later.unreadPosts : floorChanged ? undefined : earlier.unreadPosts;
+  const readPostNumbers = floorRegressed
+    ? [...(later.readPostNumbers || [])]
+    : mergeReadPostNumbers(earlier.readPostNumbers, later.readPostNumbers);
+  return {
+    topicId: earlier.topicId || later.topicId,
+    ...(lastReadPostNumber !== undefined ? { lastReadPostNumber } : {}),
+    ...(highestPostNumber !== undefined ? { highestPostNumber } : {}),
+    ...(unreadPosts !== undefined ? { unreadPosts } : {}),
+    readPostNumbers
+  };
+}
+
+export function applyFeedTopicUpdate(earlier: Topic, later: Topic): Topic {
+  const earlierEvidence = readingEvidenceForTopic(earlier);
+  const laterEvidence = readingEvidenceForTopic(later);
+  const pinned = earlier.pinned === true || later.pinned === true ? true : earlier.pinned;
+  const updatedAccess = shouldUpdateAccessRequirement(earlier.accessRequirement, later.accessRequirement);
+  const accessRequirement = updatedAccess ? later.accessRequirement : earlier.accessRequirement;
+  const reading =
+    earlier.source === 'linuxdo'
+      ? mergeSequentialLinuxDoReading(earlier.reading, later.reading, laterEvidence)
+      : earlier.reading;
+  const readingChanged = earlier.source === 'linuxdo' && hasLinuxDoReadingChange(earlier.reading, reading);
+  const pinChanged = pinned !== earlier.pinned;
+  const nextEvidence: LinuxDoResponseReadingEvidence | undefined = laterEvidence
+    ? {
+        scope: laterEvidence.scope,
+        trustworthyUnseen:
+          laterEvidence.trustworthyUnseen &&
+          !laterEvidence.requiresBackfillConfirmation &&
+          reading?.lastReadPostNumber === undefined,
+        requiresBackfillConfirmation: laterEvidence.requiresBackfillConfirmation,
+        malformedReading: laterEvidence.malformedReading
+      }
+    : earlierEvidence && reading?.lastReadPostNumber === undefined
+      ? earlierEvidence
+      : undefined;
+  const evidenceChanged =
+    Boolean(earlierEvidence?.trustworthyUnseen) !== Boolean(nextEvidence?.trustworthyUnseen) ||
+    Boolean(earlierEvidence?.requiresBackfillConfirmation) !== Boolean(nextEvidence?.requiresBackfillConfirmation) ||
+    Boolean(earlierEvidence?.malformedReading) !== Boolean(nextEvidence?.malformedReading) ||
+    earlierEvidence?.scope !== nextEvidence?.scope;
+  if (!pinChanged && !updatedAccess && !readingChanged && !evidenceChanged) {
+    return earlier;
+  }
+  const merged: Topic = {
+    ...earlier,
+    ...(pinned !== undefined ? { pinned } : {}),
+    ...(accessRequirement ? { accessRequirement } : {}),
+    ...(reading ? { reading } : {})
+  };
+  if (!reading && 'reading' in merged) {
+    delete merged.reading;
+  }
+  setLinuxDoResponseReadingEvidence(merged, nextEvidence);
+  return merged;
+}
+
+export function stripLinuxDoTopicReading(topic: Topic): Topic {
+  if (topic.source !== 'linuxdo') return topic;
+  const hadEvidence = linuxDoResponseReadingEvidence.has(topic);
+  if (topic.reading === undefined && !hadEvidence) return topic;
+  const stripped: Topic = { ...topic };
+  delete stripped.reading;
+  return stripped;
+}
+
+export function mergeTopicsWithLinuxDoMetadata(current: Topic[], incoming: Topic[]): Topic[] {
+  const merged = mergeTopics(current, incoming);
+  const candidatesByLinuxDoId = new Map<string, Topic[]>();
+  for (const topic of [...current, ...incoming]) {
+    if (topic.source !== 'linuxdo') continue;
+    const list = candidatesByLinuxDoId.get(topic.id);
+    if (list) list.push(topic);
+    else candidatesByLinuxDoId.set(topic.id, [topic]);
+  }
+  for (let index = 0; index < merged.length; index++) {
+    const topic = merged[index]!;
+    if (topic.source !== 'linuxdo') continue;
+    const group = candidatesByLinuxDoId.get(topic.id);
+    if (!group?.length) continue;
+    let resolved = group[0]!;
+    for (let groupIndex = 1; groupIndex < group.length; groupIndex++) {
+      resolved = applyFeedTopicUpdate(resolved, group[groupIndex]!);
+    }
+    if (topic.duplicateSources?.length && !resolved.duplicateSources?.length) {
+      const withDuplicateSources: Topic = { ...resolved, duplicateSources: topic.duplicateSources };
+      setLinuxDoResponseReadingEvidence(withDuplicateSources, readingEvidenceForTopic(resolved));
+      merged[index] = withDuplicateSources;
+    } else {
+      merged[index] = resolved;
+    }
+  }
+  return merged;
+}
+
+function hasSufficientExplicitUnseenEvidence(raw: Record<string, unknown>, topic: Topic) {
+  if (raw.unseen !== true || topic.source !== 'linuxdo' || topic.isPrivateMessage) return false;
+  if (raw.last_read_post_number !== undefined && raw.last_read_post_number !== null) return false;
+  if (topic.reading?.lastReadPostNumber !== undefined) return false;
+  if (
+    !hasValidHighestPostNumber(raw.highest_post_number) ||
+    !hasValidHighestPostNumber(topic.reading?.highestPostNumber)
+  ) {
+    return false;
+  }
+  if (raw.unread !== undefined && raw.unread !== null && raw.unread !== false) return false;
+  if (raw.unread_posts !== undefined && raw.unread_posts !== null && raw.unread_posts !== 0) return false;
+  if (raw.new_posts !== undefined && raw.new_posts !== null && raw.new_posts !== 0) return false;
+  if (topic.reading?.readPostNumbers?.length) return false;
+  return true;
+}
+
+export function isExplicitlyUnseenLinuxDoTopic(value: unknown, expectedScope?: string): boolean {
+  const evidence = readingEvidenceForTopic(value);
+  if (!evidence || !evidence.trustworthyUnseen || evidence.requiresBackfillConfirmation || evidence.malformedReading) {
+    return false;
+  }
+  return expectedScope === undefined || evidence.scope === expectedScope;
+}
+
+export function hasTrustedLinuxDoFeedReading(value: unknown, expectedScope: string | undefined): boolean {
+  const evidence = readingEvidenceForTopic(value);
+  return Boolean(
+    evidence && evidence.scope === expectedScope && !evidence.requiresBackfillConfirmation && !evidence.malformedReading
+  );
+}
+
+export function linuxDoTopicRequiresReadingConfirmation(value: unknown, expectedScope?: string): boolean {
+  const evidence = readingEvidenceForTopic(value);
+  if (!evidence || !evidence.requiresBackfillConfirmation) {
+    return false;
+  }
+  return expectedScope === undefined || evidence.scope === expectedScope;
+}
 
 type LinuxDoEmojiCache = { kind: 'empty' } | { kind: 'ready'; urls: DiscourseEmojiUrlMap };
 let emojiUrlCache: LinuxDoEmojiCache = { kind: 'empty' };
@@ -81,13 +452,58 @@ type LinuxDoCategoryCache =
     };
 let categoryCache: LinuxDoCategoryCache = { scope: null };
 
+type LinuxDoFeedCursorBinding = {
+  source: 'linuxdo';
+  identity: string;
+  session: string;
+  filter: string;
+};
+
+type LinuxDoFeedCursorPosition = {
+  page: number;
+  offset: number;
+  firstId?: string;
+};
+
+type LinuxDoFeedCursorState = {
+  seenIds: Set<string>;
+  pinIds: Set<string>;
+  pinnedIds: Set<string>;
+  accessById: Map<string, AccessRequirement>;
+  pageHistory: string[];
+  positionHistory: string[];
+};
+
+type LinuxDoFeedCursor = LinuxDoFeedCursorPosition &
+  LinuxDoFeedCursorState & {
+    fromCursor: boolean;
+    restarted: boolean;
+  };
+
 type LinuxDoFeedScan =
-  | { kind: 'reading'; page: number; items: Topic[]; droppedCount: number; categories: LinuxDoCategoryMap }
-  | { kind: 'ready'; items: Topic[]; droppedCount: number; hasMore: boolean };
+  | {
+      kind: 'reading';
+      page: number;
+      items: Topic[];
+      droppedCount: number;
+      categories: LinuxDoCategoryMap;
+      overlapPages: number;
+      invalidPages: number;
+    }
+  | {
+      kind: 'ready';
+      items: Topic[];
+      droppedCount: number;
+      manualContinuation?: true;
+      nextPosition?: LinuxDoFeedCursorPosition;
+    };
 
 export type LinuxDoReadAuth = {
   authenticated?: boolean;
   categoryCacheScope?: string;
+  identityKey?: string;
+  sessionEpoch?: number;
+  readingScope?: string;
   userAgent?: string;
   onAccountFailure?: (reason: 'http-401' | 'account-recheck-required') => void;
 };
@@ -369,43 +785,6 @@ export function linuxDoEditedReplyFromAction(result: unknown, topicId: string, c
   }
 }
 
-function removeReplyEdit(reply: Reply) {
-  if (!reply.canEdit && !reply.contentMarkdown) {
-    return reply;
-  }
-  const next = { ...reply };
-  delete next.canEdit;
-  delete next.contentMarkdown;
-  return next;
-}
-
-async function hydrateEditableReplyContent(replies: Reply[], options: LinuxDoOptions) {
-  if (!replies.some((reply) => reply.canEdit && reply.commentId && !reply.contentMarkdown)) {
-    return replies;
-  }
-  return Promise.all(
-    replies.map(async (reply) => {
-      if (!reply.canEdit || reply.contentMarkdown || !reply.commentId) {
-        return reply;
-      }
-      try {
-        const data = await fetchLinuxDoJson<Record<string, unknown>>(
-          `/posts/${reply.commentId}.json`,
-          undefined,
-          options
-        );
-        if (data.can_edit === false) {
-          return removeReplyEdit(reply);
-        }
-        const contentMarkdown = typeof data.raw === 'string' ? data.raw : '';
-        return contentMarkdown.trim() ? { ...reply, contentMarkdown } : removeReplyEdit(reply);
-      } catch {
-        return removeReplyEdit(reply);
-      }
-    })
-  );
-}
-
 async function linuxDoHeaders(
   access: LinuxDoOptions['linuxDoAccess'],
   referer = `${BASE_URL}/latest`,
@@ -507,7 +886,8 @@ function normalizeLinuxDoFeedRows(
   data: Record<string, unknown> | undefined,
   categoryMap: LinuxDoCategoryMap,
   category?: string,
-  sitePins = false
+  sitePins = false,
+  readingScope: string | null = null
 ) {
   const users = discourseUsersById(data?.users);
   return rows.flatMap((raw) => {
@@ -515,12 +895,125 @@ function normalizeLinuxDoFeedRows(
     const topic = normalizeTopic(raw, categoryMap, discourseOriginalPoster(raw, users));
     if (!topic) return [];
     topic.pinned = isLinuxDoFeedPin(raw, category, sitePins) || undefined;
+    if (readingScope && !topic.isPrivateMessage) {
+      const malformedReading = hasMalformedLinuxDoReadingField(raw);
+      const trustworthyUnseen = !malformedReading && hasSufficientExplicitUnseenEvidence(raw, topic);
+      setLinuxDoResponseReadingEvidence(topic, {
+        scope: readingScope,
+        trustworthyUnseen,
+        requiresBackfillConfirmation: false,
+        malformedReading
+      });
+    }
     return [topic];
   });
 }
 
+function deduplicateSameResponseLinuxDoRows(rows: readonly Topic[]): Topic[] {
+  const pageUnique: Topic[] = [];
+  const pageIndexById = new Map<string, number>();
+  for (const item of rows) {
+    const existingIndex = pageIndexById.get(item.id);
+    if (existingIndex !== undefined) {
+      pageUnique[existingIndex] = mergeSameResponseDuplicateLinuxDoTopic(pageUnique[existingIndex]!, item);
+      continue;
+    }
+    pageIndexById.set(item.id, pageUnique.length);
+    pageUnique.push(item);
+  }
+  return pageUnique;
+}
+
+type LinuxDoUpstreamContinuation =
+  | { kind: 'none' }
+  | { kind: 'points-back'; targetUpstreamPage: number }
+  | { kind: 'advances'; nextPage: number; explicitPage?: number };
+
+function linuxDoFilterBaseSegment(filter: DiscourseFeedFilter) {
+  return filter === 'hot' ? 'hot' : filter === 'latest' ? 'latest' : 'new';
+}
+
+function parseLinuxDoUpstreamContinuation(
+  rawUrl: unknown,
+  filter: DiscourseFeedFilter,
+  category: string | undefined,
+  currentUpstreamPage: number
+): LinuxDoUpstreamContinuation {
+  if (typeof rawUrl !== 'string') return { kind: 'none' };
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return { kind: 'none' };
+  let target: URL;
+  try {
+    target = new URL(trimmed, BASE_URL);
+  } catch {
+    return { kind: 'none' };
+  }
+  if (target.origin !== BASE_URL) return { kind: 'none' };
+  const baseSegment = linuxDoFilterBaseSegment(filter);
+  const pathPattern = new RegExp(`^\\/(?:c\\/[^/]+(?:\\/[^/]+)*\\/l\\/)?${baseSegment}(?:\\.json)?$`);
+  if (!pathPattern.test(target.pathname)) return { kind: 'none' };
+  if (filter === 'new-topics' && target.searchParams.has('subset') && target.searchParams.get('subset') !== 'topics') {
+    return { kind: 'none' };
+  }
+  if (
+    filter === 'new-replies' &&
+    target.searchParams.has('subset') &&
+    target.searchParams.get('subset') !== 'replies'
+  ) {
+    return { kind: 'none' };
+  }
+  if (category) {
+    const expectedCategory = /^\d+$/.test(category) ? String(Number(category)) : category;
+    if (target.searchParams.has('category') && target.searchParams.get('category') !== expectedCategory) {
+      return { kind: 'none' };
+    }
+    const pathCategoryIdMatch = target.pathname.match(/^\/c\/(?:[^/]+\/)*(\d+)\/l\//);
+    if (pathCategoryIdMatch && /^\d+$/.test(category) && pathCategoryIdMatch[1] !== expectedCategory) {
+      return { kind: 'none' };
+    }
+  }
+  const pages = target.searchParams.getAll('page');
+  if (pages.length > 1) return { kind: 'none' };
+  if (pages.length === 1) {
+    const rawPage = pages[0]!.trim();
+    if (!rawPage) return { kind: 'none' };
+    if (/^\d+$/.test(rawPage)) {
+      const targetUpstreamPage = Number(rawPage);
+      if (!Number.isSafeInteger(targetUpstreamPage)) return { kind: 'none' };
+      if (targetUpstreamPage <= currentUpstreamPage) {
+        return { kind: 'points-back', targetUpstreamPage };
+      }
+      return { kind: 'advances', nextPage: targetUpstreamPage + 1, explicitPage: targetUpstreamPage };
+    }
+    return { kind: 'advances', nextPage: currentUpstreamPage + 2 };
+  }
+  const beforeValues = target.searchParams.getAll('before');
+  if (beforeValues.length === 1 && beforeValues[0]!.trim()) {
+    return { kind: 'advances', nextPage: currentUpstreamPage + 2 };
+  }
+  return { kind: 'none' };
+}
+
+function hasValidLinuxDoPinContinuation(rawUrl: unknown, currentFilterPage: number) {
+  if (typeof rawUrl !== 'string' || !rawUrl.trim()) return false;
+  try {
+    const target = new URL(rawUrl.trim(), BASE_URL);
+    if (target.origin !== BASE_URL) return false;
+    if (!/^\/filter(?:\.json)?$/.test(target.pathname)) return false;
+    const pages = target.searchParams.getAll('page');
+    if (pages.length === 1 && /^\d+$/.test(pages[0]!.trim())) {
+      const nextPage = Number(pages[0]!.trim());
+      return Number.isSafeInteger(nextPage) && nextPage > currentFilterPage;
+    }
+    return pages.length === 1 && Boolean(pages[0]!.trim());
+  } catch {
+    return false;
+  }
+}
+
 async function latestLinuxDoPins(options: LinuxDoOptions, categoryMap: LinuxDoCategoryMap, category?: string) {
   const signedIn = options.linuxDoAccess?.authenticated === true;
+  const readingScope = linuxDoResponseReadingScope(options.linuxDoAccess);
   let slug = category;
   if (signedIn && category && /^\d+$/.test(category)) {
     const path: string[] = [];
@@ -550,8 +1043,17 @@ async function latestLinuxDoPins(options: LinuxDoOptions, categoryMap: LinuxDoCa
         if (signal.aborted) return;
         const rows = linuxDoFeedRows(data);
         const scoped = rows.filter((row) => isRecord(row) && isLinuxDoFeedPin(row, category, signedIn));
-        pins = mergeTopics(pins, normalizeLinuxDoFeedRows(scoped, data, categoryMap, category, signedIn));
-        if (!signedIn || !isRecord(data.topic_list) || !data.topic_list.more_topics_url) return;
+        const normalizedPins = deduplicateSameResponseLinuxDoRows(
+          normalizeLinuxDoFeedRows(scoped, data, categoryMap, category, signedIn, readingScope)
+        );
+        pins = mergeTopicsWithLinuxDoMetadata(pins, normalizedPins);
+        if (
+          !signedIn ||
+          !isRecord(data.topic_list) ||
+          !hasValidLinuxDoPinContinuation(data.topic_list.more_topics_url, page)
+        ) {
+          return;
+        }
         const previous = seen.size;
         for (const row of rows) {
           if (isRecord(row) && (typeof row.id === 'number' || typeof row.id === 'string')) seen.add(String(row.id));
@@ -564,8 +1066,234 @@ async function latestLinuxDoPins(options: LinuxDoOptions, categoryMap: LinuxDoCa
   return pins;
 }
 
+function legacyLinuxDoFeedPosition(page: number, limit: number): LinuxDoFeedCursorPosition {
+  const safePage = Number.isSafeInteger(page) && page >= 1 ? page : 1;
+  const start = (safePage - 1) * limit;
+  return {
+    page: Math.floor(start / LIST_PAGE_SIZE) + 1,
+    offset: start % LIST_PAGE_SIZE
+  };
+}
+
+function shouldUpdateAccessRequirement(current?: AccessRequirement, incoming?: AccessRequirement) {
+  if (!incoming) return false;
+  if (!current) return true;
+  const currentSpecificity = accessRequirementSpecificity(current);
+  const incomingSpecificity = accessRequirementSpecificity(incoming);
+  if (incomingSpecificity !== currentSpecificity) return incomingSpecificity > currentSpecificity;
+  if (current.type === 'level' && incoming.type === 'level') {
+    const currentLevel = accessRequirementLevelValue(current);
+    const incomingLevel = accessRequirementLevelValue(incoming);
+    if (currentLevel !== incomingLevel) {
+      if (!currentLevel) return Boolean(incomingLevel);
+      if (!incomingLevel) return false;
+      return incomingLevel > currentLevel;
+    }
+  }
+  return current.label !== incoming.label || current.detail !== incoming.detail;
+}
+
+function parseCursorIdSet(value: unknown) {
+  return new Set<string>(
+    Array.isArray(value) ? value.map((item) => (typeof item === 'string' ? item.trim() : '')).filter(Boolean) : []
+  );
+}
+
+function parseCursorStringList(value: unknown, limit: number) {
+  if (!Array.isArray(value)) return [];
+  const items: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of value) {
+    if (typeof raw !== 'string') continue;
+    const trimmed = raw.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    items.push(trimmed);
+  }
+  return items.slice(-limit);
+}
+
+function parseCursorAccessMap(value: unknown) {
+  const map = new Map<string, AccessRequirement>();
+  if (!isRecord(value)) return map;
+  for (const [rawId, rawAccess] of Object.entries(value)) {
+    const id = rawId.trim();
+    if (!id || !isRecord(rawAccess)) continue;
+    const type = rawAccess.type;
+    const label = rawAccess.label;
+    if ((type !== 'login' && type !== 'level' && type !== 'permission') || typeof label !== 'string') continue;
+    const detail = typeof rawAccess.detail === 'string' ? rawAccess.detail : undefined;
+    map.set(id, detail === undefined ? { type, label } : { type, label, detail });
+  }
+  return map;
+}
+
+function emptyLinuxDoFeedCursorState(): LinuxDoFeedCursorState {
+  return {
+    seenIds: new Set<string>(),
+    pinIds: new Set<string>(),
+    pinnedIds: new Set<string>(),
+    accessById: new Map<string, AccessRequirement>(),
+    pageHistory: [],
+    positionHistory: []
+  };
+}
+
+function linuxDoFeedCursorBinding(
+  access: LinuxDoReadAuth | undefined,
+  filter: DiscourseFeedFilter,
+  category?: string
+): LinuxDoFeedCursorBinding {
+  const authenticated = access?.authenticated === true;
+  const identity = authenticated
+    ? access.identityKey?.trim() || access.readingScope?.trim() || 'authenticated'
+    : 'anonymous';
+  const session =
+    access?.sessionEpoch !== undefined && Number.isSafeInteger(access.sessionEpoch)
+      ? String(access.sessionEpoch)
+      : access?.categoryCacheScope?.trim() ||
+        access?.readingScope?.trim() ||
+        (authenticated ? 'authenticated' : 'public');
+  return {
+    source: 'linuxdo',
+    identity,
+    session,
+    filter: `${filter}:${category?.trim() || ''}`
+  };
+}
+
+function cursorBindingMatches(raw: unknown, expected: LinuxDoFeedCursorBinding) {
+  return (
+    isRecord(raw) &&
+    raw.source === expected.source &&
+    raw.identity === expected.identity &&
+    raw.session === expected.session &&
+    raw.filter === expected.filter
+  );
+}
+
+function computeLinuxDoPageFingerprint(topics: readonly Topic[]) {
+  const sorted = topics.map((item) => item.id).sort();
+  const ids = sorted.join(',');
+  let hashA = 0x811c9dc5;
+  let hashB = 0x9e3779b9;
+  for (let index = 0; index < ids.length; index++) {
+    const code = ids.charCodeAt(index);
+    hashA = Math.imul(hashA ^ code, 0x01000193) >>> 0;
+    hashB = Math.imul(hashB ^ (code + index), 0x85ebca6b) >>> 0;
+  }
+  return `${sorted.length}:${sorted[0] ?? ''}:${sorted.at(-1) ?? ''}:${hashA.toString(36)}:${hashB.toString(36)}`;
+}
+
+function decodeLinuxDoFeedCursor(
+  cursor: string | null | undefined,
+  page: number,
+  limit: number,
+  binding: LinuxDoFeedCursorBinding
+): LinuxDoFeedCursor {
+  const fallback = (): LinuxDoFeedCursor => ({
+    ...legacyLinuxDoFeedPosition(page, limit),
+    ...emptyLinuxDoFeedCursorState(),
+    fromCursor: false,
+    restarted: false
+  });
+  const restartFromPageZero = (): LinuxDoFeedCursor => ({
+    page: 1,
+    offset: 0,
+    ...emptyLinuxDoFeedCursorState(),
+    fromCursor: false,
+    restarted: true
+  });
+  const trimmed = typeof cursor === 'string' ? cursor.trim() : '';
+  if (!trimmed) return fallback();
+  if (/^[1-9]\d*$/.test(trimmed)) {
+    const legacyPage = Number(trimmed);
+    if (Number.isSafeInteger(legacyPage) && legacyPage >= 1) {
+      return {
+        ...legacyLinuxDoFeedPosition(legacyPage, limit),
+        ...emptyLinuxDoFeedCursorState(),
+        fromCursor: false,
+        restarted: false
+      };
+    }
+    return fallback();
+  }
+  try {
+    const parsed: unknown = JSON.parse(decodeURIComponent(trimmed));
+    if (!isRecord(parsed)) return fallback();
+    if ('bind' in parsed && !cursorBindingMatches(parsed.bind, binding)) {
+      return restartFromPageZero();
+    }
+    const upstreamPage = parsed.page;
+    if (typeof upstreamPage !== 'number' || !Number.isSafeInteger(upstreamPage) || upstreamPage < 1) {
+      return fallback();
+    }
+    const offset =
+      typeof parsed.offset === 'number' && Number.isSafeInteger(parsed.offset) && parsed.offset >= 0
+        ? parsed.offset
+        : 0;
+    const firstId = typeof parsed.firstId === 'string' && parsed.firstId.trim() ? parsed.firstId.trim() : undefined;
+    const seenIds = parseCursorIdSet(parsed.seenIds);
+    const pinIds = parseCursorIdSet(parsed.pinIds);
+    const pinnedIds = new Set<string>([...pinIds, ...parseCursorIdSet(parsed.pinnedIds)]);
+    const accessById = parseCursorAccessMap(parsed.accessById);
+    const pageHistory = parseCursorStringList(parsed.pageHistory, LINUXDO_FEED_HISTORY_LIMIT);
+    const positionHistory = parseCursorStringList(parsed.positionHistory, LINUXDO_FEED_HISTORY_LIMIT);
+    return {
+      page: upstreamPage,
+      offset,
+      ...(firstId ? { firstId } : {}),
+      seenIds,
+      pinIds,
+      pinnedIds,
+      accessById,
+      pageHistory,
+      positionHistory,
+      fromCursor: true,
+      restarted: false
+    };
+  } catch {
+    return fallback();
+  }
+}
+
+function encodeLinuxDoFeedCursor(
+  position: LinuxDoFeedCursorPosition,
+  state: LinuxDoFeedCursorState,
+  binding: LinuxDoFeedCursorBinding,
+  limit: number
+) {
+  const maxSeen = Math.max(LINUXDO_FEED_CURSOR_SEEN_LIMIT, limit);
+  const retainedSeenIds = Array.from(state.seenIds).slice(-maxSeen);
+  const retainedPinIds = Array.from(state.pinIds).slice(-maxSeen);
+  const retainedPinIdSet = new Set(retainedPinIds);
+  const retainedIdSet = new Set([...retainedSeenIds, ...retainedPinIds]);
+  const retainedPinnedIds = Array.from(state.pinnedIds).filter(
+    (id) => retainedIdSet.has(id) && !retainedPinIdSet.has(id)
+  );
+  const retainedAccessEntries = Array.from(state.accessById.entries()).filter(([id]) => retainedIdSet.has(id));
+  const retainedPageHistory = state.pageHistory.slice(-LINUXDO_FEED_HISTORY_LIMIT);
+  const retainedPositionHistory = state.positionHistory.slice(-LINUXDO_FEED_HISTORY_LIMIT);
+  return encodeURIComponent(
+    JSON.stringify({
+      v: 2,
+      bind: binding,
+      page: position.page,
+      offset: position.offset,
+      ...(position.firstId ? { firstId: position.firstId } : {}),
+      seenIds: retainedSeenIds,
+      ...(retainedPinIds.length ? { pinIds: retainedPinIds } : {}),
+      ...(retainedPinnedIds.length ? { pinnedIds: retainedPinnedIds } : {}),
+      ...(retainedAccessEntries.length ? { accessById: Object.fromEntries(retainedAccessEntries) } : {}),
+      ...(retainedPageHistory.length ? { pageHistory: retainedPageHistory } : {}),
+      ...(retainedPositionHistory.length ? { positionHistory: retainedPositionHistory } : {})
+    })
+  );
+}
+
 export async function getLinuxDoFeed(
   options: LinuxDoOptions & {
+    aggregateHead?: boolean;
     page?: number;
     limit?: number;
     category?: string;
@@ -573,58 +1301,311 @@ export async function getLinuxDoFeed(
   } = {}
 ): Promise<FeedResponse> {
   options = withDefaultBrowserFetchIntent(options, 'feed', 'foreground');
-  const page = options.page || 1;
+  const page =
+    typeof options.page === 'number' && Number.isSafeInteger(options.page) && options.page >= 1 ? options.page : 1;
   const limit = options.limit || 30;
   const linuxDoFilter = options.linuxDoFilter || 'latest';
-  const start = (page - 1) * limit;
-  const firstListPage = Math.floor(start / LIST_PAGE_SIZE) + 1;
-  const firstOffset = start % LIST_PAGE_SIZE;
+  const authenticated = options.linuxDoAccess?.authenticated === true;
+  const readingScope = linuxDoResponseReadingScope(options.linuxDoAccess);
+  const cursorBinding = linuxDoFeedCursorBinding(options.linuxDoAccess, linuxDoFilter, options.category);
+  const startCursor = decodeLinuxDoFeedCursor(options.cursor, page, limit, cursorBinding);
+  const seenIds = new Set(startCursor.seenIds);
+  const pinIds = new Set(startCursor.pinIds);
+  const pinnedIds = new Set(startCursor.pinnedIds);
+  const accessById = new Map(startCursor.accessById);
+  const pageHistory = [...startCursor.pageHistory];
+  const pageHistorySet = new Set(pageHistory);
+  const positionHistory = [...startCursor.positionHistory];
+  const positionHistorySet = new Set(positionHistory);
+  const topicUpdatesById = new Map<string, Topic>();
   let pins: Topic[] = [];
-  let emptyWindows = 0;
+
+  const appendHistory = (list: string[], set: Set<string>, entry: string) => {
+    if (set.has(entry)) return;
+    list.push(entry);
+    set.add(entry);
+    while (list.length > LINUXDO_FEED_HISTORY_LIMIT) {
+      const evicted = list.shift();
+      if (evicted !== undefined) set.delete(evicted);
+    }
+  };
+
+  const recordTopicMetadata = (topic: Topic) => {
+    if (topic.pinned === true) pinnedIds.add(topic.id);
+    if (topic.accessRequirement && shouldUpdateAccessRequirement(accessById.get(topic.id), topic.accessRequirement)) {
+      accessById.set(topic.id, topic.accessRequirement);
+    }
+  };
+
+  const recordTopicUpdate = (candidate: Topic, currentItems: Topic[], isKnownCompletedPage: boolean) => {
+    const wasPinned = pinnedIds.has(candidate.id);
+    const previousAccess = accessById.get(candidate.id);
+    const gainedPin = !wasPinned && candidate.pinned === true;
+    const updatedAccess = shouldUpdateAccessRequirement(previousAccess, candidate.accessRequirement);
+    const candidateEvidence = readingEvidenceForTopic(candidate);
+    const hasExplicitReadingObservation =
+      authenticated &&
+      !candidate.isPrivateMessage &&
+      (candidate.reading?.lastReadPostNumber !== undefined ||
+        Boolean(candidateEvidence?.requiresBackfillConfirmation) ||
+        Boolean(candidateEvidence?.malformedReading) ||
+        (!isKnownCompletedPage && Boolean(candidate.reading || candidateEvidence)));
+
+    if (!gainedPin && !updatedAccess && !hasExplicitReadingObservation) return;
+    if (gainedPin) pinnedIds.add(candidate.id);
+    const nextAccess = updatedAccess ? candidate.accessRequirement : previousAccess;
+    if (updatedAccess && candidate.accessRequirement) {
+      accessById.set(candidate.id, candidate.accessRequirement);
+    }
+    const inCurrentIndex = currentItems.findIndex((item) => item.id === candidate.id);
+    if (inCurrentIndex >= 0) {
+      currentItems[inCurrentIndex] = applyFeedTopicUpdate(currentItems[inCurrentIndex]!, candidate);
+      return;
+    }
+    const existingUpdate = topicUpdatesById.get(candidate.id);
+    if (existingUpdate) {
+      topicUpdatesById.set(candidate.id, applyFeedTopicUpdate(existingUpdate, candidate));
+      return;
+    }
+    const updateTopic: Topic = {
+      ...candidate,
+      ...(wasPinned || candidate.pinned ? { pinned: true } : {}),
+      ...(nextAccess ? { accessRequirement: nextAccess } : {})
+    };
+    setLinuxDoResponseReadingEvidence(updateTopic, candidateEvidence);
+    topicUpdatesById.set(candidate.id, updateTopic);
+  };
+
   let scan: LinuxDoFeedScan =
     0 < limit
-      ? { kind: 'reading', page: firstListPage, items: [], droppedCount: 0, categories: new Map() }
-      : { kind: 'ready', items: [], droppedCount: 0, hasMore: false };
+      ? {
+          kind: 'reading',
+          page: startCursor.page,
+          items: [],
+          droppedCount: 0,
+          categories: new Map(),
+          overlapPages: 0,
+          invalidPages: 0
+        }
+      : { kind: 'ready', items: [], droppedCount: 0 };
+
   while (scan.kind === 'reading') {
+    if (options.signal?.aborted) throw new Error(REQUEST_CANCELED_MESSAGE);
+    const currentUpstreamPage = scan.page - 1;
     const data = await fetchLinuxDoJson<Record<string, unknown>>(
       linuxDoFeedPath(linuxDoFilter),
       linuxDoFeedParams(scan.page, options.category, linuxDoFilter),
       options
     );
     const topics = linuxDoFeedRows(data);
-    const firstLatest = page === 1 && scan.page === 1 && linuxDoFilter === 'latest' && !options.signal?.aborted;
-    const showSitePins = linuxDoFilter === 'latest' && options.linuxDoAccess?.authenticated === true;
+    const firstLatest =
+      (page === 1 || startCursor.restarted) &&
+      !startCursor.fromCursor &&
+      scan.page === 1 &&
+      linuxDoFilter === 'latest' &&
+      !options.signal?.aborted;
+    const showSitePins = linuxDoFilter === 'latest' && authenticated;
     const categoryMap = await categoryMapForTopics(data, topics, scan.categories, options);
-    const items = normalizeLinuxDoFeedRows(topics, data, categoryMap, options.category, showSitePins);
-    if (firstLatest && items.length && !options.signal?.aborted)
-      pins = await latestLinuxDoPins(options, categoryMap, options.category);
-    const droppedCount = scan.droppedCount + Math.max(0, topics.length - items.length);
-    const serverHasMore = Boolean(isRecord(data.topic_list) && data.topic_list.more_topics_url);
-    emptyWindows = items.length ? 0 : emptyWindows + 1;
-    scan.items.push(...(scan.page === firstListPage && firstOffset > 0 ? items.slice(firstOffset) : items));
-    if (scan.items.length >= limit) {
-      scan = { kind: 'ready', items: scan.items, droppedCount, hasMore: scan.items.length > limit || serverHasMore };
-    } else if (serverHasMore && topics.length > 0 && emptyWindows < 2) {
-      scan = { kind: 'reading', page: scan.page + 1, items: scan.items, droppedCount, categories: categoryMap };
+    const normalized = normalizeLinuxDoFeedRows(
+      topics,
+      data,
+      categoryMap,
+      options.category,
+      showSitePins,
+      readingScope
+    );
+    const pageUnique = deduplicateSameResponseLinuxDoRows(normalized);
+    if (firstLatest && pageUnique.length && !options.signal?.aborted) {
+      const indexed = await latestLinuxDoPins(options, categoryMap, options.category);
+      const latestById = new Map(pageUnique.map((topic) => [topic.id, topic]));
+      pins = indexed.map((pin) => {
+        const latest = latestById.get(pin.id);
+        return latest ? applyFeedTopicUpdate(latest, pin) : pin;
+      });
+      for (const pin of pins) {
+        pinIds.add(pin.id);
+        recordTopicMetadata(pin);
+      }
+    }
+    const droppedCount = scan.droppedCount + Math.max(0, topics.length - normalized.length);
+
+    // Judgment 1: whether upstream provides a verifiable same-site advancing next page.
+    const rawMoreTopicsUrl = isRecord(data.topic_list) ? data.topic_list.more_topics_url : undefined;
+    const upstreamContinuation: LinuxDoUpstreamContinuation =
+      topics.length > 0
+        ? parseLinuxDoUpstreamContinuation(rawMoreTopicsUrl, linuxDoFilter, options.category, currentUpstreamPage)
+        : { kind: 'none' };
+    const continuationPointsBack =
+      upstreamContinuation.kind === 'points-back' ||
+      (upstreamContinuation.kind === 'advances' &&
+        upstreamContinuation.explicitPage !== undefined &&
+        positionHistorySet.has(`p:${upstreamContinuation.explicitPage}`));
+    const upstreamHasNext = upstreamContinuation.kind === 'advances' && !continuationPointsBack;
+
+    // Judgment 2: whether displayable new items exist on this page (independent of 200-ID cache for known full pages).
+    const isResumingPartialStartPage = scan.page === startCursor.page && startCursor.offset > 0;
+    const fullPageFingerprint = pageUnique.length > 0 ? computeLinuxDoPageFingerprint(pageUnique) : null;
+    const isKnownCompletedPage =
+      !isResumingPartialStartPage && fullPageFingerprint !== null && pageHistorySet.has(fullPageFingerprint);
+
+    const anchorIndex = startCursor.firstId ? pageUnique.findIndex((item) => item.id === startCursor.firstId) : -1;
+    let sliceStart: number;
+    if (scan.page !== startCursor.page || startCursor.offset === 0) {
+      sliceStart = 0;
+    } else if (startCursor.seenIds.size > 0 || startCursor.pinIds.size > 0) {
+      if (startCursor.offset <= startCursor.seenIds.size + startCursor.pinIds.size) {
+        sliceStart = 0;
+      } else {
+        const searchLimit = anchorIndex >= 0 ? anchorIndex : pageUnique.length;
+        const knownBoundary = pageUnique
+          .slice(0, searchLimit)
+          .findIndex((item) => seenIds.has(item.id) || pinIds.has(item.id));
+        sliceStart = knownBoundary >= 0 ? knownBoundary : anchorIndex >= 0 ? anchorIndex : startCursor.offset;
+      }
     } else {
-      scan = { kind: 'ready', items: scan.items, droppedCount, hasMore: false };
+      sliceStart = anchorIndex >= 0 ? anchorIndex : startCursor.offset;
+    }
+
+    const freshEntries: { topic: Topic; pageIndex: number }[] = [];
+    const seenEntries: { topic: Topic; pageIndex: number }[] = [];
+    if (isKnownCompletedPage) {
+      for (let index = 0; index < pageUnique.length; index++) {
+        seenEntries.push({ topic: pageUnique[index]!, pageIndex: index });
+      }
+    } else {
+      for (let index = 0; index < Math.min(sliceStart, pageUnique.length); index++) {
+        const candidate = pageUnique[index]!;
+        if (seenIds.has(candidate.id) || pinIds.has(candidate.id)) {
+          seenEntries.push({ topic: candidate, pageIndex: index });
+        }
+      }
+      for (let index = sliceStart; index < pageUnique.length; index++) {
+        const candidate = pageUnique[index]!;
+        if (seenIds.has(candidate.id) || pinIds.has(candidate.id) || (options.aggregateHead && candidate.pinned)) {
+          seenEntries.push({ topic: candidate, pageIndex: index });
+          continue;
+        }
+        freshEntries.push({ topic: candidate, pageIndex: index });
+      }
+    }
+
+    const hasDisplayableNewItems = freshEntries.length > 0;
+    const remaining = limit - scan.items.length;
+    const takeCount = Math.min(remaining, freshEntries.length);
+    const overflow = freshEntries[takeCount];
+    const consumedEnd = overflow ? overflow.pageIndex : pageUnique.length;
+
+    for (const entry of seenEntries) {
+      if (entry.pageIndex < consumedEnd) {
+        const topic = entry.topic;
+        if (firstLatest && pinIds.has(topic.id)) continue;
+        const hiddenPin = options.aggregateHead && (topic.pinned || pinnedIds.has(topic.id));
+        recordTopicUpdate(hiddenPin ? stripLinuxDoTopicReading(topic) : topic, scan.items, isKnownCompletedPage);
+      }
+    }
+    for (let index = 0; index < takeCount; index++) {
+      const entry = freshEntries[index]!;
+      scan.items.push(entry.topic);
+      seenIds.add(entry.topic.id);
+      recordTopicMetadata(entry.topic);
+    }
+    for (let index = sliceStart; index < consumedEnd; index++) {
+      seenIds.add(pageUnique[index]!.id);
+    }
+
+    if (!overflow) {
+      appendHistory(positionHistory, positionHistorySet, `p:${currentUpstreamPage}`);
+      if (fullPageFingerprint && !isKnownCompletedPage) {
+        appendHistory(pageHistory, pageHistorySet, fullPageFingerprint);
+      }
+    }
+
+    const nextInvalidPages = !hasDisplayableNewItems && pageUnique.length === 0 ? scan.invalidPages + 1 : 0;
+    const nextOverlapPages = hasDisplayableNewItems ? 0 : scan.overlapPages + 1;
+
+    // Aggregate head returns the first usable upstream page after removing pins and duplicates.
+    if (scan.items.length >= limit || (options.aggregateHead && hasDisplayableNewItems)) {
+      const nextPosition = overflow
+        ? { page: scan.page, offset: overflow.pageIndex, firstId: overflow.topic.id }
+        : upstreamHasNext
+          ? { page: upstreamContinuation.nextPage, offset: 0 }
+          : undefined;
+      scan = {
+        kind: 'ready',
+        items: scan.items,
+        droppedCount,
+        nextPosition
+      };
+    } else if (
+      !upstreamHasNext ||
+      (upstreamContinuation.explicitPage === undefined && nextInvalidPages >= LINUXDO_FEED_MAX_STALLED_PAGES)
+    ) {
+      scan = { kind: 'ready', items: scan.items, droppedCount };
+    } else if (nextOverlapPages >= LINUXDO_FEED_MAX_OVERLAP_PAGES) {
+      scan = {
+        kind: 'ready',
+        items: scan.items,
+        droppedCount,
+        manualContinuation: true,
+        nextPosition: { page: upstreamContinuation.nextPage, offset: 0 }
+      };
+    } else {
+      scan = {
+        kind: 'reading',
+        page: upstreamContinuation.nextPage,
+        items: scan.items,
+        droppedCount,
+        categories: categoryMap,
+        overlapPages: nextOverlapPages,
+        invalidPages: nextInvalidPages
+      };
     }
   }
-  const items = scan.items.slice(0, limit);
-  const result = {
-    items: pins.length ? mergeTopics(pins, items) : items,
+
+  let items = pins.length ? [...pins, ...scan.items] : scan.items;
+  if (topicUpdatesById.size) {
+    items = items.map((item) => {
+      const update = topicUpdatesById.get(item.id);
+      if (!update) return item;
+      topicUpdatesById.delete(item.id);
+      return applyFeedTopicUpdate(item, update);
+    });
+  }
+  const topicUpdates = topicUpdatesById.size ? [...topicUpdatesById.values()] : undefined;
+  const hasMore = Boolean(scan.nextPosition);
+  const nextCursor = scan.nextPosition
+    ? encodeLinuxDoFeedCursor(
+        scan.nextPosition,
+        {
+          seenIds,
+          pinIds,
+          pinnedIds,
+          accessById,
+          pageHistory,
+          positionHistory
+        },
+        cursorBinding,
+        limit
+      )
+    : null;
+  const result: FeedResponse = {
+    items,
+    ...(topicUpdates ? { topicUpdates } : {}),
     errors: {},
-    hasMore: scan.hasMore,
-    nextPage: scan.hasMore ? page + 1 : null
+    hasMore,
+    ...(scan.manualContinuation ? { manualContinuation: true } : {}),
+    nextPage: hasMore ? page + 1 : null,
+    nextCursor
   };
   return annotateSourceDiagnosticSummary(result, {
     parserVariant: 'discourse-feed',
     candidateCount: result.items.length + scan.droppedCount,
     validCount: result.items.length,
     droppedCount: scan.droppedCount,
-    isExpectedEmpty: result.items.length === 0 && scan.droppedCount === 0 && (page > 1 || Boolean(options.category)),
-    isParseEmpty: page === 1 && !options.category && result.items.length === 0 && scan.droppedCount === 0,
-    hasRepeatedCursor: result.nextPage === page
+    isExpectedEmpty:
+      result.items.length === 0 && scan.droppedCount === 0 && (page > 1 || Boolean(options.category) || hasMore),
+    isParseEmpty: page === 1 && !options.category && !hasMore && result.items.length === 0 && scan.droppedCount === 0,
+    hasRepeatedCursor: result.nextPage === page || Boolean(nextCursor && nextCursor === options.cursor)
   });
 }
 
@@ -726,10 +1707,7 @@ export async function getLinuxDoTopic(
   const replyLimit = options.replyLimit || 30;
   const stream = isRecord(data.post_stream) && Array.isArray(data.post_stream.stream) ? data.post_stream.stream : [];
   const initialReplyPosts = replyPosts.slice(0, replyLimit);
-  const replies = await hydrateEditableReplyContent(
-    initialReplyPosts.map((post) => normalizePost(post, topic.id)).filter(Boolean) as Reply[],
-    options
-  );
+  const replies = initialReplyPosts.map((post) => normalizePost(post, topic.id)).filter((reply) => reply !== null);
   const totalPosts = stream.length || (topic.replyCount || 0) + 1;
   const replyHasMore = totalPosts > initialReplyPosts.length + 1;
   const firstPostBoostCount = isRecord(firstPost) ? boostCountFromPost(firstPost) : undefined;
@@ -879,10 +1857,7 @@ export async function getLinuxDoReplies(
     const data = await topicData(id, options, targetFloor);
     const reading = discourseReadingFromJson(data);
     const window = discourseReplyWindow(data, limit);
-    const items = await hydrateEditableReplyContent(
-      window.posts.map((post) => normalizePost(post, id)).filter(Boolean) as Reply[],
-      options
-    );
+    const items = window.posts.map((post) => normalizePost(post, id)).filter((reply) => reply !== null);
     const hasTarget = items.some((reply) =>
       targetCommentId === undefined ? reply.floor === targetFloor : reply.commentId === targetCommentId
     );
@@ -946,10 +1921,7 @@ export async function getLinuxDoReplies(
   const missing = postIds.filter((postId) => !known.has(String(postId)));
   if (missing.length) posts.push(...(await fetchPosts(id, missing, options)));
   const visiblePostIds = discourseVisiblePostIds(posts, postIds);
-  const normalizedItems = await hydrateEditableReplyContent(
-    posts.map((post) => normalizePost(post, id)).filter(Boolean) as Reply[],
-    options
-  );
+  const normalizedItems = posts.map((post) => normalizePost(post, id)).filter((reply) => reply !== null);
   const items = discourseRepliesInStreamOrder(normalizedItems, visiblePostIds, options.order);
   const result = {
     items,

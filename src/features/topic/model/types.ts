@@ -1,4 +1,4 @@
-import type { ReplyWindowPosition } from '@/domain/forum/models';
+import type { Reply, ReplyWindowPosition } from '@/domain/forum/models';
 import type { WritableSessionTicket } from '@/domain/session/writableSessionGate';
 
 export type ReplyFilter = 'all' | 'author' | 'images';
@@ -9,12 +9,18 @@ export interface ReplyTarget {
   authorId?: string;
 }
 
+export type ReplyEditSnapshot = Pick<
+  Reply,
+  'author' | 'authorId' | 'authorUrl' | 'contentHtml' | 'createdAt' | 'floor'
+>;
+
 export interface ReplyEditTarget {
   commentId: number;
   floor?: number;
   contentMarkdown: string;
   topicId: string;
   ticket: WritableSessionTicket;
+  cachedReply?: ReplyEditSnapshot;
 }
 
 type ReplyCommentIdRefreshTarget = { kind: 'comment-id'; commentId: number };

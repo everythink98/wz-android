@@ -3,7 +3,7 @@ import { useQueries } from '@tanstack/react-query';
 import * as Notifications from 'expo-notifications';
 import { isNotificationSource, notificationSources, type NotificationSource } from '@/domain/forum/sourceCatalog';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
-import type { RequestAccountRecheck } from '@/domain/session/sessionContracts';
+import type { NotificationSessionAccess, RequestAccountRecheck } from '@/domain/session/sessionContracts';
 import type { SourceErrorInfo } from '@/domain/forum/models';
 import type { Fetcher } from '@/platform/network/request';
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
@@ -16,6 +16,9 @@ import {
   confirmDisabledNotificationDismissal,
   defaultNotificationState,
   loadNotificationState,
+  notificationDeliveryAllowed,
+  readNotificationDeliveryScope,
+  markAndroidNotificationPermissionRequestStarted,
   recordNotificationDelivery,
   recordNotificationSnapshot,
   resetNotificationSourceIdentity,
@@ -26,6 +29,7 @@ import {
 import {
   dismissSourceNotification,
   dismissSourceNotificationExact,
+  ensureMessageNotificationChannel,
   notificationPermissionGranted,
   openNotificationSystemSettings,
   presentSourceNotification,
@@ -58,7 +62,54 @@ import {
 
 export type { NotificationPermissionState } from './notificationBootstrap';
 
+export type NotificationOperationOutcome =
+  { status: 'completed'; granted: boolean } | { status: 'permission-read-failed' } | { status: 'invalidated' };
+
 const digestDismissals = createKeyedSerialRunner<NotificationSource>();
+let activeNotificationsRuntimeOwner: symbol | null = null;
+
+type AndroidPermissionRequest = {
+  system: Promise<PromiseSettledResult<boolean>>;
+  markerWrite?: Promise<boolean>;
+};
+
+let activeAndroidPermissionRequest: AndroidPermissionRequest | null = null;
+
+function startAndroidPermissionRequest() {
+  let native: Promise<boolean>;
+  try {
+    native = requestNotificationPermission({ prepareChannel: false });
+  } catch (error) {
+    native = Promise.reject(error);
+  }
+  const system = native.then(
+    (value) => ({ status: 'fulfilled' as const, value }),
+    (reason: unknown) => ({ status: 'rejected' as const, reason })
+  );
+  const request: AndroidPermissionRequest = { system };
+  activeAndroidPermissionRequest = request;
+  return request;
+}
+
+function persistAndroidPermissionRequest(request: AndroidPermissionRequest) {
+  request.markerWrite ??= Promise.resolve()
+    .then(markAndroidNotificationPermissionRequestStarted)
+    .then(
+      () => true,
+      (error: unknown) => {
+        recordDiagnosticError('app', 'notification-permission', error);
+        request.markerWrite = undefined;
+        return false;
+      }
+    );
+  return request.markerWrite;
+}
+
+async function settleAndroidPermissionRequest(request: AndroidPermissionRequest, marker: Promise<boolean>) {
+  const [system, persisted] = await Promise.all([request.system, marker]);
+  if (persisted && activeAndroidPermissionRequest === request) activeAndroidPermissionRequest = null;
+  return system;
+}
 
 function confirmedIdentity(source: NotificationSource, sessions: SiteSessionViewModels) {
   const session = sessions[source];
@@ -73,9 +124,9 @@ function identityNeedsTrustedFallback(source: NotificationSource, sessions: Site
 type NotificationIdentities = Partial<Record<NotificationSource, string>>;
 type NotificationSnapshotTarget = Parameters<typeof forumQueryKeys.notificationSnapshot>[0];
 
-function eligibleBackgroundSources(state: NotificationState, readableIdentities: NotificationIdentities) {
+function eligibleBackgroundSources(state: NotificationState, deliveryIdentities: NotificationIdentities) {
   return notificationSources.filter((source) => {
-    const identity = readableIdentities[source];
+    const identity = deliveryIdentities[source];
     return identity && state.sources[source].intentEnabled && state.sources[source].identityKey === identity;
   });
 }
@@ -116,7 +167,7 @@ export function useNotificationsRuntime({
   getNodeSeekUserAgent: () => string;
   onSessionExpired: (source: NotificationSource, requestSessionEpoch: number) => void;
   openSource: (source?: NotificationSource) => boolean;
-  privateAccessAllowed: (source: NotificationSource, identityKey: string) => boolean;
+  privateAccessAllowed: (source: NotificationSource, identityKey: string, access: NotificationSessionAccess) => boolean;
   requestAccountRecheck: RequestAccountRecheck;
   remoteReady: boolean;
   sessionEpochs: ForumSessionEpochs;
@@ -224,7 +275,10 @@ export function useNotificationsRuntime({
     () =>
       createNotificationGateway({
         onSessionExpired,
-        privateAccessAllowed: (source, identityKey) => privateAccessAllowedRef.current(source, identityKey),
+        privateAccessAllowed: (source, identityKey) =>
+          privateAccessAllowedRef.current(source, identityKey, 'foreground-read'),
+        privateWriteAllowed: (source, identityKey) =>
+          privateAccessAllowedRef.current(source, identityKey, 'settled-session'),
         readAccess: (source) => readAccessRef.current(source),
         requestAccountRecheck,
         requestSessionEpoch: (source) => sessionEpochsRef.current[source],
@@ -239,7 +293,13 @@ export function useNotificationsRuntime({
   const { ready, storageError, permissionError, permission } = bootstrapView;
   const publishBootstrap = useCallback(() => setBootstrapView(bootstrap.snapshot), [bootstrap]);
   const backgroundErrorRef = useRef('');
+  const joinedAndroidPermissionRequest = useRef<AndroidPermissionRequest | null>(null);
   const mountedRef = useRef(true);
+  const [runtimeOwner] = useState(() => Symbol('notifications-runtime'));
+  const ownsRuntime = useCallback(
+    () => mountedRef.current && activeNotificationsRuntimeOwner === runtimeOwner,
+    [runtimeOwner]
+  );
   const [foregroundDeliveries] = useState(createNotificationForegroundDeliveries);
   const snapshotResultRevisionRef = useRef(0);
   const [openIntent] = useState(createNotificationOpenIntent);
@@ -320,16 +380,17 @@ export function useNotificationsRuntime({
     setCenterVisibleState(visible);
   }, []);
 
-  const readableIdentitiesRef = useRef<NotificationIdentities>({});
+  const deliveryIdentitiesRef = useRef<NotificationIdentities>({});
   const syncBackground = useCallback(async () => {
+    if (!ownsRuntime()) return;
     const next = stateRef.current;
     try {
       await syncNotificationBackgroundRegistration(
         next,
         bootstrap.granted,
-        eligibleBackgroundSources(next, readableIdentitiesRef.current)
+        eligibleBackgroundSources(next, deliveryIdentitiesRef.current)
       );
-      if (mountedRef.current && backgroundErrorRef.current) {
+      if (ownsRuntime() && backgroundErrorRef.current) {
         const trace = beginDiagnosticTrace('app', 'notification-runtime');
         finishDiagnosticTrace(trace, 'success', { state: 'recovered' });
         backgroundErrorRef.current = '';
@@ -337,17 +398,24 @@ export function useNotificationsRuntime({
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : '后台任务设置失败';
-      if (mountedRef.current && backgroundErrorRef.current !== message) {
+      if (ownsRuntime() && backgroundErrorRef.current !== message) {
         backgroundErrorRef.current = message;
         setBackgroundError(message);
       }
     }
-  }, [bootstrap]);
+  }, [bootstrap, ownsRuntime]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     mountedRef.current = true;
+    activeNotificationsRuntimeOwner = runtimeOwner;
     return () => {
       mountedRef.current = false;
+      if (activeNotificationsRuntimeOwner === runtimeOwner) activeNotificationsRuntimeOwner = null;
+    };
+  }, [runtimeOwner]);
+
+  useEffect(() => {
+    return () => {
       foregroundDeliveries.invalidate();
       const pending = openIntent.cancel();
       if (pending) {
@@ -360,28 +428,34 @@ export function useNotificationsRuntime({
     async (visitIsCurrent?: () => boolean) => {
       try {
         const granted = await notificationPermissionGranted();
-        if (!mountedRef.current || visitIsCurrent?.() === false) return;
+        if (!ownsRuntime() || visitIsCurrent?.() === false) return;
         bootstrap.observedPermission(granted);
         publishBootstrap();
       } catch (error) {
-        if (!mountedRef.current || visitIsCurrent?.() === false) return;
+        if (!ownsRuntime() || visitIsCurrent?.() === false) return;
         bootstrap.failedPermission();
         publishBootstrap();
         recordDiagnosticError('app', 'notification-permission', error);
       }
     },
-    [bootstrap, publishBootstrap]
+    [bootstrap, ownsRuntime, publishBootstrap]
   );
+
+  const publishPermissionRequestStarted = useCallback(() => {
+    if (ownsRuntime() && !stateRef.current.androidPermissionRequestStarted) {
+      commitState({ ...stateRef.current, androidPermissionRequestStarted: true });
+    }
+  }, [commitState, ownsRuntime]);
 
   const retryInitialization = useCallback(() => {
     if (bootstrap.pending) return bootstrap.pending;
-    if (!mountedRef.current) return Promise.resolve();
+    if (!ownsRuntime()) return Promise.resolve();
     const restore = async () => {
       if (bootstrap.restored) return;
       const trace = beginDiagnosticTrace('app', 'notification-runtime', { state: 'state-load' });
       try {
         const stored = await loadNotificationState();
-        if (!mountedRef.current) {
+        if (!ownsRuntime()) {
           finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
           return;
         }
@@ -390,7 +464,7 @@ export function useNotificationsRuntime({
         publishBootstrap();
         finishDiagnosticTrace(trace, 'success', { isEnabled: stored.globalEnabled });
       } catch (error) {
-        if (mountedRef.current) {
+        if (ownsRuntime()) {
           bootstrap.failedStorage();
           publishBootstrap();
         }
@@ -400,10 +474,29 @@ export function useNotificationsRuntime({
     return bootstrap.run(async () => {
       await Promise.all([restore(), probePermission()]);
     });
-  }, [commitState, bootstrap, probePermission, publishBootstrap]);
+  }, [commitState, bootstrap, ownsRuntime, probePermission, publishBootstrap]);
   useEffect(() => {
     void retryInitialization();
   }, [retryInitialization]);
+
+  useEffect(() => {
+    const inherited = activeAndroidPermissionRequest;
+    if (!inherited) return;
+    let observing = true;
+    const current = () => observing && ownsRuntime() && joinedAndroidPermissionRequest.current !== inherited;
+    const initialized = bootstrap.pending;
+    void (async () => {
+      const marker = persistAndroidPermissionRequest(inherited);
+      await settleAndroidPermissionRequest(inherited, marker);
+      await initialized?.catch(() => undefined);
+      if (!current() || !bootstrap.restored) return;
+      if (await marker) publishPermissionRequestStarted();
+      await probePermission(current);
+    })();
+    return () => {
+      observing = false;
+    };
+  }, [bootstrap, ownsRuntime, probePermission, publishPermissionRequestStarted]);
 
   useEffect(() => {
     if (ready) retryDisabledDigests();
@@ -432,18 +525,19 @@ export function useNotificationsRuntime({
     .map((source) => identityKeys[source] || `${source}:none`)
     .join('|')}`;
   const observedSources: NotificationSource[] = [];
-  const readableIdentities: NotificationIdentities = {};
+  const deliveryIdentities: NotificationIdentities = {};
   for (const source of operationalSources) {
     const identity = identityKeys[source];
     if (!identity || sessions[source].identityTrust !== 'confirmed') continue;
-    const allowed = privateAccessAllowed(source, identity);
+    const allowed = privateAccessAllowed(source, identity, 'foreground-read');
     const blocked = getReadBlock(source);
     // A paused Query must stay observed for the existing verification recovery.
     if (allowed || blocked) observedSources.push(source);
-    if (allowed && !blocked) readableIdentities[source] = identity;
+    if (allowed && !blocked && privateAccessAllowed(source, identity, 'settled-session'))
+      deliveryIdentities[source] = identity;
   }
   const activeSourceSignature = observedSources.join('|');
-  useCommitRefValue(readableIdentitiesRef, readableIdentities);
+  useCommitRefValue(deliveryIdentitiesRef, deliveryIdentities);
   const activeNetworkSources = useMemo(
     () => (activeSourceSignature ? (activeSourceSignature.split('|') as NotificationSource[]) : []),
     [activeSourceSignature]
@@ -452,7 +546,7 @@ export function useNotificationsRuntime({
     () => enabledSources.filter((source) => activeNetworkSources.includes(source)),
     [activeNetworkSources, enabledSources]
   );
-  const eligibleSourcesKey = eligibleBackgroundSources(state, readableIdentities).join('|');
+  const eligibleSourcesKey = eligibleBackgroundSources(state, deliveryIdentities).join('|');
   const previousContentScopeRef = useRef<{
     identitySignature: string;
     sources: readonly NotificationSource[];
@@ -699,15 +793,13 @@ export function useNotificationsRuntime({
         remoteQueryEnabledRef.current &&
         foregroundDeliveries.generation === job.generation &&
         bootstrap.granted &&
-        stateRef.current.globalEnabled &&
-        stateRef.current.sources[job.source].intentEnabled &&
-        stateRef.current.sources[job.source].identityKey === job.identityKey &&
+        notificationDeliveryAllowed(stateRef.current, job.source, job) &&
         identityKeysRef.current[job.source] === job.identityKey &&
         sessionEpochsRef.current[job.source] === job.epoch &&
         sourceLifecyclesRef.current[job.source] === job.lifecycle &&
         !getReadBlock(job.source) &&
         sourceIsOperational(job.source) &&
-        privateAccessAllowedRef.current(job.source, job.identityKey);
+        privateAccessAllowedRef.current(job.source, job.identityKey, 'settled-session');
       for (const job of jobs) if (currentJob(job)) foregroundDeliveries.enqueue(job);
       foregroundDeliveries.drain(
         async (batch) => {
@@ -753,8 +845,11 @@ export function useNotificationsRuntime({
   );
 
   const handledSnapshotUpdateRef = useRef(new Map<string, number>());
-  const snapshotRevision = snapshotQueries
-    .map((query, index) => `${snapshotSources[index]}:${query.data?.revision || 0}`)
+  const snapshotCommitKey = snapshotQueries
+    .map((query, index) => {
+      const source = snapshotSources[index]!;
+      return `${source}:${query.data?.revision || 0}:${deliveryIdentities[source] || ''}`;
+    })
     .join('|');
   useEffect(() => {
     const deliveries: ForegroundDelivery[] = [];
@@ -767,18 +862,21 @@ export function useNotificationsRuntime({
         sourceIsOperational(source) &&
         identityKeysRef.current[source] === identityKey &&
         sessionEpochsRef.current[source] === epoch &&
-        privateAccessAllowedRef.current(source, identityKey);
+        privateAccessAllowedRef.current(source, identityKey, 'settled-session');
       if (!canCommit()) return [];
       const handledKey = `${source}\u0000${identityKey}`;
       if (handledSnapshotUpdateRef.current.get(handledKey) === revision) return [];
       handledSnapshotUpdateRef.current.set(handledKey, revision);
-      deliveries.push({
-        source,
-        identityKey,
-        epoch,
-        generation: foregroundDeliveries.generation,
-        lifecycle: sourceLifecyclesRef.current[source]
-      });
+      const scope = readNotificationDeliveryScope(stateRef.current, source);
+      if (scope?.identityKey === identityKey) {
+        deliveries.push({
+          ...scope,
+          source,
+          epoch,
+          generation: foregroundDeliveries.generation,
+          lifecycle: sourceLifecyclesRef.current[source]
+        });
+      }
       return [
         recordNotificationSnapshot(source, identityKey, snapshot.total, snapshot.checkedAt, canCommit)
           .then((saved) => {
@@ -808,7 +906,7 @@ export function useNotificationsRuntime({
   }, [
     commitState,
     runForegroundDelivery,
-    snapshotRevision,
+    snapshotCommitKey,
     snapshotSources,
     foregroundDeliveries,
     sourceIsOperational
@@ -835,14 +933,14 @@ export function useNotificationsRuntime({
     let current = true;
     void (async () => {
       await bootstrap.pending?.catch(() => undefined);
-      if (!current || !runtimeReadyRef.current) return;
-      await bootstrap.run(() => probePermission(() => current));
-      if (current) await syncBackground();
+      if (!current || !ownsRuntime() || !runtimeReadyRef.current) return;
+      await bootstrap.run(() => probePermission(() => current && ownsRuntime()));
+      if (current && ownsRuntime()) await syncBackground();
     })();
     return () => {
       current = false;
     };
-  }, [appActive, syncBackground, bootstrap, probePermission, retryDisabledDigests]);
+  }, [appActive, syncBackground, bootstrap, ownsRuntime, probePermission, retryDisabledDigests]);
 
   const handleNotificationResponse = useCallback(
     (response: Notifications.NotificationResponse) => {
@@ -920,49 +1018,156 @@ export function useNotificationsRuntime({
     }
   }, [openSource, sourceIsOperational, openIntent]);
 
-  const setGlobalEnabled = useCallback(
-    async (enabled: boolean) => {
-      if (!runtimeReadyRef.current) throw new Error('通知存储尚未恢复，请先重试初始化');
-      const firstOptIn = enabled && !stateRef.current.hasOptedIn;
-      const next = await setGlobalNotificationIntent(enabled);
-      commitState(next);
-      if (firstOptIn && !bootstrap.granted) {
-        await bootstrap.pending;
-        if (!bootstrap.granted) {
-          await bootstrap.run(async () => {
-            const granted = await requestNotificationPermission();
-            if (!mountedRef.current) return;
-            bootstrap.observedPermission(granted);
-            publishBootstrap();
-          });
+  const readPermissionState = useCallback(() => bootstrap.snapshot.permission, [bootstrap]);
+
+  const runAndroidPermissionRequest = useCallback(async (): Promise<'completed' | 'failed' | 'invalidated'> => {
+    while (bootstrap.pending) {
+      await bootstrap.pending.catch(() => undefined);
+      if (!ownsRuntime() || !stateRef.current.globalEnabled) return 'invalidated';
+    }
+    if (!ownsRuntime() || !stateRef.current.globalEnabled) return 'invalidated';
+    if (!activeAndroidPermissionRequest && (bootstrap.granted || stateRef.current.androidPermissionRequestStarted)) {
+      return 'completed';
+    }
+    let result: 'completed' | 'failed' | 'invalidated' = 'completed';
+    await bootstrap.run(async () => {
+      let request = activeAndroidPermissionRequest;
+      if (!request) {
+        try {
+          await ensureMessageNotificationChannel();
+          if (!ownsRuntime() || !stateRef.current.globalEnabled) {
+            result = 'invalidated';
+            return;
+          }
+          request = activeAndroidPermissionRequest;
+          if (!request) {
+            // A replacement may have loaded its snapshot before the previous request marked storage.
+            const latest = await loadNotificationState();
+            if (!ownsRuntime() || !stateRef.current.globalEnabled) {
+              result = 'invalidated';
+              return;
+            }
+            request = activeAndroidPermissionRequest;
+            if (!request && latest.androidPermissionRequestStarted) {
+              publishPermissionRequestStarted();
+              await probePermission();
+              return;
+            }
+            if (!request && !bootstrap.granted) request = startAndroidPermissionRequest();
+          }
+        } catch (error) {
+          if (!ownsRuntime() || !stateRef.current.globalEnabled) {
+            result = 'invalidated';
+            return;
+          }
+          bootstrap.failedPermission();
+          publishBootstrap();
+          recordDiagnosticError('app', 'notification-permission', error);
+          result = 'failed';
+          return;
         }
       }
+      if (!request) return;
+      if (!ownsRuntime() || !stateRef.current.globalEnabled) {
+        result = 'invalidated';
+        return;
+      }
+      joinedAndroidPermissionRequest.current = request;
+      const marker = persistAndroidPermissionRequest(request);
+      void marker.then((saved) => {
+        if (saved) publishPermissionRequestStarted();
+      });
+      const system = await settleAndroidPermissionRequest(request, marker);
+      if (!ownsRuntime() || !stateRef.current.globalEnabled) {
+        result = 'invalidated';
+        return;
+      }
+      if (system.status === 'fulfilled') {
+        bootstrap.observedPermission(system.value);
+      } else {
+        bootstrap.failedPermission();
+        recordDiagnosticError('app', 'notification-permission', system.reason);
+        result = 'failed';
+      }
+      publishBootstrap();
+    });
+    return ownsRuntime() && stateRef.current.globalEnabled ? result : 'invalidated';
+  }, [bootstrap, ownsRuntime, probePermission, publishBootstrap, publishPermissionRequestStarted]);
+
+  const requestPermission = useCallback(async (): Promise<NotificationOperationOutcome> => {
+    if (!runtimeReadyRef.current) throw new Error('通知存储尚未恢复，请先重试初始化');
+    if (!ownsRuntime() || !stateRef.current.globalEnabled) return { status: 'invalidated' };
+    const permissionResult = await runAndroidPermissionRequest();
+    if (permissionResult === 'invalidated' || !ownsRuntime() || !stateRef.current.globalEnabled) {
+      return { status: 'invalidated' };
+    }
+    await syncBackground();
+    if (!ownsRuntime() || !stateRef.current.globalEnabled) return { status: 'invalidated' };
+    void refetchSnapshots();
+    return permissionResult === 'failed' || bootstrap.snapshot.permission === 'unavailable'
+      ? { status: 'permission-read-failed' }
+      : { status: 'completed', granted: bootstrap.granted };
+  }, [bootstrap, ownsRuntime, refetchSnapshots, runAndroidPermissionRequest, syncBackground]);
+
+  const setGlobalEnabled = useCallback(
+    async (enabled: boolean): Promise<NotificationOperationOutcome> => {
+      if (!runtimeReadyRef.current) throw new Error('通知存储尚未恢复，请先重试初始化');
+      if (!ownsRuntime()) return { status: 'invalidated' };
+      const next = await setGlobalNotificationIntent(enabled);
+      if (!ownsRuntime()) return { status: 'invalidated' };
+      commitState(next);
+      let permissionFailed = false;
+      if (enabled && !next.androidPermissionRequestStarted && !bootstrap.granted) {
+        const permissionResult = await runAndroidPermissionRequest();
+        if (permissionResult === 'invalidated' || !ownsRuntime() || !stateRef.current.globalEnabled) {
+          return { status: 'invalidated' };
+        }
+        permissionFailed = permissionResult === 'failed';
+      }
+      if (!ownsRuntime()) return { status: 'invalidated' };
       await syncBackground();
+      if (!ownsRuntime()) return { status: 'invalidated' };
       if (!enabled) {
         const settled = await Promise.allSettled(
           notificationSources.map((source) => dismissDisabledDigest(source, true))
         );
         const failed = settled.find((result) => result.status === 'rejected');
         if (failed) throw failed.reason;
+        if (!ownsRuntime()) return { status: 'invalidated' };
+        return { status: 'completed', granted: bootstrap.granted };
       }
-      if (enabled) void refetchSnapshots();
-      return bootstrap.granted;
+      if (!stateRef.current.globalEnabled) return { status: 'invalidated' };
+      void refetchSnapshots();
+      return permissionFailed || bootstrap.snapshot.permission === 'unavailable'
+        ? { status: 'permission-read-failed' }
+        : { status: 'completed', granted: bootstrap.granted };
     },
-    [commitState, refetchSnapshots, syncBackground, bootstrap, publishBootstrap, dismissDisabledDigest]
+    [
+      commitState,
+      ownsRuntime,
+      refetchSnapshots,
+      runAndroidPermissionRequest,
+      syncBackground,
+      bootstrap,
+      dismissDisabledDigest
+    ]
   );
 
   const setSourceEnabled = useCallback(
     async (source: NotificationSource, enabled: boolean) => {
       if (!runtimeReadyRef.current) throw new Error('通知存储尚未恢复，请先重试初始化');
+      if (!ownsRuntime()) return;
       const next = await setSourceNotificationIntent(source, enabled);
+      if (!ownsRuntime()) return;
       commitState(next);
       await syncBackground();
+      if (!ownsRuntime()) return;
       if (!enabled) {
         await dismissDisabledDigest(source, true);
       }
-      if (enabled) void refetchSnapshots();
+      if (enabled && ownsRuntime()) void refetchSnapshots();
     },
-    [commitState, refetchSnapshots, syncBackground, dismissDisabledDigest]
+    [commitState, ownsRuntime, refetchSnapshots, syncBackground, dismissDisabledDigest]
   );
 
   const backgroundEnabled = state.globalEnabled && permission === 'granted' && eligibleSourcesKey.length > 0;
@@ -982,6 +1187,7 @@ export function useNotificationsRuntime({
     identitySignature,
     enabledNotificationSources: enabledSources,
     permission,
+    readPermissionState,
     ready: runtimeReady,
     sessions,
     state,
@@ -989,6 +1195,7 @@ export function useNotificationsRuntime({
     openSystemSettings: openNotificationSystemSettings,
     onNavigationReady,
     refreshSnapshots: refetchSnapshots,
+    requestPermission,
     setCenterVisible,
     setGlobalEnabled,
     setSourceEnabled

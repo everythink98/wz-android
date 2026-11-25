@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { parseDataImageUrl } from '@/domain/forum/html';
 
 const { getDefaultUserAgent } = vi.hoisted(() => ({
   getDefaultUserAgent: vi.fn(async () => 'native-provider-user-agent')
@@ -9,7 +10,6 @@ vi.mock('@/platform/android/androidWebViewUserAgent', () => ({
 }));
 
 import {
-  dataImageFileFromUrl,
   forumMediaPlayerSourceFromUrl,
   imageRequestHeadersForUrl,
   imageSourceFromUrl,
@@ -103,7 +103,7 @@ describe('image request source', () => {
     expect(isPreviewableImageUrl('data:image/png;base64,abc')).toBe(true);
     expect(isPreviewableImageUrl('data:image/svg+xml;base64,abc')).toBe(false);
     expect(isPreviewableImageUrl('data:image/webp;base64,ok')).toBe(true);
-    expect(dataImageFileFromUrl('data:image/svg+xml;base64,abc')).toBeNull();
+    expect(parseDataImageUrl('data:image/svg+xml;base64,abc')).toBeNull();
   });
 
   it('allows external opening only for http and https URLs', () => {
@@ -129,12 +129,12 @@ describe('image request source', () => {
   });
 
   it('extracts base64 image file data from data URLs for local saving', () => {
-    expect(dataImageFileFromUrl('data:image/jpeg;base64,abc123')).toEqual({
+    expect(parseDataImageUrl('data:image/jpeg;base64,abc123')).toEqual({
       base64: 'abc123',
       extension: 'jpg'
     });
-    expect(dataImageFileFromUrl('data:text/plain;base64,abc123')).toBeNull();
-    expect(dataImageFileFromUrl('https://cdn.example.com/a.jpg')).toBeNull();
+    expect(parseDataImageUrl('data:text/plain;base64,abc123')).toBeNull();
+    expect(parseDataImageUrl('https://cdn.example.com/a.jpg')).toBeNull();
   });
 
   it('gives unknown NodeSeek image hosts the forum browser request profile', () => {

@@ -103,9 +103,11 @@ async function renderController(
 }
 
 describe('NodeSeek account check-in controller', () => {
-  it('keeps the committed account read single-flight while another account render is discarded', async () => {
+  it('keeps the committed check-in preflight single-flight while another account render is discarded', async () => {
     const response = Promise.withResolvers<NodeSeekAttendanceBoard>();
     const readAttendance = jest.fn(async () => response.promise);
+    const ensureWritableSession = jest.fn(async () => ticket);
+    const onConfirmed = jest.fn();
     const notify = jest.fn();
     const discarded = { ...ticket, identityKey: 'nodeseek:discarded', sessionEpoch: ticket.sessionEpoch + 1 };
     const never = new Promise<void>(() => undefined);
@@ -113,11 +115,12 @@ describe('NodeSeek account check-in controller', () => {
     function Probe({ current, suspend }: { current: WritableSessionTicket; suspend: boolean }) {
       const controller = useNodeSeekCheckInController({
         currentSessionTicket: current,
-        ensureWritableSession: async () => ticket,
+        ensureWritableSession,
         fetcher: fetch,
         isWritableSessionTicketCurrent: (candidate) => candidate === ticket,
         getNodeSeekUserAgent: () => 'WZ Test',
         notify,
+        onConfirmed,
         onSessionExpired: jest.fn(),
         readAttendance
       });
@@ -147,15 +150,15 @@ describe('NodeSeek account check-in controller', () => {
     let first: Promise<void> | undefined;
     let repeated: Promise<void> | undefined;
     try {
-      await act(() => {
-        first = committed!.refresh(ticket);
+      await act(async () => {
+        first = committed!.checkIn();
       });
       expect(readAttendance).toHaveBeenCalledTimes(1);
       await fireEvent.press(view.getByRole('button', { name: 'Render another account' }));
       expect(view.getByText(ticket.identityKey)).toBeTruthy();
       expect(view.queryByText('Uncommitted account')).toBeNull();
-      await act(() => {
-        repeated = committed!.refresh(ticket);
+      await act(async () => {
+        repeated = committed!.checkIn(true);
       });
       expect(readAttendance).toHaveBeenCalledTimes(1);
       await fireEvent.press(view.getByRole('button', { name: /discard account render/i }));
@@ -164,6 +167,10 @@ describe('NodeSeek account check-in controller', () => {
         await Promise.all([first, repeated]);
       });
       expect(committed?.state).toMatchObject({ kind: 'signed', record: { memberId: '7' } });
+      await act(async () => committed!.checkIn(true));
+      expect(readAttendance).toHaveBeenCalledTimes(1);
+      expect(ensureWritableSession).toHaveBeenCalledTimes(1);
+      expect(onConfirmed).not.toHaveBeenCalled();
     } finally {
       await act(async () => {
         response.resolve(attendanceBoard(true));
@@ -171,7 +178,7 @@ describe('NodeSeek account check-in controller', () => {
       });
       await view.unmount();
     }
-    expect(notify).not.toHaveBeenCalled();
+    expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
   });
 
   it.each(['identity', 'epoch', 'source-disabled', 'auth-surface', 'unchanged'])(
@@ -236,7 +243,6 @@ describe('NodeSeek account check-in controller', () => {
     await act(async () => {
       first = hook.result.current.checkIn();
       second = hook.result.current.checkIn(true);
-      await hook.result.current.refresh(ticket);
       await Promise.resolve();
     });
     expect(ensureWritableSession).toHaveBeenCalledTimes(1);
@@ -296,22 +302,6 @@ describe('NodeSeek account check-in controller', () => {
       expect(notify).toHaveBeenCalledWith('今日已签到，获得 7 鸡腿');
     }
   );
-
-  it('uses the current signed record without submitting attendance again', async () => {
-    const readAttendance = jest.fn(async () => attendanceBoard(true));
-    const { hook, ensureWritableSession, onConfirmed } = await renderController({ readAttendance });
-
-    await act(async () => {
-      await hook.result.current.checkIn(true);
-      await hook.result.current.checkIn(false);
-    });
-
-    expect(readAttendance).toHaveBeenCalledTimes(1);
-    expect(ensureWritableSession).toHaveBeenCalledTimes(1);
-    expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
-    expect(onConfirmed).not.toHaveBeenCalled();
-    expect(hook.result.current.state.kind).toBe('signed');
-  });
 
   it('does not submit when the read-only preflight fails', async () => {
     const readAttendance = jest
@@ -482,14 +472,14 @@ describe('NodeSeek account check-in controller', () => {
     expect(hook.result.current.state.kind).toBe(signed ? 'signed' : 'result-unknown');
     await act(async () => {
       await hook.result.current.checkIn(false);
-      await hook.result.current.refresh(ticket);
+      hook.result.current.observeBoard(attendanceBoard(signed), ticket);
       await hook.result.current.checkIn(true);
     });
 
     expect(hook.result.current.state.kind).toBe(signed ? 'signed' : 'result-unknown');
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(1);
-    expect(readAttendance).toHaveBeenCalledTimes(signed ? 3 : 5);
+    expect(readAttendance).toHaveBeenCalledTimes(signed ? 2 : 4);
     expect(ensureWritableSession).toHaveBeenCalledTimes(1);
     expect(onConfirmed).not.toHaveBeenCalled();
     expect(onSessionExpired).not.toHaveBeenCalled();

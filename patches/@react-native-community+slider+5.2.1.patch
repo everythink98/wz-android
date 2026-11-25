@@ -1,0 +1,69 @@
+diff --git a/node_modules/@react-native-community/slider/android/src/main/java/com/reactnativecommunity/slider/ReactSlider.java b/node_modules/@react-native-community/slider/android/src/main/java/com/reactnativecommunity/slider/ReactSlider.java
+index 19808941..2aab9172 100644
+--- a/node_modules/@react-native-community/slider/android/src/main/java/com/reactnativecommunity/slider/ReactSlider.java
++++ b/node_modules/@react-native-community/slider/android/src/main/java/com/reactnativecommunity/slider/ReactSlider.java
+@@ -7,8 +7,10 @@ import android.graphics.Canvas;
+ import android.graphics.Paint;
+ import android.graphics.PorterDuff;
+ import android.graphics.drawable.BitmapDrawable;
+ import android.os.Build;
++import android.os.SystemClock;
+ import android.util.Log;
+ import android.util.AttributeSet;
++import android.view.MotionEvent;
+ import android.view.accessibility.AccessibilityEvent;
+ import android.view.accessibility.AccessibilityManager;
+@@ -33,6 +35,37 @@ import com.facebook.react.modules.i18nmanager.I18nUtil;
+  * <p>Note that the slider is _not_ a controlled component (setValue isn't called during dragging).
+  */
+ public class ReactSlider extends AppCompatSeekBar {
++  private boolean trackingTouchCanceled;
++
++  @Override
++  public void setEnabled(boolean enabled) {
++    if (!enabled && isEnabled() && isSliding()) {
++      // SeekBar ignores ACTION_CANCEL while disabled.
++      long now = SystemClock.uptimeMillis();
++      MotionEvent cancel = MotionEvent.obtain(now, now, MotionEvent.ACTION_CANCEL, 0f, 0f, 0);
++      try {
++        onTouchEvent(cancel);
++      } finally {
++        cancel.recycle();
++      }
++    }
++    super.setEnabled(enabled);
++  }
++
++  @Override
++  public boolean onTouchEvent(MotionEvent event) {
++    boolean previous = trackingTouchCanceled;
++    trackingTouchCanceled = event.getActionMasked() == MotionEvent.ACTION_CANCEL;
++    try {
++      return super.onTouchEvent(event);
++    } finally {
++      trackingTouchCanceled = previous;
++    }
++  }
++
++  boolean isTrackingTouchCanceled() {
++    return trackingTouchCanceled;
++  }
+ 
+   /**
+    * If step is 0 (unset) we default to this total number of steps. Don't use 100 which leads to
+diff --git a/node_modules/@react-native-community/slider/android/src/main/java/com/reactnativecommunity/slider/ReactSliderManager.java b/node_modules/@react-native-community/slider/android/src/main/java/com/reactnativecommunity/slider/ReactSliderManager.java
+index bdd08f18..1c5ac92f 100644
+--- a/node_modules/@react-native-community/slider/android/src/main/java/com/reactnativecommunity/slider/ReactSliderManager.java
++++ b/node_modules/@react-native-community/slider/android/src/main/java/com/reactnativecommunity/slider/ReactSliderManager.java
+@@ -72,8 +72,10 @@ public class ReactSliderManager extends SimpleViewManager<ReactSlider> implement
+ 
+             @Override
+             public void onStopTrackingTouch(SeekBar seekbar) {
++              ReactSlider slider = (ReactSlider)seekbar;
++              slider.isSliding(false);
++              if (slider.isTrackingTouchCanceled()) return;
+               ReactContext reactContext = (ReactContext) seekbar.getContext();
+-              ((ReactSlider)seekbar).isSliding(false);
+               int reactTag = seekbar.getId();
+ 
+               EventDispatcher eventDispatcher = UIManagerHelper.getEventDispatcherForReactTag(reactContext, reactTag);

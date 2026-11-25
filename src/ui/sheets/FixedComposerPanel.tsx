@@ -214,6 +214,7 @@ export function FixedComposerPanel({
         key="fixed-composer-panel"
         ref={keyboardHostRef}
         enabled={presented}
+        dismissOnDisable
         hiddenLayoutHeight={hiddenLayoutHeight}
         testID="composer-bottom-sheet"
         pointerEvents={presented ? 'auto' : 'none'}

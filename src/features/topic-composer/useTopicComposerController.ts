@@ -5,6 +5,7 @@ import type { Topic } from '@/domain/forum/models';
 import {
   applyTopicCategory,
   applyTopicEditReceipt,
+  draftFromTopicEdit,
   normalizedTopicEditInput,
   topicSubmissionWithReceipt,
   emptyTopicDraft,
@@ -14,24 +15,32 @@ import {
   type TopicCreationSource,
   type TopicDraft,
   type TopicDraftAttachment,
+  type TopicEditContext,
   type TopicSubmissionAttempt,
   type TopicSubmissionReceipt,
   hasTopicEditChanges,
   topicDraftTarget,
   topicEditChanges,
+  topicEditConflict,
   validateTopicEdit,
   yaohuoFileBytePolicy,
   type TopicComposerIntent
 } from '@/domain/forum/topicComposer';
-import type { ComposerSnapshot } from '@/domain/forum/structuredComposer';
+import { firstNodeSeekStardustIssue, type ComposerSnapshot } from '@/domain/forum/structuredComposer';
 import { editLinuxDoTopic } from '@/sources/linuxdo/topicEditing';
 import { editNodeSeekTopic } from '@/sources/nodeseek/topicEditing';
 import { editYaohuoTopic } from '@/sources/yaohuo/topicEditing';
 import { siteSessionIdentityKey } from '@/domain/session/siteSessionState';
 import type { WritableSessionTicket } from '@/domain/session/writableSessionGate';
-import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
+import type { ReadRecovery } from '@/platform/query/readRecovery';
 import { errorMessage } from '@/platform/network/errors';
-import { withRequestBeforeSend, type Fetcher, type RequestDispatchState } from '@/platform/network/request';
+import {
+  RequestCanceledError,
+  isDefinitiveHttpRejection,
+  withRequestBeforeSend,
+  type Fetcher,
+  type RequestDispatchState
+} from '@/platform/network/request';
 import {
   acknowledgeTopicSubmissionAttempt,
   beginTopicSubmissionAttempt,
@@ -66,7 +75,12 @@ import type { TopicComposerRouteRuntimeValue } from './TopicComposerRouteRuntime
 import { uploadTopicAttachment, validateTopicAttachment } from './topicCreationActions';
 import { TopicDraftConflictError, useTopicDraftPersistence } from './useTopicDraftPersistence';
 import { useTopicComposerOperation } from './useTopicComposerOperation';
-import { useTopicDraftHydration } from './useTopicDraftHydration';
+import {
+  readTopicDraftAndAttempt,
+  serializeTopicDraftInputSnapshot,
+  useTopicDraftHydration,
+  type UntouchedEditBaseline
+} from './useTopicDraftHydration';
 import { useTopicDraftContext } from './useTopicDraftContext';
 
 type UploadJob = { abort: AbortController; promise: Promise<string | undefined> };
@@ -75,6 +89,22 @@ type AttachmentWork =
   | { kind: 'picking' }
   | { kind: 'upload'; upload: UploadJob }
   | { kind: 'picking-upload'; upload: UploadJob };
+
+type RemoteEditReplacement = {
+  previous: TopicDraft;
+  draft: TopicDraft;
+  stored: TopicDraft;
+  origin: { kind: 'hydration'; editing: TopicEditContext } | { kind: 'rules'; signal: AbortSignal };
+  sessionEpoch: number;
+  ownsFocus(): boolean;
+  finish(result: RemoteEditReplacementResult): void;
+  onReady(): void;
+};
+type RemoteEditReplacementResult = { kind: 'accepted' | 'canceled' } | { kind: 'failed'; cause: unknown };
+type RemoteEditReplacementState = {
+  phase: 'awaiting-editor' | 'checking-storage';
+  request: RemoteEditReplacement;
+};
 
 function isPicking(work: AttachmentWork) {
   return work.kind === 'picking' || work.kind === 'picking-upload';
@@ -161,6 +191,7 @@ export function useTopicComposerController({
   const initialSource = intent.kind === 'edit' ? intent.source : intent.initialSource;
   const editTopicId = intent.kind === 'edit' ? intent.topicId : undefined;
   const target = editTopicId ? `edit:${editTopicId}` : 'create';
+  const targetRef = useCommittedRef(target);
   const runtimeRef = useCommittedRef(runtime);
   const activeRef = useCommittedRef(active);
   const confirmationFocusOwner = useRef<object | null>(null);
@@ -196,9 +227,33 @@ export function useTopicComposerController({
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const [attempt, setAttempt] = useState<TopicSubmissionAttempt | null>(null);
+  const attemptRef = useRef<TopicSubmissionAttempt | null>(null);
+  const untouchedEditBaselineRef = useRef<UntouchedEditBaseline | null>(null);
+  const mounted = useRef(true);
+  const [remoteLift, setRemoteLift] = useState<RemoteEditReplacementState | null>(null);
+  const currentRemoteLift = useRef<RemoteEditReplacementState | null>(null);
+  const publishRemoteLift = useCallback((state: RemoteEditReplacementState | null) => {
+    currentRemoteLift.current = state;
+    if (mounted.current) setRemoteLift(state);
+  }, []);
+  const finishRemoteLift = useCallback(
+    (request: RemoteEditReplacement, result: RemoteEditReplacementResult) => {
+      if (currentRemoteLift.current?.request !== request) return;
+      publishRemoteLift(null);
+      request.finish(result);
+    },
+    [publishRemoteLift]
+  );
+  const cancelRemoteLift = useCallback(() => {
+    const request = currentRemoteLift.current?.request;
+    if (request) finishRemoteLift(request, { kind: 'canceled' });
+  }, [finishRemoteLift]);
   const [draftSites, setDraftSites] = useState<Partial<Record<TopicCreationSource, boolean>>>({});
 
-  const mounted = useRef(true);
+  const installAttempt = useCallback((value: TopicSubmissionAttempt | null) => {
+    attemptRef.current = value;
+    if (mounted.current) setAttempt(value);
+  }, []);
   const showReconciledAttempt = useCallback(
     (receipt: TopicSubmissionAttempt) => {
       if (
@@ -209,10 +264,14 @@ export function useTopicComposerController({
         return;
       const completed = receipt.status === 'saved' || receipt.status === 'posted' || receipt.status === 'enqueued';
       if (completed) completedSubmission.current = receipt;
-      setAttempt(receipt);
-      setError(completed ? '' : receipt.result?.message || '');
+      installAttempt(receipt);
+      setError(
+        completed
+          ? ''
+          : receipt.result?.message || (receipt.status === 'partial' ? '部分修改已保存，请核对剩余修改后继续' : '')
+      );
     },
-    [runtimeRef]
+    [installAttempt, runtimeRef]
   );
   const {
     busy,
@@ -230,6 +289,7 @@ export function useTopicComposerController({
     edited: markDraftEdited,
     restored: restoreDraftPersistence,
     restorationFailed: reportDraftRestorationFailure,
+    conflict: reportDraftConflict,
     retire: retireDraft,
     fresh: markFreshDraft,
     discarded: markDraftDiscarded,
@@ -314,9 +374,23 @@ export function useTopicComposerController({
     (snapshot: ComposerSnapshot, draftId?: string) => {
       const current = draftRef.current;
       if (!current || (draftId && current.id !== draftId) || current.source === 'yaohuo') return;
-      if (current.edit && snapshot.revision === 0) return;
       recordSnapshot(current.id, snapshot.validationIssues);
-      if (snapshot.revision === 0) return;
+      if (current.edit && snapshot.revision === 0) return;
+      if (snapshot.revision === 0) {
+        if (current.mode === snapshot.mode) return;
+        if (!hasSavedDraft(current.id) && current.revision === 0) {
+          installDraft({ ...current, mode: snapshot.mode });
+          return;
+        }
+        installDraft({
+          ...current,
+          mode: snapshot.mode,
+          revision: current.revision + 1,
+          updatedAt: Date.now()
+        });
+        markDraftEdited();
+        return;
+      }
       const contentChanged =
         current.body !== snapshot.markdown ||
         JSON.stringify(current.pendingNodeSeekPolls) !== JSON.stringify(snapshot.pendingNodeSeekPolls);
@@ -341,7 +415,7 @@ export function useTopicComposerController({
           Object.fromEntries(Object.entries(previous).filter(([key]) => key !== 'body' && key !== 'poll'))
         );
     },
-    [installDraft, markDraftEdited, recordSnapshot]
+    [hasSavedDraft, installDraft, markDraftEdited, recordSnapshot]
   );
 
   const flush = useCallback(() => {
@@ -353,9 +427,10 @@ export function useTopicComposerController({
     mounted.current = true;
     return () => {
       mounted.current = false;
+      cancelRemoteLift();
       getUploadJob(attachmentWork.current)?.abort.abort();
     };
-  }, []);
+  }, [cancelRemoteLift]);
   useEffect(() => {
     if (initialSource) return;
     let alive = true;
@@ -500,7 +575,7 @@ export function useTopicComposerController({
           else reject(result.error);
         };
         const cancel = () => finish({ error: new Error('验证已取消，草稿已保留，请重试读取') });
-        const recovery: LinuxDoReadRecovery = {
+        const recovery: ReadRecovery = {
           queryKey: ['create-topic', value.identityKey, value.id, epoch, ...key],
           isCurrent,
           cancel,
@@ -540,28 +615,63 @@ export function useTopicComposerController({
     },
     [assertOwner, runtimeRef]
   );
-  const { loading, retry: retryDraft } = useTopicDraftHydration({
+  const {
+    loading,
+    retry: retryDraft,
+    recoverInitialEditRead
+  } = useTopicDraftHydration({
     scope: { source, identityKey, target, editTopicId },
+    sessionEpoch: source ? runtime.sessionEpochs[source] : 0,
     getDraft: () => draftRef.current,
     waitForPendingUpload: () => getUploadJob(attachmentWork.current)?.promise,
     flush,
     persist,
     readEditContext,
+    captureEditVerification: ({ identityKey, target, sessionEpoch }) => {
+      const ownsFocus = captureConfirmationFocus();
+      return {
+        isCurrent: () =>
+          ownsFocus() &&
+          runtimeRef.current.appActive &&
+          runtimeRef.current.enabledSources.includes('linuxdo') &&
+          targetRef.current === target &&
+          runtimeRef.current.sessionEpochs.linuxdo === sessionEpoch &&
+          siteSessionIdentityKey(runtimeRef.current.sessions.linuxdo) === identityKey,
+        open: (message, recovery) => runtimeRef.current.openAccount('linuxdo', message, recovery)
+      };
+    },
+    reportVerificationError: (cause) => setError(errorMessage(cause)),
     started: () => {
+      untouchedEditBaselineRef.current = null;
+      cancelRemoteLift();
       setError('');
       resetDraftContext();
       setErrors({});
     },
     restored: (result) => {
       if (!result.draft) {
+        untouchedEditBaselineRef.current = null;
+        cancelRemoteLift();
         installDraft(null);
-        setAttempt(null);
+        installAttempt(null);
         return;
       }
-      restoreDraftPersistence(result.stored);
-      installDraft(result.draft);
-      if (result.editing) installRestoredEdit(result.editing);
-      setAttempt(result.attempt);
+      untouchedEditBaselineRef.current = result.untouchedEditBaseline;
+      const previous = draftRef.current;
+      if (result.editing && result.bodySource === 'remote' && result.stored && previous?.id === result.draft.id) {
+        void stageRemoteLift({
+          previous,
+          draft: result.draft,
+          stored: result.stored,
+          origin: { kind: 'hydration', editing: result.editing }
+        });
+      } else {
+        cancelRemoteLift();
+        restoreDraftPersistence(result.draft, result.stored, result.bodySource);
+        installDraft(result.draft);
+        if (result.editing) installRestoredEdit(result.editing, result.verifiedNow ? result.draft.id : undefined);
+      }
+      installAttempt(result.attempt);
       if (result.attempt?.status === 'partial' && result.attempt.draftId === result.draft.id)
         setError(result.attempt.result?.message || '部分修改已保存，请核对剩余修改后继续');
     },
@@ -588,7 +698,13 @@ export function useTopicComposerController({
     target,
     draft,
     sessionEpoch: source ? runtime.sessionEpochs[source] : 0,
-    canRead: !loading && active && runtime.appActive && enabled && Boolean(session?.canWrite),
+    canRead:
+      !loading &&
+      active &&
+      runtime.appActive &&
+      enabled &&
+      Boolean(session?.canWrite) &&
+      remoteLift?.request.origin.kind !== 'hydration',
     getDraft: () => draftRef.current,
     readRules: async (value, signal) => {
       const read = async () => {
@@ -614,7 +730,82 @@ export function useTopicComposerController({
         assertOwner(value, access.ticket);
         return { context, editing: null };
       };
-      return readWithVerification(value, signal, ['rules'], read);
+      const resolved = await readWithVerification(value, signal, ['rules'], read);
+      const editing = resolved.editing;
+      const fallback = untouchedEditBaselineRef.current;
+      if (
+        !editing ||
+        !fallback ||
+        fallback.draftId !== value.id ||
+        fallback.source !== editing.source ||
+        fallback.account !== editing.identityKey ||
+        fallback.target !== `edit:${editing.topicId}`
+      ) {
+        return resolved;
+      }
+      const matchesUntouchedSnapshot = (candidate: TopicDraft | null) =>
+        Boolean(
+          candidate &&
+          candidate.id === fallback.draftId &&
+          candidate.source === fallback.source &&
+          candidate.identityKey === fallback.account &&
+          topicDraftTarget(candidate) === fallback.target &&
+          candidate.revision === fallback.revision &&
+          serializeTopicDraftInputSnapshot(candidate) === fallback.inputSnapshot
+        );
+      const routeLocalChangeConflict = (currentDraft: TopicDraft | null) => {
+        untouchedEditBaselineRef.current = null;
+        if (currentDraft?.edit && topicEditConflict(currentDraft.edit.original, editing.original))
+          setError('原站内容已更新，请先核对后再保存');
+        return resolved;
+      };
+      if (!matchesUntouchedSnapshot(draftRef.current)) return routeLocalChangeConflict(draftRef.current);
+
+      const { stored: storedNow, attempt: attemptNow } = await readTopicDraftAndAttempt(
+        fallback.source,
+        fallback.account,
+        fallback.target
+      );
+      if (signal.aborted) throw new Error('编辑读取已失效');
+      assertOwner(value);
+      if (untouchedEditBaselineRef.current !== fallback) return resolved;
+      const previous = draftRef.current;
+      if (!previous || !matchesUntouchedSnapshot(previous)) return routeLocalChangeConflict(previous);
+
+      if (attemptNow?.status === 'sending' || attemptNow?.status === 'unknown') {
+        installAttempt(attemptNow);
+        return resolved;
+      }
+      if (attemptNow && attemptNow.draftId === fallback.draftId) {
+        untouchedEditBaselineRef.current = null;
+        if (attemptNow.status !== 'saved' || attemptNow.revision === fallback.revision)
+          showReconciledAttempt(attemptNow);
+        if (!matchesUntouchedSnapshot(storedNow)) {
+          reportDraftConflict(fallback.draftId);
+          setError(new TopicDraftConflictError().message);
+        }
+        return resolved;
+      }
+      if (!storedNow || !matchesUntouchedSnapshot(storedNow)) {
+        untouchedEditBaselineRef.current = null;
+        reportDraftConflict(fallback.draftId);
+        setError(new TopicDraftConflictError().message);
+        return resolved;
+      }
+
+      const remoteDraft: TopicDraft = {
+        ...draftFromTopicEdit(editing),
+        id: storedNow.id,
+        updatedAt: storedNow.updatedAt
+      };
+      const accepted = await stageRemoteLift({
+        previous,
+        draft: remoteDraft,
+        stored: storedNow,
+        origin: { kind: 'rules', signal }
+      });
+      if (!accepted) throw new RequestCanceledError();
+      return resolved;
     },
     readEmojis: (signal) => runtimeRef.current.getEmojiUrls({ source: 'linuxdo', signal }),
     rulesReady: (value, rules) => {
@@ -636,6 +827,241 @@ export function useTopicComposerController({
       }
     }
   });
+  const validateRemoteLift = useCallback(
+    (request: RemoteEditReplacement) => {
+      if (currentRemoteLift.current?.request !== request) return false;
+      const { previous } = request;
+      try {
+        assertOwner(previous);
+        if (
+          !request.ownsFocus() ||
+          topicDraftTarget(previous) !== targetRef.current ||
+          runtimeRef.current.sessionEpochs[previous.source] !== request.sessionEpoch
+        ) {
+          finishRemoteLift(request, { kind: 'canceled' });
+          return false;
+        }
+      } catch {
+        finishRemoteLift(request, { kind: 'canceled' });
+        return false;
+      }
+      const current = draftRef.current;
+      if (current === previous) return true;
+      untouchedEditBaselineRef.current = null;
+      if (current?.edit && request.draft.edit && topicEditConflict(current.edit.original, request.draft.edit.original))
+        setError('原站内容已更新，请先核对后再保存');
+      finishRemoteLift(request, { kind: 'accepted' });
+      return false;
+    },
+    [assertOwner, finishRemoteLift, runtimeRef, targetRef]
+  );
+  const completeRemoteLift = useCallback(
+    async (request: RemoteEditReplacement) => {
+      if (currentRemoteLift.current?.phase !== 'awaiting-editor' || !validateRemoteLift(request)) return;
+      publishRemoteLift({ phase: 'checking-storage', request });
+      const { previous } = request;
+      try {
+        const { stored, attempt } = await readTopicDraftAndAttempt(
+          previous.source,
+          previous.identityKey,
+          topicDraftTarget(previous)
+        );
+        if (!validateRemoteLift(request)) return;
+        if (attempt?.status === 'sending' || attempt?.status === 'unknown') {
+          installAttempt(attempt);
+        } else {
+          untouchedEditBaselineRef.current = null;
+          if (
+            !stored ||
+            serializeTopicDraftInputSnapshot(stored) !== serializeTopicDraftInputSnapshot(request.stored)
+          ) {
+            reportDraftConflict(previous.id);
+            setError(new TopicDraftConflictError().message);
+          } else if (attempt?.draftId === previous.id) {
+            if (attempt.status !== 'saved' || attempt.revision === previous.revision) showReconciledAttempt(attempt);
+          } else {
+            installDraft(request.draft);
+            restoreDraftPersistence(request.draft, stored, 'remote');
+          }
+        }
+        finishRemoteLift(request, { kind: 'accepted' });
+      } catch (cause) {
+        if (validateRemoteLift(request)) finishRemoteLift(request, { kind: 'failed', cause });
+      }
+    },
+    [
+      finishRemoteLift,
+      installAttempt,
+      installDraft,
+      publishRemoteLift,
+      reportDraftConflict,
+      restoreDraftPersistence,
+      showReconciledAttempt,
+      validateRemoteLift
+    ]
+  );
+  const stageRemoteLift = useCallback(
+    (input: Pick<RemoteEditReplacement, 'previous' | 'draft' | 'stored' | 'origin'>) => {
+      const { origin } = input;
+      const signal = origin.kind === 'rules' ? origin.signal : undefined;
+      const ownsFocus = captureConfirmationFocus();
+      if (signal?.aborted || !ownsFocus()) return Promise.resolve(false);
+      cancelRemoteLift();
+      return new Promise<boolean>((resolve, reject) => {
+        const cancel = () => finishRemoteLift(request, { kind: 'canceled' });
+        const request: RemoteEditReplacement = {
+          ...input,
+          sessionEpoch: runtimeRef.current.sessionEpochs[input.previous.source],
+          ownsFocus,
+          onReady: () => {
+            void completeRemoteLift(request);
+          },
+          finish: (result) => {
+            signal?.removeEventListener('abort', cancel);
+            if (origin.kind === 'hydration') {
+              if (result.kind === 'accepted') installRestoredEdit(origin.editing);
+              if (result.kind === 'failed') {
+                reportDraftRestorationFailure(result.cause);
+                setError(errorMessage(result.cause));
+              }
+            } else if (result.kind === 'failed') {
+              reject(result.cause);
+              return;
+            }
+            resolve(result.kind === 'accepted');
+          }
+        };
+        signal?.addEventListener('abort', cancel, { once: true });
+        publishRemoteLift({ phase: 'awaiting-editor', request });
+      });
+    },
+    [
+      cancelRemoteLift,
+      captureConfirmationFocus,
+      completeRemoteLift,
+      finishRemoteLift,
+      installRestoredEdit,
+      publishRemoteLift,
+      reportDraftRestorationFailure,
+      runtimeRef
+    ]
+  );
+  const pageFocused = active && runtime.appActive;
+  const sessionEpoch = source ? runtime.sessionEpochs[source] : 0;
+  useEffect(() => {
+    if (!remoteLift || !validateRemoteLift(remoteLift.request)) return;
+    if (remoteLift.phase === 'awaiting-editor' && draft?.source === 'yaohuo') remoteLift.request.onReady();
+  }, [draft, enabled, identityKey, pageFocused, remoteLift, sessionEpoch, target, validateRemoteLift]);
+  const wasFocusedRef = useRef(pageFocused);
+  const refocusReceiptRunRef = useRef(0);
+  useEffect(() => {
+    const regained = pageFocused && !wasFocusedRef.current;
+    wasFocusedRef.current = pageFocused;
+    if (!pageFocused) {
+      refocusReceiptRunRef.current += 1;
+      return;
+    }
+    if (!regained || loading || operationSubmitting()) return;
+    const currentDraft = draftRef.current;
+    if (
+      !source ||
+      !identityKey ||
+      identityKey.endsWith(':anonymous') ||
+      !currentDraft ||
+      currentDraft.source !== source ||
+      currentDraft.identityKey !== identityKey
+    )
+      return;
+    const checkedSource = source;
+    const checkedIdentityKey = identityKey;
+    const checkedTarget = topicDraftTarget(currentDraft);
+    const checkedDraftId = currentDraft.id;
+    const runId = ++refocusReceiptRunRef.current;
+    void readTopicSubmissionAttempt(checkedSource, checkedIdentityKey, checkedTarget)
+      .then((persisted) => {
+        if (
+          !mounted.current ||
+          refocusReceiptRunRef.current !== runId ||
+          operationSubmitting() ||
+          sourceRef.current !== checkedSource ||
+          siteSessionIdentityKey(runtimeRef.current.sessions[checkedSource]) !== checkedIdentityKey
+        )
+          return;
+        const liveDraft = draftRef.current;
+        if (!liveDraft || liveDraft.id !== checkedDraftId || topicDraftTarget(liveDraft) !== checkedTarget) return;
+        const currentAttempt = attemptRef.current;
+        const currentUnresolved = currentAttempt?.status === 'sending' || currentAttempt?.status === 'unknown';
+        const persistedUnresolved = persisted?.status === 'sending' || persisted?.status === 'unknown';
+        const clearWait = () => {
+          if (!currentUnresolved) return;
+          const staleMessage = currentAttempt.result?.message;
+          installAttempt(null);
+          setError((previous) =>
+            previous === '请先核对上次保存结果' || (staleMessage && previous === staleMessage) ? '' : previous
+          );
+          if (untouchedEditBaselineRef.current?.draftId === liveDraft.id) reloadContext();
+        };
+        if (persistedUnresolved) {
+          if (
+            currentAttempt?.id !== persisted.id ||
+            currentAttempt.status !== persisted.status ||
+            currentAttempt.result?.message !== persisted.result?.message
+          )
+            installAttempt(persisted);
+          return;
+        }
+        if (!persisted) {
+          clearWait();
+          return;
+        }
+        if (persisted.draftId === liveDraft.id) {
+          if (currentAttempt?.id === persisted.id && currentAttempt.status === persisted.status) return;
+          if (
+            persisted.status === 'saved' &&
+            liveDraft.edit?.confirmedAttemptId === persisted.id &&
+            persisted.revision !== liveDraft.revision
+          ) {
+            if (currentUnresolved) installAttempt(null);
+            return;
+          }
+          if (
+            persisted.status === 'partial' ||
+            (persisted.status === 'saved' && persisted.revision !== liveDraft.revision)
+          ) {
+            const updated = applyTopicEditReceipt(liveDraft, persisted);
+            if (updated !== liveDraft) installDraft(updated);
+          }
+          showReconciledAttempt(persisted);
+          if (
+            (persisted.status === 'posted' || persisted.status === 'enqueued') &&
+            liveDraft.revision === persisted.revision
+          ) {
+            untouchedEditBaselineRef.current = null;
+            retireDraft(liveDraft.id);
+            installDraft(emptyTopicDraft(liveDraft.source, liveDraft.identityKey));
+            markFreshDraft();
+            setDraftSites((previous) => ({ ...previous, [liveDraft.source]: false }));
+          }
+          return;
+        }
+        clearWait();
+      })
+      .catch(() => undefined);
+  }, [
+    identityKey,
+    installAttempt,
+    installDraft,
+    loading,
+    markFreshDraft,
+    operationSubmitting,
+    pageFocused,
+    reloadContext,
+    retireDraft,
+    runtimeRef,
+    showReconciledAttempt,
+    source,
+    sourceRef
+  ]);
   useEffect(() => {
     if (!draft || loading) return;
     const timer = setTimeout(() => {
@@ -732,8 +1158,28 @@ export function useTopicComposerController({
     [persist, installDraft]
   );
 
+  const captureLinuxDoVerification = useCallback(() => {
+    const ownsFocus = captureConfirmationFocus();
+    const linuxDoEpoch = runtimeRef.current.sessionEpochs.linuxdo;
+    return (value: TopicDraft, message: string, ticket?: WritableSessionTicket) => {
+      if (
+        value.source !== 'linuxdo' ||
+        !ownsFocus() ||
+        runtimeRef.current.sessionEpochs.linuxdo !== linuxDoEpoch ||
+        !runtimeRef.current.sessions.linuxdo.canWrite
+      )
+        return;
+      try {
+        assertOwner(value, ticket);
+      } catch {
+        return;
+      }
+      void (async () => runtimeRef.current.openAccount('linuxdo', message))().catch(() => undefined);
+    };
+  }, [assertOwner, captureConfirmationFocus, runtimeRef]);
+
   const submit = useCallback(async () => {
-    if (getUploadJob(attachmentWork.current) || loading) return;
+    if (getUploadJob(attachmentWork.current) || loading || currentRemoteLift.current) return;
     if (
       editTopicId &&
       (!editContext ||
@@ -744,18 +1190,7 @@ export function useTopicComposerController({
       return;
     const run = beginOperation('submitting');
     if (!run) return;
-    const ownsFocus = captureConfirmationFocus();
-    const linuxDoEpoch = runtimeRef.current.sessionEpochs.linuxdo;
-    const showVerification = (value: TopicDraft, message: string) => {
-      if (value.source !== 'linuxdo' || !ownsFocus() || runtimeRef.current.sessionEpochs.linuxdo !== linuxDoEpoch)
-        return;
-      try {
-        assertOwner(value);
-      } catch {
-        return;
-      }
-      void (async () => runtimeRef.current.openAccount('linuxdo', message))().catch(() => undefined);
-    };
+    const showVerification = captureLinuxDoVerification();
     setError('');
     const dispatchState: RequestDispatchState = { mayHaveSent: false };
     let owner = editTopicId ? null : draftRef.current;
@@ -774,7 +1209,7 @@ export function useTopicComposerController({
           previous.status === 'saved' &&
           previous.revision === draftRef.current?.revision
         ) {
-          setAttempt(previous);
+          installAttempt(previous);
           return;
         }
         if (previous && previous.status !== 'sending' && previous.status !== 'unknown')
@@ -785,7 +1220,7 @@ export function useTopicComposerController({
           return;
         }
         if (previous?.status === 'unknown' || previous?.status === 'sending') {
-          setAttempt(previous);
+          installAttempt(previous);
           throw new Error('请先核对上次保存结果');
         }
       }
@@ -793,8 +1228,20 @@ export function useTopicComposerController({
       if (!value || !rules || (!editing && rules.source !== value.source))
         throw new Error('请先加载当前站点的发帖设置');
       const validation = editing ? validateTopicEdit(value, editing) : validateTopicDraft(value, rules);
-      const issue = snapshotIssue(value.id);
+      const sendsBody = !editing || value.source !== 'linuxdo' || value.body !== value.edit?.original.body;
+      const issue = sendsBody ? snapshotIssue(value.id) : undefined;
       if (issue) validation.body = issue;
+      if (value.source === 'nodeseek' && !validation.body) {
+        const memberId = runtimeRef.current.sessions.nodeseek.currentUser?.id;
+        let markerIssue = firstNodeSeekStardustIssue(value.body, memberId);
+        if (markerIssue) {
+          // eslint-disable-next-line @typescript-eslint/no-require-imports -- Only load the parser for a possible blocker on submit.
+          const code = require('@/domain/forum/markdownCode') as typeof import('@/domain/forum/markdownCode');
+          const activeMarkdown = code.maskMarkdownCode(value.body);
+          if (activeMarkdown !== value.body) markerIssue = firstNodeSeekStardustIssue(activeMarkdown, memberId);
+        }
+        if (markerIssue) validation.body = markerIssue;
+      }
       setErrors(validation);
       if (Object.keys(validation).length) return;
 
@@ -882,7 +1329,7 @@ export function useTopicComposerController({
       };
       await beginTopicSubmissionAttempt(submission);
       recorded = submission;
-      setAttempt(submission);
+      installAttempt(submission);
       let body = value.body;
       if (value.source === 'nodeseek' && (!editing || value.pendingNodeSeekPolls.length)) {
         body = await materializePendingNodeSeekPolls({
@@ -961,11 +1408,12 @@ export function useTopicComposerController({
         siteSessionIdentityKey(runtimeRef.current.sessions[value.source]) !== value.identityKey
       )
         return;
-      setAttempt(receipt);
+      installAttempt(receipt);
       if (result.status === 'saved') runtimeRef.current.notify(result.message);
       else if (published) {
         const canNavigate = activeRef.current && runtimeRef.current.enabledSources.includes(value.source);
         if (draftRef.current.revision === value.revision) {
+          untouchedEditBaselineRef.current = null;
           retireDraft(value.id);
           if (!canNavigate) {
             installDraft(emptyTopicDraft(value.source, value.identityKey));
@@ -1006,7 +1454,7 @@ export function useTopicComposerController({
     editContext,
     attempt,
     beginOperation,
-    captureConfirmationFocus,
+    captureLinuxDoVerification,
     flush,
     applyConfirmedEdit,
     confirmOnCurrentRoute,
@@ -1021,6 +1469,7 @@ export function useTopicComposerController({
     acceptSnapshot,
     activeRef,
     retireDraft,
+    installAttempt,
     installDraft,
     markFreshDraft,
     onPosted,
@@ -1077,8 +1526,9 @@ export function useTopicComposerController({
         siteSessionIdentityKey(runtimeRef.current.sessions[attempt.source]) !== attempt.identityKey
       )
         return;
-      setAttempt(null);
+      installAttempt(null);
       setError('');
+      if (untouchedEditBaselineRef.current?.draftId === draftRef.current?.id) reloadContext();
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -1094,7 +1544,9 @@ export function useTopicComposerController({
     applyConfirmedEdit,
     operationSubmitting,
     beginOperation,
+    installAttempt,
     showReconciledAttempt,
+    reloadContext,
     releaseOperation
   ]);
   const discard = useCallback(async () => {
@@ -1118,6 +1570,8 @@ export function useTopicComposerController({
         !(await discardTopicDraft(value.source, value.identityKey, value.id, value.revision, topicDraftTarget(value)))
       )
         throw new Error('草稿已更新，请重试');
+      untouchedEditBaselineRef.current = null;
+      cancelRemoteLift();
       retireDraft(value.id);
       if (draftRef.current?.id === value.id) {
         if (value.edit) {
@@ -1141,6 +1595,7 @@ export function useTopicComposerController({
     installDraft,
     markDraftDiscarded,
     onAccepted,
+    cancelRemoteLift,
     releaseOperation,
     retireDraft,
     runtimeRef
@@ -1165,8 +1620,10 @@ export function useTopicComposerController({
       if (!value || !context || context.source !== value.source) return Promise.resolve(undefined);
       if (value.edit && !editContext?.permissions.body) return Promise.resolve(undefined);
       const abort = new AbortController();
+      const showVerification = captureLinuxDoVerification();
       const promise = (async () => {
         const markups: string[] = [];
+        let pendingVerification: { message: string; ticket: WritableSessionTicket } | undefined;
         const updateFile = async (id: string, patch: Partial<TopicDraftAttachment>) => {
           const current = draftRef.current;
           if (!current || current.id !== value.id || current.identityKey !== value.identityKey)
@@ -1258,20 +1715,33 @@ export function useTopicComposerController({
             } catch (cause) {
               // Only an explicit request rejection confirms that an upload did not succeed.
               // Timeout/conflict responses, 5xx and a lost response still require reconciliation.
-              const unknown =
-                dispatchState.mayHaveSent &&
-                ![400, 401, 403, 404, 405, 413, 415, 422, 429].includes(uploadResponseStatus || 0);
+              const unknown = dispatchState.mayHaveSent && !isDefinitiveHttpRejection(uploadResponseStatus);
+              const verificationRequired =
+                !confirmedMarkup &&
+                value.source === 'linuxdo' &&
+                sourceErrorFromUnknown('linuxdo', cause).kind === 'verification-required';
+              const message =
+                verificationRequired && unknown
+                  ? `${errorMessage(cause)}；上传结果未知，请先核对，勿重复上传`
+                  : errorMessage(cause);
               if (!confirmedMarkup)
                 await updateFile(file.id, {
                   status: unknown ? 'unknown' : abort.signal.aborted && !uploadResponseStatus ? 'queued' : 'failed',
                   error: unknown ? '上传结果未知，请先核对，勿重复上传' : errorMessage(cause)
                 });
-              if (mounted.current && !abort.signal.aborted)
+              if (
+                mounted.current &&
+                !abort.signal.aborted &&
+                draftRef.current?.id === value.id &&
+                siteSessionIdentityKey(runtimeRef.current.sessions[value.source]) === value.identityKey
+              )
                 setError(
                   confirmedMarkup
                     ? `${file.kind === 'image' ? '图片已上传，可在“更多 → 图片上传记录”中再次插入' : '附件已上传，可在附件面板中再次插入'}：${errorMessage(cause)}`
-                    : errorMessage(cause)
+                    : message
                 );
+              if (verificationRequired && !abort.signal.aborted)
+                pendingVerification = { message, ticket: access.ticket };
               break;
             } finally {
               // Only the captured editor owns this token; a restored draft must never receive it.
@@ -1279,11 +1749,18 @@ export function useTopicComposerController({
             }
           }
         } catch (cause) {
-          if (mounted.current) setError(errorMessage(cause));
+          if (
+            mounted.current &&
+            draftRef.current?.id === value.id &&
+            siteSessionIdentityKey(runtimeRef.current.sessions[value.source]) === value.identityKey
+          )
+            setError(errorMessage(cause));
         } finally {
           attachmentWork.current = isPicking(attachmentWork.current) ? { kind: 'picking' } : { kind: 'idle' };
           if (mounted.current) setUploading(false);
         }
+        if (pendingVerification && !abort.signal.aborted)
+          showVerification(value, pendingVerification.message, pendingVerification.ticket);
         return markups.length ? markups.join('\n') : undefined;
       })();
       const upload = { abort, promise };
@@ -1294,6 +1771,7 @@ export function useTopicComposerController({
     },
     [
       assertOwner,
+      captureLinuxDoVerification,
       confirmOnCurrentRoute,
       context,
       installDraft,
@@ -1486,6 +1964,7 @@ export function useTopicComposerController({
       return resolveLinuxDoUpload({ ...(await requestAccess(value)), shortUrl });
     }
   };
+  const replacementDocument: Pick<RemoteEditReplacement, 'draft' | 'onReady'> | undefined = remoteLift?.request;
   return {
     editing: Boolean(editTopicId),
     editContext,
@@ -1506,6 +1985,7 @@ export function useTopicComposerController({
     draftSites,
     emojiUrls,
     editorRef,
+    replacementDocument,
     enabled,
     session,
     change,
@@ -1524,6 +2004,7 @@ export function useTopicComposerController({
     editorServices,
     reloadContext,
     retryDraft,
+    recoverInitialEditRead,
     reviewLatest: async () => {
       try {
         const value = await flush();

@@ -1,11 +1,12 @@
 import { QueryClient } from '@tanstack/react-query';
 import { describe, expect, it, vi } from 'vitest';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import { accountQueryKeys } from '@/platform/query/serverState';
+import { accountQueryKeys, forumWriteReceiptKeys } from '@/platform/query/serverState';
 import {
   cancelForumSourceQueries,
   forumSessionEpochsAfterSourceChange,
-  removeUnconfirmedForumSourceQueries
+  removeUnconfirmedForumSourceQueries,
+  resetForumSourceQueries
 } from './sessionQueryOwnership';
 
 describe('session query ownership', () => {
@@ -86,16 +87,23 @@ describe('session query ownership', () => {
     expect(aggregateAbort).not.toHaveBeenCalled();
     await client.cancelQueries();
   });
-  it('removes unconfirmed source data without touching account or safe aggregate queries', () => {
+  it('removes unconfirmed source data while keeping account, aggregate, and write receipt queries', () => {
     const client = new QueryClient();
     const sourceFeed = ['forum', 'nodeseek', 'feed'] as const;
     const account = accountQueryKeys.snapshot('nodeseek');
     const aggregate = ['forum', 'all', 'feed'] as const;
     const otherSource = ['forum', 'linuxdo', 'feed'] as const;
+    const receipt = forumWriteReceiptKeys.nodeSeekPoll({
+      identityKey: 'nodeseek:7',
+      sessionEpoch: 2,
+      pollId: '11',
+      kind: 'vote'
+    });
     client.setQueryData(sourceFeed, 'untrusted');
     client.setQueryData(account, 'canonical');
     client.setQueryData(aggregate, 'safe');
     client.setQueryData(otherSource, 'other');
+    client.setQueryData(receipt, 'awaiting-read');
 
     removeUnconfirmedForumSourceQueries('nodeseek', client);
 
@@ -103,5 +111,28 @@ describe('session query ownership', () => {
     expect(client.getQueryData(account)).toBe('canonical');
     expect(client.getQueryData(aggregate)).toBe('safe');
     expect(client.getQueryData(otherSource)).toBe('other');
+    expect(client.getQueryData(receipt)).toBe('awaiting-read');
+  });
+
+  it('clears receipts only for the source whose session was reset', () => {
+    const client = new QueryClient();
+    const nodeSeekReceipt = forumWriteReceiptKeys.nodeSeekPoll({
+      identityKey: 'nodeseek:7',
+      sessionEpoch: 2,
+      pollId: '11',
+      kind: 'lock'
+    });
+    const linuxDoReceipt = forumWriteReceiptKeys.discoursePolicy({ identityKey: 'linuxdo:8', sessionEpoch: 3 });
+    client.setQueryData(nodeSeekReceipt, 'awaiting-read');
+    client.setQueryData(linuxDoReceipt, 'awaiting-readback');
+
+    resetForumSourceQueries('nodeseek', client);
+
+    expect(client.getQueryData(nodeSeekReceipt)).toBeUndefined();
+    expect(client.getQueryData(linuxDoReceipt)).toBe('awaiting-readback');
+
+    resetForumSourceQueries('linuxdo', client);
+
+    expect(client.getQueryData(linuxDoReceipt)).toBeUndefined();
   });
 });

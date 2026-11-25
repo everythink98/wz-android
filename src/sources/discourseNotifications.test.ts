@@ -5,6 +5,20 @@ import { linuxDoNotificationAdapter } from './discourseNotifications';
 import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 
 describe('Discourse notifications', () => {
+  it('preserves inline words and separates blocks in fallback notification titles', async () => {
+    const page = await linuxDoNotificationAdapter.listPage({
+      identityKey: 'linuxdo:7',
+      userId: '7',
+      fetcher: async () =>
+        jsonResponse({
+          notifications: [{ id: 42, fancy_title: '<p>Linux<em>DO</em></p><p>Boards &copycat;</p>' }],
+          total_rows_notifications: 1
+        })
+    });
+
+    expect(page.items.map((item) => item.title)).toEqual(['LinuxDO Boards &copycat;']);
+  });
+
   it('preserves plain notification titles and reads the emoji labels of HTML-only titles', async () => {
     const page = await linuxDoNotificationAdapter.listPage({
       identityKey: 'linuxdo:7',
@@ -20,6 +34,113 @@ describe('Discourse notifications', () => {
         })
     });
     expect(page.items.map((item) => item.title)).toEqual(['Real <title>', 'A & B', ':smile:']);
+  });
+
+  it('retains spaceless comparisons, comments, and emoji alt labels in HTML-only notification titles', async () => {
+    const page = await linuxDoNotificationAdapter.listPage({
+      identityKey: 'linuxdo:7',
+      userId: '7',
+      fetcher: async () =>
+        jsonResponse({
+          notifications: [
+            { id: 1, fancy_title: "x<y, 'inline <b>keep</b>' <i>end</i>" },
+            { id: 2, fancy_title: "x<y 'inline <b>keep</b>' <i>end</i>" },
+            { id: 3, fancy_title: 'x<y <img class="emoji" alt=":smile:" src="/smile.png"> <i>end</i>' },
+            { id: 4, fancy_title: 'x<y \'quote\' <img class="emoji" alt=":smile:" src="/smile.png">' },
+            { id: 5, fancy_title: "<!-- don't --><b>keep</b>" },
+            { id: 6, fancy_title: '<!-- a > b --><b>keep</b>' },
+            { id: 7, fancy_title: '<img class="emoji" alt="1 > 0" src="/smile.png"> <a title="a > b">keep</a>' },
+            { id: 8, fancy_title: '<!-- don\'t --><img class="emoji" alt=":smile:" src="/smile.png"><b>keep</b>' },
+            { id: 9, fancy_title: '<a '.repeat(200) + '<img class="emoji" alt=":smile:" src="/smile.png"><b>keep</b>' }
+          ],
+          total_rows_notifications: 9
+        })
+    });
+    expect(page.items.map((item) => item.title)).toEqual([
+      "x<y, 'inline keep' end",
+      "x<y 'inline keep' end",
+      'x<y :smile: end',
+      "x<y 'quote' :smile:",
+      'keep',
+      'keep',
+      '1 > 0 keep',
+      ':smile:keep',
+      '<a '.repeat(200) + ':smile:keep'
+    ]);
+  });
+
+  it('strips tags with Unicode or unquoted URL attributes and decodes image alt entities once in HTML-only titles', async () => {
+    const page = await linuxDoNotificationAdapter.listPage({
+      identityKey: 'linuxdo:7',
+      userId: '7',
+      fetcher: async () =>
+        jsonResponse({
+          notifications: [
+            { id: 1, fancy_title: '<span data-分类="x">分类标题</span>' },
+            { id: 2, fancy_title: '<div data-分类>标签标题</div>' },
+            { id: 3, fancy_title: '<a href=/search?q=boards>boards</a>' },
+            { id: 4, fancy_title: '<img class="emoji" alt="&hearts;" src="/heart.png">' },
+            { id: 5, fancy_title: '<img class="emoji" alt="&amp;hearts;" src="/heart.png">' },
+            {
+              id: 6,
+              fancy_title: '<img data-分类="x" src=/emoji?name=heart alt="&hearts;"> <span data-分类="1">标题</span>'
+            },
+            { id: 7, fancy_title: 'a<b && c>d <img alt="&hearts;" src="/heart.png">' },
+            {
+              id: 8,
+              title: 'How to type &copy; in HTML',
+              fancy_title: 'How to type &amp;copy; in HTML',
+              data: { excerpt: '<script>var x = "<!--";</script><p>visible &copy; &amp;copy;</p><!-- real comment -->' }
+            },
+            { id: 9, fancy_title: '<script>var x = "<!--";</script><b>visible</b><!-- real comment -->' },
+            {
+              id: 10,
+              fancy_title: '<style>/* <!-- */</style><img alt="&hearts;" src="/heart.png"><b>visible</b><!-- real -->'
+            }
+          ],
+          total_rows_notifications: 10
+        })
+    });
+    expect(page.items.map((item) => item.title)).toEqual([
+      '分类标题',
+      '标签标题',
+      'boards',
+      '♥',
+      '&hearts;',
+      '♥ 标题',
+      'a<b && c>d ♥',
+      'How to type &copy; in HTML',
+      'visible',
+      '♥visible'
+    ]);
+    expect(page.items[7]?.preview).toBe('visible © &copy;');
+  });
+
+  it('preserves plain notification titles verbatim and decodes fancy_title HTML entities once via entities@8.0.0', async () => {
+    const page = await linuxDoNotificationAdapter.listPage({
+      identityKey: 'linuxdo:7',
+      userId: '7',
+      fetcher: async () =>
+        jsonResponse({
+          notifications: [
+            {
+              id: 101,
+              title: 'Literal &copy; &amp; &#128; &#x1F600',
+              fancy_title: 'Ignored &copy;'
+            },
+            {
+              id: 102,
+              fancy_title:
+                '&#128; &#0; &#x1F600 &Lt; &Gt; &unknownref; &amp;copy; <img class="emoji" alt="&amp;copy; &Lt;" src="/e.png">'
+            }
+          ],
+          total_rows_notifications: 2
+        })
+    });
+    expect(page.items.map((item) => item.title)).toEqual([
+      'Literal &copy; &amp; &#128; &#x1F600',
+      '€ \uFFFD 😀 ≪ ≫ &unknownref; &copy; &copy; ≪'
+    ]);
   });
 
   it('advances by the server offset after inaccessible rows and stops at the actual total', async () => {

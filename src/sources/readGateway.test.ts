@@ -12,6 +12,7 @@ vi.mock('@/platform/network/networkProxy', () => ({
 }));
 
 import { createReadGateway, getTopic } from './readGateway';
+import { readingResumeAnchor, selectDiscourseVisited } from '@/domain/forum/discourseReading';
 import type { Topic } from '@/domain/forum/models';
 import { QueryClient } from '@tanstack/react-query';
 import { createDiscourseReadingRuntime } from '@/platform/query/discourseReadingRuntime';
@@ -278,7 +279,13 @@ describe('bounded source preparation', () => {
         url: 'https://www.v2ex.com/t/901',
         createdAt: '2026-05-20T00:00:00Z'
       };
-      const cursor = encodeURIComponent(JSON.stringify({ buffers: { v2ex: [buffered] }, nextPages: { v2ex: 2 } }));
+      const cursor = encodeURIComponent(
+        JSON.stringify({
+          bind: JSON.stringify([[['v2ex', '["public:omit",null,null]']], '', '']),
+          buffers: { v2ex: [buffered] },
+          nextPages: { v2ex: 2 }
+        })
+      );
       const result =
         operation === 'local-categories'
           ? await gateway.getCategories({ source: 'yaohuo' })
@@ -1441,7 +1448,7 @@ describe('read authentication failures through the production gateway', () => {
   });
 
   it.each([401, 403])(
-    'passes authentication failure from editable reply hydration HTTP %s to Account owner',
+    'does not request edit-only raw during reading even when that endpoint would return HTTP %s',
     async (status) => {
       const fetcher = vi.fn(async (input: string) =>
         new URL(input).pathname === '/posts/1002.json'
@@ -1476,10 +1483,1150 @@ describe('read authentication failures through the production gateway', () => {
       );
       const { gateway, onSessionExpired, requestAccountRecheck } = accountFailureFixture(fetcher);
       const result = await gateway.getTopic({ source: 'linuxdo', id: '900' });
-      expect.soft(result).toMatchObject({ id: '900', title: 'normal topic', replies: [{ commentId: 1002 }] });
-      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect
+        .soft(result)
+        .toMatchObject({ id: '900', title: 'normal topic', replies: [{ commentId: 1002, canEdit: true }] });
+      expect(fetcher).toHaveBeenCalledTimes(1);
       expect(onSessionExpired).not.toHaveBeenCalled();
-      expect(requestAccountRecheck).toHaveBeenCalledTimes(1);
+      expect(requestAccountRecheck).not.toHaveBeenCalled();
     }
   );
+});
+
+describe('linux.do explicit unseen reading backfill optimization', () => {
+  const createdAt = (minutesAgo: number) =>
+    new Date(Date.UTC(2026, 9, 10, 12, 0, 0) - minutesAgo * 60_000).toISOString();
+
+  const makeTopic = (id: number, minutesAgo: number, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id,
+    slug: `topic-${id}`,
+    title: `Topic ${id}`,
+    created_at: createdAt(minutesAgo),
+    posts_count: 5,
+    highest_post_number: 5,
+    ...extra
+  });
+
+  const seedLocalProgress = (reading: ReturnType<typeof createDiscourseReadingRuntime>, topicId: string) => {
+    reading.observe(
+      [{ topicId, lastReadPostNumber: 3, highestPostNumber: 5, readPostNumbers: [1, 3] }],
+      reading.startRequest()
+    );
+    const session = reading.begin(topicId);
+    session.active(true);
+    session.visible([3], { floor: 3, rowKey: `row-${topicId}`, offset: 12 });
+    session.end();
+  };
+
+  const readingSummary = (reading: ReturnType<typeof createDiscourseReadingRuntime>) =>
+    Object.fromEntries(
+      Object.entries(reading.state()).map(([id, entry]) => [
+        id,
+        {
+          visited: entry.visited,
+          highestKnown: entry.highestKnown,
+          anchor: entry.anchor,
+          resumeAnchor: readingResumeAnchor(entry),
+          readPosts: entry.readPosts,
+          lastReadPostNumber: entry.server.lastReadPostNumber,
+          highestPostNumber: entry.server.highestPostNumber
+        }
+      ])
+    );
+
+  const flushMicrotasks = async () => {
+    for (let index = 0; index < 8; index++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  };
+
+  it('skips reading backfill for explicitly unseen single-site feed topics while keeping identical pages, pins, floors, and cursors', async () => {
+    const run = async (markUnseen: boolean) => {
+      const reading = createDiscourseReadingRuntime({
+        queryClient: new QueryClient(),
+        scope: () => 'alice',
+        send: async () => undefined
+      });
+      seedLocalProgress(reading, '101');
+      const pin71 = makeTopic(71, 1, {
+        pinned_globally: true,
+        pinned: false,
+        unpinned: true,
+        last_read_post_number: 2,
+        highest_post_number: 2,
+        unseen: false
+      });
+      const page1Topics = [
+        makeTopic(101, 2, { unseen: markUnseen, highest_post_number: 7 }),
+        makeTopic(102, 3, { unseen: markUnseen, highest_post_number: 4 }),
+        makeTopic(103, 4, { unseen: false, last_read_post_number: 6, highest_post_number: 8, unread_posts: 2 })
+      ];
+      const page2Topics = [
+        makeTopic(104, 5, { unseen: markUnseen, highest_post_number: 2 }),
+        makeTopic(105, 6, { unseen: false, last_read_post_number: 1, highest_post_number: 2 })
+      ];
+      const byId = new Map<string, Record<string, unknown>>(
+        [pin71, ...page1Topics, ...page2Topics].map((entry) => [String(entry.id), entry])
+      );
+      const requests: string[] = [];
+      const fetcher = vi.fn<Fetcher>(async (input) => {
+        const url = new URL(input);
+        requests.push(`${url.pathname}${url.search}`);
+        if (url.pathname === '/filter.json') {
+          return Response.json({ topic_list: { topics: [pin71] } });
+        }
+        const batchIds = url.searchParams.getAll('topic_ids[]');
+        if (batchIds.length) {
+          return Response.json({
+            topic_list: { topics: batchIds.map((id) => byId.get(id)).filter(Boolean) }
+          });
+        }
+        const page = Number(url.searchParams.get('page') || 0);
+        return Response.json({
+          topic_list: {
+            topics: page === 0 ? page1Topics : page2Topics,
+            more_topics_url: page === 0 ? '/latest?order=created&page=1' : null
+          }
+        });
+      });
+      const gateway = createReadGateway({
+        reading,
+        fetcher,
+        anonymousFetcher: fetcher,
+        linuxDoUserAgent: () => 'test-ua',
+        nodeSeekUserAgent: () => 'test-ua',
+        readSessionRuntimeSnapshot: (source) => ({
+          source,
+          authenticated: true,
+          identityTrust: 'confirmed',
+          identityKey: 'alice',
+          sessionEpoch: 1,
+          authSurfaceOpen: false,
+          sourceEnabled: true
+        })
+      });
+      try {
+        const page1 = await gateway.getFeed({ source: 'linuxdo', limit: 3 });
+        await flushMicrotasks();
+        const page1Requests = [...requests];
+        const page2 = await gateway.getFeed({
+          source: 'linuxdo',
+          limit: 3,
+          page: page1.nextPage!,
+          cursor: page1.nextCursor ?? undefined
+        });
+        await flushMicrotasks();
+        return {
+          page1,
+          page2,
+          page1Requests,
+          allRequests: requests,
+          backfillCalls: requests.filter((entry) => entry.includes('topic_ids')),
+          summary: readingSummary(reading),
+          visited: selectDiscourseVisited(reading.state())
+        };
+      } finally {
+        reading.dispose();
+      }
+    };
+
+    const baseline = await run(false);
+    const optimized = await run(true);
+
+    expect(baseline.allRequests).toHaveLength(5);
+    expect(baseline.backfillCalls).toHaveLength(2);
+    expect(optimized.allRequests).toHaveLength(3);
+    expect(optimized.backfillCalls).toHaveLength(0);
+    expect(optimized.page1Requests).toEqual([
+      '/latest.json?order=created&ascending=false',
+      '/filter.json?q=in%3Apinned'
+    ]);
+    expect(optimized.page1.items).toEqual(baseline.page1.items);
+    expect(optimized.page2.items).toEqual(baseline.page2.items);
+    expect(optimized.page1.items.map((item) => [item.id, Boolean(item.pinned)])).toEqual([
+      ['71', true],
+      ['101', false],
+      ['102', false],
+      ['103', false]
+    ]);
+    expect(optimized.page1.nextCursor).toBe(baseline.page1.nextCursor);
+    expect(optimized.page2.nextCursor).toBe(baseline.page2.nextCursor);
+    expect(optimized.page1.hasMore).toBe(baseline.page1.hasMore);
+    expect(optimized.page2.hasMore).toBe(baseline.page2.hasMore);
+    expect(optimized.summary).toEqual(baseline.summary);
+    expect(optimized.visited).toEqual(baseline.visited);
+    expect(optimized.summary['101']).toMatchObject({
+      visited: true,
+      highestKnown: 3,
+      lastReadPostNumber: 3,
+      highestPostNumber: 7,
+      readPosts: { 1: true, 3: true }
+    });
+    expect(optimized.visited['101']).toEqual({ visited: true, hasNewReplies: true });
+  });
+
+  it('skips reading backfill across aggregate pages including buffered topics while preserving cross-page pin exclusion and exact cursors', async () => {
+    const run = async (markUnseen: boolean) => {
+      const reading = createDiscourseReadingRuntime({
+        queryClient: new QueryClient(),
+        scope: () => 'alice',
+        send: async () => undefined
+      });
+      seedLocalProgress(reading, '101');
+      const pin71 = makeTopic(71, 1, {
+        pinned_globally: true,
+        pinned: false,
+        unpinned: true,
+        last_read_post_number: 2,
+        highest_post_number: 2,
+        unseen: false
+      });
+      const pin71Unbadged = makeTopic(71, 20, { unseen: markUnseen, highest_post_number: 2 });
+      const page1Topics = [
+        makeTopic(101, 2, { unseen: markUnseen, highest_post_number: 7 }),
+        makeTopic(102, 4, { unseen: markUnseen, highest_post_number: 4 }),
+        makeTopic(103, 6, { unseen: markUnseen, highest_post_number: 3 }),
+        makeTopic(104, 8, { unseen: false, last_read_post_number: 4, highest_post_number: 6 })
+      ];
+      const page2Topics = [pin71Unbadged, makeTopic(105, 10, { unseen: markUnseen, highest_post_number: 2 })];
+      const byId = new Map<string, Record<string, unknown>>(
+        [pin71, ...page1Topics, ...page2Topics].map((entry) => [String(entry.id), entry])
+      );
+      const requests: string[] = [];
+      const fetcher = vi.fn<Fetcher>(async (input) => {
+        const url = new URL(input);
+        requests.push(`${url.hostname}${url.pathname}${url.search}`);
+        if (url.hostname === 'www.v2ex.com') {
+          if (url.pathname === '/recent') {
+            return new Response(
+              '<div class="cell"><a class="topic-link" href="/t/203#reply0">V2EX 203</a><span title="2026-10-10 19:53:00 +08:00"></span></div>'
+            );
+          }
+          return new Response(
+            '<div class="cell item"><a class="topic-link" href="/t/201#reply0">V2EX 201</a><span title="2026-10-10 19:57:00 +08:00"></span></div>' +
+              '<div class="cell item"><a class="topic-link" href="/t/202#reply0">V2EX 202</a><span title="2026-10-10 19:55:00 +08:00"></span></div>' +
+              '<a href="/recent">更多新主题</a>'
+          );
+        }
+        if (url.pathname === '/filter.json') {
+          return Response.json({ topic_list: { topics: [pin71] } });
+        }
+        const batchIds = url.searchParams.getAll('topic_ids[]');
+        if (batchIds.length) {
+          return Response.json({
+            topic_list: { topics: batchIds.map((id) => byId.get(id)).filter(Boolean) }
+          });
+        }
+        const page = Number(url.searchParams.get('page') || 0);
+        return Response.json({
+          topic_list: {
+            topics: page === 0 ? page1Topics : page2Topics,
+            more_topics_url: page === 0 ? '/latest?order=created&page=1' : null
+          }
+        });
+      });
+      const gateway = createReadGateway({
+        reading,
+        fetcher,
+        anonymousFetcher: fetcher,
+        getEnabledSources: () => ['linuxdo', 'v2ex'],
+        linuxDoUserAgent: () => 'test-ua',
+        nodeSeekUserAgent: () => 'test-ua',
+        readSessionRuntimeSnapshot: (source) => ({
+          source,
+          authenticated: true,
+          identityTrust: 'confirmed',
+          identityKey: 'alice',
+          sessionEpoch: 1,
+          authSurfaceOpen: false,
+          sourceEnabled: true
+        })
+      });
+      try {
+        const page1 = await gateway.getFeed({ source: 'all', limit: 2 });
+        await flushMicrotasks();
+        const page2 = await gateway.getFeed({
+          source: 'all',
+          limit: 2,
+          page: page1.nextPage!,
+          cursor: page1.nextCursor ?? undefined
+        });
+        await flushMicrotasks();
+        const page3 = await gateway.getFeed({
+          source: 'all',
+          limit: 2,
+          page: page2.nextPage!,
+          cursor: page2.nextCursor ?? undefined
+        });
+        await flushMicrotasks();
+        const page4 = await gateway.getFeed({
+          source: 'all',
+          limit: 2,
+          page: page3.nextPage!,
+          cursor: page3.nextCursor ?? undefined
+        });
+        await flushMicrotasks();
+        return {
+          pages: [page1, page2, page3, page4],
+          allRequests: requests,
+          backfillCalls: requests.filter((entry) => entry.includes('topic_ids')),
+          summary: readingSummary(reading)
+        };
+      } finally {
+        reading.dispose();
+      }
+    };
+
+    const baseline = await run(false);
+    const optimized = await run(true);
+
+    expect(baseline.allRequests).toHaveLength(9);
+    expect(baseline.backfillCalls).toHaveLength(4);
+    expect(optimized.allRequests).toHaveLength(8);
+    expect(optimized.backfillCalls).toHaveLength(3);
+    expect(optimized.backfillCalls).toEqual([
+      expect.stringContaining('topic_ids%5B%5D=102'),
+      expect.stringContaining('topic_ids%5B%5D=103'),
+      expect.stringContaining('topic_ids%5B%5D=104')
+    ]);
+    for (let index = 0; index < baseline.pages.length; index++) {
+      expect(optimized.pages[index]!.items).toEqual(baseline.pages[index]!.items);
+      expect(optimized.pages[index]!.nextCursor).toBe(baseline.pages[index]!.nextCursor);
+      expect(optimized.pages[index]!.hasMore).toBe(baseline.pages[index]!.hasMore);
+      expect(optimized.pages[index]!.nextPage).toBe(baseline.pages[index]!.nextPage);
+    }
+    expect(optimized.pages.flatMap((page) => page.items).some((item) => item.id === '71')).toBe(false);
+    expect(optimized.summary).toEqual(baseline.summary);
+    expect(optimized.summary['101']).toMatchObject({
+      visited: true,
+      highestKnown: 3,
+      lastReadPostNumber: 3,
+      highestPostNumber: 7
+    });
+  });
+
+  it('still backfills unknown reading progress when unseen is not explicitly true and isolates aggregate unseen state across account scopes', async () => {
+    let identityKey = 'alice';
+    let sessionEpoch = 1;
+    const reading = createDiscourseReadingRuntime({
+      queryClient: new QueryClient(),
+      scope: () => `${identityKey}:${sessionEpoch}`,
+      send: async () => undefined
+    });
+    const batchRequests: string[][] = [];
+    const fetcher = vi.fn<Fetcher>(async (input) => {
+      const url = new URL(input);
+      if (url.hostname === 'www.v2ex.com') {
+        return new Response(
+          '<div class="cell item"><a class="topic-link" href="/t/501#reply0">V2EX 501</a><span title="2026-10-10 19:59:00 +08:00"></span></div>'
+        );
+      }
+      if (url.pathname === '/filter.json') {
+        return Response.json({ topic_list: { topics: [] } });
+      }
+      const batchIds = url.searchParams.getAll('topic_ids[]');
+      if (batchIds.length) {
+        batchRequests.push(batchIds);
+        return Response.json({
+          topic_list: {
+            topics: batchIds.map((id) => ({ id: Number(id), last_read_post_number: 2, highest_post_number: 5 }))
+          }
+        });
+      }
+      return Response.json({
+        topic_list: {
+          topics: [
+            makeTopic(201, 1, { unseen: true, highest_post_number: 5 }),
+            makeTopic(205, 2, { unseen: true, highest_post_number: 5 }),
+            makeTopic(202, 3, { unseen: false, highest_post_number: 5 }),
+            makeTopic(203, 4, { highest_post_number: 6 }),
+            makeTopic(204, 5, { unseen: false, last_read_post_number: 4, highest_post_number: 6 })
+          ]
+        }
+      });
+    });
+    const gateway = createReadGateway({
+      reading,
+      fetcher,
+      anonymousFetcher: fetcher,
+      getEnabledSources: () => ['linuxdo', 'v2ex'],
+      linuxDoUserAgent: () => 'test-ua',
+      nodeSeekUserAgent: () => 'test-ua',
+      readSessionRuntimeSnapshot: (source) => ({
+        source,
+        authenticated: true,
+        identityTrust: 'confirmed',
+        identityKey,
+        sessionEpoch,
+        authSurfaceOpen: false,
+        sourceEnabled: true
+      })
+    });
+    try {
+      await gateway.getFeed({ source: 'linuxdo', limit: 5 });
+      await flushMicrotasks();
+      expect(batchRequests).toEqual([['202', '203']]);
+
+      batchRequests.length = 0;
+      const aliceAggregate = await gateway.getFeed({ source: 'all', limit: 2 });
+      await flushMicrotasks();
+      expect(batchRequests).toEqual([]);
+
+      identityKey = 'bob';
+      sessionEpoch = 2;
+      reading.sessionChanged();
+      const bobAggregate = await gateway.getFeed({
+        source: 'all',
+        limit: 2,
+        page: aliceAggregate.nextPage!,
+        cursor: aliceAggregate.nextCursor ?? undefined
+      });
+      await flushMicrotasks();
+      expect(bobAggregate.items.map((item) => item.id)).toEqual(['201', '501']);
+      expect(batchRequests).toEqual([]);
+      await gateway.getFeed({
+        source: 'all',
+        limit: 2,
+        page: bobAggregate.nextPage!,
+        cursor: bobAggregate.nextCursor ?? undefined
+      });
+      await flushMicrotasks();
+      expect(batchRequests.flat()).toContain('205');
+      expect(batchRequests.flat()).toContain('202');
+    } finally {
+      reading.dispose();
+    }
+  });
+
+  it.each(['linuxdo', 'all'] as const)(
+    'keeps reading backfill in %s feed when unseen is true but reading floor is malformed or highest floor is missing',
+    async (feedSource) => {
+      const reading = createDiscourseReadingRuntime({
+        queryClient: new QueryClient(),
+        scope: () => 'alice',
+        send: async () => undefined
+      });
+      const batchRequests: string[][] = [];
+      const backfillById = new Map<string, Record<string, unknown>>([
+        ['301', { id: 301, last_read_post_number: 7, highest_post_number: 12 }],
+        ['302', { id: 302, last_read_post_number: null, highest_post_number: 17 }],
+        ['303', { id: 303, last_read_post_number: null, highest_post_number: 17 }],
+        ['304', { id: 304, last_read_post_number: null, highest_post_number: 9 }]
+      ]);
+      const fetcher = vi.fn<Fetcher>(async (input) => {
+        const url = new URL(input);
+        if (url.pathname === '/filter.json') {
+          return Response.json({ topic_list: { topics: [] } });
+        }
+        const batchIds = url.searchParams.getAll('topic_ids[]');
+        if (batchIds.length) {
+          batchRequests.push(batchIds);
+          return Response.json({
+            topic_list: { topics: batchIds.map((id) => backfillById.get(id)).filter(Boolean) }
+          });
+        }
+        return Response.json({
+          topic_list: {
+            topics: [
+              makeTopic(301, 1, { unseen: true, last_read_post_number: '7', highest_post_number: 12 }),
+              {
+                id: 302,
+                slug: 'topic-302',
+                title: 'Topic 302',
+                created_at: createdAt(2),
+                posts_count: 5,
+                unseen: true
+              },
+              makeTopic(303, 3, { unseen: true, highest_post_number: 0 }),
+              makeTopic(304, 4, { unseen: true, highest_post_number: 9 })
+            ]
+          }
+        });
+      });
+      const gateway = createReadGateway({
+        reading,
+        fetcher,
+        anonymousFetcher: fetcher,
+        getEnabledSources: () => ['linuxdo'],
+        linuxDoUserAgent: () => 'test-ua',
+        nodeSeekUserAgent: () => 'test-ua',
+        readSessionRuntimeSnapshot: (source) => ({
+          source,
+          authenticated: true,
+          identityTrust: 'confirmed',
+          identityKey: 'alice',
+          sessionEpoch: 1,
+          authSurfaceOpen: false,
+          sourceEnabled: true
+        })
+      });
+      try {
+        await gateway.getFeed({ source: feedSource, limit: 10 });
+        await flushMicrotasks();
+        expect(batchRequests).toEqual([['301', '302', '303']]);
+        expect(reading.state()['301']).toMatchObject({
+          visited: true,
+          highestKnown: 7,
+          server: { lastReadPostNumber: 7, highestPostNumber: 12 }
+        });
+        expect(reading.state()['302']).toMatchObject({
+          visited: false,
+          server: { lastReadPostNumber: null, highestPostNumber: 17 }
+        });
+        expect(reading.state()['303']).toMatchObject({
+          visited: false,
+          server: { lastReadPostNumber: null, highestPostNumber: 17 }
+        });
+        expect(reading.state()['304']).toMatchObject({
+          visited: false,
+          server: { highestPostNumber: 9 }
+        });
+      } finally {
+        reading.dispose();
+      }
+    }
+  );
+
+  it('combines current aggregate reading facts and backfills only the unresolved visible buffer row', async () => {
+    const reading = createDiscourseReadingRuntime({
+      queryClient: new QueryClient(),
+      scope: () => 'alice',
+      send: async () => undefined
+    });
+    const batchRequests: string[][] = [];
+    const fetcher = vi.fn<Fetcher>(async (input) => {
+      const url = new URL(input);
+      if (url.hostname === 'www.v2ex.com') {
+        return new Response(
+          '<div class="cell item"><a class="topic-link" href="/t/701#reply0">V2EX 701</a><span title="2026-10-10 19:59:00 +08:00"></span></div>' +
+            '<div class="cell item"><a class="topic-link" href="/t/702#reply0">V2EX 702</a><span title="2026-10-10 19:58:00 +08:00"></span></div>' +
+            '<div class="cell item"><a class="topic-link" href="/t/703#reply0">V2EX 703</a><span title="2026-10-10 19:40:00 +08:00"></span></div>'
+        );
+      }
+      if (url.pathname === '/filter.json') {
+        return Response.json({ topic_list: { topics: [] } });
+      }
+      const batchIds = url.searchParams.getAll('topic_ids[]');
+      if (batchIds.length) {
+        batchRequests.push(batchIds);
+        return Response.json({
+          topic_list: {
+            topics: batchIds.map((id) => ({
+              id: Number(id),
+              last_read_post_number: id === '30' ? 7 : 4,
+              highest_post_number: id === '30' ? 12 : 8
+            }))
+          }
+        });
+      }
+      const page = Number(url.searchParams.get('page') || 0);
+      if (page === 0) {
+        return Response.json({
+          topic_list: {
+            topics: [
+              makeTopic(28, 1, { unseen: true, highest_post_number: 6 }),
+              makeTopic(29, 2, { unseen: true, highest_post_number: 6 }),
+              makeTopic(30, 3, { unseen: true, highest_post_number: 10 }),
+              makeTopic(31, 4, { unseen: true, highest_post_number: 8 })
+            ],
+            more_topics_url: '/latest?order=created&page=1'
+          }
+        });
+      }
+      return Response.json({
+        topic_list: {
+          topics: [
+            makeTopic(30, 3, { unseen: false, last_read_post_number: 7, highest_post_number: 12 }),
+            makeTopic(31, 4, { unseen: false, highest_post_number: 8 }),
+            makeTopic(32, 5, { unseen: true, highest_post_number: 5 })
+          ],
+          more_topics_url: null
+        }
+      });
+    });
+    const gateway = createReadGateway({
+      reading,
+      fetcher,
+      anonymousFetcher: fetcher,
+      getEnabledSources: () => ['linuxdo', 'v2ex'],
+      linuxDoUserAgent: () => 'test-ua',
+      nodeSeekUserAgent: () => 'test-ua',
+      readSessionRuntimeSnapshot: (source) => ({
+        source,
+        authenticated: true,
+        identityTrust: 'confirmed',
+        identityKey: 'alice',
+        sessionEpoch: 1,
+        authSurfaceOpen: false,
+        sourceEnabled: true
+      })
+    });
+    try {
+      const page1 = await gateway.getFeed({ source: 'all', limit: 4 });
+      await flushMicrotasks();
+      expect(batchRequests).toEqual([]);
+      expect(page1.items.filter((item) => item.source === 'linuxdo').map((item) => item.id)).toEqual(['28', '29']);
+
+      const page2 = await gateway.getFeed({
+        source: 'all',
+        limit: 4,
+        page: page1.nextPage!,
+        cursor: page1.nextCursor ?? undefined
+      });
+      await flushMicrotasks();
+
+      const topic30 = page2.items.find((item) => item.source === 'linuxdo' && item.id === '30');
+      expect(topic30).toBeTruthy();
+      expect(topic30?.reading).toMatchObject({ lastReadPostNumber: 7, highestPostNumber: 12 });
+      expect(reading.state()['30']).toMatchObject({
+        visited: true,
+        highestKnown: 7,
+        server: { lastReadPostNumber: 7, highestPostNumber: 12 }
+      });
+      expect(batchRequests).toEqual([['31']]);
+      expect(reading.state()['31']).toMatchObject({
+        visited: true,
+        highestKnown: 4,
+        server: { lastReadPostNumber: 4, highestPostNumber: 8 }
+      });
+      expect(reading.state()['32']).toMatchObject({
+        visited: false,
+        server: { highestPostNumber: 5 }
+      });
+    } finally {
+      reading.dispose();
+    }
+  });
+
+  it('observes merged reading progress and restores backfill for duplicate IDs within one upstream response', async () => {
+    const reading = createDiscourseReadingRuntime({
+      queryClient: new QueryClient(),
+      scope: () => 'alice',
+      send: async () => undefined
+    });
+    const batchRequests: string[][] = [];
+    const fetcher = vi.fn<Fetcher>(async (input) => {
+      const url = new URL(input);
+      if (url.pathname === '/filter.json') {
+        return Response.json({ topic_list: { topics: [] } });
+      }
+      const batchIds = url.searchParams.getAll('topic_ids[]');
+      if (batchIds.length) {
+        batchRequests.push(batchIds);
+        return Response.json({
+          topic_list: {
+            topics: batchIds.map((id) => ({ id: Number(id), last_read_post_number: 3, highest_post_number: 5 }))
+          }
+        });
+      }
+      return Response.json({
+        topic_list: {
+          topics: [
+            makeTopic(40, 1, { unseen: true, highest_post_number: 5 }),
+            makeTopic(41, 2, { unseen: true, highest_post_number: 5 }),
+            makeTopic(42, 3, { highest_post_number: 5 }),
+            makeTopic(40, 1, {
+              pinned: true,
+              pinned_globally: true,
+              required_trust_level: 3,
+              last_read_post_number: 7,
+              highest_post_number: 12
+            }),
+            makeTopic(41, 2, { unseen: false, highest_post_number: 5 }),
+            makeTopic(42, 3, { last_read_post_number: 7, highest_post_number: 11 })
+          ]
+        }
+      });
+    });
+    const gateway = createReadGateway({
+      reading,
+      fetcher,
+      anonymousFetcher: fetcher,
+      getEnabledSources: () => ['linuxdo'],
+      linuxDoUserAgent: () => 'test-ua',
+      nodeSeekUserAgent: () => 'test-ua',
+      readSessionRuntimeSnapshot: (source) => ({
+        source,
+        authenticated: true,
+        identityTrust: 'confirmed',
+        identityKey: 'alice',
+        sessionEpoch: 1,
+        authSurfaceOpen: false,
+        sourceEnabled: true
+      })
+    });
+    try {
+      const page1 = await gateway.getFeed({ source: 'linuxdo', limit: 10 });
+      await flushMicrotasks();
+
+      expect(page1.items.map((item) => item.id)).toEqual(['40', '41', '42']);
+      expect(page1.items[0]).toMatchObject({
+        id: '40',
+        pinned: true,
+        accessRequirement: { type: 'level', label: '需等级', detail: 'Lv3' },
+        reading: { topicId: '40', highestPostNumber: 12, readPostNumbers: [] }
+      });
+      expect(page1.items[0]?.reading?.lastReadPostNumber).toBeUndefined();
+      expect(batchRequests).toEqual([['40', '41']]);
+      expect(reading.state()['40']).toMatchObject({
+        visited: true,
+        highestKnown: 3,
+        server: { lastReadPostNumber: 3, highestPostNumber: 5 }
+      });
+      expect(reading.state()['41']).toMatchObject({
+        visited: true,
+        highestKnown: 3,
+        server: { lastReadPostNumber: 3, highestPostNumber: 5 }
+      });
+      expect(reading.state()['42']).toMatchObject({
+        visited: true,
+        highestKnown: 7,
+        server: { lastReadPostNumber: 7, highestPostNumber: 11 }
+      });
+    } finally {
+      reading.dispose();
+    }
+  });
+
+  it.each(['linuxdo', 'all'] as const)(
+    'applies 7->2, 7->0, and 7->null reading regressions on already-displayed %s topics via topicUpdates while preserving missing-field, pending-write, and late-callback guards',
+    async (feedSource) => {
+      let nowMs = 1_000_000;
+      const reading = createDiscourseReadingRuntime({
+        queryClient: new QueryClient(),
+        scope: () => 'alice',
+        now: () => nowMs,
+        send: async () => new Promise<void>(() => undefined)
+      });
+      const batchRequests: string[][] = [];
+      const feedPages: (string | null)[] = [];
+      let allowDelayedPage1Update: ((response: Response) => void) | undefined;
+      let page1ReadCount = 0;
+      const fetcher = vi.fn<Fetcher>(async (input) => {
+        const url = new URL(input);
+        if (url.pathname === '/filter.json') {
+          return Response.json({ topic_list: { topics: [] } });
+        }
+        const batchIds = url.searchParams.getAll('topic_ids[]');
+        if (batchIds.length) {
+          batchRequests.push(batchIds);
+          return Response.json({ topic_list: { topics: [] } });
+        }
+        feedPages.push(url.searchParams.get('page'));
+        const page = Number(url.searchParams.get('page') || 0);
+        if (page === 0) {
+          page1ReadCount += 1;
+          if (page1ReadCount === 2) {
+            return new Promise<Response>((resolve) => {
+              allowDelayedPage1Update = resolve;
+            });
+          }
+          return Response.json({
+            topic_list: {
+              topics: [
+                makeTopic(501, 1, { last_read_post_number: 7, highest_post_number: 12 }),
+                makeTopic(502, 2, { last_read_post_number: 7, highest_post_number: 12 }),
+                makeTopic(503, 3, { last_read_post_number: 7, highest_post_number: 12 }),
+                makeTopic(504, 4, { last_read_post_number: 7, highest_post_number: 12 }),
+                makeTopic(505, 5, { last_read_post_number: 7, highest_post_number: 12 })
+              ],
+              more_topics_url: '/latest?order=created&page=1'
+            }
+          });
+        }
+        return Response.json({
+          topic_list: {
+            topics: [
+              makeTopic(501, 1, { last_read_post_number: 2, highest_post_number: 12 }),
+              makeTopic(502, 2, { last_read_post_number: 0, highest_post_number: 12 }),
+              makeTopic(503, 3, { last_read_post_number: null, highest_post_number: 12 }),
+              makeTopic(504, 4, { highest_post_number: 15 }),
+              makeTopic(505, 5, { last_read_post_number: 1, highest_post_number: 12 }),
+              makeTopic(506, 6, { unseen: true, highest_post_number: 6 })
+            ],
+            more_topics_url: null
+          }
+        });
+      });
+      const gateway = createReadGateway({
+        reading,
+        fetcher,
+        anonymousFetcher: fetcher,
+        getEnabledSources: () => ['linuxdo'],
+        linuxDoUserAgent: () => 'test-ua',
+        nodeSeekUserAgent: () => 'test-ua',
+        readSessionRuntimeSnapshot: (source) => ({
+          source,
+          authenticated: true,
+          identityTrust: 'confirmed',
+          identityKey: 'alice',
+          sessionEpoch: 1,
+          authSurfaceOpen: false,
+          sourceEnabled: true
+        })
+      });
+      try {
+        const page1 = await gateway.getFeed({ source: feedSource, limit: 5 });
+        await flushMicrotasks();
+        expect(batchRequests).toEqual([]);
+        expect(readingResumeAnchor(reading.state()['501'])).toEqual({ floor: 8 });
+        expect(readingResumeAnchor(reading.state()['502'])).toEqual({ floor: 8 });
+        expect(readingResumeAnchor(reading.state()['503'])).toEqual({ floor: 8 });
+        expect(readingResumeAnchor(reading.state()['504'])).toEqual({ floor: 8 });
+
+        // Start a local pending-write session on topic 505 so its local progress must survive regression.
+        const pendingSession = reading.begin('505');
+        pendingSession.visible([9], { floor: 9 });
+        pendingSession.active(true);
+        nowMs += 2000;
+        pendingSession.active(false);
+
+        // Start an older request that will finish AFTER page 2 to verify late-callback protection.
+        const stalePage1Promise = gateway.getFeed({ source: feedSource, limit: 5 });
+        await vi.waitFor(() => expect(allowDelayedPage1Update).toBeDefined());
+
+        feedPages.length = 0;
+        const page2 = await gateway.getFeed({
+          source: feedSource,
+          limit: 5,
+          page: page1.nextPage!,
+          cursor: page1.nextCursor ?? undefined
+        });
+        await flushMicrotasks();
+
+        expect(feedPages).toEqual(['1']);
+        expect(page2.items.map((item) => item.id)).toEqual(['506']);
+        expect(batchRequests).toEqual([]);
+        expect(reading.state()['501']?.server.lastReadPostNumber).toBe(2);
+        expect(readingResumeAnchor(reading.state()['501'])).toEqual({ floor: 3 });
+        expect(reading.state()['502']?.server.lastReadPostNumber).toBe(0);
+        expect(readingResumeAnchor(reading.state()['502'])).toBeUndefined();
+        expect(reading.state()['503']?.server.lastReadPostNumber).toBeNull();
+        expect(readingResumeAnchor(reading.state()['503'])).toBeUndefined();
+        // Missing field preserves prior floor 7 while accepting newer highest floor 15.
+        expect(reading.state()['504']?.server).toMatchObject({ lastReadPostNumber: 7, highestPostNumber: 15 });
+        expect(readingResumeAnchor(reading.state()['504'])).toEqual({ floor: 8 });
+        // Pending local write (floor 9) protects local progress & prior server floor 7 against server regression (7 -> 1).
+        expect(reading.state()['505']?.server.lastReadPostNumber).toBe(7);
+        expect(reading.state()['505']?.highestKnown).toBe(9);
+        expect(readingResumeAnchor(reading.state()['505'])).toEqual({ floor: 9 });
+
+        // Late-finishing older page-1 response (with stale floor 7) must NOT overwrite page 2's 2/0/null.
+        allowDelayedPage1Update!(
+          Response.json({
+            topic_list: {
+              topics: [
+                makeTopic(501, 1, { last_read_post_number: 7, highest_post_number: 12 }),
+                makeTopic(502, 2, { last_read_post_number: 7, highest_post_number: 12 }),
+                makeTopic(503, 3, { last_read_post_number: 7, highest_post_number: 12 })
+              ]
+            }
+          })
+        );
+        await stalePage1Promise;
+        await flushMicrotasks();
+        expect(reading.state()['501']?.server.lastReadPostNumber).toBe(2);
+        expect(reading.state()['502']?.server.lastReadPostNumber).toBe(0);
+        expect(reading.state()['503']?.server.lastReadPostNumber).toBeNull();
+        pendingSession.end();
+      } finally {
+        reading.dispose();
+      }
+    }
+  );
+
+  it('selectively backfills only finally selected stale-buffer IDs without a cross-page unseen cache, recovers server floor 7, and keeps guest backfill at 0', async () => {
+    const runScenario = async (authenticated: boolean, staleFloor?: number, carryPriorReading = false) => {
+      const reading = createDiscourseReadingRuntime({
+        queryClient: new QueryClient(),
+        scope: () => (authenticated ? 'alice' : null),
+        send: async () => undefined
+      });
+      const requests: string[] = [];
+      const batchRequests: string[][] = [];
+      const fetcher = vi.fn<Fetcher>(async (input) => {
+        const url = new URL(input);
+        requests.push(`${url.hostname}${url.pathname}${url.search}`);
+        if (url.hostname === 'www.v2ex.com') {
+          return new Response(
+            '<div class="cell item"><a class="topic-link" href="/t/801#reply0">V2EX 801</a><span title="2026-10-10 19:59:00 +08:00"></span></div>' +
+              '<div class="cell item"><a class="topic-link" href="/t/802#reply0">V2EX 802</a><span title="2026-10-10 19:58:00 +08:00"></span></div>'
+          );
+        }
+        if (url.pathname === '/filter.json') {
+          return Response.json({ topic_list: { topics: [] } });
+        }
+        const batchIds = url.searchParams.getAll('topic_ids[]');
+        if (batchIds.length) {
+          batchRequests.push(batchIds);
+          return Response.json({
+            topic_list: {
+              topics: batchIds.map((id) => ({
+                id: Number(id),
+                last_read_post_number: staleFloor === undefined ? 7 : 2,
+                highest_post_number: 12
+              }))
+            }
+          });
+        }
+        return Response.json({
+          topic_list: {
+            topics: [
+              makeTopic(601, 1, { unseen: true, highest_post_number: 10 }),
+              makeTopic(602, 2, {
+                unseen: staleFloor === undefined,
+                highest_post_number: 10,
+                last_read_post_number: staleFloor
+              }),
+              makeTopic(603, 3, { unseen: true, highest_post_number: 10 })
+            ],
+            more_topics_url: null
+          }
+        });
+      });
+      const gateway = createReadGateway({
+        reading,
+        fetcher,
+        anonymousFetcher: fetcher,
+        getEnabledSources: () => ['linuxdo', 'v2ex'],
+        linuxDoUserAgent: () => 'test-ua',
+        nodeSeekUserAgent: () => 'test-ua',
+        readSessionRuntimeSnapshot: (source) => ({
+          source,
+          authenticated,
+          identityTrust: authenticated ? 'confirmed' : 'none',
+          identityKey: authenticated ? 'alice' : `${source}:anonymous`,
+          sessionEpoch: 1,
+          authSurfaceOpen: false,
+          sourceEnabled: true
+        })
+      });
+      try {
+        const page1 = await gateway.getFeed({ source: 'all', limit: 2 });
+        await flushMicrotasks();
+        const page1Requests = [...requests];
+        const page1Batches = [...batchRequests];
+        if (staleFloor !== undefined) {
+          await gateway.getReadingBatch(['602']);
+          expect(reading.state()['602']?.server.lastReadPostNumber).toBe(2);
+        }
+
+        let cursor = page1.nextCursor ?? undefined;
+        if (carryPriorReading && cursor) {
+          const wire = JSON.parse(decodeURIComponent(cursor));
+          wire.buffers.linuxdo[0].reading = { topicId: '602', lastReadPostNumber: staleFloor, highestPostNumber: 10 };
+          cursor = encodeURIComponent(JSON.stringify(wire));
+        }
+        const page2 = await gateway.getFeed({
+          source: 'all',
+          limit: 2,
+          page: page1.nextPage!,
+          cursor
+        });
+        await flushMicrotasks();
+        return {
+          page1,
+          page2,
+          page1Requests,
+          allRequests: requests,
+          page1Batches,
+          allBatches: batchRequests,
+          state: reading.state(),
+          visited: selectDiscourseVisited(reading.state())
+        };
+      } finally {
+        reading.dispose();
+      }
+    };
+
+    const authed = await runScenario(true);
+    // Homepage preserves 0 backfill calls (2 linux.do requests + 1 v2ex request = 3 total).
+    expect(authed.page1Batches).toEqual([]);
+    expect(authed.page1Requests.filter((url) => url.startsWith('linux.do'))).toHaveLength(2);
+    expect(authed.page1.items.map((item) => `${item.source}:${item.id}`)).toEqual(['linuxdo:601', 'v2ex:801']);
+    // Pure-buffer page 2 selects ONLY linuxdo:602 (leaving 603 buffered) and selectively backfills ONLY ['602'].
+    expect(authed.page2.items.map((item) => `${item.source}:${item.id}`)).toEqual(['linuxdo:602', 'v2ex:802']);
+    expect(authed.allBatches).toEqual([['602']]);
+    expect(authed.allRequests.filter((url) => url.startsWith('linux.do'))).toHaveLength(3);
+    expect(authed.state['602']).toMatchObject({
+      visited: true,
+      highestKnown: 7,
+      server: { lastReadPostNumber: 7, highestPostNumber: 12 }
+    });
+    expect(readingResumeAnchor(authed.state['602'])).toEqual({ floor: 8 });
+    expect(authed.visited['602']).toEqual({ visited: true, hasNewReplies: true });
+    expect(authed.state['603']).toBeUndefined();
+
+    const confirmed = await runScenario(true, 7);
+    expect(confirmed.page2.items.map((item) => item.id)).toEqual(['602', '802']);
+    expect(confirmed.state['602']?.server.lastReadPostNumber).toBe(2);
+    expect(confirmed.allBatches).toEqual([['602'], ['602']]);
+    expect(JSON.parse(decodeURIComponent(confirmed.page1.nextCursor!)).buffers.linuxdo[0].reading).toBeUndefined();
+
+    const prior = await runScenario(true, 7, true);
+    expect(prior.state['602']?.server.lastReadPostNumber).toBe(2);
+    expect(prior.allBatches).toEqual([['602'], ['602']]);
+
+    const guest = await runScenario(false);
+    expect(guest.allBatches).toEqual([]);
+  });
+
+  it('restarts a bound aggregate cursor after account switch without displaying or backfilling its old buffer', async () => {
+    let identityKey = 'alice';
+    let sessionEpoch = 1;
+    const reading = createDiscourseReadingRuntime({
+      queryClient: new QueryClient(),
+      scope: () => `${identityKey}:${sessionEpoch}`,
+      send: async () => undefined
+    });
+    const batchRequests: string[][] = [];
+    const fetcher = vi.fn<Fetcher>(async (input) => {
+      const url = new URL(input);
+      if (url.hostname === 'www.v2ex.com') {
+        return new Response(
+          '<div class="cell item"><a class="topic-link" href="/t/901#reply0">V2EX 901</a><span title="2026-10-10 19:59:00 +08:00"></span></div>'
+        );
+      }
+      if (url.pathname === '/filter.json') {
+        return Response.json({ topic_list: { topics: [] } });
+      }
+      const batchIds = url.searchParams.getAll('topic_ids[]');
+      if (batchIds.length) {
+        batchRequests.push(batchIds);
+        return Response.json({
+          topic_list: {
+            topics: batchIds.map((id) => ({ id: Number(id), last_read_post_number: 7, highest_post_number: 12 }))
+          }
+        });
+      }
+      if (identityKey === 'bob') {
+        expect(url.searchParams.get('page')).toBeNull();
+        return Response.json({
+          topic_list: { topics: [makeTopic(801, 1, { last_read_post_number: 2, highest_post_number: 10 })] }
+        });
+      }
+      return Response.json({
+        topic_list: {
+          topics: [
+            makeTopic(701, 1, { unseen: true, highest_post_number: 10 }),
+            makeTopic(702, 2, { last_read_post_number: 4, highest_post_number: 10 }),
+            makeTopic(703, 3, { unseen: true, highest_post_number: 10 }),
+            makeTopic(704, 4, { last_read_post_number: 9, highest_post_number: 10 })
+          ]
+        }
+      });
+    });
+    const gateway = createReadGateway({
+      reading,
+      fetcher,
+      anonymousFetcher: fetcher,
+      getEnabledSources: () => ['linuxdo', 'v2ex'],
+      linuxDoUserAgent: () => 'test-ua',
+      nodeSeekUserAgent: () => 'test-ua',
+      readSessionRuntimeSnapshot: (source) => ({
+        source,
+        authenticated: true,
+        identityTrust: 'confirmed',
+        identityKey,
+        sessionEpoch,
+        authSurfaceOpen: false,
+        sourceEnabled: true
+      })
+    });
+    try {
+      const alicePage1 = await gateway.getFeed({ source: 'all', limit: 2 });
+      await flushMicrotasks();
+      expect(batchRequests).toEqual([]);
+
+      identityKey = 'bob';
+      sessionEpoch = 2;
+      reading.sessionChanged();
+      const bobPage2 = await gateway.getFeed({
+        source: 'all',
+        limit: 2,
+        page: alicePage1.nextPage!,
+        cursor: alicePage1.nextCursor ?? undefined
+      });
+      await flushMicrotasks();
+
+      expect(bobPage2.items.map((item) => item.id)).toEqual(['801', '901']);
+      expect(batchRequests).toEqual([]);
+      expect(reading.state()['801']?.server.lastReadPostNumber).toBe(2);
+      expect(reading.state()['702']).toBeUndefined();
+      expect(reading.state()['703']).toBeUndefined();
+      expect(reading.state()['704']).toBeUndefined();
+    } finally {
+      reading.dispose();
+    }
+  });
+
+  it('sends conflicting same-response duplicate reading evidence (7 vs 2, 7 vs 0, 7 vs null, unseen vs 7) to batch confirmation while keeping valid-over-missing without backfill', async () => {
+    const reading = createDiscourseReadingRuntime({
+      queryClient: new QueryClient(),
+      scope: () => 'alice',
+      send: async () => undefined
+    });
+    const batchRequests: string[][] = [];
+    const fetcher = vi.fn<Fetcher>(async (input) => {
+      const url = new URL(input);
+      if (url.pathname === '/filter.json') {
+        return Response.json({ topic_list: { topics: [] } });
+      }
+      const batchIds = url.searchParams.getAll('topic_ids[]');
+      if (batchIds.length) {
+        batchRequests.push(batchIds);
+        return Response.json({
+          topic_list: {
+            topics: batchIds.map((id) => ({ id: Number(id), last_read_post_number: 5, highest_post_number: 12 }))
+          }
+        });
+      }
+      return Response.json({
+        topic_list: {
+          topics: [
+            makeTopic(801, 1, { highest_post_number: 5 }),
+            makeTopic(801, 1, { last_read_post_number: 7, highest_post_number: 12 }),
+            makeTopic(802, 2, { last_read_post_number: 7, highest_post_number: 12 }),
+            makeTopic(802, 2, { last_read_post_number: 2, highest_post_number: 12 }),
+            makeTopic(803, 3, { last_read_post_number: 7, highest_post_number: 12 }),
+            makeTopic(803, 3, { last_read_post_number: 0, highest_post_number: 12 }),
+            makeTopic(804, 4, { last_read_post_number: 7, highest_post_number: 12 }),
+            makeTopic(804, 4, { last_read_post_number: null, highest_post_number: 12 }),
+            makeTopic(805, 5, { unseen: true, highest_post_number: 5 }),
+            makeTopic(805, 5, { last_read_post_number: 7, highest_post_number: 12 })
+          ]
+        }
+      });
+    });
+    const gateway = createReadGateway({
+      reading,
+      fetcher,
+      anonymousFetcher: fetcher,
+      getEnabledSources: () => ['linuxdo'],
+      linuxDoUserAgent: () => 'test-ua',
+      nodeSeekUserAgent: () => 'test-ua',
+      readSessionRuntimeSnapshot: (source) => ({
+        source,
+        authenticated: true,
+        identityTrust: 'confirmed',
+        identityKey: 'alice',
+        sessionEpoch: 1,
+        authSurfaceOpen: false,
+        sourceEnabled: true
+      })
+    });
+    try {
+      await gateway.getFeed({ source: 'linuxdo', limit: 10 });
+      await flushMicrotasks();
+
+      expect(batchRequests).toEqual([['802', '803', '804', '805']]);
+      expect(reading.state()['801']?.server.lastReadPostNumber).toBe(7);
+      expect(reading.state()['802']?.server.lastReadPostNumber).toBe(5);
+      expect(reading.state()['803']?.server.lastReadPostNumber).toBe(5);
+      expect(reading.state()['804']?.server.lastReadPostNumber).toBe(5);
+      expect(reading.state()['805']?.server.lastReadPostNumber).toBe(5);
+    } finally {
+      reading.dispose();
+    }
+  });
 });

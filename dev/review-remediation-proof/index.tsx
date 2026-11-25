@@ -96,7 +96,7 @@ import {
 } from './verificationRecoveryProof';
 import { readingEntryProofModes, verifyReadingEntryProof, type ReadingProofAction } from './readingEntryProof';
 import { verifyEditorReceiptReview } from './editorReceiptReview';
-import { verifySourcePaginationReview } from './sourcePaginationReview';
+import { scopedAggregateFeedFixtureCursor, verifySourcePaginationReview } from './sourcePaginationReview';
 
 // Isolated developer entry only. Synthetic payloads test boundaries, never upstream protocol claims.
 // HTTP fixtures use the supplied fetcher; the platform-export route uses an instrumentation-owned loopback server.
@@ -127,17 +127,21 @@ function HookProbe<T>({ useValue, observe }: { useValue: () => T; observe: (valu
   return null;
 }
 type BrowserResult = { html?: string; body?: string; challenge?: boolean; error?: string };
+const PROOF_BROWSER_ALLOWED_ORIGINS = ['https://linux.do'];
+
 function BrowserProbe({
   source,
   body,
   html,
   observe,
+  onMainFrameStart,
   onInjected
 }: {
   source: 'nodeseek' | 'linuxdo';
   body: string;
   html?: string;
   observe: (value: BrowserResult) => void;
+  onMainFrameStart?: (url: string) => void;
   onInjected?: (at: number) => void;
 }) {
   const webview = useRef<WebView>(null);
@@ -158,12 +162,14 @@ function BrowserProbe({
       ref={webview}
       style={{ height: 180 }}
       originWhitelist={['*']}
+      androidNavigationAllowedOrigins={onMainFrameStart ? PROOF_BROWSER_ALLOWED_ORIGINS : undefined}
       source={{
         html:
           html ||
           `<html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'"></head><body><pre>${escaped}</pre></body></html>`,
         baseUrl: source === 'nodeseek' ? 'https://www.nodeseek.com/api/proof' : 'https://linux.do/proof.json'
       }}
+      onMainFrameLoadStart={onMainFrameStart ? (event) => onMainFrameStart(event.nativeEvent.url) : undefined}
       onLoadEnd={() => {
         onInjected?.(Date.now());
         webview.current?.injectJavaScript(script);
@@ -279,8 +285,22 @@ async function execute(token: string, mount: (node: ReactNode) => void, status: 
       ]) {
         await run(`webview-${source}-${name}`, async () => {
           const messages: BrowserResult[] = [];
-          mount(<BrowserProbe source={source} body={body} observe={(value) => messages.push(value)} />);
+          const checkMainFrame = source === 'linuxdo' && name === 'short';
+          const mainFrameUrls: string[] = [];
+          mount(
+            <BrowserProbe
+              source={source}
+              body={body}
+              observe={(value) => messages.push(value)}
+              onMainFrameStart={checkMainFrame ? (url) => mainFrameUrls.push(url) : undefined}
+            />
+          );
           await until(() => messages.length > 0, 'WebView bridge did not respond');
+          if (checkMainFrame)
+            await until(
+              () => mainFrameUrls.includes('https://linux.do/proof.json'),
+              'Android did not deliver the main-frame start for the current inline page'
+            );
           await delay(600);
           check(messages.length === 1, 'Request completed more than once');
           const result = messages[0];
@@ -1225,7 +1245,10 @@ async function execute(token: string, mount: (node: ReactNode) => void, status: 
           headers: { 'content-type': 'application/json' }
         });
       };
-      const cursor = encodeURIComponent(JSON.stringify({ buffers: { linuxdo: buffered }, nextPages: { linuxdo: 2 } }));
+      const cursor = await scopedAggregateFeedFixtureCursor('linuxdo', {
+        buffers: { linuxdo: buffered },
+        nextPages: { linuxdo: 2 }
+      });
       const first = await getFeed({ source: 'all', page: 2, cursor, limit: 30, includedSources: ['linuxdo'], fetcher });
       check(first.items.length === 30 && mergeTopics([], first.items).length === 30, 'Duplicate consumed page quota');
       check(
@@ -1310,7 +1333,7 @@ async function execute(token: string, mount: (node: ReactNode) => void, status: 
         ),
         'An undated source topic gained a timestamp'
       );
-      const cursor = encodeURIComponent(JSON.stringify({ buffers: { v2ex: [undated] } }));
+      const cursor = await scopedAggregateFeedFixtureCursor('v2ex', { buffers: { v2ex: [undated] } });
       const buffered = await getFeed({
         source: 'all',
         page: 2,
@@ -1843,12 +1866,12 @@ async function execute(token: string, mount: (node: ReactNode) => void, status: 
             system: {
               permissionGranted: notificationPermissionGranted,
               reconcileDigests: reconcileSourceNotificationSlots,
-              presentDigest: async (source, digest, identifier) => {
+              presentDigest: async (source, digest, identifier, assertCurrent) => {
                 if (mode === 'native-failure') {
                   nativeFailureSeen = true;
                   throw new Error('Injected Native presentation failure');
                 }
-                const value = await presentSourceNotification(source, digest, identifier);
+                const value = await presentSourceNotification(source, digest, identifier, assertCurrent);
                 if (mode === 'identity-change') {
                   activeIdentity = 'nodeseek:8';
                   await resetNotificationSourceIdentity('nodeseek', activeIdentity);

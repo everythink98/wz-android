@@ -57,11 +57,9 @@ export function ComposerBottomSheet({
     if (presented) setKeyboardActive(true);
   }, [presented]);
   const close = useCallback(() => {
-    // This controlled sheet has no close gesture. An old animation must not
-    // dismiss a newly opened editor or release its keyboard subscription.
+    // A late animation cannot release a reopened editor's keyboard subscription.
     if (committedVisible.current) return;
     setKeyboardActive(false);
-    Keyboard.dismiss();
   }, [committedVisible]);
   const availableContentHeight = Math.max(320, height - insets.top - insets.bottom);
   const fixedSheetContentHeight = Math.min(
@@ -78,10 +76,6 @@ export function ComposerBottomSheet({
   useLayoutEffect(() => {
     if (visible) onPresentationChange?.('sheet');
   }, [onPresentationChange, visible]);
-  useEffect(() => {
-    if (presented) return;
-    Keyboard.dismiss();
-  }, [presented]);
   const handleSheetChange = useCallback(
     (nextIndex: number) => {
       if (committedVisible.current && nextIndex === 0 && initialFocusPending.current) {

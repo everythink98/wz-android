@@ -33,7 +33,10 @@ import {
   loadNotificationState,
   recordNotificationDelivery,
   recordNotificationSnapshot,
-  saveNotificationState
+  resetNotificationSourceIdentity,
+  saveNotificationState,
+  setGlobalNotificationIntent,
+  setSourceNotificationIntent
 } from '@/platform/notifications/notificationStore';
 import {
   dismissSourceNotificationExact,
@@ -229,6 +232,144 @@ describe('notification delivery settlement', () => {
     expect((await loadNotificationState()).sources.nodeseek.baselineReady).toBe(true);
   });
 
+  it.each(['global switch', 'source switch', 'content source cleanup', 'identity round trip'] as const)(
+    'requires a fresh quiet baseline when a scan crosses a %s',
+    async (change) => {
+      const identityKey = 'nodeseek:7';
+      const state = defaultNotificationState();
+      state.globalEnabled = true;
+      state.hasOptedIn = true;
+      state.sources.nodeseek = { intentEnabled: true, identityKey, baselineReady: true, deliveredIds: ['before'] };
+      await saveNotificationState(state);
+      const entered = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<NotificationPage>();
+      const page = (id: string): NotificationPage => ({
+        items: [item(id)],
+        cursor: null,
+        hasMore: false,
+        quality: 'complete'
+      });
+      const run = (listPage: () => Promise<NotificationPage>) =>
+        runNotificationBackgroundWorker({
+          sources: ['nodeseek'],
+          sourceAllowed: async () => true,
+          network: {
+            restoreProxy: async () => undefined,
+            probeAccess: async () => ({ identityKey, userId: '7' }),
+            listPage
+          },
+          store: {
+            load: loadNotificationState,
+            record: recordNotificationDelivery,
+            clearForContentDisable: clearNotificationSourceForContentDisable
+          },
+          system: {
+            permissionGranted: notificationPermissionGranted,
+            reconcileDigests: reconcileSourceNotificationSlots,
+            presentDigest: presentSourceNotification,
+            dismissDigest: (_, id) => dismissSourceNotificationExact(id)
+          }
+        });
+      const oldRound = run(() => {
+        entered.resolve();
+        return release.promise;
+      });
+      try {
+        await entered.promise;
+        if (change === 'content source cleanup') {
+          await clearNotificationSourceForContentDisable('nodeseek');
+        } else if (change === 'identity round trip') {
+          await resetNotificationSourceIdentity('nodeseek', 'nodeseek:8');
+          await resetNotificationSourceIdentity('nodeseek', identityKey);
+        } else {
+          const setIntent =
+            change === 'global switch'
+              ? setGlobalNotificationIntent
+              : (enabled: boolean) => setSourceNotificationIntent('nodeseek', enabled);
+          await setIntent(false);
+          await setIntent(true);
+        }
+      } finally {
+        release.resolve(page('before'));
+      }
+      await expect(oldRound).resolves.toMatchObject({ delivered: 0, failedSources: 0 });
+      const afterOldRound = (await loadNotificationState()).sources.nodeseek;
+      await expect(run(async () => page('while-paused'))).resolves.toMatchObject({ delivered: 0, failedSources: 0 });
+      expect(afterOldRound).toMatchObject({ baselineReady: false, deliveredIds: [] });
+      expect(native.present).not.toHaveBeenCalled();
+      expect((await loadNotificationState()).sources.nodeseek).toMatchObject({
+        baselineReady: true,
+        deliveredIds: ['while-paused']
+      });
+      await expect(run(async () => page('after-baseline'))).resolves.toMatchObject({ delivered: 1, failedSources: 0 });
+      expect(native.present).toHaveBeenCalledOnce();
+    }
+  );
+
+  it.each(['closing during the final account check', 'reopening during channel preparation'] as const)(
+    'does not present an obsolete digest after %s',
+    async (scenario) => {
+      const identityKey = 'nodeseek:7';
+      const state = defaultNotificationState();
+      state.globalEnabled = true;
+      state.hasOptedIn = true;
+      state.sources.nodeseek = { intentEnabled: true, identityKey, baselineReady: true, deliveredIds: ['old'] };
+      await saveNotificationState(state);
+      const entered = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const pause = async () => {
+        entered.resolve();
+        await release.promise;
+      };
+      let channelReady = false;
+      const reopen = scenario === 'reopening during channel preparation';
+      native.channel.mockImplementation(async () => {
+        if (reopen) await pause();
+        channelReady = true;
+      });
+      const running = runNotificationBackgroundWorker({
+        sources: ['nodeseek'],
+        sourceAllowed: async () => true,
+        privateAccessAllowed: async () => {
+          if (channelReady && !reopen) await pause();
+          return true;
+        },
+        network: {
+          restoreProxy: async () => undefined,
+          probeAccess: async () => ({ identityKey, userId: '7' }),
+          listPage: async () => ({ quality: 'complete', cursor: null, hasMore: false, items: [item('new')] })
+        },
+        store: {
+          load: loadNotificationState,
+          record: recordNotificationDelivery,
+          clearForContentDisable: clearNotificationSourceForContentDisable
+        },
+        system: {
+          permissionGranted: notificationPermissionGranted,
+          reconcileDigests: reconcileSourceNotificationSlots,
+          presentDigest: presentSourceNotification,
+          dismissDigest: (_, id) => dismissSourceNotificationExact(id)
+        }
+      });
+      try {
+        await entered.promise;
+        await setGlobalNotificationIntent(false);
+        if (reopen) await setGlobalNotificationIntent(true);
+        const latest = await loadNotificationState();
+        expect(latest.globalEnabled).toBe(reopen);
+        expect(latest.sources.nodeseek.baselineReady).toBe(false);
+      } finally {
+        release.resolve();
+      }
+      await expect(running).resolves.toMatchObject({ delivered: 0, failedSources: 0 });
+      expect(native.present).not.toHaveBeenCalled();
+      expect((await loadNotificationState()).sources.nodeseek).toMatchObject({
+        baselineReady: false,
+        deliveredIds: []
+      });
+    }
+  );
+
   it.each([
     { total: 80, scanned: 60, unread: true },
     { total: 1, scanned: 20, unread: false }
@@ -284,10 +425,11 @@ describe('notification delivery settlement', () => {
     'reconciliation',
     'failed reconciliation',
     'channel creation',
+    'channel creation with stale account',
     'native presentation',
     'previous digest dismissal',
     'baseline write'
-  ])('holds the identity lane through delayed %s after a bounded deadline', async (stage) => {
+  ])('protects the identity lane and native delivery through delayed %s', async (stage) => {
     vi.useFakeTimers();
     const identityKey = `nodeseek:${stage}`;
     const base = `wz-message-nodeseek-${encodeURIComponent(identityKey)}`;
@@ -309,13 +451,14 @@ describe('notification delivery settlement', () => {
     const release = Promise.withResolvers<void>();
     const cleanupEntered = Promise.withResolvers<void>();
     const releaseCleanup = Promise.withResolvers<void>();
-    const latePresentation = stage === 'channel creation' || stage === 'native presentation';
+    const latePresentation = stage === 'native presentation';
+    const preparingChannel = stage === 'channel creation' || stage === 'channel creation with stale account';
     const block = async () => {
       entered.resolve();
       await release.promise;
     };
     native.channel.mockImplementation(async () => {
-      if (stage === 'channel creation') await block();
+      if (preparingChannel) await block();
     });
     native.present.mockImplementation(async (identifier) => {
       if (stage === 'native presentation') await block();
@@ -347,9 +490,11 @@ describe('notification delivery settlement', () => {
     }
     const settlements: Promise<void>[] = [];
     let drained = false;
+    let accountCurrent = true;
     const dependencies: NotificationWorkerDependencies = {
       sources: ['nodeseek'],
       sourceAllowed: () => true,
+      privateAccessAllowed: () => accountCurrent,
       deadlineMs: 10,
       captureDeliverySettlement: (settlement) => {
         settlements.push(settlement);
@@ -391,6 +536,15 @@ describe('notification delivery settlement', () => {
     let second: ReturnType<typeof runNotificationBackgroundWorker> | undefined;
     try {
       await entered.promise;
+      if (stage === 'channel creation with stale account') {
+        accountCurrent = false;
+        release.resolve();
+        await expect(first).resolves.toMatchObject({ status: 'success', delivered: 0, failedSources: 0 });
+        expect(native.present).not.toHaveBeenCalled();
+        expect(visible).toEqual(new Set([previous]));
+        expect((await loadNotificationState()).sources.nodeseek).toEqual(state.sources.nodeseek);
+        return;
+      }
       const drain = settlements[0]!.then(() => {
         drained = true;
       });
@@ -423,6 +577,7 @@ describe('notification delivery settlement', () => {
         expect(persisted).toEqual(state.sources.nodeseek);
         if (latePresentation) expect(events.slice(-2)).toEqual([`present:${staged}`, `dismiss:${staged}`]);
       }
+      if (stage === 'channel creation') expect(native.present).not.toHaveBeenCalled();
     } finally {
       release.resolve();
       releaseCleanup.resolve();

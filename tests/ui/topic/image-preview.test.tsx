@@ -6,7 +6,7 @@ import { ReaderStyleProvider as ObservedReaderStyles } from '@/ui/theme/ReaderSt
 import { resolveReaderStyleSettings, createTheme as createObservedTheme } from '@/ui/theme/tokens';
 import { act, fireEvent, render, waitFor, within } from '../render';
 import React, { useLayoutEffect as useObservedLayoutEffect } from 'react';
-import { NativeModules, PixelRatio, Pressable, StyleSheet, Text } from 'react-native';
+import { Dimensions, NativeModules, PixelRatio, Pressable, StyleSheet, Text } from 'react-native';
 import { ImagePreviewModal } from '@/ui/media/ImagePreviewModal';
 import { ForumSessionEpochProvider, mediaSessionIdentityForSource } from '@/platform/media/mediaSessionEpoch';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
@@ -28,17 +28,23 @@ const mockGetImageCachePath = jest.fn(
   async (cacheKey: string): Promise<string | null> => `/cache/${encodeURIComponent(cacheKey)}`
 );
 let mockZoomScale = 1;
+let mockZoomTranslateX = 0;
+let mockZoomTranslateY = 0;
 let mockZoomVisibleRect = { height: 100, width: 100, x: 0, y: 0 };
 let mockGestureNextToken = 0;
 let mockGestureHandlerTag = 0;
 const mockGestureStateManagers = new Map<number, { activate: () => void; fail: () => void }>();
 let mockDeferAnimations = false;
-const mockDeferredAnimationCallbacks: (() => void)[] = [];
+const mockDeferredAnimationCallbacks: ((finished?: boolean) => void)[] = [];
 let mockDeferRNCallbacks = false;
 const mockDeferredRNCallbacks: (() => void)[] = [];
 let mockZoomNextToken = 0;
 let mockZoomRenders = 0;
 const mockZoomResets = jest.fn<(index: string) => void>();
+const mockZoomSetTransformState =
+  jest.fn<
+    (index: string, state: { scale: number; translateX: number; translateY: number }, animate?: boolean) => void
+  >();
 const mockPreviewImageUnmounts = jest.fn<(testID: string) => void>();
 let mockPreviewImageNextToken = 0;
 const mockCommittedPreviewImages = new Map<number, string | null>();
@@ -141,7 +147,7 @@ jest.mock('react-native-reanimated', () => {
     },
     withTiming: (value: unknown, _config?: unknown, callback?: (finished: boolean) => void) => {
       if (callback && mockDeferAnimations) {
-        mockDeferredAnimationCallbacks.push(() => callback(true));
+        mockDeferredAnimationCallbacks.push((finished = true) => callback(finished));
       } else {
         callback?.(true);
       }
@@ -291,6 +297,10 @@ jest.mock('react-native-zoom-toolkit', () => {
           };
           getVisibleRect: () => typeof mockZoomVisibleRect;
           reset: () => void;
+          setTransformState: (
+            state: { scale: number; translateX: number; translateY: number },
+            animate?: boolean
+          ) => void;
         }>
       ) => {
         const token = ReactModule.useRef(0);
@@ -305,11 +315,41 @@ jest.mock('react-native-zoom-toolkit', () => {
             containerSize: { height: 100, width: 100 },
             maxScale: 20,
             scale: mockZoomScale,
-            translateX: 0,
-            translateY: 0
+            translateX: mockZoomTranslateX,
+            translateY: mockZoomTranslateY
           }),
           getVisibleRect: () => mockZoomVisibleRect,
-          reset: () => mockZoomResets(index)
+          reset: () => {
+            mockZoomScale = 1;
+            mockZoomTranslateX = 0;
+            mockZoomTranslateY = 0;
+            mockZoomResets(index);
+          },
+          setTransformState: (state, animate) => {
+            mockZoomSetTransformState(index, state, animate);
+            mockZoomScale = state.scale;
+            mockZoomTranslateX = state.translateX;
+            mockZoomTranslateY = state.translateY;
+            (
+              props as {
+                onUpdate?: (next: {
+                  childSize: { height: number; width: number };
+                  containerSize: { height: number; width: number };
+                  maxScale: number;
+                  scale: number;
+                  translateX: number;
+                  translateY: number;
+                }) => void;
+              }
+            ).onUpdate?.({
+              childSize: { height: 100, width: 100 },
+              containerSize: { height: 100, width: 100 },
+              maxScale: 20,
+              scale: state.scale,
+              translateX: state.translateX,
+              translateY: state.translateY
+            });
+          }
         }));
         return ReactModule.createElement(
           ZoomMockView,
@@ -374,9 +414,18 @@ async function flushNextPreviewAnimation() {
   await act(() => mockDeferredAnimationCallbacks.shift()?.());
 }
 
+function svgReadyMessage(documentView: { props: Record<string, unknown> }) {
+  const html = String((documentView.props.source as { html?: string } | undefined)?.html || '');
+  const message = /ready\s*=\s*\(\)\s*=>[\s\S]*?post\('([^']+)'\)/.exec(html)?.[1];
+  if (!message) throw new Error('Missing SVG ready message in WebView document');
+  return message;
+}
+
 describe('Image preview', () => {
   beforeEach(() => {
     mockZoomScale = 1;
+    mockZoomTranslateX = 0;
+    mockZoomTranslateY = 0;
     mockZoomVisibleRect = { height: 100, width: 100, x: 0, y: 0 };
     mockGestureNextToken = 0;
     mockGestureHandlerTag = 0;
@@ -387,6 +436,7 @@ describe('Image preview', () => {
     mockDeferredRNCallbacks.splice(0);
     mockZoomNextToken = 0;
     mockZoomResets.mockClear();
+    mockZoomSetTransformState.mockClear();
     mockPreviewImageUnmounts.mockClear();
     mockPreviewImageNextToken = 0;
     mockCommittedPreviewImages.clear();
@@ -1387,6 +1437,32 @@ describe('Image preview', () => {
     expect(view.getByTestId('preview-zoom-0').props.maxScale).toBe(3);
   });
 
+  it('alternates cached movement and sharp settled SVG detail with the controls visible', async () => {
+    const view = await render(
+      <ImagePreviewModal preview={previewProps([previewItem('https://example.com/vector')])} {...callbacks()} />
+    );
+    const image = () => view.getByTestId('preview-image-0');
+    const zoom = () => view.getByTestId('preview-zoom-0');
+    await fireEvent(image(), 'load', {
+      cacheType: 'disk',
+      source: { height: 480, width: 640, mediaType: 'image/svg+xml' }
+    });
+
+    expect(image().props.cacheSvgInHardwareLayer).toBe(true);
+    await fireEvent(zoom(), 'pinchStart');
+    mockZoomScale = 2;
+    await fireEvent(zoom(), 'gestureEnd');
+    expect(image().props.cacheSvgInHardwareLayer).toBe(false);
+    expect(view.getByLabelText('关闭图片预览')).toBeTruthy();
+    expect(view.getByLabelText('保存图片')).toBeTruthy();
+
+    await fireEvent(zoom(), 'panStart');
+    expect(image().props.cacheSvgInHardwareLayer).toBe(true);
+    mockZoomScale = 1;
+    await fireEvent(zoom(), 'gestureEnd');
+    expect(image().props.cacheSvgInHardwareLayer).toBe(true);
+  });
+
   it('fits the page to the original dimensions once they are known', async () => {
     const item = {
       displaySize: { height: 800, width: 400 },
@@ -1420,9 +1496,15 @@ describe('Image preview', () => {
 
     await fireEvent(galleryAccessibility, 'accessibilityAction', { nativeEvent: { actionName: 'decrement' } });
     expect(onSelect).not.toHaveBeenCalled();
+    expect(mockZoomResets).not.toHaveBeenCalled();
     await fireEvent(galleryAccessibility, 'accessibilityAction', { nativeEvent: { actionName: 'increment' } });
     expect(onSelect).toHaveBeenLastCalledWith(1);
-    expect(view.getByLabelText('图片预览，第 2 张，共 2 张').props.accessibilityValue.text).toBe('第 2 张，共 2 张');
+    expect(mockZoomResets.mock.calls).toEqual([['0']]);
+    const secondAccessibility = view.getByLabelText('图片预览，第 2 张，共 2 张');
+    expect(secondAccessibility.props.accessibilityValue.text).toBe('第 2 张，共 2 张');
+    await fireEvent(secondAccessibility, 'accessibilityAction', { nativeEvent: { actionName: 'increment' } });
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(mockZoomResets.mock.calls).toEqual([['0']]);
     const [modal] = view.container.queryAll(({ props }) => typeof props.onRequestClose === 'function');
     await fireEvent(modal, 'requestClose');
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -1438,13 +1520,59 @@ describe('Image preview', () => {
     await fireEvent(accessibility, 'accessibilityAction', { nativeEvent: { actionName: 'increment' } });
     await fireEvent(accessibility, 'accessibilityAction', { nativeEvent: { actionName: 'decrement' } });
     expect(onSelect).not.toHaveBeenCalled();
+    expect(mockZoomResets.mock.calls).toEqual([['1']]);
 
     await flushNextPreviewAnimation();
     expect(onSelect).toHaveBeenLastCalledWith(2);
+    expect(mockZoomResets.mock.calls).toEqual([['1'], ['2']]);
     await flushNextPreviewAnimation();
 
     expect(onSelect.mock.calls.map(([index]) => index)).toEqual([2, 1]);
+    expect(mockZoomResets.mock.calls).toEqual([['1'], ['2']]);
     expect(view.getByText('2/4')).toBeTruthy();
+  });
+
+  it('resets zoom once per accessibility step while preserving rapid consecutive paging', async () => {
+    const items = Array.from({ length: 4 }, (_, index) => previewItem(`https://example.com/a11y-rapid-${index}.png`));
+    const onSelect = jest.fn<(index: number) => void>();
+    const view = await render(<ImagePreviewModal preview={previewProps(items, 0)} {...callbacks({ onSelect })} />);
+    mockZoomScale = 2.5;
+    await fireEvent(view.getByTestId('preview-zoom-0'), 'pinchStart', {});
+    await fireEvent(view.getByTestId('preview-zoom-0'), 'update', { scale: 2.5 });
+    await fireEvent(view.getByTestId('preview-zoom-0'), 'gestureEnd');
+    expect(view.getByTestId('preview-zoom-0').props.panEnabled).toBe(true);
+
+    const accessibility = view.getByLabelText('图片预览，第 1 张，共 4 张');
+    mockDeferAnimations = true;
+    mockDeferRNCallbacks = true;
+
+    await fireEvent(accessibility, 'accessibilityAction', { nativeEvent: { actionName: 'increment' } });
+    await fireEvent(accessibility, 'accessibilityAction', { nativeEvent: { actionName: 'increment' } });
+    await fireEvent(accessibility, 'accessibilityAction', { nativeEvent: { actionName: 'increment' } });
+
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(mockZoomResets.mock.calls).toEqual([['0']]);
+    expect(view.getByTestId('preview-zoom-0').props.panEnabled).toBe(false);
+
+    const flushStep = async () => {
+      await flushNextPreviewAnimation();
+      while (mockDeferredRNCallbacks.length > 0) {
+        await act(() => mockDeferredRNCallbacks.shift()?.());
+      }
+    };
+
+    await flushStep();
+    expect(onSelect.mock.calls.map(([index]) => index)).toEqual([1]);
+    expect(mockZoomResets.mock.calls).toEqual([['0'], ['1']]);
+
+    await flushStep();
+    expect(onSelect.mock.calls.map(([index]) => index)).toEqual([1, 2]);
+    expect(mockZoomResets.mock.calls).toEqual([['0'], ['1'], ['2']]);
+
+    await flushStep();
+    expect(onSelect.mock.calls.map(([index]) => index)).toEqual([1, 2, 3]);
+    expect(mockZoomResets.mock.calls).toEqual([['0'], ['1'], ['2']]);
+    expect(view.getByText('4/4')).toBeTruthy();
   });
 
   it('queues a rapid physical swipe without disturbing the active transition', async () => {
@@ -1456,11 +1584,14 @@ describe('Image preview', () => {
     expect(await swipePreviewNext(view)).toEqual({ active: true, failed: false });
     expect(await swipePreviewNext(view)).toEqual({ active: true, failed: false });
     expect(onSelect).not.toHaveBeenCalled();
+    expect(mockZoomResets.mock.calls).toEqual([['1']]);
 
     await flushNextPreviewAnimation();
+    expect(mockZoomResets.mock.calls).toEqual([['1'], ['2']]);
     await flushNextPreviewAnimation();
 
     expect(onSelect.mock.calls.map(([index]) => index)).toEqual([2, 3]);
+    expect(mockZoomResets.mock.calls).toEqual([['1'], ['2']]);
     expect(view.getByText('4/5')).toBeTruthy();
   });
 
@@ -1749,10 +1880,10 @@ describe('Image preview', () => {
           )
         )
       );
-      await waitFor(() => expect(view.getByTestId('compatible-svg-document-view')).toBeTruthy());
+      const documentView = await waitFor(() => view.getByTestId('compatible-svg-document-view'));
       expect(fetchSpy).toHaveBeenCalledTimes(1);
-      await fireEvent(view.getByTestId('compatible-svg-document-view'), 'message', {
-        nativeEvent: { data: 'wz-svg-ready' }
+      await fireEvent(documentView, 'message', {
+        nativeEvent: { data: svgReadyMessage(documentView) }
       });
       expect(view.queryByText('图片加载中...')).toBeNull();
     } finally {
@@ -1827,8 +1958,9 @@ describe('Image preview', () => {
       await waitFor(() => expect(mockRenderSvgPoster).toHaveBeenCalledTimes(2));
       expect(view.getByTestId('preview-continuity-0').props.recyclingKey).not.toBe(firstContinuityKey);
       expect(view.getByText('图片加载中...')).toBeTruthy();
-      await fireEvent(view.getByTestId('compatible-svg-document-view'), 'message', {
-        nativeEvent: { data: 'wz-svg-ready' }
+      const documentView = view.getByTestId('compatible-svg-document-view');
+      await fireEvent(documentView, 'message', {
+        nativeEvent: { data: svgReadyMessage(documentView) }
       });
 
       expect(view.queryByText('图片加载中...')).toBeNull();
@@ -1858,7 +1990,7 @@ describe('Image preview', () => {
       expect(mockWebViewUnmounts).toBe(0);
       expect(within(view.getByTestId('preview-zoom-0')).queryByTestId('compatible-svg-document-view')).toBeNull();
       const posterKey = view.getByTestId('preview-continuity-0').props.recyclingKey;
-      await fireEvent(documentView, 'message', { nativeEvent: { data: 'wz-svg-ready' } });
+      await fireEvent(documentView, 'message', { nativeEvent: { data: svgReadyMessage(documentView) } });
       expect(view.queryByTestId('preview-continuity-0')).toBeNull();
 
       await fireEvent(view.getByTestId('preview-zoom-0'), 'doubleTapStart', {});
@@ -1866,7 +1998,7 @@ describe('Image preview', () => {
       expect(mockWebViewMounts).toBe(1);
       expect(mockWebViewUnmounts).toBe(0);
       await fireEvent(view.getByTestId('preview-continuity-0'), 'display');
-      expect(StyleSheet.flatten(view.getByTestId('compatible-svg-document-view').props.style).opacity).toBe(0);
+      expect(StyleSheet.flatten(view.getByTestId('compatible-svg-document-container').props.style).opacity).toBe(0);
       expect(view.getByTestId('preview-continuity-0').props.recyclingKey).toBe(posterKey);
 
       mockZoomScale = 3;
@@ -1875,13 +2007,15 @@ describe('Image preview', () => {
       expect(view.getByTestId('compatible-svg-document-view').props.mockWebViewToken).toBe(documentToken);
       expect(mockWebViewMounts).toBe(1);
       expect(mockWebViewUnmounts).toBe(0);
-      expect(StyleSheet.flatten(view.getByTestId('compatible-svg-document-view').props.style).opacity).toBe(0);
+      expect(StyleSheet.flatten(view.getByTestId('compatible-svg-document-container').props.style).opacity).toBe(0);
 
       mockZoomScale = 1;
       await fireEvent(view.getByTestId('preview-zoom-0'), 'update', { scale: 1 });
       await fireEvent(view.getByTestId('preview-zoom-0'), 'gestureEnd');
       await waitFor(() =>
-        expect(StyleSheet.flatten(view.getByTestId('compatible-svg-document-view').props.style).opacity).not.toBe(0)
+        expect(StyleSheet.flatten(view.getByTestId('compatible-svg-document-container').props.style).opacity).not.toBe(
+          0
+        )
       );
       expect(view.queryByTestId('preview-continuity-0')).toBeNull();
       expect(view.getByTestId('compatible-svg-document-view').props.mockWebViewToken).toBe(documentToken);
@@ -1889,7 +2023,7 @@ describe('Image preview', () => {
       expect(mockWebViewUnmounts).toBe(0);
 
       await fireEvent(view.getByTestId('preview-zoom-0'), 'pinchStart', {});
-      expect(StyleSheet.flatten(view.getByTestId('compatible-svg-document-view').props.style).opacity).toBe(0);
+      expect(StyleSheet.flatten(view.getByTestId('compatible-svg-document-container').props.style).opacity).toBe(0);
       expect(view.getByTestId('preview-continuity-0').props.recyclingKey).toBe(posterKey);
       await fireEvent(view.getByTestId('preview-zoom-0'), 'gestureEnd');
       expect((await waitFor(() => view.getByTestId('compatible-svg-document-view'))).props.mockWebViewToken).toBe(
@@ -1941,8 +2075,9 @@ describe('Image preview', () => {
 
       await fireEvent(view.getByTestId('preview-continuity-0'), 'error');
       await waitFor(() => expect(resolveRefresh).toBeDefined());
-      await fireEvent(view.getByTestId('compatible-svg-document-view'), 'message', {
-        nativeEvent: { data: 'wz-svg-ready' }
+      const documentView = view.getByTestId('compatible-svg-document-view');
+      await fireEvent(documentView, 'message', {
+        nativeEvent: { data: svgReadyMessage(documentView) }
       });
       expect(view.queryByText('图片加载中...')).toBeNull();
 
@@ -2007,8 +2142,9 @@ describe('Image preview', () => {
       const view = await render(modal(0));
       await fireEvent(view.getByTestId('preview-image-0'), 'error');
       await waitFor(() => expect(view.getByTestId('compatible-svg-document-view')).toBeTruthy());
-      await fireEvent(view.getByTestId('compatible-svg-document-view'), 'message', {
-        nativeEvent: { data: 'wz-svg-ready' }
+      const documentView = view.getByTestId('compatible-svg-document-view');
+      await fireEvent(documentView, 'message', {
+        nativeEvent: { data: svgReadyMessage(documentView) }
       });
       expect(view.queryByTestId('preview-continuity-0')).toBeNull();
 
@@ -2394,20 +2530,549 @@ describe('Image preview', () => {
         const [poster] = root.container.queryAll((node) => node.props.testID === 'preview-continuity-0');
         const document = () =>
           root.container.queryAll((node) => node.props.testID === 'compatible-svg-document-view')[0];
+        const documentContainer = () =>
+          root.container.queryAll((node) => node.props.testID === 'compatible-svg-document-container')[0];
         const [zoom] = root.container.queryAll((node) => node.props.testID === 'preview-zoom-0');
-        if (!poster || !zoom || !document()) throw new Error('Expected current animated preview');
+        if (!poster || !zoom || !document() || !documentContainer())
+          throw new Error('Expected current animated preview');
         await act(async () => poster.props.onDisplay());
-        await act(async () => document().props.onMessage({ nativeEvent: { data: 'wz-svg-ready' } }));
+        await act(async () => document().props.onMessage({ nativeEvent: { data: svgReadyMessage(document()) } }));
         await act(async () => zoom.props.onPinchStart({}));
-        expect(StyleSheet.flatten(document().props.style).opacity).toBe(0);
+        expect(StyleSheet.flatten(documentContainer().props.style).opacity).toBe(0);
         await act(async () => retiredError?.());
-        expect(StyleSheet.flatten(document().props.style).opacity).toBe(0);
+        expect(StyleSheet.flatten(documentContainer().props.style).opacity).toBe(0);
         expect(fetchSpy).toHaveBeenCalledTimes(1);
       } finally {
         await act(async () => root.unmount());
       }
     } finally {
       fetchSpy.mockRestore();
+    }
+  });
+
+  it('orders immediate next and prev accessibility actions after an in-flight swipe on the UI thread', async () => {
+    const items = Array.from({ length: 5 }, (_, index) =>
+      previewItem(`https://example.com/unified-order-${index}.png`)
+    );
+    const flushStep = async () => {
+      await flushNextPreviewAnimation();
+      while (mockDeferredRNCallbacks.length > 0) {
+        await act(() => mockDeferredRNCallbacks.shift()?.());
+      }
+    };
+
+    const nextSelect = jest.fn<(index: number) => void>();
+    const nextView = await render(
+      <ImagePreviewModal preview={previewProps(items, 1)} {...callbacks({ onSelect: nextSelect })} />
+    );
+    mockDeferAnimations = true;
+    mockDeferRNCallbacks = true;
+
+    expect(await swipePreviewNext(nextView)).toEqual({ active: true, failed: false });
+    await fireEvent(nextView.getByLabelText('图片预览，第 2 张，共 5 张'), 'accessibilityAction', {
+      nativeEvent: { actionName: 'increment' }
+    });
+    expect(nextSelect).not.toHaveBeenCalled();
+
+    await flushStep();
+    expect(nextSelect.mock.calls.map(([index]) => index)).toEqual([2]);
+    expect(mockZoomResets.mock.calls).toEqual([['1'], ['2']]);
+
+    await flushStep();
+    expect(nextSelect.mock.calls.map(([index]) => index)).toEqual([2, 3]);
+    expect(mockZoomResets.mock.calls).toEqual([['1'], ['2']]);
+    expect(nextView.getByText('4/5')).toBeTruthy();
+    await nextView.unmount();
+
+    mockZoomResets.mockClear();
+    mockDeferredAnimationCallbacks.splice(0);
+    mockDeferredRNCallbacks.splice(0);
+
+    const prevSelect = jest.fn<(index: number) => void>();
+    const prevView = await render(
+      <ImagePreviewModal preview={previewProps(items, 1)} {...callbacks({ onSelect: prevSelect })} />
+    );
+    mockDeferAnimations = true;
+    mockDeferRNCallbacks = true;
+
+    expect(await swipePreviewNext(prevView)).toEqual({ active: true, failed: false });
+    await fireEvent(prevView.getByLabelText('图片预览，第 2 张，共 5 张'), 'accessibilityAction', {
+      nativeEvent: { actionName: 'decrement' }
+    });
+    expect(prevSelect).not.toHaveBeenCalled();
+
+    await flushStep();
+    expect(prevSelect.mock.calls.map(([index]) => index)).toEqual([2]);
+    expect(mockZoomResets.mock.calls).toEqual([['1'], ['2']]);
+
+    await flushStep();
+    expect(prevSelect.mock.calls.map(([index]) => index)).toEqual([2, 1]);
+    expect(mockZoomResets.mock.calls).toEqual([['1'], ['2']]);
+    expect(prevView.getByText('2/5')).toBeTruthy();
+  });
+
+  it('clamps start and end boundaries per step across interleaved swipes and accessibility actions', async () => {
+    const items = Array.from({ length: 4 }, (_, index) =>
+      previewItem(`https://example.com/boundary-clamp-${index}.png`)
+    );
+    const flushAllSteps = async () => {
+      while (mockDeferredAnimationCallbacks.length > 0 || mockDeferredRNCallbacks.length > 0) {
+        if (mockDeferredAnimationCallbacks.length > 0) {
+          await flushNextPreviewAnimation();
+        }
+        while (mockDeferredRNCallbacks.length > 0) {
+          await act(() => mockDeferredRNCallbacks.shift()?.());
+        }
+      }
+    };
+
+    const endSelect = jest.fn<(index: number) => void>();
+    const endView = await render(
+      <ImagePreviewModal preview={previewProps(items, 2)} {...callbacks({ onSelect: endSelect })} />
+    );
+    mockDeferAnimations = true;
+    mockDeferRNCallbacks = true;
+
+    await swipePreviewNext(endView);
+    const endPager = endView.getByLabelText('图片预览，第 3 张，共 4 张');
+    await fireEvent(endPager, 'accessibilityAction', { nativeEvent: { actionName: 'increment' } });
+    await fireEvent(endPager, 'accessibilityAction', { nativeEvent: { actionName: 'increment' } });
+    await fireEvent(endPager, 'accessibilityAction', { nativeEvent: { actionName: 'decrement' } });
+    await flushAllSteps();
+
+    expect(endSelect.mock.calls.map(([index]) => index)).toEqual([3, 2]);
+    expect(mockZoomResets.mock.calls).toEqual([['2'], ['3']]);
+    expect(endView.getByText('3/4')).toBeTruthy();
+    await endView.unmount();
+
+    mockZoomResets.mockClear();
+    mockDeferredAnimationCallbacks.splice(0);
+    mockDeferredRNCallbacks.splice(0);
+
+    const startSelect = jest.fn<(index: number) => void>();
+    const startView = await render(
+      <ImagePreviewModal preview={previewProps(items, 1)} {...callbacks({ onSelect: startSelect })} />
+    );
+    mockDeferAnimations = true;
+    mockDeferRNCallbacks = true;
+
+    await swipePreviewPrevious(startView);
+    const startPager = startView.getByLabelText('图片预览，第 2 张，共 4 张');
+    await fireEvent(startPager, 'accessibilityAction', { nativeEvent: { actionName: 'decrement' } });
+    await fireEvent(startPager, 'accessibilityAction', { nativeEvent: { actionName: 'decrement' } });
+    await fireEvent(startPager, 'accessibilityAction', { nativeEvent: { actionName: 'increment' } });
+    await flushAllSteps();
+
+    expect(startSelect.mock.calls.map(([index]) => index)).toEqual([0, 1]);
+    expect(mockZoomResets.mock.calls).toEqual([['1'], ['0']]);
+    expect(startView.getByText('2/4')).toBeTruthy();
+  });
+
+  it('commits each step once and isolates cancel, group change, and close/reopen stale callbacks', async () => {
+    const groupA = Array.from({ length: 4 }, (_, index) => previewItem(`https://example.com/group-a-${index}.png`));
+    const groupB = Array.from({ length: 2 }, (_, index) => previewItem(`https://example.com/group-b-${index}.png`));
+    const groupC = Array.from({ length: 2 }, (_, index) => previewItem(`https://example.com/group-c-${index}.png`));
+    const onSelect = jest.fn<(index: number) => void>();
+    const sharedCallbacks = callbacks({ onSelect });
+    const view = await render(<ImagePreviewModal preview={previewProps(groupA, 1)} {...sharedCallbacks} />);
+    mockDeferAnimations = true;
+    mockDeferRNCallbacks = true;
+
+    await swipePreviewNext(view);
+    const duplicateAnimation = mockDeferredAnimationCallbacks.shift();
+    expect(duplicateAnimation).toEqual(expect.any(Function));
+    await act(() => {
+      duplicateAnimation?.(true);
+      duplicateAnimation?.(true);
+    });
+    while (mockDeferredRNCallbacks.length > 0) {
+      await act(() => mockDeferredRNCallbacks.shift()?.());
+    }
+    expect(onSelect.mock.calls.map(([index]) => index)).toEqual([2]);
+    expect(mockZoomResets.mock.calls).toEqual([['1']]);
+    expect(view.getByText('3/4')).toBeTruthy();
+
+    await swipePreviewNext(view);
+    const canceledAnimation = mockDeferredAnimationCallbacks.shift();
+    await act(() => canceledAnimation?.(false));
+    while (mockDeferredRNCallbacks.length > 0) {
+      await act(() => mockDeferredRNCallbacks.shift()?.());
+    }
+    expect(onSelect.mock.calls.map(([index]) => index)).toEqual([2]);
+    expect(view.getByText('3/4')).toBeTruthy();
+
+    await swipePreviewNext(view);
+    await fireEvent(view.getByLabelText('图片预览，第 3 张，共 4 张'), 'accessibilityAction', {
+      nativeEvent: { actionName: 'increment' }
+    });
+    const staleGroupAnimations = mockDeferredAnimationCallbacks.splice(0);
+    const staleGroupRNCallbacks = mockDeferredRNCallbacks.splice(0);
+    onSelect.mockClear();
+    mockZoomResets.mockClear();
+
+    await view.rerender(<ImagePreviewModal preview={previewProps(groupB, 0)} {...sharedCallbacks} />);
+    expect(view.getByText('1/2')).toBeTruthy();
+    expect(view.getByTestId('preview-image-0').props.source.uri).toBe(groupB[0].originalUri);
+
+    for (const callback of staleGroupAnimations) {
+      await act(() => callback(true));
+      await act(() => callback(false));
+    }
+    for (const callback of staleGroupRNCallbacks) {
+      await act(() => callback());
+    }
+    while (mockDeferredRNCallbacks.length > 0) {
+      await act(() => mockDeferredRNCallbacks.shift()?.());
+    }
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(view.getByText('1/2')).toBeTruthy();
+    expect(view.getByTestId('preview-image-0').props.source.uri).toBe(groupB[0].originalUri);
+
+    await swipePreviewNext(view);
+    const staleCloseAnimations = mockDeferredAnimationCallbacks.splice(0);
+    const staleCloseRNCallbacks = mockDeferredRNCallbacks.splice(0);
+    await view.rerender(<ImagePreviewModal preview={null} {...sharedCallbacks} />);
+    await view.rerender(<ImagePreviewModal preview={previewProps(groupC, 0)} {...sharedCallbacks} />);
+
+    for (const callback of staleCloseAnimations) {
+      await act(() => callback(true));
+      await act(() => callback(false));
+    }
+    for (const callback of staleCloseRNCallbacks) {
+      await act(() => callback());
+    }
+    while (mockDeferredRNCallbacks.length > 0) {
+      await act(() => mockDeferredRNCallbacks.shift()?.());
+    }
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(view.getByText('1/2')).toBeTruthy();
+    expect(view.getByTestId('preview-image-0').props.source.uri).toBe(groupC[0].originalUri);
+  });
+
+  it.each(['before', 'after'] as const)(
+    'restores the static poster when an animated SVG renderer exits %s ready and isolates A -> B -> A callbacks',
+    async (exitAt) => {
+      const svgUrl = 'https://example.com/' + exitAt + '-ready-poster-exit.svg';
+      const otherUrl = 'https://example.com/' + exitAt + '-ready-other.png';
+      const items = [previewItem(svgUrl), previewItem(otherUrl)];
+      const onVisibleImageChange =
+        jest.fn<NonNullable<React.ComponentProps<typeof ImagePreviewModal>['onVisibleImageChange']>>();
+      const sharedCallbacks = callbacks();
+      const modal = (index: number) => (
+        <ImagePreviewModal
+          preview={previewProps(items, index)}
+          {...sharedCallbacks}
+          onVisibleImageChange={onVisibleImageChange}
+        />
+      );
+      const fetchSpy = jest
+        .spyOn(global, 'fetch')
+        .mockResolvedValue(
+          new Response(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="920" height="460"><animate attributeName="opacity" /></svg>',
+            { headers: { 'content-type': 'image/svg+xml' } }
+          )
+        );
+      try {
+        const view = await render(modal(0));
+        await fireEvent(view.getByTestId('preview-image-0'), 'error');
+        const firstDocument = await waitFor(() => view.getByTestId('compatible-svg-document-view'));
+        const firstToken = firstDocument.props.mockWebViewToken;
+        const staleFirstExit = firstDocument.props.onRenderProcessGone as (event: {
+          nativeEvent: { didCrash: boolean };
+        }) => void;
+        const staleFirstReady = svgReadyMessage(firstDocument);
+
+        await fireEvent(view.getByTestId('preview-continuity-0'), 'display');
+        if (exitAt === 'after') {
+          await fireEvent(firstDocument, 'message', { nativeEvent: { data: staleFirstReady } });
+          expect(view.queryByTestId('preview-continuity-0')).toBeNull();
+          expect(onVisibleImageChange).toHaveBeenLastCalledWith(items[0]);
+        }
+
+        await fireEvent(firstDocument, 'renderProcessGone', { nativeEvent: { didCrash: true } });
+
+        expect(view.queryByTestId('compatible-svg-document-view')).toBeNull();
+        expect(view.queryByText('图片加载失败')).toBeNull();
+        const restoredPoster = view.getByTestId('preview-continuity-0');
+        expect(StyleSheet.flatten(restoredPoster.props.style).opacity).not.toBe(0);
+        expect(onVisibleImageChange).toHaveBeenLastCalledWith(items[0]);
+
+        await view.rerender(modal(1));
+        await view.rerender(modal(0));
+        const secondDocument = await waitFor(() => view.getByTestId('compatible-svg-document-view'));
+        expect(secondDocument.props.mockWebViewToken).not.toBe(firstToken);
+
+        await act(() => staleFirstExit({ nativeEvent: { didCrash: true } }));
+        await fireEvent(secondDocument, 'message', { nativeEvent: { data: staleFirstReady } });
+        expect(view.getByTestId('compatible-svg-document-view').props.mockWebViewToken).toBe(
+          secondDocument.props.mockWebViewToken
+        );
+        expect(StyleSheet.flatten(view.getByTestId('compatible-svg-document-container').props.style).opacity).toBe(0);
+
+        await fireEvent(secondDocument, 'message', { nativeEvent: { data: svgReadyMessage(secondDocument) } });
+        expect(StyleSheet.flatten(view.getByTestId('compatible-svg-document-container').props.style).opacity).not.toBe(
+          0
+        );
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    }
+  );
+
+  it('keeps an existing SVG poster mounted until it displays after the renderer exits', async () => {
+    const svgUrl = 'https://example.com/post-ready-pending-poster-exit.svg';
+    const item = previewItem(svgUrl);
+    const onVisibleImageChange =
+      jest.fn<NonNullable<React.ComponentProps<typeof ImagePreviewModal>['onVisibleImageChange']>>();
+    const fetchSpy = jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValue(
+        new Response(
+          '<svg xmlns="http://www.w3.org/2000/svg" width="920" height="460"><animate attributeName="opacity" /></svg>',
+          { headers: { 'content-type': 'image/svg+xml' } }
+        )
+      );
+    try {
+      const view = await render(
+        <ImagePreviewModal
+          preview={previewProps([item])}
+          {...callbacks()}
+          onVisibleImageChange={onVisibleImageChange}
+        />
+      );
+      await fireEvent(view.getByTestId('preview-image-0'), 'error');
+      const document = await waitFor(() => view.getByTestId('compatible-svg-document-view'));
+      const pendingPoster = view.getByTestId('preview-continuity-0');
+      const pendingPosterKey = pendingPoster.props.recyclingKey;
+      await fireEvent(document, 'message', { nativeEvent: { data: svgReadyMessage(document) } });
+      await fireEvent(document, 'renderProcessGone', { nativeEvent: { didCrash: true } });
+
+      expect(view.queryByTestId('compatible-svg-document-view')).toBeNull();
+      const restoredPoster = view.getByTestId('preview-continuity-0');
+      expect(restoredPoster.props.recyclingKey).toBe(pendingPosterKey);
+      expect(restoredPoster.props.source.uri).toBe('file:///cache/complex-svg-poster.png');
+      expect(view.getByText('图片加载中...')).toBeTruthy();
+      expect(view.queryByText('图片加载失败')).toBeNull();
+      expect(onVisibleImageChange).toHaveBeenLastCalledWith(null);
+
+      await fireEvent(restoredPoster, 'display');
+
+      expect(view.queryByText('图片加载中...')).toBeNull();
+      expect(view.queryByText('图片加载失败')).toBeNull();
+      expect(onVisibleImageChange).toHaveBeenLastCalledWith(item);
+      expect(mockRenderSvgPoster).toHaveBeenCalledTimes(1);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('keeps a ready SVG visible if its hidden poster cannot be recovered', async () => {
+    const svgUrl = 'https://example.com/ready-svg-with-unavailable-poster.svg';
+    const item = previewItem(svgUrl);
+    const onVisibleImageChange =
+      jest.fn<NonNullable<React.ComponentProps<typeof ImagePreviewModal>['onVisibleImageChange']>>();
+    const fetchSpy = jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValue(
+        new Response(
+          '<svg xmlns="http://www.w3.org/2000/svg" width="920" height="460"><animate attributeName="opacity" /></svg>',
+          { headers: { 'content-type': 'image/svg+xml' } }
+        )
+      );
+    try {
+      const view = await render(
+        <ImagePreviewModal
+          preview={previewProps([item])}
+          {...callbacks()}
+          onVisibleImageChange={onVisibleImageChange}
+        />
+      );
+      await fireEvent(view.getByTestId('preview-image-0'), 'error');
+      const document = await waitFor(() => view.getByTestId('compatible-svg-document-view'));
+      const poster = view.getByTestId('preview-continuity-0');
+      await fireEvent(document, 'message', { nativeEvent: { data: svgReadyMessage(document) } });
+
+      mockRenderSvgPoster.mockRejectedValueOnce(new Error('poster refresh failed'));
+      await fireEvent(poster, 'error');
+      await waitFor(() => expect(mockRenderSvgPoster).toHaveBeenCalledTimes(2));
+
+      expect(view.queryByText('图片加载中...')).toBeNull();
+      expect(onVisibleImageChange).toHaveBeenLastCalledWith(item);
+
+      await fireEvent(document, 'renderProcessGone', { nativeEvent: { didCrash: true } });
+
+      expect(view.getByText('图片加载失败')).toBeTruthy();
+      expect(view.getByLabelText('重试加载图片')).toBeTruthy();
+      expect(onVisibleImageChange).toHaveBeenLastCalledWith(null);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('settles a poster timeout or refresh failure after SVG renderer exit and remounts on retry', async () => {
+    jest.useFakeTimers();
+    const svgUrl = 'https://example.com/post-ready-unavailable-poster-exit.svg';
+    const onVisibleImageChange =
+      jest.fn<NonNullable<React.ComponentProps<typeof ImagePreviewModal>['onVisibleImageChange']>>();
+    const fetchSpy = jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValue(
+        new Response(
+          '<svg xmlns="http://www.w3.org/2000/svg" width="920" height="460"><animate attributeName="opacity" /></svg>',
+          { headers: { 'content-type': 'image/svg+xml' } }
+        )
+      );
+    try {
+      const view = await render(
+        <ImagePreviewModal
+          preview={previewProps([previewItem(svgUrl)])}
+          {...callbacks()}
+          onVisibleImageChange={onVisibleImageChange}
+        />
+      );
+      await fireEvent(view.getByTestId('preview-image-0'), 'error');
+      const firstDocument = await waitFor(() => view.getByTestId('compatible-svg-document-view'));
+      const firstToken = firstDocument.props.mockWebViewToken;
+      const staleFirstExit = firstDocument.props.onRenderProcessGone as (event: {
+        nativeEvent: { didCrash: boolean };
+      }) => void;
+      const staleFirstReady = svgReadyMessage(firstDocument);
+
+      await fireEvent(firstDocument, 'message', { nativeEvent: { data: staleFirstReady } });
+      expect(view.queryByText('图片加载中...')).toBeNull();
+      expect(onVisibleImageChange).toHaveBeenLastCalledWith(expect.objectContaining({ originalUri: svgUrl }));
+
+      await fireEvent(firstDocument, 'renderProcessGone', { nativeEvent: { didCrash: true } });
+
+      expect(view.queryByTestId('compatible-svg-document-view')).toBeNull();
+      expect(view.getByText('图片加载中...')).toBeTruthy();
+      expect(view.queryByText('图片加载失败')).toBeNull();
+      await act(() => jest.advanceTimersByTime(30_000));
+      expect(view.getByText('图片加载失败')).toBeTruthy();
+      expect(view.getByLabelText('重试加载图片')).toBeTruthy();
+      expect(onVisibleImageChange).toHaveBeenLastCalledWith(null);
+
+      await fireEvent.press(view.getByLabelText('重试加载图片'));
+      const secondDocument = view.getByTestId('compatible-svg-document-view');
+      const secondToken = secondDocument.props.mockWebViewToken;
+      expect(secondToken).not.toBe(firstToken);
+      expect(view.getByText('图片加载中...')).toBeTruthy();
+
+      await act(() => staleFirstExit({ nativeEvent: { didCrash: true } }));
+      await fireEvent(secondDocument, 'message', { nativeEvent: { data: staleFirstReady } });
+      expect(view.getByText('图片加载中...')).toBeTruthy();
+      expect(view.queryByText('图片加载失败')).toBeNull();
+
+      await fireEvent(secondDocument, 'message', { nativeEvent: { data: svgReadyMessage(secondDocument) } });
+      expect(view.queryByText('图片加载中...')).toBeNull();
+      expect(onVisibleImageChange).toHaveBeenLastCalledWith(expect.objectContaining({ originalUri: svgUrl }));
+
+      await fireEvent(secondDocument, 'renderProcessGone', { nativeEvent: { didCrash: true } });
+      expect(view.queryByTestId('compatible-svg-document-view')).toBeNull();
+      mockRenderSvgPoster.mockRejectedValueOnce(new Error('poster refresh failed'));
+      await fireEvent(view.getByTestId('preview-continuity-0'), 'error');
+      await waitFor(() => expect(view.getByText('图片加载失败')).toBeTruthy());
+
+      await fireEvent.press(view.getByLabelText('重试加载图片'));
+      const thirdDocument = view.getByTestId('compatible-svg-document-view');
+      expect(thirdDocument.props.mockWebViewToken).not.toBe(secondToken);
+      await fireEvent(thirdDocument, 'message', { nativeEvent: { data: svgReadyMessage(thirdDocument) } });
+      expect(view.queryByText('图片加载中...')).toBeNull();
+      expect(view.queryByText('图片加载失败')).toBeNull();
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      fetchSpy.mockRestore();
+      jest.useRealTimers();
+    }
+  });
+
+  it('updates maxScale, bitmap decode targets, and clamps zoom when only window scale changes', async () => {
+    const previousWindow = Dimensions.get('window');
+    const previousScreen = Dimensions.get('screen');
+    const pixelRatioSpy = jest.spyOn(PixelRatio, 'get').mockReturnValue(2);
+    try {
+      await act(() => {
+        Dimensions.set({
+          screen: { fontScale: 1, height: 800, scale: 2, width: 400 },
+          window: { fontScale: 1, height: 800, scale: 2, width: 400 }
+        });
+      });
+      const items = [
+        previewItem('https://example.com/density-4k-0.png', 'https://example.com/density-thumb-0.png'),
+        previewItem('https://example.com/density-4k-1.png', 'https://example.com/density-thumb-1.png')
+      ];
+      const view = await render(<ImagePreviewModal preview={previewProps(items, 0)} {...callbacks()} />);
+
+      await fireEvent(view.getByTestId('preview-image-0'), 'load', {
+        source: { height: 8_000, mediaType: 'image/png', width: 4_000 }
+      });
+      await fireEvent(view.getByTestId('preview-image-0'), 'display');
+      await waitFor(() => expect(view.getByTestId('preview-region-0')).toBeTruthy());
+
+      expect(view.getByTestId('preview-zoom-0').props.maxScale).toBeCloseTo(5, 5);
+      expect(view.getByTestId('preview-image-0').props.source).toEqual(
+        expect.objectContaining({ height: 1_600, scale: 1, width: 800 })
+      );
+      expect(view.getByTestId('preview-display-underlay-1').props.source).toEqual(
+        expect.objectContaining({ height: 1_600, scale: 1, width: 800 })
+      );
+
+      mockZoomScale = 4.5;
+      mockZoomTranslateX = 12;
+      mockZoomTranslateY = -18;
+      await fireEvent(view.getByTestId('preview-zoom-0'), 'pinchStart', {});
+      await fireEvent(view.getByTestId('preview-zoom-0'), 'update', { scale: 4.5 });
+      await fireEvent(view.getByTestId('preview-zoom-0'), 'gestureEnd');
+      expect(view.getByTestId('preview-region-0').props.scale).toBeCloseTo(4.5, 5);
+      mockZoomSetTransformState.mockClear();
+
+      await act(() => {
+        Dimensions.set({
+          screen: { fontScale: 1, height: 800, scale: 3, width: 400 },
+          window: { fontScale: 1, height: 800, scale: 3, width: 400 }
+        });
+      });
+
+      expect(view.getByTestId('preview-zoom-0').props.maxScale).toBeCloseTo(10 / 3, 5);
+      expect(mockZoomSetTransformState).toHaveBeenCalledTimes(1);
+      expect(mockZoomSetTransformState.mock.calls[0]?.[0]).toBe('0');
+      expect(mockZoomSetTransformState.mock.calls[0]?.[1].scale).toBeCloseTo(10 / 3, 5);
+      expect(mockZoomSetTransformState.mock.calls[0]?.[1].translateX).toBe(12);
+      expect(mockZoomSetTransformState.mock.calls[0]?.[1].translateY).toBe(-18);
+      expect(mockZoomSetTransformState.mock.calls[0]?.[2]).toBe(false);
+      expect(mockZoomScale).toBeCloseTo(10 / 3, 5);
+      expect(view.getByTestId('preview-region-0').props.scale).toBeCloseTo(10 / 3, 5);
+      expect(view.getByTestId('preview-image-0').props.source).toEqual(
+        expect.objectContaining({ height: 2_048, scale: 1, width: 1_024 })
+      );
+      expect(view.getByTestId('preview-display-underlay-1').props.source).toEqual(
+        expect.objectContaining({ height: 2_048, scale: 1, width: 1_024 })
+      );
+
+      mockZoomScale = 2.5;
+      mockZoomSetTransformState.mockClear();
+      await act(() => {
+        Dimensions.set({
+          screen: { fontScale: 1, height: 800, scale: 2, width: 400 },
+          window: { fontScale: 1, height: 800, scale: 2, width: 400 }
+        });
+      });
+      await act(() => {
+        Dimensions.set({
+          screen: { fontScale: 1, height: 800, scale: 3, width: 400 },
+          window: { fontScale: 1, height: 800, scale: 3, width: 400 }
+        });
+      });
+      expect(mockZoomSetTransformState).not.toHaveBeenCalled();
+      expect(mockZoomScale).toBe(2.5);
+    } finally {
+      pixelRatioSpy.mockRestore();
+      await act(() => {
+        Dimensions.set({ screen: previousScreen, window: previousWindow });
+      });
     }
   });
 });

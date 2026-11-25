@@ -275,7 +275,7 @@ describe('reader command optimistic persistence', () => {
       hook.result.current.commitReaderData(favorite);
     });
     expect(mockCommit).toHaveBeenCalledTimes(1);
-    expect(hook.result.current.readerStatus).toBe('recovery');
+    expect(hook.result.current.readerStatus).toBe('restart-required');
   });
   it('protects settings when backup import rollback fails after a ready startup', async () => {
     const { hook } = await setup();
@@ -287,7 +287,7 @@ describe('reader command optimistic persistence', () => {
       await expect(hook.result.current.importBackup('backup')).rejects.toThrow('import rollback failed');
       hook.result.current.commitReaderData(favorite);
     });
-    expect(hook.result.current.readerStatus).toBe('recovery');
+    expect(hook.result.current.readerStatus).toBe('restart-required');
     expect(mockCommit).not.toHaveBeenCalled();
   });
 
@@ -295,22 +295,22 @@ describe('reader command optimistic persistence', () => {
     const { hook } = await setup();
     await act(async () => hook.result.current.commitReaderData(favorite));
     const trusted = hook.result.current.readerData;
-    const recoveryError = new Error('本机资料事务状态不明，请重新启动后恢复。');
     mockExport.mockImplementationOnce(async () => {
       for (const listener of mockFreezeListeners) listener();
       throw new AggregateError([], 'export rollback failed');
     });
-    mockImport.mockRejectedValueOnce(recoveryError);
 
     await act(async () => {
       await expect(hook.result.current.exportBackup()).rejects.toThrow('export rollback failed');
       hook.result.current.commitReaderData({ ...favorite, enabled: false });
-      await expect(hook.result.current.importBackup('backup')).rejects.toBe(recoveryError);
+      await expect(hook.result.current.importBackup('backup')).rejects.toThrow(
+        '本机资料事务状态不明，请重新启动后恢复。'
+      );
     });
 
     expect(mockCommit).toHaveBeenCalledTimes(1);
-    expect(mockImport).toHaveBeenCalledWith('backup', true);
-    expect(hook.result.current.readerStatus).toBe('recovery');
+    expect(mockImport).not.toHaveBeenCalled();
+    expect(hook.result.current.readerStatus).toBe('restart-required');
     expect(hook.result.current.readerData).toBe(trusted);
   });
 });

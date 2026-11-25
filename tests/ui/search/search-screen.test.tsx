@@ -17,7 +17,8 @@ import { QueryTestWrapper } from '../QueryTestWrapper';
 import { aggregateSearchSources, isSessionSource } from '@/domain/forum/sourceCatalog';
 import { resolveForumReadPlan, type ForumReadOperation } from '@/domain/forum/readPlan';
 import { createSiteSessionStates } from '@/domain/session/siteSessionState';
-import { SearchRoute, SearchRouteRuntimeProvider, type SearchRouteRuntimeValue } from '@/features/search/SearchRoute';
+import { SearchRoute } from '@/features/search/SearchRoute';
+import { SearchRouteRuntimeProvider, type SearchRouteRuntimeValue } from '@/features/search/SearchRouteRuntime';
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { defaultScheduler, notifyManager } from '@tanstack/react-query';
 import type { ReadGateway } from '@/sources/readGateway';
@@ -428,7 +429,7 @@ function RecentSearchHarness({
       renderFilters={() => null}
       query={query}
       readScope="recent-searches"
-      recentSearches={['codex', 'react native']}
+      recentSearches={['codex', 'node seek', 'react native']}
       topicStateIndex={topicStateIndex}
       searchGroups={[]}
       expectedSearchSources={aggregateSearchSources}
@@ -1308,7 +1309,7 @@ describe('Search state', () => {
   });
 
   it('submits a recent search immediately and removes only the selected entry', async () => {
-    for (const platformName of [Platform.OS, 'android'] as const) {
+    for (const platformName of ['ios', 'android'] as const) {
       const platform = jest.replaceProperty(Platform, 'OS', platformName);
       try {
         const onRemoveRecentSearch = jest.fn<(query: string) => void>();
@@ -1328,10 +1329,13 @@ describe('Search state', () => {
             ['搜索最近记录 codex', 'history', 17],
             ['删除最近搜索 react native', 'close', 16]
           ] as const) {
-            const icon = view
-              .getByLabelText(label)
-              .children.filter((node) => typeof node !== 'string')
+            const button = view.getByLabelText(label);
+            const icon = button.children
+              .filter((node) => typeof node !== 'string')
               .find((node) => node.type === 'WzSearchHistoryIcon');
+            const frame = button.parent?.children
+              .filter((node) => typeof node !== 'string')
+              .find((node) => node.type === 'WzSearchHistoryFrame');
             if (platformName === 'android') {
               expect(icon?.props).toMatchObject({
                 accessible: false,
@@ -1339,8 +1343,18 @@ describe('Search state', () => {
                 color: createTheme(settings).muted
               });
               expect(StyleSheet.flatten(icon?.props.style)).toMatchObject({ width: size, height: size });
+              expect(frame?.props).toMatchObject({
+                accessible: false,
+                surfaceColor: createTheme(settings).surface,
+                lineColor: createTheme(settings).line,
+                cornerRadius: readerRadii.surface,
+                lineWidth: StyleSheet.hairlineWidth,
+                roundTop: iconName === 'history',
+                roundBottom: iconName === 'close'
+              });
             } else {
               expect(icon).toBeUndefined();
+              expect(frame).toBeUndefined();
             }
           }
           expect(view.queryAllByRole('image')).toHaveLength(0);
@@ -1349,15 +1363,25 @@ describe('Search state', () => {
         expect(lastSearchListData).toEqual([
           { type: 'recentHeader' },
           { type: 'recentSearch', query: 'codex' },
+          { type: 'recentSearch', query: 'node seek' },
           { type: 'recentSearch', query: 'react native' }
         ]);
+        expect(
+          view
+            .getByLabelText('搜索最近记录 node seek')
+            .parent?.children.some((node) => typeof node !== 'string' && node.type === 'WzSearchHistoryFrame')
+        ).toBe(false);
         const recentSearchButton = view.getByLabelText('搜索最近记录 codex');
         expect(StyleSheet.flatten(recentSearchButton.props.style).minHeight).toBe(48);
-        expect(StyleSheet.flatten(recentSearchButton.parent?.props.style)).toMatchObject({
-          borderTopLeftRadius: readerRadii.surface,
-          borderTopRightRadius: readerRadii.surface,
-          borderTopWidth: StyleSheet.hairlineWidth
-        });
+        expect(StyleSheet.flatten(recentSearchButton.parent?.props.style)).toMatchObject(
+          platformName === 'android'
+            ? { paddingHorizontal: StyleSheet.hairlineWidth, paddingTop: StyleSheet.hairlineWidth }
+            : {
+                borderTopLeftRadius: readerRadii.surface,
+                borderTopRightRadius: readerRadii.surface,
+                borderTopWidth: StyleSheet.hairlineWidth
+              }
+        );
         expect(view.getByText('codex').props.numberOfLines).toBe(2);
         await fireEvent.press(recentSearchButton);
         expect(onSearch).toHaveBeenCalledTimes(1);
@@ -1365,12 +1389,16 @@ describe('Search state', () => {
 
         const deleteButton = view.getByLabelText('删除最近搜索 react native');
         expect(StyleSheet.flatten(deleteButton.props.style).minHeight).toBe(48);
-        expect(StyleSheet.flatten(deleteButton.parent?.props.style)).toMatchObject({
-          borderBottomLeftRadius: readerRadii.surface,
-          borderBottomRightRadius: readerRadii.surface,
-          borderBottomWidth: StyleSheet.hairlineWidth,
-          borderTopWidth: StyleSheet.hairlineWidth
-        });
+        expect(StyleSheet.flatten(deleteButton.parent?.props.style)).toMatchObject(
+          platformName === 'android'
+            ? { paddingBottom: StyleSheet.hairlineWidth, paddingTop: StyleSheet.hairlineWidth }
+            : {
+                borderBottomLeftRadius: readerRadii.surface,
+                borderBottomRightRadius: readerRadii.surface,
+                borderBottomWidth: StyleSheet.hairlineWidth,
+                borderTopWidth: StyleSheet.hairlineWidth
+              }
+        );
         expect(StyleSheet.flatten(deleteButton.parent?.props.style)).not.toHaveProperty('marginTop');
         expect(
           lastSearchListSeparatorComponent?.({

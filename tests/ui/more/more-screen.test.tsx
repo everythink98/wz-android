@@ -40,12 +40,8 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import type { MainTabParamList, RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { navigationRef } from '@/app/appNavigation';
 import { useAppDeepLinkNavigation } from '@/app/useAppDeepLinkNavigation';
-import {
-  MoreRoute,
-  MoreRouteRuntimeProvider,
-  ReadingSettingsRoute,
-  type MoreRouteRuntimeValue
-} from '@/features/more/MoreRoute';
+import { MoreRoute, ReadingSettingsRoute } from '@/features/more/MoreRoute';
+import { MoreRouteRuntimeProvider, type MoreRouteRuntimeValue } from '@/features/more/MoreRouteRuntime';
 import type { LocalReaderFont } from '@/domain/reader/readerFonts';
 import { downloadableReaderFonts } from '@/platform/storage/readerFonts';
 import { localReaderFontRegistration } from '@/ui/theme/useReaderFonts';
@@ -603,7 +599,7 @@ function moreProps(overrides: MoreScreenOverrides = {}): MoreScreenProps {
         ...overrides.utilities?.library
       },
       backup: {
-        recovery: false,
+        readerStatus: 'ready',
         operation: 'idle',
         exportFile: jest.fn(),
         importFile: jest.fn(),
@@ -992,7 +988,7 @@ describe('More screen state and actions', () => {
       <MoreRouteRuntimeProvider value={runtime}>{children}</MoreRouteRuntimeProvider>
     ));
     try {
-      const queued = view.getByTestId('more-diagnostics');
+      const queued = view.getByRole('button', { name: '问题诊断' });
       await act(async () => {
         followLink();
         await fireEvent.press(queued);
@@ -1004,6 +1000,7 @@ describe('More screen state and actions', () => {
         void fireEvent.press(view.getByTestId('more-diagnostics'));
       });
       expect(exportLog).toHaveBeenCalledTimes(1);
+      expect(exportLog).toHaveBeenCalledWith({ ...runtime.diagnostics.metadata, currentScreen: 'more' });
       await act(async () => {
         followLink();
         settled.resolve();
@@ -1137,7 +1134,7 @@ describe('More screen state and actions', () => {
         await waitFor(() => expect(mockInstallFont).toHaveBeenCalledTimes(1));
         await fireEvent.press(view.getByRole('button', { name: '关闭阅读字体选择' }));
         await act(() => navigationRef.navigate('ReadingSettings'));
-        await fireEvent.press(await view.findByLabelText('阅读字体，思源黑体'));
+        await fireEvent.press(await view.findByLabelText('阅读字体，正在连接…'));
         await fireEvent.press(await view.findByRole('menuitem', { name: '跟随系统' }));
         await act(() => navigationRef.goBack());
         expect(await view.findByLabelText('收起外观')).toBeTruthy();
@@ -1151,10 +1148,7 @@ describe('More screen state and actions', () => {
           await waitFor(() =>
             expect(client.getQueryData(localReaderFontRegistration(font.family).queryKey)).toBe(true)
           );
-          await waitFor(() => {
-            expect(client.getQueryState(['reader-font-progress', font.family])).toBeUndefined();
-            expect(client.getQueryState(['reader-font-download', font.family])).toBeUndefined();
-          });
+          expect(await view.findByLabelText('阅读字体，思源黑体')).toBeTruthy();
         }
         expect(jest.mocked(runtime.reader.commit).mock.calls).toEqual([
           [{ type: 'settings', patch: { fontFamily: 'system' } }]
@@ -3331,7 +3325,7 @@ describe('More screen state and actions', () => {
     const exportFile = jest.fn();
     const importFile = jest.fn();
     const view = await render(
-      <MoreScreen {...moreProps({ utilities: { backup: { recovery: true, exportFile, importFile } } })} />
+      <MoreScreen {...moreProps({ utilities: { backup: { readerStatus: 'recovery', exportFile, importFile } } })} />
     );
     expect(view.getByText(/本机资料读取失败，来源访问已暂停/)).toBeTruthy();
     await fireEvent.press(view.getByLabelText('展开备份 / 恢复'));
@@ -3340,6 +3334,20 @@ describe('More screen state and actions', () => {
     await fireEvent.press(view.getByLabelText('选择备份文件恢复'));
     expect(exportFile).not.toHaveBeenCalled();
     expect(importFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('explains that frozen storage needs a restart before the backup can be picked', async () => {
+    const importFile = jest.fn();
+    const view = await render(
+      <MoreScreen {...moreProps({ utilities: { backup: { readerStatus: 'restart-required', importFile } } })} />
+    );
+    expect(view.getByRole('alert')).toHaveTextContent(/事务状态不明.*重新启动/);
+    await fireEvent.press(view.getByLabelText('展开备份 / 恢复'));
+    const restore = view.getByLabelText('选择备份文件恢复');
+    expect(restore).toBeDisabled();
+    expect(view.getByLabelText('导出备份文件')).toBeDisabled();
+    await fireEvent.press(restore);
+    expect(importFile).not.toHaveBeenCalled();
   });
 
   it('updates the read-channel threshold from Account Center', async () => {

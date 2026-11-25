@@ -27,6 +27,7 @@ type HiddenEvent = NativeSyntheticEvent<{ requestId: number; success: boolean }>
 export type ComposerImeInsetsEvent = NativeSyntheticEvent<{ bottom: number }>;
 type NativeHostProps = ViewProps & {
   enabled: boolean;
+  dismissOnDisable?: boolean;
   hiddenLayoutHeight?: number;
   trackImeInsets?: boolean;
   autoShowIme?: boolean;
@@ -39,7 +40,7 @@ const AnimatedNativeHost = Animated.createAnimatedComponent(NativeHost);
 type HostProps = Omit<NativeHostProps, 'style'> & Pick<ComponentProps<typeof AnimatedNativeHost>, 'style'>;
 
 export const ComposerKeyboardHost = forwardRef<ComposerKeyboardHostHandle, HostProps>(function ComposerKeyboardHost(
-  { enabled, hiddenLayoutHeight, ...props },
+  { enabled, dismissOnDisable, hiddenLayoutHeight, ...props },
   ref
 ) {
   const nativeRef = useRef<ComponentRef<typeof NativeHost>>(null);
@@ -118,6 +119,7 @@ export const ComposerKeyboardHost = forwardRef<ComposerKeyboardHostHandle, HostP
       {...props}
       ref={nativeRef}
       enabled={enabled}
+      dismissOnDisable={dismissOnDisable}
       hiddenLayoutHeight={hiddenLayoutHeight}
       onKeyboardHidden={({ nativeEvent }) => {
         if (pending.current?.id !== nativeEvent.requestId) return;

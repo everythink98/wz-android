@@ -36,6 +36,8 @@ type ReadDecision =
 
 export type ForumReadPlan = ReadDecision & { source: Source; operation: ForumReadOperation };
 
+export type ForumReadSession = SessionRuntimeSnapshot & { foregroundReadDuringHandoff?: true };
+
 export type AggregateForumReadPlan = {
   source: 'all';
   operation: ForumReadOperation;
@@ -105,7 +107,7 @@ export function resolveForumReadPlan(
   source: Source,
   operation: ForumReadOperation,
   enabled: boolean,
-  session?: SessionRuntimeSnapshot
+  session?: ForumReadSession
 ): ForumReadPlan {
   return { source, operation, ...readDecision(source, operation, enabled, session) };
 }
@@ -114,7 +116,7 @@ function readDecision(
   source: Source,
   operation: ForumReadOperation,
   enabled: boolean,
-  session?: SessionRuntimeSnapshot
+  session?: ForumReadSession
 ): ReadDecision {
   if (!enabled || session?.sourceEnabled === false) return blocked('source-disabled');
   if (session && session.source !== source) return blocked('capability-unavailable');
@@ -132,7 +134,8 @@ function readDecision(
       : blocked('capability-unavailable');
   }
   if (!session) return blocked('identity-pending');
-  if (session.authenticated && session.identityTrust === 'confirmed' && !session.authSurfaceOpen) {
+  const handoffBlocksRead = session.authSurfaceOpen && !session.foregroundReadDuringHandoff;
+  if (session.authenticated && session.identityTrust === 'confirmed' && !handoffBlocksRead) {
     return {
       state: 'ready',
       lane: 'authenticated',
@@ -148,7 +151,7 @@ function readDecision(
       cacheScope: 'public:omit'
     };
   }
-  if (session.authSurfaceOpen) return blocked('identity-pending');
+  if (handoffBlocksRead) return blocked('identity-pending');
   if (session.identityTrust === 'unknown') return blocked('identity-unavailable');
   return blocked('login-required');
 }

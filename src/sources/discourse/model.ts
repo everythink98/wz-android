@@ -1,11 +1,10 @@
 import { normalizeTopicId, positiveInteger, positiveNumber } from '@/domain/forum/numericValues';
 import {
-  decodeHtml,
   hasRenderableHtmlContent,
   isRecord,
   recordText,
   textContentFromHtml,
-  textExcerpt,
+  textExcerptFromPlainText,
   toIsoString
 } from '@/domain/forum/html';
 import { stripDiscourseCalloutMarkersFromExcerpt } from './content';
@@ -349,7 +348,12 @@ export function discoursePolls(post: unknown, options: { includeType?: boolean }
       .filter(isRecord)
       .flatMap((option): TopicPollOption[] => {
         const id = String(option.id || '').trim();
-        const label = textContentFromHtml(String(option.html || option.label || '')).trim();
+        const label =
+          typeof option.html === 'string' && option.html.trim()
+            ? textContentFromHtml(option.html).trim()
+            : String(option.label || '')
+                .replace(/\s+/g, ' ')
+                .trim();
         if (!id || !label) {
           return [];
         }
@@ -484,7 +488,8 @@ export function discourseTopicFields(raw: unknown) {
     return null;
   }
   const id = normalizeTopicId(raw.id);
-  const title = decodeHtml(raw.unicode_title || raw.title || '').trim();
+  const plainTitle = recordText(raw, 'unicode_title', 'title');
+  const title = plainTitle || textContentFromHtml(recordText(raw, 'fancy_title'), { includeImageAlt: true });
   const createdAt = toIsoString(raw.created_at);
   const postCount = positiveInteger(raw.posts_count);
   if (!id || !title || !createdAt || !postCount) {
@@ -504,7 +509,7 @@ export function discourseTopicFields(raw: unknown) {
     lastReplyAt,
     replyCount: postCount - 1,
     ...(viewCount === undefined ? {} : { viewCount }),
-    excerpt: textExcerpt(stripDiscourseCalloutMarkersFromExcerpt(raw.excerpt || '')),
+    excerpt: textExcerptFromPlainText(stripDiscourseCalloutMarkersFromExcerpt(textContentFromHtml(raw.excerpt || ''))),
     ...(tags.length ? { tags } : {}),
     ...(raw.closed === true ? { closed: true } : {}),
     ...(raw.archived === true ? { archived: true } : {}),

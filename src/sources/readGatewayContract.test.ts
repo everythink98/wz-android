@@ -77,6 +77,7 @@ const linuxDoLevelMocks = vi.hoisted(() => ({
 }));
 const readNetworkRuntimeMocks = vi.hoisted(() => ({
   generation: 0,
+  sourceGenerations: new Map<Source, number>(),
   triggerSource: null as Source | null,
   recoverReadNetworkRuntime: vi.fn()
 }));
@@ -90,7 +91,9 @@ vi.mock('./feedRead', () => ({ ...forumMocks, getSourceCategories: forumMocks.ge
 vi.mock('./searchRead', () => forumMocks);
 vi.mock('./sourceRead', () => forumMocks);
 vi.mock('@/sources/linuxdo/reader', () => ({
-  getLinuxDoEmojiUrls: linuxDoMocks.getLinuxDoEmojiUrls
+  getLinuxDoEmojiUrls: linuxDoMocks.getLinuxDoEmojiUrls,
+  isExplicitlyUnseenLinuxDoTopic: () => false,
+  linuxDoTopicRequiresReadingConfirmation: () => false
 }));
 vi.mock('@/sources/linuxdo/search', () => ({
   searchLinuxDoSemantic: linuxDoMocks.searchLinuxDoSemantic,
@@ -111,7 +114,8 @@ vi.mock('@/platform/network/networkProxy', () => ({
 }));
 vi.mock('@/platform/network/readNetworkRuntime', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/platform/network/readNetworkRuntime')>()),
-  currentReadNetworkRuntimeGeneration: () => readNetworkRuntimeMocks.generation,
+  currentReadNetworkRuntimeGeneration: (source?: Source) =>
+    source ? (readNetworkRuntimeMocks.sourceGenerations.get(source) ?? 0) : readNetworkRuntimeMocks.generation,
   getReadNetworkRuntimeSnapshot: () => ({
     generation: readNetworkRuntimeMocks.generation,
     triggerSource: readNetworkRuntimeMocks.triggerSource
@@ -119,6 +123,12 @@ vi.mock('@/platform/network/readNetworkRuntime', async (importOriginal) => ({
 }));
 
 import { createReadGateway as createProductionReadGateway, getReplies, getTopic } from './readGateway';
+
+function publishReadRotation(generation: number, source: Source) {
+  readNetworkRuntimeMocks.generation = generation;
+  readNetworkRuntimeMocks.triggerSource = source;
+  readNetworkRuntimeMocks.sourceGenerations.set(source, generation);
+}
 
 type ReadGatewayTestDependencies = Omit<
   Parameters<typeof createProductionReadGateway>[0],
@@ -165,9 +175,9 @@ describe('source gateway read contract', () => {
     vi.clearAllMocks();
     readNetworkRuntimeMocks.generation = 7;
     readNetworkRuntimeMocks.triggerSource = null;
+    readNetworkRuntimeMocks.sourceGenerations.clear();
     readNetworkRuntimeMocks.recoverReadNetworkRuntime.mockImplementation(async (source, expectedGeneration) => {
-      readNetworkRuntimeMocks.generation = Math.max(readNetworkRuntimeMocks.generation, expectedGeneration + 1);
-      readNetworkRuntimeMocks.triggerSource = source;
+      publishReadRotation(Math.max(readNetworkRuntimeMocks.generation, expectedGeneration + 1), source);
       return {
         ok: true,
         rotated: true,
@@ -1090,34 +1100,37 @@ describe('source gateway read contract', () => {
   });
 
   it.each([
-    ['typed cancellation', () => new RequestCanceledError()],
-    ['native network cancellation', () => new TypeError('Network request failed')]
-  ])('replays a current foreground read rejected by a completed runtime rotation: %s', async (_kind, cancellation) => {
-    const fetcher = vi
-      .fn<Fetcher>()
-      .mockImplementationOnce(async () => {
-        readNetworkRuntimeMocks.generation = 8;
-        readNetworkRuntimeMocks.triggerSource = 'v2ex';
-        throw cancellation();
-      })
-      .mockResolvedValueOnce(new Response('{}'));
-    const readFeed = async ({ fetcher: scopedFetcher }: { fetcher: Fetcher }) => {
-      await scopedFetcher('https://www.v2ex.com/?tab=all');
-      return { items: [], errors: {}, hasMore: false, nextPage: null };
-    };
-    forumMocks.getFeed.mockImplementationOnce(readFeed).mockImplementationOnce(readFeed);
-    const gateway = createReadGateway({ fetcher, nodeSeekUserAgent: () => '' });
+    ['typed cancellation', () => new RequestCanceledError(), false],
+    ['native network cancellation', () => new TypeError('Network request failed'), false],
+    ['cancellation delivered after a later source rotates', () => new RequestCanceledError(), true]
+  ] as const)(
+    'replays a current foreground read rejected by a completed runtime rotation: %s',
+    async (_kind, cancellation, laterRotation) => {
+      const fetcher = vi
+        .fn<Fetcher>()
+        .mockImplementationOnce(async () => {
+          publishReadRotation(8, 'v2ex');
+          if (laterRotation) publishReadRotation(9, 'linuxdo');
+          throw cancellation();
+        })
+        .mockResolvedValueOnce(new Response('{}'));
+      const readFeed = async ({ fetcher: scopedFetcher }: { fetcher: Fetcher }) => {
+        await scopedFetcher('https://www.v2ex.com/?tab=all');
+        return { items: [], errors: {}, hasMore: false, nextPage: null };
+      };
+      forumMocks.getFeed.mockImplementationOnce(readFeed).mockImplementationOnce(readFeed);
+      const gateway = createReadGateway({ fetcher, nodeSeekUserAgent: () => '' });
 
-    await expect(gateway.getFeed({ source: 'v2ex' })).resolves.toMatchObject({ items: [], errors: {} });
+      await expect(gateway.getFeed({ source: 'v2ex' })).resolves.toMatchObject({ items: [], errors: {} });
 
-    expect(fetcher).toHaveBeenCalledTimes(2);
-    expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).not.toHaveBeenCalled();
-  });
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).not.toHaveBeenCalled();
+    }
+  );
 
   it('does not replay a cancellation caused by another source rotation', async () => {
     const fetcher = vi.fn<Fetcher>().mockImplementationOnce(async () => {
-      readNetworkRuntimeMocks.generation = 8;
-      readNetworkRuntimeMocks.triggerSource = 'linuxdo';
+      publishReadRotation(8, 'linuxdo');
       throw new RequestCanceledError();
     });
     forumMocks.getFeed.mockImplementationOnce(async ({ fetcher: scopedFetcher }) => {
@@ -1932,8 +1945,7 @@ describe('source gateway read contract', () => {
       .fn<Fetcher>()
       .mockImplementationOnce(async () => {
         await new Promise<void>((resolve) => setTimeout(resolve, 3_000));
-        readNetworkRuntimeMocks.generation = 8;
-        readNetworkRuntimeMocks.triggerSource = 'v2ex';
+        publishReadRotation(8, 'v2ex');
         throw new RequestCanceledError();
       })
       .mockImplementationOnce(async () => {

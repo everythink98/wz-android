@@ -11,7 +11,10 @@ import {
   getLinuxDoFeed,
   getLinuxDoReplies,
   getLinuxDoReply,
-  getLinuxDoTopic
+  getLinuxDoTopic,
+  hasTrustedLinuxDoFeedReading,
+  isExplicitlyUnseenLinuxDoTopic,
+  linuxDoTopicRequiresReadingConfirmation
 } from './reader';
 
 function topic(index: number) {
@@ -636,6 +639,1113 @@ describe('linux.do reader', () => {
       nextPage: null
     });
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('bounds repeated single-topic feed pages and returns only the unique topic without paging forever', async () => {
+    const requestedPages: (string | null)[] = [];
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (!url.searchParams.has('order')) return jsonResponse({ topic_list: { topics: [] } });
+      requestedPages.push(url.searchParams.get('page'));
+      return jsonResponse({
+        topic_list: {
+          topics: [topic(1)],
+          more_topics_url: '/latest?order=created&page=1'
+        }
+      });
+    });
+
+    const result = await getLinuxDoFeed({ fetcher, limit: 30 });
+
+    expect(requestedPages).toEqual([null, '1']);
+    expect(result.items.map((item) => item.id)).toEqual(['1']);
+    expect(result).toMatchObject({ hasMore: false, nextPage: null, nextCursor: null });
+  });
+
+  it('continues past consecutive full-page replays when the upstream page number keeps advancing', async () => {
+    const requestedPages: (string | null)[] = [];
+    const pageRows = [topic(1), topic(2), topic(3)];
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (!url.searchParams.has('order')) return jsonResponse({ topic_list: { topics: [] } });
+      const page = url.searchParams.get('page');
+      requestedPages.push(page);
+      return jsonResponse({
+        topic_list: {
+          topics: page === '3' ? [topic(4), topic(5), topic(6)] : pageRows,
+          more_topics_url: page === '3' ? null : `/latest?order=created&page=${Number(page || 0) + 1}`
+        }
+      });
+    });
+
+    const first = await getLinuxDoFeed({ fetcher, limit: 3 });
+    expect(requestedPages).toEqual([null]);
+    expect(first.items.map((item) => item.id)).toEqual(['1', '2', '3']);
+    expect(first).toMatchObject({ hasMore: true, nextPage: 2 });
+    expect(first.nextCursor).toBeTruthy();
+
+    requestedPages.length = 0;
+    const second = await getLinuxDoFeed({ fetcher, limit: 3, page: first.nextPage!, cursor: first.nextCursor });
+    expect(requestedPages).toEqual(['1', '2', '3']);
+    expect(second.items.map((item) => item.id)).toEqual(['4', '5', '6']);
+    expect(second).toMatchObject({ hasMore: false, nextPage: null, nextCursor: null });
+  });
+
+  it('bounds consecutive invalid feed pages and preserves already fetched valid topics', async () => {
+    const requestedPages: (string | null)[] = [];
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (!url.searchParams.has('order')) return jsonResponse({ topic_list: { topics: [] } });
+      const pageParam = url.searchParams.get('page');
+      requestedPages.push(pageParam);
+      const page = Number(pageParam || 0);
+      if (page > 2) throw new Error('exceeded invalid page bound');
+      return jsonResponse({
+        topic_list: {
+          topics: page === 0 ? [topic(1)] : page === 1 ? [{ id: 91 }] : [{}],
+          more_topics_url: '/latest?page=next'
+        }
+      });
+    });
+
+    const result = await getLinuxDoFeed({ fetcher, limit: 3 });
+
+    expect(requestedPages).toEqual([null, '1', '2']);
+    expect(result.items.map((item) => item.id)).toEqual(['1']);
+    expect(result).toMatchObject({ hasMore: false, nextPage: null, nextCursor: null });
+  });
+
+  it('paginates short pages with reused more_topics_url without duplicates or lost overflow items', async () => {
+    const requestedPages: (string | null)[] = [];
+    const pages = new Map<number, ReturnType<typeof topic>[]>([
+      [0, [topic(1), topic(2)]],
+      [1, [topic(3), topic(4)]],
+      [2, [topic(5), topic(6)]]
+    ]);
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (!url.searchParams.has('order')) return jsonResponse({ topic_list: { topics: [] } });
+      const pageParam = url.searchParams.get('page');
+      requestedPages.push(pageParam);
+      const page = Number(pageParam || 0);
+      return jsonResponse({
+        topic_list: {
+          topics: pages.get(page) ?? [],
+          more_topics_url: page < 2 ? '/latest?page=next' : null
+        }
+      });
+    });
+
+    const first = await getLinuxDoFeed({ fetcher, limit: 3 });
+    expect(requestedPages).toEqual([null, '1']);
+    expect(first.items.map((item) => item.id)).toEqual(['1', '2', '3']);
+    expect(first).toMatchObject({ hasMore: true, nextPage: 2 });
+    expect(first.nextCursor).toBeTruthy();
+
+    requestedPages.length = 0;
+    const second = await getLinuxDoFeed({ fetcher, limit: 3, page: first.nextPage!, cursor: first.nextCursor });
+    expect(requestedPages).toEqual(['1', '2']);
+    expect(second.items.map((item) => item.id)).toEqual(['4', '5', '6']);
+    expect(second).toMatchObject({ hasMore: false, nextPage: null, nextCursor: null });
+  });
+
+  it('stops cleanly when the final non-empty page points to its own position', async () => {
+    const requestedPages: (string | null)[] = [];
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (!url.searchParams.has('order')) return jsonResponse({ topic_list: { topics: [] } });
+      const pageParam = url.searchParams.get('page');
+      requestedPages.push(pageParam);
+      const page = Number(pageParam || 0);
+      return jsonResponse({
+        topic_list: {
+          topics: page === 0 ? [topic(1), topic(2)] : [topic(3)],
+          more_topics_url: '/latest?order=created&page=1'
+        }
+      });
+    });
+
+    const result = await getLinuxDoFeed({ fetcher, limit: 5 });
+
+    expect(requestedPages).toEqual([null, '1']);
+    expect(result.items.map((item) => item.id)).toEqual(['1', '2', '3']);
+    expect(result).toMatchObject({ hasMore: false, nextPage: null, nextCursor: null });
+  });
+
+  it.each([undefined, '2'] as const)(
+    'reads a legacy plain page-number entry (%s) and transitions to the structured cursor',
+    async (legacyCursor) => {
+      const requestedPages: (string | null)[] = [];
+      const fetcher = vi.fn(async (input: string) => {
+        const url = new URL(input);
+        const pageParam = url.searchParams.get('page');
+        requestedPages.push(pageParam);
+        const page = Number(pageParam || 0);
+        return jsonResponse({
+          topic_list: {
+            topics:
+              page === 1
+                ? Array.from({ length: 30 }, (_, index) => topic(31 + index))
+                : page === 2
+                  ? [topic(61), topic(62)]
+                  : [],
+            more_topics_url: page === 1 ? '/latest?order=created&page=2' : null
+          }
+        });
+      });
+
+      const first = await getLinuxDoFeed({ fetcher, page: 2, cursor: legacyCursor, limit: 30 });
+      expect(requestedPages).toEqual(['1']);
+      expect(first.items.map((item) => item.id)).toEqual(Array.from({ length: 30 }, (_, index) => String(31 + index)));
+      expect(first).toMatchObject({ hasMore: true, nextPage: 3 });
+      expect(first.nextCursor).toBeTruthy();
+      expect(first.nextCursor).not.toBe('2');
+
+      requestedPages.length = 0;
+      const second = await getLinuxDoFeed({ fetcher, page: first.nextPage!, cursor: first.nextCursor, limit: 30 });
+      expect(requestedPages).toEqual(['2']);
+      expect(second.items.map((item) => item.id)).toEqual(['61', '62']);
+      expect(second).toMatchObject({ hasMore: false, nextPage: null, nextCursor: null });
+    }
+  );
+
+  it('marks explicitly unseen feed topics only for authenticated reads without last_read_post_number or private messages', async () => {
+    const rows = [
+      { ...topic(1), unseen: true, highest_post_number: 3 },
+      { ...topic(2), unseen: false, highest_post_number: 3 },
+      { ...topic(3), unseen: 'true', highest_post_number: 3 },
+      { ...topic(4), unseen: true, last_read_post_number: 2, highest_post_number: 3 },
+      { ...topic(5), unseen: true, archetype: 'private_message', highest_post_number: 3 }
+    ];
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.pathname === '/filter.json' || !url.searchParams.has('order')) {
+        return jsonResponse({ topic_list: { topics: [] } });
+      }
+      return jsonResponse({ topic_list: { topics: rows } });
+    });
+
+    const authenticated = await getLinuxDoFeed({
+      fetcher,
+      limit: 10,
+      linuxDoAccess: { authenticated: true, userAgent: 'fixture' }
+    });
+    expect(authenticated.items.map((item) => [item.id, isExplicitlyUnseenLinuxDoTopic(item)])).toEqual([
+      ['1', true],
+      ['2', false],
+      ['3', false],
+      ['4', false],
+      ['5', false]
+    ]);
+
+    const anonymous = await getLinuxDoFeed({ fetcher, limit: 10 });
+    expect(anonymous.items.every((item) => !isExplicitlyUnseenLinuxDoTopic(item))).toBe(true);
+  });
+
+  it('does not mark unseen feed topics as backfill-exempt when reading floor is malformed, highest floor is missing, or unread flags conflict', async () => {
+    const rows = [
+      { ...topic(1), unseen: true, highest_post_number: 17 },
+      { ...topic(2), unseen: true, last_read_post_number: '7', highest_post_number: 17 },
+      { ...topic(3), unseen: true, last_read_post_number: -1, highest_post_number: 17 },
+      { ...topic(4), unseen: true },
+      { ...topic(5), unseen: true, highest_post_number: 0 },
+      { ...topic(6), unseen: true, highest_post_number: '17' },
+      { ...topic(7), unseen: true, highest_post_number: 17, unread_posts: 2 },
+      { ...topic(8), unseen: true, highest_post_number: 17, unread: true }
+    ];
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.pathname === '/filter.json' || !url.searchParams.has('order')) {
+        return jsonResponse({ topic_list: { topics: [] } });
+      }
+      return jsonResponse({ topic_list: { topics: rows } });
+    });
+
+    const authenticated = await getLinuxDoFeed({
+      fetcher,
+      limit: 10,
+      linuxDoAccess: { authenticated: true, userAgent: 'fixture' }
+    });
+    expect(authenticated.items.map((item) => [item.id, isExplicitlyUnseenLinuxDoTopic(item)])).toEqual([
+      ['1', true],
+      ['2', false],
+      ['3', false],
+      ['4', false],
+      ['5', false],
+      ['6', false],
+      ['7', false],
+      ['8', false]
+    ]);
+  });
+
+  it('reaches regular topics on page 3 after two upstream pages filled with 60 pre-registered pinned announcements', async () => {
+    const pinRow = (id: number) => ({
+      ...topic(id),
+      category_id: 2,
+      pinned: true,
+      pinned_globally: true
+    });
+    const pinnedFirst30 = Array.from({ length: 30 }, (_, index) => pinRow(index + 1));
+    const pinnedSecond30 = Array.from({ length: 30 }, (_, index) => pinRow(index + 31));
+    const page0Regular = Array.from({ length: 30 }, (_, index) => topic(101 + index));
+    const page3Regular = Array.from({ length: 5 }, (_, index) => topic(131 + index));
+    const requestedPages: (string | null)[] = [];
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.pathname === '/filter.json') {
+        const filterPage = Number(url.searchParams.get('page') || 0);
+        return jsonResponse({
+          categories: [{ id: 2, name: '公告', slug: 'announcements' }],
+          topic_list: {
+            topics: filterPage === 0 ? pinnedFirst30 : pinnedSecond30,
+            more_topics_url: filterPage === 0 ? '/filter?q=in%3Apinned&page=1' : null
+          }
+        });
+      }
+      const pageParam = url.searchParams.get('page');
+      requestedPages.push(pageParam);
+      const upstreamPage = Number(pageParam || 0);
+      const topics =
+        upstreamPage === 0
+          ? pinnedFirst30
+          : upstreamPage === 1
+            ? pinnedSecond30
+            : upstreamPage === 2
+              ? page0Regular
+              : upstreamPage === 3
+                ? page3Regular
+                : [];
+      return jsonResponse({
+        categories: [{ id: 2, name: '公告', slug: 'announcements' }],
+        topic_list: {
+          topics,
+          more_topics_url: upstreamPage < 3 ? `/latest?order=created&page=${upstreamPage + 1}` : null
+        }
+      });
+    });
+
+    const access = { authenticated: true, userAgent: 'fixture' };
+    const first = await getLinuxDoFeed({ fetcher, limit: 30, linuxDoAccess: access });
+    expect(requestedPages).toEqual([null, '1', '2']);
+    expect(first.items).toHaveLength(90);
+    expect(first).toMatchObject({ hasMore: true, nextPage: 2 });
+    expect(first.nextCursor).toBeTruthy();
+
+    requestedPages.length = 0;
+    const second = await getLinuxDoFeed({
+      fetcher,
+      limit: 30,
+      page: first.nextPage!,
+      cursor: first.nextCursor,
+      linuxDoAccess: access
+    });
+    expect(requestedPages).toEqual(['3']);
+    expect(second.items.map((item) => item.id)).toEqual(['131', '132', '133', '134', '135']);
+    expect(second).toMatchObject({ hasMore: false, nextPage: null, nextCursor: null });
+  });
+
+  it('propagates newly pinned state and newly added trust-level requirements when a seen topic reappears on a later page', async () => {
+    const requestedPages: (string | null)[] = [];
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (!url.searchParams.has('order')) return jsonResponse({ topic_list: { topics: [] } });
+      const pageParam = url.searchParams.get('page');
+      requestedPages.push(pageParam);
+      const upstreamPage = Number(pageParam || 0);
+      if (upstreamPage === 0) {
+        return jsonResponse({
+          topic_list: {
+            topics: [topic(1), topic(2)],
+            more_topics_url: '/latest?order=created&page=1'
+          }
+        });
+      }
+      if (upstreamPage === 1) {
+        return jsonResponse({
+          topic_list: {
+            topics: [
+              { ...topic(1), pinned: true, pinned_globally: true },
+              { ...topic(2), required_trust_level: 3 },
+              topic(3),
+              topic(4)
+            ],
+            more_topics_url: '/latest?order=created&page=2'
+          }
+        });
+      }
+      return jsonResponse({
+        topic_list: {
+          topics: [
+            { ...topic(1), pinned: true, pinned_globally: true },
+            { ...topic(2), required_trust_level: 3 }
+          ],
+          more_topics_url: '/latest?order=created&page=1'
+        }
+      });
+    });
+
+    const first = await getLinuxDoFeed({ fetcher, limit: 2 });
+    expect(first.items.map((item) => item.id)).toEqual(['1', '2']);
+    expect(first.hasMore).toBe(true);
+
+    requestedPages.length = 0;
+    const second = await getLinuxDoFeed({ fetcher, limit: 2, page: first.nextPage!, cursor: first.nextCursor });
+    expect(requestedPages).toEqual(['1']);
+    expect(second.items.map((item) => item.id)).toEqual(['3', '4']);
+    expect(second.topicUpdates?.map((item) => item.id)).toEqual(['1', '2']);
+    expect(second.topicUpdates?.find((item) => item.id === '1')?.pinned).toBe(true);
+    expect(second.topicUpdates?.find((item) => item.id === '2')?.accessRequirement).toEqual({
+      type: 'level',
+      label: '需等级',
+      detail: 'Lv3'
+    });
+
+    requestedPages.length = 0;
+    const third = await getLinuxDoFeed({ fetcher, limit: 2, page: second.nextPage!, cursor: second.nextCursor });
+    expect(requestedPages).toEqual(['2']);
+    expect(third.items).toEqual([]);
+    expect(third).toMatchObject({ hasMore: false, nextPage: null, nextCursor: null });
+  });
+
+  it('delivers previously unseen topics that shift ahead of the cursor anchor without duplicating consumed items', async () => {
+    const page0 = Array.from({ length: 20 }, (_, index) => topic(index + 1));
+    const initialPage1 = Array.from({ length: 30 }, (_, index) => topic(index + 21));
+    const shiftedPage1 = [
+      ...Array.from({ length: 10 }, (_, index) => topic(index + 21)),
+      topic(32),
+      topic(31),
+      ...Array.from({ length: 18 }, (_, index) => topic(index + 33))
+    ];
+    let page1Reads = 0;
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (!url.searchParams.has('order')) return jsonResponse({ topic_list: { topics: [] } });
+      const upstreamPage = Number(url.searchParams.get('page') || 0);
+      if (upstreamPage === 0) {
+        return jsonResponse({
+          topic_list: { topics: page0, more_topics_url: '/latest?order=created&page=1' }
+        });
+      }
+      page1Reads += 1;
+      return jsonResponse({
+        topic_list: { topics: page1Reads === 1 ? initialPage1 : shiftedPage1, more_topics_url: null }
+      });
+    });
+
+    const first = await getLinuxDoFeed({ fetcher, limit: 30 });
+    expect(first.items.map((item) => item.id)).toEqual(Array.from({ length: 30 }, (_, index) => String(index + 1)));
+    expect(first).toMatchObject({ hasMore: true, nextPage: 2 });
+    expect(first.nextCursor).toBeTruthy();
+
+    const second = await getLinuxDoFeed({ fetcher, limit: 30, page: first.nextPage!, cursor: first.nextCursor });
+    expect(second.items.map((item) => item.id)).toEqual([
+      '32',
+      '31',
+      ...Array.from({ length: 18 }, (_, index) => String(index + 33))
+    ]);
+    const combined = [...first.items, ...second.items].map((item) => item.id);
+    expect(combined).toHaveLength(50);
+    expect(new Set(combined).size).toBe(50);
+    expect(second).toMatchObject({ hasMore: false, nextPage: null, nextCursor: null });
+  });
+
+  it('delivers an unseen topic shifted to the top of a single re-read page ahead of already consumed items', async () => {
+    const initialPage0 = Array.from({ length: 50 }, (_, index) => topic(index + 1));
+    const shiftedPage0 = [
+      topic(32),
+      ...Array.from({ length: 30 }, (_, index) => topic(index + 1)),
+      topic(31),
+      ...Array.from({ length: 18 }, (_, index) => topic(index + 33))
+    ];
+    let page0Reads = 0;
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (!url.searchParams.has('order')) return jsonResponse({ topic_list: { topics: [] } });
+      page0Reads += 1;
+      return jsonResponse({
+        topic_list: { topics: page0Reads === 1 ? initialPage0 : shiftedPage0, more_topics_url: null }
+      });
+    });
+
+    const first = await getLinuxDoFeed({ fetcher, limit: 30 });
+    expect(first.items.map((item) => item.id)).toEqual(Array.from({ length: 30 }, (_, index) => String(index + 1)));
+    expect(first).toMatchObject({ hasMore: true, nextPage: 2 });
+
+    const second = await getLinuxDoFeed({ fetcher, limit: 30, page: first.nextPage!, cursor: first.nextCursor });
+    expect(second.items.map((item) => item.id)).toEqual([
+      '32',
+      '31',
+      ...Array.from({ length: 18 }, (_, index) => String(index + 33))
+    ]);
+    expect(new Set([...first.items, ...second.items].map((item) => item.id)).size).toBe(50);
+    expect(second).toMatchObject({ hasMore: false, nextPage: null, nextCursor: null });
+  });
+
+  it('continues past consecutive distinct already-seen overlap pages to deliver later unseen topics', async () => {
+    const requestedPages: (string | null)[] = [];
+    const pages = new Map<number, ReturnType<typeof topic>[]>([
+      [0, [topic(1), topic(2), topic(3)]],
+      [1, [topic(4), topic(5), topic(6)]],
+      [2, [topic(1), topic(2), topic(3)]],
+      [3, [topic(4), topic(5), topic(6)]],
+      [4, [topic(7), topic(8), topic(9)]]
+    ]);
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (!url.searchParams.has('order')) return jsonResponse({ topic_list: { topics: [] } });
+      const pageParam = url.searchParams.get('page');
+      requestedPages.push(pageParam);
+      const upstreamPage = Number(pageParam || 0);
+      return jsonResponse({
+        topic_list: {
+          topics: pages.get(upstreamPage) ?? [],
+          more_topics_url: upstreamPage < 4 ? `/latest?order=created&page=${upstreamPage + 1}` : null
+        }
+      });
+    });
+
+    const first = await getLinuxDoFeed({ fetcher, limit: 6 });
+    expect(requestedPages).toEqual([null, '1']);
+    expect(first.items.map((item) => item.id)).toEqual(['1', '2', '3', '4', '5', '6']);
+    expect(first).toMatchObject({ hasMore: true, nextPage: 2 });
+
+    requestedPages.length = 0;
+    const second = await getLinuxDoFeed({ fetcher, limit: 6, page: first.nextPage!, cursor: first.nextCursor });
+    expect(requestedPages).toEqual(['2', '3', '4']);
+    expect(second.items.map((item) => item.id)).toEqual(['7', '8', '9']);
+    expect(second).toMatchObject({ hasMore: false, nextPage: null, nextCursor: null });
+  });
+
+  it('returns a manually continuable cursor under a finite scan bound when upstream keeps returning distinct already-seen subsets', async () => {
+    const requestedPages: (string | null)[] = [];
+    const page0 = Array.from({ length: 20 }, (_, index) => topic(index + 1));
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (!url.searchParams.has('order')) return jsonResponse({ topic_list: { topics: [] } });
+      const pageParam = url.searchParams.get('page');
+      requestedPages.push(pageParam);
+      const upstreamPage = Number(pageParam || 0);
+      if (upstreamPage > 10) throw new Error('exceeded distinct seen-overlap scan bound');
+      if (upstreamPage === 0) {
+        return jsonResponse({
+          topic_list: { topics: page0, more_topics_url: '/latest?order=created&page=1' }
+        });
+      }
+      const start = (upstreamPage - 1) * 2 + 1;
+      return jsonResponse({
+        topic_list: {
+          topics: [topic(start), topic(start + 1)],
+          more_topics_url: `/latest?order=created&page=${upstreamPage + 1}`
+        }
+      });
+    });
+
+    const first = await getLinuxDoFeed({ fetcher, limit: 20 });
+    expect(first.items).toHaveLength(20);
+    expect(first.hasMore).toBe(true);
+
+    requestedPages.length = 0;
+    const second = await getLinuxDoFeed({ fetcher, limit: 20, page: first.nextPage!, cursor: first.nextCursor });
+    expect(requestedPages).toEqual(['1', '2', '3', '4', '5', '6']);
+    expect(second.items).toEqual([]);
+    expect(second).toMatchObject({ hasMore: true, nextPage: 3 });
+    expect(second.nextCursor).toBeTruthy();
+  });
+
+  it('continues past reordered already-seen overlap subsets without falsely terminating before unseen topics', async () => {
+    const requestedPages: (string | null)[] = [];
+    const pages = new Map<number, ReturnType<typeof topic>[]>([
+      [0, [topic(1), topic(2), topic(3), topic(4)]],
+      [1, [topic(1), topic(2)]],
+      [2, [topic(3), topic(4)]],
+      [3, [topic(2), topic(1)]],
+      [4, [topic(5), topic(6)]]
+    ]);
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (!url.searchParams.has('order')) return jsonResponse({ topic_list: { topics: [] } });
+      const pageParam = url.searchParams.get('page');
+      requestedPages.push(pageParam);
+      const upstreamPage = Number(pageParam || 0);
+      return jsonResponse({
+        topic_list: {
+          topics: pages.get(upstreamPage) ?? [],
+          more_topics_url: upstreamPage < 4 ? `/latest?order=created&page=${upstreamPage + 1}` : null
+        }
+      });
+    });
+
+    const first = await getLinuxDoFeed({ fetcher, limit: 4 });
+    expect(first.items.map((item) => item.id)).toEqual(['1', '2', '3', '4']);
+
+    requestedPages.length = 0;
+    const second = await getLinuxDoFeed({ fetcher, limit: 4, page: first.nextPage!, cursor: first.nextCursor });
+    expect(requestedPages).toEqual(['1', '2', '3', '4']);
+    expect(second.items.map((item) => item.id)).toEqual(['5', '6']);
+    expect(second).toMatchObject({ hasMore: false, nextPage: null, nextCursor: null });
+  });
+
+  it('merges pinned state, access requirements, and valid-over-missing reading while sending conflicting duplicate reading to confirmation', async () => {
+    const rows = [
+      { ...topic(10), unseen: true, highest_post_number: 5 },
+      { ...topic(11), unseen: true, highest_post_number: 4 },
+      {
+        ...topic(12),
+        pinned: true,
+        pinned_globally: true,
+        required_trust_level: 3,
+        last_read_post_number: 9,
+        highest_post_number: 10
+      },
+      { ...topic(13), unseen: true, highest_post_number: 6 },
+      { ...topic(14), highest_post_number: 5 },
+      {
+        ...topic(10),
+        pinned: true,
+        pinned_globally: true,
+        required_trust_level: 3,
+        last_read_post_number: 7,
+        highest_post_number: 12
+      },
+      { ...topic(11), unseen: false, highest_post_number: 4 },
+      { ...topic(12), unseen: true, highest_post_number: 14 },
+      { ...topic(13), unseen: true, highest_post_number: 6 },
+      { ...topic(14), last_read_post_number: 7, highest_post_number: 11 }
+    ];
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.pathname === '/filter.json' || !url.searchParams.has('order')) {
+        return jsonResponse({ topic_list: { topics: [] } });
+      }
+      return jsonResponse({ topic_list: { topics: rows } });
+    });
+
+    const result = await getLinuxDoFeed({
+      fetcher,
+      limit: 10,
+      linuxDoAccess: { authenticated: true, userAgent: 'fixture' }
+    });
+
+    expect(result.items.map((item) => item.id)).toEqual(['10', '11', '12', '13', '14']);
+    const [t10, t11, t12, t13, t14] = result.items;
+    expect(t10).toMatchObject({
+      id: '10',
+      pinned: true,
+      accessRequirement: { type: 'level', label: '需等级', detail: 'Lv3' },
+      reading: { topicId: '10', highestPostNumber: 12, readPostNumbers: [] }
+    });
+    expect(t10?.reading?.lastReadPostNumber).toBeUndefined();
+    expect(isExplicitlyUnseenLinuxDoTopic(t10)).toBe(false);
+    expect(linuxDoTopicRequiresReadingConfirmation(t10)).toBe(true);
+    expect(isExplicitlyUnseenLinuxDoTopic(t11)).toBe(false);
+    expect(linuxDoTopicRequiresReadingConfirmation(t11)).toBe(true);
+    expect(t12).toMatchObject({
+      id: '12',
+      pinned: true,
+      accessRequirement: { type: 'level', label: '需等级', detail: 'Lv3' },
+      reading: { topicId: '12', highestPostNumber: 14, readPostNumbers: [] }
+    });
+    expect(t12?.reading?.lastReadPostNumber).toBeUndefined();
+    expect(isExplicitlyUnseenLinuxDoTopic(t12)).toBe(false);
+    expect(linuxDoTopicRequiresReadingConfirmation(t12)).toBe(true);
+    expect(isExplicitlyUnseenLinuxDoTopic(t13)).toBe(true);
+    expect(linuxDoTopicRequiresReadingConfirmation(t13)).toBe(false);
+    expect(t14?.reading).toEqual({
+      topicId: '14',
+      lastReadPostNumber: 7,
+      highestPostNumber: 11,
+      readPostNumbers: []
+    });
+    expect(linuxDoTopicRequiresReadingConfirmation(t14)).toBe(false);
+  });
+
+  it('delivers 90 unique topics across 1-30 -> 31-60 -> 1-30 -> 16-30 -> 61-90 without losing page 4', async () => {
+    const requestedPages: (string | null)[] = [];
+    const pages = new Map<number, ReturnType<typeof topic>[]>([
+      [0, Array.from({ length: 30 }, (_, index) => topic(index + 1))],
+      [1, Array.from({ length: 30 }, (_, index) => topic(index + 31))],
+      [2, Array.from({ length: 30 }, (_, index) => topic(index + 1))],
+      [3, Array.from({ length: 15 }, (_, index) => topic(index + 16))],
+      [4, Array.from({ length: 30 }, (_, index) => topic(index + 61))]
+    ]);
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (!url.searchParams.has('order')) return jsonResponse({ topic_list: { topics: [] } });
+      const pageParam = url.searchParams.get('page');
+      requestedPages.push(pageParam);
+      const upstreamPage = Number(pageParam || 0);
+      return jsonResponse({
+        topic_list: {
+          topics: pages.get(upstreamPage) ?? [],
+          more_topics_url: upstreamPage < 4 ? `/latest?order=created&page=${upstreamPage + 1}` : null
+        }
+      });
+    });
+
+    const first = await getLinuxDoFeed({ fetcher, limit: 30 });
+    expect(requestedPages).toEqual([null]);
+    expect(first.items.map((item) => item.id)).toEqual(Array.from({ length: 30 }, (_, index) => String(index + 1)));
+    expect(first).toMatchObject({ hasMore: true, nextPage: 2 });
+
+    requestedPages.length = 0;
+    const second = await getLinuxDoFeed({ fetcher, limit: 30, page: first.nextPage!, cursor: first.nextCursor });
+    expect(requestedPages).toEqual(['1']);
+    expect(second.items.map((item) => item.id)).toEqual(Array.from({ length: 30 }, (_, index) => String(index + 31)));
+    expect(second).toMatchObject({ hasMore: true, nextPage: 3 });
+
+    requestedPages.length = 0;
+    const third = await getLinuxDoFeed({ fetcher, limit: 30, page: second.nextPage!, cursor: second.nextCursor });
+    expect(requestedPages).toEqual(['2', '3', '4']);
+    expect(third.items.map((item) => item.id)).toEqual(Array.from({ length: 30 }, (_, index) => String(index + 61)));
+    expect(third).toMatchObject({ hasMore: false, nextPage: null, nextCursor: null });
+
+    const allIds = [...first.items, ...second.items, ...third.items].map((item) => item.id);
+    expect(allIds).toHaveLength(90);
+    expect(new Set(allIds).size).toBe(90);
+  });
+
+  it.each(['advancing-url', 'wrapping-url'] as const)(
+    'preserves all 240 unique topics on an 8-page loop (%s) and stops automatic serial reads',
+    async (mode) => {
+      const requestedPages: (string | null)[] = [];
+      const pages = Array.from({ length: 8 }, (_, pageIndex) =>
+        Array.from({ length: 30 }, (_, offset) => topic(pageIndex * 30 + offset + 1))
+      );
+      const fetcher = vi.fn(async (input: string) => {
+        const url = new URL(input);
+        if (!url.searchParams.has('order')) return jsonResponse({ topic_list: { topics: [] } });
+        const pageParam = url.searchParams.get('page');
+        requestedPages.push(pageParam);
+        const upstreamPage = Number(pageParam || 0);
+        if (upstreamPage > 13) throw new Error('infinite 8-page loop');
+        const nextUrl =
+          mode === 'wrapping-url' && upstreamPage === 7
+            ? '/latest?order=created&page=0'
+            : `/latest?order=created&page=${upstreamPage + 1}`;
+        return jsonResponse({
+          topic_list: {
+            topics: upstreamPage < 8 ? pages[upstreamPage]! : [...pages[upstreamPage % 8]!].reverse(),
+            more_topics_url: nextUrl
+          }
+        });
+      });
+
+      const collected: string[] = [];
+      let page = 1;
+      let cursor: string | null | undefined = undefined;
+      let hasMore = true;
+      let manualContinuation = false;
+      let calls = 0;
+      while (hasMore && !manualContinuation && calls < 12) {
+        calls += 1;
+        const result = await getLinuxDoFeed({ fetcher, limit: 30, page, cursor });
+        collected.push(...result.items.map((item) => item.id));
+        hasMore = Boolean(result.hasMore);
+        manualContinuation = result.manualContinuation === true;
+        page = result.nextPage ?? page + 1;
+        cursor = result.nextCursor;
+      }
+
+      expect(collected).toHaveLength(240);
+      expect(new Set(collected).size).toBe(240);
+      if (mode === 'wrapping-url') {
+        expect(hasMore).toBe(false);
+        expect(cursor).toBeNull();
+        expect(requestedPages).toEqual([null, '1', '2', '3', '4', '5', '6', '7']);
+      } else {
+        expect(hasMore).toBe(true);
+        expect(manualContinuation).toBe(true);
+        expect(cursor).toBeTruthy();
+        expect(requestedPages).toEqual([null, ...Array.from({ length: 13 }, (_, index) => String(index + 1))]);
+      }
+    }
+  );
+
+  it('returns a manually continuable cursor when the overlap scan budget is exhausted on strictly advancing pages', async () => {
+    const requestedPages: (string | null)[] = [];
+    const page0 = Array.from({ length: 30 }, (_, index) => topic(index + 1));
+    const page7 = Array.from({ length: 30 }, (_, index) => topic(index + 31));
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (!url.searchParams.has('order')) return jsonResponse({ topic_list: { topics: [] } });
+      const pageParam = url.searchParams.get('page');
+      requestedPages.push(pageParam);
+      const upstreamPage = Number(pageParam || 0);
+      if (upstreamPage === 0) {
+        return jsonResponse({ topic_list: { topics: page0, more_topics_url: '/latest?order=created&page=1' } });
+      }
+      if (upstreamPage >= 1 && upstreamPage <= 6) {
+        const start = (upstreamPage - 1) * 5 + 1;
+        return jsonResponse({
+          topic_list: {
+            topics: Array.from({ length: 5 }, (_, index) => topic(start + index)),
+            more_topics_url: `/latest?order=created&page=${upstreamPage + 1}`
+          }
+        });
+      }
+      return jsonResponse({
+        topic_list: {
+          topics: upstreamPage === 7 ? page7 : [],
+          more_topics_url: null
+        }
+      });
+    });
+
+    const first = await getLinuxDoFeed({ fetcher, limit: 30 });
+    expect(requestedPages).toEqual([null]);
+    expect(first.items).toHaveLength(30);
+
+    requestedPages.length = 0;
+    const second = await getLinuxDoFeed({ fetcher, limit: 30, page: first.nextPage!, cursor: first.nextCursor });
+    expect(requestedPages).toEqual(['1', '2', '3', '4', '5', '6']);
+    expect(second.items).toEqual([]);
+    expect(second).toMatchObject({ hasMore: true, manualContinuation: true, nextPage: 3 });
+    expect(second.nextCursor).toBeTruthy();
+    expect(second.nextCursor).not.toBe(first.nextCursor);
+
+    requestedPages.length = 0;
+    const third = await getLinuxDoFeed({ fetcher, limit: 30, page: second.nextPage!, cursor: second.nextCursor });
+    expect(requestedPages).toEqual(['7']);
+    expect(third.items.map((item) => item.id)).toEqual(Array.from({ length: 30 }, (_, index) => String(index + 31)));
+    expect(third).toMatchObject({ hasMore: false, nextPage: null, nextCursor: null });
+  });
+
+  it('rejects cross-site, malformed, wrong-path, and non-advancing more_topics_url continuations', async () => {
+    for (const badUrl of [
+      'https://evil.example/latest?order=created&page=1',
+      '//evil.example/latest?order=created&page=1',
+      'javascript:alert(1)',
+      '/t/123?page=1',
+      '/latest?order=created&page=0',
+      '/latest?order=created'
+    ]) {
+      const fetcher = vi.fn(async (input: string) => {
+        const url = new URL(input);
+        if (!url.searchParams.has('order')) return jsonResponse({ topic_list: { topics: [] } });
+        return jsonResponse({
+          topic_list: {
+            topics: [topic(1), topic(2)],
+            more_topics_url: badUrl
+          }
+        });
+      });
+
+      const result = await getLinuxDoFeed({ fetcher, limit: 2 });
+      expect(result.items.map((item) => item.id)).toEqual(['1', '2']);
+      expect(result).toMatchObject({ hasMore: false, nextPage: null, nextCursor: null });
+    }
+  });
+
+  it('restarts bound cursors from page 0 on account switch, session change, or filter mismatch while keeping legacy JSON cursors continuable', async () => {
+    const requestedUrls: string[] = [];
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.pathname === '/filter.json' || (url.pathname === '/latest.json' && !url.searchParams.has('order'))) {
+        return jsonResponse({ topic_list: { topics: [] } });
+      }
+      requestedUrls.push(`${url.pathname}${url.search}`);
+      const upstreamPage = Number(url.searchParams.get('page') || 0);
+      return jsonResponse({
+        topic_list: {
+          topics: [topic(upstreamPage * 10 + 1), topic(upstreamPage * 10 + 2)],
+          more_topics_url: upstreamPage < 2 ? `${url.pathname.replace('.json', '')}?page=${upstreamPage + 1}` : null
+        }
+      });
+    });
+
+    const aliceAccess = {
+      authenticated: true,
+      identityKey: 'linuxdo:alice',
+      sessionEpoch: 1,
+      categoryCacheScope: 'authenticated:1',
+      readingScope: 'authenticated:1:linuxdo:alice:alice',
+      userAgent: 'fixture'
+    };
+    const first = await getLinuxDoFeed({ fetcher, limit: 2, linuxDoAccess: aliceAccess });
+    expect(first.hasMore).toBe(true);
+    expect(first.nextCursor).toBeTruthy();
+
+    requestedUrls.length = 0;
+    const afterAccountSwitch = await getLinuxDoFeed({
+      fetcher,
+      limit: 2,
+      page: 2,
+      cursor: first.nextCursor,
+      linuxDoAccess: { ...aliceAccess, identityKey: 'linuxdo:bob', readingScope: 'authenticated:1:linuxdo:bob:bob' }
+    });
+    expect(requestedUrls).toEqual(['/latest.json?order=created&ascending=false']);
+    expect(afterAccountSwitch.items.map((item) => item.id)).toEqual(['1', '2']);
+
+    requestedUrls.length = 0;
+    const afterSessionChange = await getLinuxDoFeed({
+      fetcher,
+      limit: 2,
+      page: 2,
+      cursor: first.nextCursor,
+      linuxDoAccess: { ...aliceAccess, sessionEpoch: 2, categoryCacheScope: 'authenticated:2' }
+    });
+    expect(requestedUrls).toEqual(['/latest.json?order=created&ascending=false']);
+    expect(afterSessionChange.items.map((item) => item.id)).toEqual(['1', '2']);
+
+    requestedUrls.length = 0;
+    const afterFilterChange = await getLinuxDoFeed({
+      fetcher,
+      limit: 2,
+      page: 2,
+      cursor: first.nextCursor,
+      linuxDoFilter: 'hot',
+      linuxDoAccess: aliceAccess
+    });
+    expect(requestedUrls).toEqual(['/hot.json']);
+    expect(afterFilterChange.items.map((item) => item.id)).toEqual(['1', '2']);
+
+    requestedUrls.length = 0;
+    const afterCategoryChange = await getLinuxDoFeed({
+      fetcher,
+      limit: 2,
+      page: 2,
+      cursor: first.nextCursor,
+      category: '4',
+      linuxDoAccess: aliceAccess
+    });
+    expect(requestedUrls).toEqual(['/latest.json?order=created&ascending=false&category=4']);
+    expect(afterCategoryChange.items.map((item) => item.id)).toEqual(['1', '2']);
+
+    requestedUrls.length = 0;
+    const legacyJsonCursor = encodeURIComponent(
+      JSON.stringify({ page: 2, offset: 1, firstId: '12', seenIds: ['1', '2', '11'] })
+    );
+    const fromLegacyJson = await getLinuxDoFeed({
+      fetcher,
+      limit: 2,
+      page: 2,
+      cursor: legacyJsonCursor,
+      linuxDoAccess: aliceAccess
+    });
+    expect(requestedUrls).toEqual([
+      '/latest.json?order=created&ascending=false&page=1',
+      '/latest.json?order=created&ascending=false&page=2'
+    ]);
+    expect(fromLegacyJson.items.map((item) => item.id)).toEqual(['12', '21']);
+  });
+
+  it('reports seen-topic metadata updates via topicUpdates without consuming the 30-topic quota or issuing extra paging requests', async () => {
+    const requestedPages: (string | null)[] = [];
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (!url.searchParams.has('order')) return jsonResponse({ topic_list: { topics: [] } });
+      const pageParam = url.searchParams.get('page');
+      requestedPages.push(pageParam);
+      const upstreamPage = Number(pageParam || 0);
+      if (upstreamPage === 0) {
+        return jsonResponse({
+          topic_list: {
+            topics: Array.from({ length: 30 }, (_, index) => topic(index + 1)),
+            more_topics_url: '/latest?order=created&page=1'
+          }
+        });
+      }
+      return jsonResponse({
+        topic_list: {
+          topics: [
+            { ...topic(1), pinned: true, pinned_globally: true },
+            { ...topic(2), required_trust_level: 3 },
+            ...Array.from({ length: 30 }, (_, index) => topic(index + 31))
+          ],
+          more_topics_url: '/latest?order=created&page=2'
+        }
+      });
+    });
+
+    const first = await getLinuxDoFeed({ fetcher, limit: 30 });
+    expect(requestedPages).toEqual([null]);
+    expect(first.items).toHaveLength(30);
+
+    requestedPages.length = 0;
+    const second = await getLinuxDoFeed({ fetcher, limit: 30, page: first.nextPage!, cursor: first.nextCursor });
+    expect(requestedPages).toEqual(['1']);
+    expect(second.items.map((item) => item.id)).toEqual(Array.from({ length: 30 }, (_, index) => String(index + 31)));
+    const updates = (second as { topicUpdates?: { id: string; pinned?: boolean; accessRequirement?: unknown }[] })
+      .topicUpdates;
+    expect(updates?.map((item) => item.id)).toEqual(['1', '2']);
+    expect(updates?.find((item) => item.id === '1')?.pinned).toBe(true);
+    expect(updates?.find((item) => item.id === '2')?.accessRequirement).toEqual({
+      type: 'level',
+      label: '需等级',
+      detail: 'Lv3'
+    });
+  });
+
+  it('aborts cleanly during multi-page overlap scanning without issuing further requests', async () => {
+    const controller = new AbortController();
+    const requestedPages: (string | null)[] = [];
+    const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
+      const url = new URL(input);
+      if (!url.searchParams.has('order')) return jsonResponse({ topic_list: { topics: [] } });
+      const pageParam = url.searchParams.get('page');
+      requestedPages.push(pageParam);
+      const upstreamPage = Number(pageParam || 0);
+      if (upstreamPage === 0) {
+        return jsonResponse({
+          topic_list: { topics: [topic(1), topic(2)], more_topics_url: '/latest?order=created&page=1' }
+        });
+      }
+      if (upstreamPage === 1) {
+        controller.abort();
+        return jsonResponse({
+          topic_list: { topics: [topic(1)], more_topics_url: '/latest?order=created&page=2' }
+        });
+      }
+      if (init?.signal?.aborted) throw new DOMException('aborted', 'AbortError');
+      throw new Error('should not fetch page 2 after abort');
+    });
+
+    const first = await getLinuxDoFeed({ fetcher, limit: 2 });
+    requestedPages.length = 0;
+    await expect(
+      getLinuxDoFeed({ fetcher, limit: 2, page: first.nextPage!, cursor: first.nextCursor, signal: controller.signal })
+    ).rejects.toThrow('请求已取消');
+    expect(requestedPages).toEqual(['1']);
+  });
+
+  it('omits readingById from encoded cursors and preserves 7->2, 7->0, 7->null, and missing reading updates in observation order', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.pathname === '/filter.json' || !url.searchParams.has('order')) {
+        return jsonResponse({ topic_list: { topics: [] } });
+      }
+      const upstreamPage = Number(url.searchParams.get('page') || 0);
+      if (upstreamPage === 0) {
+        return jsonResponse({
+          topic_list: {
+            topics: [
+              { ...topic(1), last_read_post_number: 7, highest_post_number: 12 },
+              { ...topic(2), last_read_post_number: 7, highest_post_number: 12 },
+              { ...topic(3), last_read_post_number: 7, highest_post_number: 12 },
+              { ...topic(4), last_read_post_number: 7, highest_post_number: 12 }
+            ],
+            more_topics_url: '/latest?order=created&page=1'
+          }
+        });
+      }
+      return jsonResponse({
+        topic_list: {
+          topics: [
+            { ...topic(1), last_read_post_number: 2, highest_post_number: 12 },
+            { ...topic(2), last_read_post_number: 0, highest_post_number: 12 },
+            { ...topic(3), last_read_post_number: null, highest_post_number: 12 },
+            { ...topic(4), highest_post_number: 15 },
+            { ...topic(5), unseen: true, highest_post_number: 6 }
+          ],
+          more_topics_url: null
+        }
+      });
+    });
+
+    const access = { authenticated: true, identityKey: 'linuxdo:alice', sessionEpoch: 1, userAgent: 'fixture' };
+    const first = await getLinuxDoFeed({ fetcher, limit: 4, linuxDoAccess: access });
+    expect(first.nextCursor).toBeTruthy();
+    const decodedCursor = JSON.parse(decodeURIComponent(first.nextCursor!)) as Record<string, unknown>;
+    expect(decodedCursor).not.toHaveProperty('readingById');
+
+    const second = await getLinuxDoFeed({
+      fetcher,
+      limit: 4,
+      page: first.nextPage!,
+      cursor: first.nextCursor,
+      linuxDoAccess: access
+    });
+    expect(second.items.map((item) => item.id)).toEqual(['5']);
+    const updates = (second as { topicUpdates?: { id: string; reading?: Record<string, unknown> }[] }).topicUpdates;
+    expect(updates?.find((item) => item.id === '1')?.reading?.lastReadPostNumber).toBe(2);
+    expect(updates?.find((item) => item.id === '2')?.reading?.lastReadPostNumber).toBe(0);
+    expect(updates?.find((item) => item.id === '3')?.reading?.lastReadPostNumber).toBeNull();
+    expect(updates?.find((item) => item.id === '4')?.reading).toEqual({
+      topicId: '4',
+      highestPostNumber: 15,
+      readPostNumbers: []
+    });
+  });
+
+  it('keeps the later pin index reading when a pinned topic also appears on the first latest page', async () => {
+    const pinned = { ...topic(1), pinned: true, pinned_globally: true, highest_post_number: 12, unseen: false };
+    const fetcher = vi.fn(async (input: string) => {
+      const pinIndex = new URL(input).pathname === '/filter.json';
+      return jsonResponse({
+        topic_list: {
+          topics: [{ ...pinned, last_read_post_number: pinIndex ? 2 : 7 }]
+        }
+      });
+    });
+    const result = await getLinuxDoFeed({
+      fetcher,
+      limit: 2,
+      linuxDoAccess: { authenticated: true, readingScope: 'fixture-reading', userAgent: 'fixture' }
+    });
+
+    expect(result.items.map((item) => item.id)).toEqual(['1']);
+    expect(result.items[0]?.reading?.lastReadPostNumber).toBe(2);
+    expect(hasTrustedLinuxDoFeedReading(result.items[0], 'fixture-reading')).toBe(true);
+  });
+
+  it('invalidates an earlier reading when the later feed window supplies the same floor with conflicting evidence', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.pathname === '/filter.json') return jsonResponse({ topic_list: { topics: [] } });
+      const first = !url.searchParams.has('page');
+      return jsonResponse({
+        topic_list: {
+          topics: [{ ...topic(1), unseen: !first, last_read_post_number: 7, highest_post_number: 12 }],
+          more_topics_url: first ? '/latest?order=created&page=1' : null
+        }
+      });
+    });
+    const result = await getLinuxDoFeed({
+      fetcher,
+      limit: 2,
+      linuxDoAccess: { authenticated: true, readingScope: 'fixture-reading', userAgent: 'fixture' }
+    });
+    expect(result.items.map((item) => item.id)).toEqual(['1']);
+    expect(hasTrustedLinuxDoFeedReading(result.items[0], 'fixture-reading')).toBe(false);
+  });
+
+  it('prefers valid reading fields over missing fields and flags conflicting same-response duplicate rows for backfill confirmation', async () => {
+    const rows = [
+      { ...topic(10), highest_post_number: 5 },
+      { ...topic(10), last_read_post_number: 7, highest_post_number: 12 },
+      { ...topic(11), last_read_post_number: 7, highest_post_number: 10 },
+      { ...topic(11), last_read_post_number: 2, highest_post_number: 10 },
+      { ...topic(12), last_read_post_number: 7, highest_post_number: 10 },
+      { ...topic(12), last_read_post_number: 0, highest_post_number: 10 },
+      { ...topic(13), last_read_post_number: 7, highest_post_number: 10 },
+      { ...topic(13), last_read_post_number: null, highest_post_number: 10 },
+      { ...topic(14), unseen: true, highest_post_number: 5 },
+      { ...topic(14), last_read_post_number: 7, highest_post_number: 12 },
+      { ...topic(15), unseen: true, highest_post_number: 6 },
+      { ...topic(15), unseen: true, highest_post_number: 6 }
+    ];
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.pathname === '/filter.json' || !url.searchParams.has('order')) {
+        return jsonResponse({ topic_list: { topics: [] } });
+      }
+      return jsonResponse({ topic_list: { topics: rows } });
+    });
+
+    const result = await getLinuxDoFeed({
+      fetcher,
+      limit: 10,
+      linuxDoAccess: { authenticated: true, userAgent: 'fixture' }
+    });
+
+    expect(result.items.map((item) => item.id)).toEqual(['10', '11', '12', '13', '14', '15']);
+    expect(result.items[0]?.reading).toMatchObject({ lastReadPostNumber: 7, highestPostNumber: 12 });
+    expect(result.items[1]?.reading?.lastReadPostNumber).toBeUndefined();
+    expect(result.items[2]?.reading?.lastReadPostNumber).toBeUndefined();
+    expect(result.items[3]?.reading?.lastReadPostNumber).toBeUndefined();
+    expect(result.items[4]?.reading?.lastReadPostNumber).toBeUndefined();
+    expect(isExplicitlyUnseenLinuxDoTopic(result.items[4])).toBe(false);
+    expect(isExplicitlyUnseenLinuxDoTopic(result.items[5])).toBe(true);
   });
 
   it('keeps the created-order feed usable when the optional pin read fails', async () => {

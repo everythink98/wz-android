@@ -402,7 +402,7 @@ export function useAccountStatusController({
               readAccountStatus(source, {
                 fetcher: withDiagnosticFetcher(
                   trace,
-                  source === 'linuxdo' ? fetcher : rejectUnauthorizedResponse(fetcher)
+                  source === 'linuxdo' ? fetcher : rejectUnauthorizedResponse(source, fetcher)
                 ),
                 linuxDoUserAgent: getLinuxDoUserAgent(),
                 nodeSeekUserAgent: getNodeSeekUserAgent(),

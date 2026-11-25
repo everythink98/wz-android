@@ -11,7 +11,8 @@ import { LinuxDoPacketPage } from '@/features/topic/components/LinuxDoPacketPage
 import { useAppDeepLinkNavigation } from '@/app/useAppDeepLinkNavigation';
 import type { Topic, TopicDetail } from '@/domain/forum/models';
 import { createEmptyReaderData, topicKey } from '@/domain/reader/readerData';
-import { TopicRoute, TopicRouteRuntimeProvider, type TopicRouteRuntimeValue } from '@/features/topic/TopicRoute';
+import { TopicRoute } from '@/features/topic/TopicRoute';
+import { TopicRouteRuntimeProvider, type TopicRouteRuntimeValue } from '@/features/topic/TopicRouteRuntime';
 import { useTopicActionsController } from '@/features/topic/actions/useTopicActionsController';
 import { useImagePreviewController } from '@/features/topic/media/useImagePreviewController';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
@@ -96,8 +97,7 @@ function setup(topicDetail: TopicDetail | null = null, routeTopic = topic) {
     commands: {
       composer: { toggle: jest.fn() },
       view: {
-        changeCommentQuery: jest.fn(),
-        changeReplyFilter: jest.fn()
+        clearReplyFilters: jest.fn()
       }
     }
   } as never);

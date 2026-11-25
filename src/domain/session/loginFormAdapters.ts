@@ -134,6 +134,17 @@ function createLoginFormScript(config: LoginFormConfig, attempt: number, credent
       post(false, "invalid-form");
       return;
     }
+    const formMarker = Symbol.for("wz.reader.loginForm");
+    ${
+      !credentials
+        ? 'document[formMarker] = { attempt, account, password };'
+        : `const verifiedForm = document[formMarker];
+    if (verifiedForm?.attempt !== attempt || verifiedForm.account !== account || verifiedForm.password !== password) {
+      post(false, "invalid-form");
+      return;
+    }
+    delete document[formMarker];`
+    }
     ${credentialsDeclaration}
     ${
       credentials

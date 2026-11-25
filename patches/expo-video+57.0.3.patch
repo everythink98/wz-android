@@ -32,10 +32,10 @@ index 0000000..b08f05c
 +</manifest>
 diff --git a/node_modules/expo-video/android/src/androidTest/java/expo/modules/video/ReaderPlaybackInstrumentedTest.kt b/node_modules/expo-video/android/src/androidTest/java/expo/modules/video/ReaderPlaybackInstrumentedTest.kt
 new file mode 100644
-index 0000000..598b064
+index 00000000..e80ccbfa
 --- /dev/null
 +++ b/node_modules/expo-video/android/src/androidTest/java/expo/modules/video/ReaderPlaybackInstrumentedTest.kt
-@@ -0,0 +1,311 @@
+@@ -0,0 +1,410 @@
 +package expo.modules.video
 +
 +import android.net.Uri
@@ -248,6 +248,105 @@ index 0000000..598b064
 +      instrumentation.runOnMainSync { player?.release() }
 +      scenario.close()
 +    }
++  }
++
++  @Test fun nativeInlineSettingsChangesSpeedInCompactPlayer() {
++    val media = source()
++    val scenario = ActivityScenario.launch<ReaderPlaybackTestActivity>(
++      Intent(context, ReaderPlaybackTestActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
++    )
++    var player: ExoPlayer? = null
++    try {
++      scenario.onActivity { activity ->
++        val view = activity.playerView
++        view.layoutParams = view.layoutParams.apply { height = (136 * view.resources.displayMetrics.density).toInt() }
++        view.controllerShowTimeoutMs = 0
++        view.setSettingsButtonVisibility(true)
++        player = ExoPlayer.Builder(context).build().apply {
++          view.player = this
++          setMediaSource(buildExpoVideoMediaSource(context, media))
++          prepare()
++        }
++        view.showController()
++      }
++      val activePlayer = checkNotNull(player)
++      awaitReady(activePlayer)
++      val mediaResources = context.resources
++      val speedMenu = mediaResources.getString(androidx.media3.ui.R.string.exo_controls_playback_speed)
++      val speeds = mediaResources.getStringArray(androidx.media3.ui.R.array.exo_controls_playback_speeds)
++      for ((label, multiplier) in listOf(speeds[5] to 1.5f, speeds[6] to 2f)) {
++        scenario.onActivity { activity ->
++          val view = activity.playerView
++          view.showController()
++          val settings = view.findViewById<android.view.View>(androidx.media3.ui.R.id.exo_settings)
++          assertEquals(androidx.media3.ui.R.id.exo_center_controls, (settings.parent as android.view.View).id)
++          assertTrue(settings.isShown && settings.isClickable)
++          assertTrue(settings.performClick())
++        }
++        clickNativeMenuText(speedMenu)
++        clickNativeMenuText(label)
++        val playing = CountDownLatch(1)
++        val playbackListener = object : Player.Listener {
++          override fun onIsPlayingChanged(isPlaying: Boolean) {
++            if (isPlaying) playing.countDown()
++          }
++        }
++        instrumentation.runOnMainSync {
++          assertEquals(multiplier, activePlayer.playbackParameters.speed, 0.001f)
++          activePlayer.seekTo(0)
++          activePlayer.addListener(playbackListener)
++          activePlayer.play()
++          if (activePlayer.isPlaying) playing.countDown()
++        }
++        assertTrue("Native playback did not start at ${multiplier}x", playing.await(5, TimeUnit.SECONDS))
++        var startPositionMs = 0L
++        var startWallTimeMs = 0L
++        SystemClock.sleep(250)
++        instrumentation.runOnMainSync {
++          startPositionMs = activePlayer.currentPosition
++          startWallTimeMs = SystemClock.elapsedRealtime()
++        }
++        SystemClock.sleep(1400)
++        instrumentation.runOnMainSync {
++          val progressedMs = activePlayer.currentPosition - startPositionMs
++          val elapsedMs = SystemClock.elapsedRealtime() - startWallTimeMs
++          val actualSpeed = progressedMs.toFloat() / elapsedMs
++          activePlayer.pause()
++          activePlayer.removeListener(playbackListener)
++          assertEquals("Actual media progression at ${multiplier}x", multiplier, actualSpeed, 0.22f)
++        }
++      }
++    } finally {
++      instrumentation.runOnMainSync { player?.release() }
++      scenario.close()
++    }
++  }
++
++  private fun clickNativeMenuText(text: String) {
++    val deadline = SystemClock.elapsedRealtime() + 5000
++    var nextScroll = SystemClock.elapsedRealtime() + 250
++    do {
++      val root = instrumentation.uiAutomation.rootInActiveWindow
++      val items = root?.findAccessibilityNodeInfosByText(text).orEmpty()
++      for (item in items.filter { it.text?.toString() == text }) {
++        val control = generateSequence(item) { it.parent }.firstOrNull { it.isClickable }
++        if (control?.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK) == true) return
++      }
++      if (root != null && SystemClock.elapsedRealtime() >= nextScroll) {
++        // Media3 clips the popup to the height of the inline controller, so speed rows can require scrolling.
++        val queue = ArrayDeque(listOf(root))
++        while (queue.isNotEmpty()) {
++          val node = queue.removeFirst()
++          if (node.isScrollable && node.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
++            break
++          }
++          for (index in 0 until node.childCount) node.getChild(index)?.let(queue::addLast)
++        }
++        nextScroll = SystemClock.elapsedRealtime() + 350
++      }
++      SystemClock.sleep(50)
++    } while (SystemClock.elapsedRealtime() < deadline)
++    fail("Media3 did not expose the menu item: $text")
 +  }
 +
 +  @Test fun realPlayerSeeksWithinDownloadedAudioWithoutNewRequests() {
@@ -652,10 +751,17 @@ index 45d3d7b9..a141e423 100644
 +  }
 +}
 diff --git a/node_modules/expo-video/android/src/main/java/expo/modules/video/PlayerViewExtension.kt b/node_modules/expo-video/android/src/main/java/expo/modules/video/PlayerViewExtension.kt
-index 235844e..20234f3 100644
+index 235844ef..a639720d 100644
 --- a/node_modules/expo-video/android/src/main/java/expo/modules/video/PlayerViewExtension.kt
 +++ b/node_modules/expo-video/android/src/main/java/expo/modules/video/PlayerViewExtension.kt
-@@ -4,6 +4,21 @@ import android.graphics.Color
+@@ -1,9 +1,39 @@
+ package expo.modules.video
+ 
+ import android.graphics.Color
++import android.view.Gravity
++import android.view.ViewGroup
++import android.widget.ImageButton
++import android.widget.LinearLayout
  import androidx.media3.ui.DefaultTimeBar
  import androidx.media3.ui.PlayerView
  
@@ -672,12 +778,23 @@ index 235844e..20234f3 100644
 +  }
 +  findViewById<android.view.View>(androidx.media3.ui.R.id.exo_controls_background)
 +    ?.setBackgroundColor(0x66000000)
++  if (!fullscreen && id == R.id.texture_player_view) {
++    // Media3 hides the bottom bar for short videos. Keep its own Settings button with the play controls.
++    val settings = findViewById<ImageButton>(androidx.media3.ui.R.id.exo_settings)
++    val center = findViewById<LinearLayout>(androidx.media3.ui.R.id.exo_center_controls)
++    val source = settings?.parent as? ViewGroup
++    if (settings != null && center != null && source != null && source !== center) {
++      source.removeView(settings)
++      val touchTarget = (48 * density).toInt()
++      center.addView(settings, LinearLayout.LayoutParams(touchTarget, touchTarget).apply { gravity = Gravity.CENTER_VERTICAL })
++    }
++  }
 +}
 +
  @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
  internal fun PlayerView.applyRequiresLinearPlayback(requireLinearPlayback: Boolean) {
    setShowFastForwardButton(!requireLinearPlayback)
-@@ -35,6 +50,20 @@ internal fun PlayerView.setFullscreenButtonVisibility(visible: Boolean) {
+@@ -35,6 +65,20 @@ internal fun PlayerView.setFullscreenButtonVisibility(visible: Boolean) {
    }
  }
  

@@ -18,27 +18,34 @@ import type {
   NotificationPage
 } from '@/domain/notifications/models';
 import type { DiscoursePostPolicy } from '@/domain/forum/discoursePolicy';
-import type { Topic, TopicDetail, UserReference } from '@/domain/forum/models';
+import type { SourceErrorInfo, Topic, TopicDetail, UserReference } from '@/domain/forum/models';
 import { notificationPageError } from '@/domain/notifications/notificationQuality';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import type { DiagnosticEvent } from '@/platform/diagnostics/diagnosticPolicy';
-import type { AccountReconcileResult, LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
+import type { AccountReconcileResult } from '@/domain/session/sessionContracts';
+import type { ReadRecovery } from '@/platform/query/readRecovery';
 import { notificationSources, type NotificationSource } from '@/domain/forum/sourceCatalog';
 import { createSiteSessionStates } from '@/domain/session/siteSessionState';
 import {
   NotificationDetailRoute,
-  NotificationRouteRuntimeProvider,
   NotificationSettingsRoute,
-  NotificationsRoute,
-  type NotificationRouteRuntimeValue
+  NotificationsRoute
 } from '@/features/notifications/NotificationRoute';
+import {
+  NotificationRouteRuntimeProvider,
+  type NotificationRouteRuntimeValue
+} from '@/features/notifications/NotificationRouteRuntime';
 import { defaultNotificationState } from '@/platform/notifications/notificationStore';
 import {
+  ensureMessageNotificationChannel,
   notificationPermissionGranted,
-  requestNotificationPermission
+  requestNotificationPermission,
+  syncNotificationBackgroundRegistration
 } from '@/platform/notifications/notificationSystem';
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
+import { captureDiscoursePolicyRead, recordDiscoursePolicyReceipt } from '@/platform/query/discoursePolicyCache';
+import { cleanupContentSourceQueries } from '@/app/useContentSourceQueryCleanup';
 import { prepareRequestToSend, type Fetcher } from '@/platform/network/request';
 import type { NotificationAdapter, NotificationAdapterAccess } from '@/sources/notificationAdapter';
 import { createNotificationGateway } from '@/sources/notificationGateway';
@@ -95,6 +102,7 @@ jest.mock('expo-document-picker', () => ({
 }));
 
 jest.mock('@/platform/notifications/notificationSystem', () => ({
+  ensureMessageNotificationChannel: jest.fn(async () => undefined),
   notificationPermissionGranted: jest.fn(async () => false),
   requestNotificationPermission: jest.fn(async () => false),
   syncNotificationBackgroundRegistration: jest.fn(async () => false),
@@ -486,20 +494,468 @@ describe('notification routes', () => {
           confirm();
         });
         await waitFor(() => expect(permission).toHaveBeenCalledTimes(1));
-        expect(write).toHaveBeenCalledTimes(1);
-        expect(persisted).toMatchObject({ globalEnabled: true, hasOptedIn: true });
+        await waitFor(() => expect(persisted.androidPermissionRequestStarted).toBe(true));
+        expect(write).toHaveBeenCalledTimes(2);
+        expect(persisted).toMatchObject({
+          globalEnabled: true,
+          hasOptedIn: true,
+          androidPermissionRequestStarted: true
+        });
         await act(async () => {
           followLink();
           permissionResult.resolve(true);
         });
         expect(persisted.globalEnabled).toBe(true);
         expect(permission).toHaveBeenCalledTimes(1);
-        expect(write).toHaveBeenCalledTimes(1);
+        expect(write).toHaveBeenCalledTimes(2);
       } finally {
         permissionResult.resolve(false);
         await view.unmount();
         read.mockImplementation(async () => null);
         write.mockImplementation(async () => undefined);
+        permission.mockReset().mockResolvedValue(false);
+        alert.mockRestore();
+      }
+    }
+  );
+
+  it.each(['left', 'returned'] as const)(
+    'does not publish permission feedback to a settings visit after it is %s',
+    async (visit) => {
+      const runtime = routeRuntime({} as NotificationRouteRuntimeValue['gateway']);
+      runtime.state = { ...defaultNotificationState(), hasOptedIn: true };
+      const pending = Promise.withResolvers<boolean>();
+      runtime.setGlobalEnabled = jest.fn(() => pending.promise);
+      const navigation = createNavigationContainerRef<FocusTestStackParamList>();
+      const view = await render(
+        <NotificationRouteRuntimeProvider value={runtime}>
+          <NavigationContainer ref={navigation}>
+            <FocusTestStack.Navigator initialRouteName="NotificationSettings">
+              <FocusTestStack.Screen name="NotificationSettings" component={NotificationSettingsRoute} />
+              <FocusTestStack.Screen name="Other">{() => <Text>其他页面</Text>}</FocusTestStack.Screen>
+            </FocusTestStack.Navigator>
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>,
+        { wrapper: QueryTestWrapper }
+      );
+      try {
+        await fireEvent(view.getByTestId('notification-global-switch'), 'valueChange', true);
+        expect(runtime.setGlobalEnabled).toHaveBeenCalledTimes(1);
+        await act(async () => navigation.navigate('Other'));
+        expect(navigation.getCurrentRoute()?.name).toBe('Other');
+        if (visit === 'returned') await act(async () => navigation.goBack());
+        await act(async () => pending.resolve(false));
+        expect(runtime.notify).not.toHaveBeenCalled();
+      } finally {
+        pending.resolve(false);
+        await view.unmount();
+      }
+    }
+  );
+
+  it('keeps first opt-in settings usable on native permission exception and recovers via retry initialization', async () => {
+    const initial = defaultNotificationState();
+    initial.sources.nodeseek.identityKey = 'nodeseek:42';
+    let persisted = initial;
+    const read = jest.mocked(AsyncStorage.getItem);
+    const write = jest.mocked(AsyncStorage.setItem);
+    const probe = jest.mocked(notificationPermissionGranted);
+    const permission = jest.mocked(requestNotificationPermission);
+    const syncBackground = jest.mocked(syncNotificationBackgroundRegistration);
+    read.mockClear().mockImplementation(async () => JSON.stringify(persisted));
+    write.mockClear().mockImplementation(async (_key, value) => {
+      persisted = JSON.parse(value);
+    });
+    probe.mockReset().mockResolvedValue(false);
+    permission.mockReset().mockRejectedValueOnce(new Error('native permission bridge failed'));
+    syncBackground.mockClear();
+
+    const notify = jest.fn();
+    const sessions = projectTestAccountSessions(
+      createSiteSessionStates({
+        nodeseek: {
+          site: 'nodeseek',
+          status: 'logged-in',
+          cookieSummary: [],
+          isVerifying: false,
+          currentUser: { source: 'nodeseek', id: '42', username: 'alice', url: 'https://www.nodeseek.com/space/42' }
+        }
+      })
+    );
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    const navigation = createNavigationContainerRef<FocusTestStackParamList>();
+    function Harness() {
+      const runtime = useNotificationsRuntime({
+        appActive: true,
+        contentSourcesReady: true,
+        enabledNotificationSources: notificationSources,
+        fetcher: async () => new Response(JSON.stringify({ data: [] })),
+        getLinuxDoUserAgent: () => 'test',
+        getNodeSeekUserAgent: () => 'test',
+        onSessionExpired: jest.fn(),
+        requestAccountRecheck: jest.fn(() => undefined),
+        openSource: () => true,
+        privateAccessAllowed: () => true,
+        remoteReady: false,
+        sessionEpochs: initialForumSessionEpochs,
+        sessions
+      });
+      return (
+        <NotificationRouteRuntimeProvider value={{ ...routeRuntime(runtime.gateway), ...runtime, notify }}>
+          <NavigationContainer ref={navigation}>
+            <FocusTestStack.Navigator initialRouteName="NotificationSettings">
+              <FocusTestStack.Screen name="NotificationSettings" component={NotificationSettingsRoute} />
+            </FocusTestStack.Navigator>
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>
+      );
+    }
+    const view = await render(<Harness />, { wrapper: QueryTestWrapper });
+    try {
+      const toggle = await view.findByTestId('notification-global-switch');
+      await waitFor(() => expect(toggle.props.accessibilityState.disabled).toBe(false));
+      syncBackground.mockClear();
+
+      await fireEvent(toggle, 'valueChange', true);
+      expect(alert).toHaveBeenCalledTimes(1);
+      const accept = alert.mock.calls[0]?.[2]?.find(({ text }) => text === '继续')?.onPress;
+      expect(accept).toBeDefined();
+      await act(async () => {
+        accept?.();
+      });
+
+      await waitFor(() => expect(view.getByText('系统通知权限读取失败，请重试；站内消息仍可使用。')).toBeTruthy());
+      expect(view.getByText('重试通知初始化')).toBeTruthy();
+      expect(view.queryByText('系统通知权限未开启')).toBeNull();
+      expect(view.queryByText('打开系统设置')).toBeNull();
+      expect(notify).not.toHaveBeenCalledWith('系统通知权限未开启，已保留你的设置');
+      expect(persisted).toMatchObject({
+        globalEnabled: true,
+        hasOptedIn: true,
+        sources: {
+          nodeseek: expect.objectContaining({ intentEnabled: true }),
+          linuxdo: expect.objectContaining({ intentEnabled: true }),
+          yaohuo: expect.objectContaining({ intentEnabled: true })
+        }
+      });
+      expect(syncBackground).toHaveBeenCalled();
+      for (const call of syncBackground.mock.calls) expect(call[1]).toBe(false);
+
+      // Toggling off and back on must not re-open the first-time confirmation or permission prompt.
+      await fireEvent(view.getByTestId('notification-global-switch'), 'valueChange', false);
+      await waitFor(() => expect(view.getByTestId('notification-global-switch').props.value).toBe(false));
+      await fireEvent(view.getByTestId('notification-global-switch'), 'valueChange', true);
+      await waitFor(() => expect(view.getByTestId('notification-global-switch').props.value).toBe(true));
+      expect(alert).toHaveBeenCalledTimes(1);
+      expect(permission).toHaveBeenCalledTimes(1);
+
+      // Retrying initialization re-reads permission and clears the error on success.
+      probe.mockResolvedValueOnce(true);
+      await fireEvent.press(view.getByText('重试通知初始化'));
+      await waitFor(() => expect(view.queryByText('重试通知初始化')).toBeNull());
+      expect(view.queryByText('系统通知权限读取失败，请重试；站内消息仍可使用。')).toBeNull();
+      await waitFor(() =>
+        expect(syncBackground).toHaveBeenLastCalledWith(
+          expect.objectContaining({ globalEnabled: true, hasOptedIn: true }),
+          true,
+          ['nodeseek']
+        )
+      );
+    } finally {
+      await view.unmount();
+      read.mockImplementation(async () => null);
+      write.mockImplementation(async () => undefined);
+      probe.mockReset().mockResolvedValue(false);
+      permission.mockReset().mockResolvedValue(false);
+      alert.mockRestore();
+    }
+  });
+
+  it.each(['granted', 'denied', 'bridge-exception'] as const)(
+    'recovers Android permission on a replaced settings screen after interruption during channel creation and suppresses stale toasts (%s)',
+    async (outcome) => {
+      const initial = defaultNotificationState();
+      initial.sources.nodeseek.identityKey = 'nodeseek:42';
+      let persisted: Record<string, unknown> = initial as unknown as Record<string, unknown>;
+      const read = jest.mocked(AsyncStorage.getItem);
+      const write = jest.mocked(AsyncStorage.setItem);
+      const channel = jest.mocked(ensureMessageNotificationChannel);
+      const probe = jest.mocked(notificationPermissionGranted);
+      const permission = jest.mocked(requestNotificationPermission);
+      const syncBackground = jest.mocked(syncNotificationBackgroundRegistration);
+      read.mockClear().mockImplementation(async () => JSON.stringify(persisted));
+      write.mockClear().mockImplementation(async (_key, value) => {
+        persisted = JSON.parse(value);
+      });
+      probe.mockReset().mockResolvedValue(false);
+      channel.mockReset();
+      permission.mockReset();
+      syncBackground.mockClear();
+
+      const oldChannelPending = Promise.withResolvers<void>();
+      channel.mockReturnValueOnce(oldChannelPending.promise).mockResolvedValue(undefined);
+      if (outcome === 'granted') permission.mockResolvedValueOnce(true);
+      else if (outcome === 'denied') permission.mockResolvedValueOnce(false);
+      else permission.mockRejectedValueOnce(new Error('native permission bridge failed'));
+
+      const oldNotify = jest.fn();
+      const newNotify = jest.fn();
+      const sessions = projectTestAccountSessions(
+        createSiteSessionStates({
+          nodeseek: {
+            site: 'nodeseek',
+            status: 'logged-in',
+            cookieSummary: [],
+            isVerifying: false,
+            currentUser: { source: 'nodeseek', id: '42', username: 'alice', url: 'https://www.nodeseek.com/space/42' }
+          }
+        })
+      );
+      const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+      function SettingsHarness({ notify }: { notify: jest.Mock }) {
+        const runtime = useNotificationsRuntime({
+          appActive: true,
+          contentSourcesReady: true,
+          enabledNotificationSources: notificationSources,
+          fetcher: async () => new Response(JSON.stringify({ data: [] })),
+          getLinuxDoUserAgent: () => 'test',
+          getNodeSeekUserAgent: () => 'test',
+          onSessionExpired: jest.fn(),
+          requestAccountRecheck: jest.fn(() => undefined),
+          openSource: () => true,
+          privateAccessAllowed: () => true,
+          remoteReady: false,
+          sessionEpochs: initialForumSessionEpochs,
+          sessions
+        });
+        return (
+          <NotificationRouteRuntimeProvider value={{ ...routeRuntime(runtime.gateway), ...runtime, notify }}>
+            <NavigationContainer>
+              <FocusTestStack.Navigator initialRouteName="NotificationSettings">
+                <FocusTestStack.Screen name="NotificationSettings" component={NotificationSettingsRoute} />
+              </FocusTestStack.Navigator>
+            </NavigationContainer>
+          </NotificationRouteRuntimeProvider>
+        );
+      }
+
+      const oldView = await render(<SettingsHarness notify={oldNotify} />, { wrapper: QueryTestWrapper });
+      let newView: Awaited<ReturnType<typeof render>> | undefined;
+      try {
+        const oldToggle = await oldView.findByTestId('notification-global-switch');
+        await waitFor(() => expect(oldToggle.props.accessibilityState.disabled).toBe(false));
+
+        // First regress cancel confirmation: canceling alert persists nothing and calls no OS/channel APIs.
+        await fireEvent(oldToggle, 'valueChange', true);
+        expect(alert).toHaveBeenCalledTimes(1);
+        const cancel = alert.mock.calls[0]?.[2]?.find(({ text }) => text === '取消')?.onPress;
+        await act(async () => cancel?.());
+        expect(write).not.toHaveBeenCalled();
+        expect(channel).not.toHaveBeenCalled();
+        expect(permission).not.toHaveBeenCalled();
+        expect(oldNotify).not.toHaveBeenCalled();
+
+        // Confirm opt-in; pause during channel creation BEFORE OS permission API is called.
+        await fireEvent(oldToggle, 'valueChange', true);
+        expect(alert).toHaveBeenCalledTimes(2);
+        const accept = alert.mock.calls[1]?.[2]?.find(({ text }) => text === '继续')?.onPress;
+        await act(async () => accept?.());
+        await waitFor(() => expect(channel).toHaveBeenCalledTimes(1));
+        expect(permission).not.toHaveBeenCalled();
+        expect(persisted).toMatchObject({
+          globalEnabled: true,
+          hasOptedIn: true,
+          androidPermissionRequestStarted: false
+        });
+
+        // Replace runtime + settings screen BEFORE OS call is issued.
+        newView = await render(<SettingsHarness notify={newNotify} />, { wrapper: QueryTestWrapper });
+        expect(await newView.findByText('继续申请权限')).toBeTruthy();
+        expect(newView.queryByText('打开系统设置')).toBeNull();
+
+        // Late channel completion on stale old runtime must not issue OS call, toast, or register background.
+        const syncBeforeStaleChannel = syncBackground.mock.calls.length;
+        await act(async () => {
+          oldChannelPending.resolve();
+          await Promise.resolve();
+        });
+        expect(permission).not.toHaveBeenCalled();
+        expect(oldNotify).not.toHaveBeenCalled();
+        expect(syncBackground.mock.calls).toHaveLength(syncBeforeStaleChannel);
+        expect(persisted.androidPermissionRequestStarted).toBe(false);
+
+        // User taps "继续申请权限" on the active replacement screen -> exactly 1 OS permission request.
+        await fireEvent.press(newView.getByText('继续申请权限'));
+        await waitFor(() => expect(permission).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(persisted.androidPermissionRequestStarted).toBe(true));
+
+        if (outcome === 'granted') {
+          await waitFor(() => expect(newView!.queryByText('继续申请权限')).toBeNull());
+          expect(newView.queryByText('打开系统设置')).toBeNull();
+          expect(newNotify).not.toHaveBeenCalled();
+          await waitFor(() =>
+            expect(syncBackground).toHaveBeenLastCalledWith(
+              expect.objectContaining({
+                globalEnabled: true,
+                hasOptedIn: true,
+                androidPermissionRequestStarted: true
+              }),
+              true,
+              ['nodeseek']
+            )
+          );
+        } else if (outcome === 'denied') {
+          await waitFor(() => expect(newView!.getByText('打开系统设置')).toBeTruthy());
+          expect(newView.queryByText('继续申请权限')).toBeNull();
+          expect(newNotify).toHaveBeenCalledWith('系统通知权限未开启，已保留你的设置');
+          expect(syncBackground).toHaveBeenLastCalledWith(
+            expect.objectContaining({ globalEnabled: true, androidPermissionRequestStarted: true }),
+            false,
+            ['nodeseek']
+          );
+        } else {
+          await waitFor(() => expect(newView!.getByText('重试通知初始化')).toBeTruthy());
+          expect(newView.queryByText('继续申请权限')).toBeNull();
+          expect(newView.queryByText('打开系统设置')).toBeNull();
+          expect(newNotify).toHaveBeenCalledWith('系统通知权限读取失败，已保留你的设置，请重试通知初始化');
+          expect(syncBackground).toHaveBeenLastCalledWith(
+            expect.objectContaining({ globalEnabled: true, androidPermissionRequestStarted: true }),
+            false,
+            ['nodeseek']
+          );
+        }
+        expect(oldNotify).not.toHaveBeenCalled();
+
+        // Regress disabling notifications on active screen: persists globalEnabled=false and preserves started flag.
+        const notifyCallsBeforeDisable = newNotify.mock.calls.length;
+        await fireEvent(newView.getByTestId('notification-global-switch'), 'valueChange', false);
+        await waitFor(() => expect(persisted.globalEnabled).toBe(false));
+        expect(persisted).toMatchObject({
+          globalEnabled: false,
+          hasOptedIn: true,
+          androidPermissionRequestStarted: true
+        });
+        expect(newNotify).toHaveBeenCalledTimes(notifyCallsBeforeDisable);
+        expect(permission).toHaveBeenCalledTimes(1);
+      } finally {
+        oldChannelPending.resolve();
+        await newView?.unmount();
+        await oldView.unmount();
+        read.mockImplementation(async () => null);
+        write.mockImplementation(async () => undefined);
+        channel.mockReset().mockResolvedValue(undefined);
+        probe.mockReset().mockResolvedValue(false);
+        permission.mockReset().mockResolvedValue(false);
+        alert.mockRestore();
+      }
+    }
+  );
+
+  it.each(['denied', 'bridge-exception'] as const)(
+    'suppresses stale screen toasts and keeps process-wide OS permission requests at 1 when replaced after OS call (%s)',
+    async (lateOutcome) => {
+      const initial = defaultNotificationState();
+      initial.sources.nodeseek.identityKey = 'nodeseek:42';
+      let persisted: Record<string, unknown> = initial as unknown as Record<string, unknown>;
+      const read = jest.mocked(AsyncStorage.getItem);
+      const write = jest.mocked(AsyncStorage.setItem);
+      const channel = jest.mocked(ensureMessageNotificationChannel);
+      const probe = jest.mocked(notificationPermissionGranted);
+      const permission = jest.mocked(requestNotificationPermission);
+      const syncBackground = jest.mocked(syncNotificationBackgroundRegistration);
+      read.mockClear().mockImplementation(async () => JSON.stringify(persisted));
+      write.mockClear().mockImplementation(async (_key, value) => {
+        persisted = JSON.parse(value);
+      });
+      channel.mockReset().mockResolvedValue(undefined);
+      probe.mockReset().mockResolvedValue(false);
+      permission.mockReset();
+      syncBackground.mockClear();
+
+      const osPending = Promise.withResolvers<boolean>();
+      permission.mockReturnValueOnce(osPending.promise);
+
+      const oldNotify = jest.fn();
+      const newNotify = jest.fn();
+      const sessions = projectTestAccountSessions(
+        createSiteSessionStates({
+          nodeseek: {
+            site: 'nodeseek',
+            status: 'logged-in',
+            cookieSummary: [],
+            isVerifying: false,
+            currentUser: { source: 'nodeseek', id: '42', username: 'alice', url: 'https://www.nodeseek.com/space/42' }
+          }
+        })
+      );
+      const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+      function SettingsHarness({ notify }: { notify: jest.Mock }) {
+        const runtime = useNotificationsRuntime({
+          appActive: true,
+          contentSourcesReady: true,
+          enabledNotificationSources: notificationSources,
+          fetcher: async () => new Response(JSON.stringify({ data: [] })),
+          getLinuxDoUserAgent: () => 'test',
+          getNodeSeekUserAgent: () => 'test',
+          onSessionExpired: jest.fn(),
+          requestAccountRecheck: jest.fn(() => undefined),
+          openSource: () => true,
+          privateAccessAllowed: () => true,
+          remoteReady: false,
+          sessionEpochs: initialForumSessionEpochs,
+          sessions
+        });
+        return (
+          <NotificationRouteRuntimeProvider value={{ ...routeRuntime(runtime.gateway), ...runtime, notify }}>
+            <NavigationContainer>
+              <FocusTestStack.Navigator initialRouteName="NotificationSettings">
+                <FocusTestStack.Screen name="NotificationSettings" component={NotificationSettingsRoute} />
+              </FocusTestStack.Navigator>
+            </NavigationContainer>
+          </NotificationRouteRuntimeProvider>
+        );
+      }
+
+      const oldView = await render(<SettingsHarness notify={oldNotify} />, { wrapper: QueryTestWrapper });
+      let newView: Awaited<ReturnType<typeof render>> | undefined;
+      try {
+        const oldToggle = await oldView.findByTestId('notification-global-switch');
+        await waitFor(() => expect(oldToggle.props.accessibilityState.disabled).toBe(false));
+        await fireEvent(oldToggle, 'valueChange', true);
+        const accept = alert.mock.calls[0]?.[2]?.find(({ text }) => text === '继续')?.onPress;
+        await act(async () => accept?.());
+        await waitFor(() => expect(permission).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(persisted.androidPermissionRequestStarted).toBe(true));
+
+        // Replace runtime + screen AFTER OS permission call was issued.
+        newView = await render(<SettingsHarness notify={newNotify} />, { wrapper: QueryTestWrapper });
+        expect(await newView.findByText('打开系统设置')).toBeTruthy();
+        expect(newView.queryByText('继续申请权限')).toBeNull();
+
+        const syncCallsBeforeLateSettlement = syncBackground.mock.calls.length;
+        await act(async () => {
+          if (lateOutcome === 'denied') osPending.resolve(false);
+          else osPending.reject(new Error('late bridge exception'));
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        });
+
+        expect(permission).toHaveBeenCalledTimes(1);
+        expect(oldNotify).not.toHaveBeenCalled();
+        expect(newNotify).not.toHaveBeenCalled();
+        expect(syncBackground.mock.calls).toHaveLength(syncCallsBeforeLateSettlement);
+        expect(persisted).toMatchObject({
+          globalEnabled: true,
+          hasOptedIn: true,
+          androidPermissionRequestStarted: true
+        });
+      } finally {
+        osPending.resolve(false);
+        await newView?.unmount();
+        await oldView.unmount();
+        read.mockImplementation(async () => null);
+        write.mockImplementation(async () => undefined);
+        channel.mockReset().mockResolvedValue(undefined);
+        probe.mockReset().mockResolvedValue(false);
         permission.mockReset().mockResolvedValue(false);
         alert.mockRestore();
       }
@@ -514,6 +970,7 @@ describe('notification routes', () => {
         ...defaults,
         globalEnabled: true,
         hasOptedIn: true,
+        androidPermissionRequestStarted: true,
         sources: { ...defaults.sources, nodeseek: { ...defaults.sources.nodeseek, intentEnabled: true } }
       };
       let persisted = before;
@@ -754,7 +1211,7 @@ describe('notification routes', () => {
         privateAccessAllowed: () => true,
         sourceAllowed: () => true
       });
-      let recovery: LinuxDoReadRecovery | undefined;
+      let recovery: ReadRecovery | undefined;
       let runtime = {
         ...routeRuntime(gateway),
         activeSources: ['linuxdo'],
@@ -876,6 +1333,99 @@ describe('notification routes', () => {
         }
       } finally {
         response.resolve(new Response('{}'));
+        await view.unmount();
+      }
+    }
+  );
+
+  it.each(['list', 'detail'] as const)(
+    'aborts the NodeSeek notification %s recovery when its verification attempt closes',
+    async (flow) => {
+      appQueryClient.clear();
+      const item = { ...notification, unread: false, title: 'NodeSeek 验证后消息' };
+      const release = Promise.withResolvers<void>();
+      let recovery: ReadRecovery | undefined;
+      let challenged = true;
+      let requestSignal: AbortSignal | undefined;
+      const read = async (options: NotificationAdapterAccess) => {
+        if (challenged) throw Object.assign(new Error('站点需要验证'), { source: 'nodeseek', reason: 'cloudflare' });
+        requestSignal = options.signal;
+        await release.promise;
+      };
+      const gateway = createNotificationGateway({
+        adapters: {
+          ...notificationAdapters,
+          nodeseek: {
+            ...notificationAdapters.nodeseek,
+            listPage: async (options) => {
+              await read(options);
+              return { items: [item], cursor: null, hasMore: false, quality: 'complete' };
+            },
+            loadDetail: async (_item, options) => {
+              await read(options);
+              return { notification: item, title: item.title };
+            }
+          }
+        },
+        readAccess: () => ({ identityKey: 'nodeseek:7', userId: '7' }),
+        privateAccessAllowed: () => true,
+        sourceAllowed: () => true
+      });
+      const runtime = {
+        ...routeRuntime(gateway),
+        identityKeys: { nodeseek: 'nodeseek:7' },
+        identitySignature: 'nodeseek:7',
+        openAccountSurface: jest.fn<NotificationRouteRuntimeValue['openAccountSurface']>(
+          async (_source, _message, next) => {
+            recovery = next;
+          }
+        )
+      } satisfies NotificationRouteRuntimeValue;
+      const view = await render(
+        <NotificationRouteRuntimeProvider value={runtime}>
+          <NavigationContainer>
+            {flow === 'list' ? (
+              <NotificationsRoute
+                navigation={{ navigate: jest.fn(), setParams: jest.fn() } as never}
+                route={{ key: 'notifications', name: 'notifications', params: { source: 'nodeseek' } }}
+              />
+            ) : (
+              <NotificationDetailRoute
+                navigation={{ navigate: jest.fn(), setOptions: jest.fn() } as never}
+                route={{
+                  key: 'detail',
+                  name: 'NotificationDetail',
+                  params: { notification: item, identityKey: 'nodeseek:7' }
+                }}
+              />
+            )}
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>,
+        { wrapper: QueryTestWrapper }
+      );
+      try {
+        const verification = await waitFor(() =>
+          flow === 'list' ? view.getByRole('button', { name: '去验证 NodeSeek' }) : view.getByText('去验证')
+        );
+        await fireEvent.press(verification);
+        expect(recovery).toBeDefined();
+        const controller = new AbortController();
+        challenged = false;
+        let running!: ReturnType<ReadRecovery['resume']>;
+        await act(async () => {
+          running = recovery!.resume(controller.signal);
+        });
+        await waitFor(() => expect(requestSignal).toBeDefined());
+        await act(async () => {
+          controller.abort();
+          release.resolve();
+          await expect(running).resolves.toBe('stale');
+        });
+        expect(requestSignal?.aborted).toBe(true);
+        expect(view.queryByText(item.title)).toBeNull();
+        expect(runtime.clearReadBlock).not.toHaveBeenCalled();
+      } finally {
+        release.resolve();
         await view.unmount();
       }
     }
@@ -1495,24 +2045,149 @@ describe('notification routes', () => {
     }
   });
 
-  it('keeps submitted policy controls disabled after reopening while the authoritative read still fails', async () => {
+  it('does not resubmit an acknowledged announcement from stale data after re-enabling linux.do', async () => {
     const owner = await renderAnnouncementPolicy();
-    owner.failRead(true);
-    await fireEvent.press(owner.view.getByLabelText('我已知晓此更新内容'));
-    await waitFor(() => expect(owner.view.getByText('暂时无法读取原站最新状态，请重试读取消息后核对。')).toBeTruthy());
-    await act(async () => {
-      owner.navigation.navigate('Other');
+    const firstRead = Promise.withResolvers<void>();
+    const initialRead = owner.loadDetail.mock.results[0];
+    if (initialRead?.type !== 'return') throw new Error('Expected the opening announcement read');
+    const detail = await initialRead.value;
+    owner.loadDetail.mockImplementationOnce(async () => {
+      await firstRead.promise;
+      return detail;
     });
-    await act(async () => {
-      owner.navigation.goBack();
-    });
-    await waitFor(() =>
-      expect(owner.view.getByLabelText('我已知晓此更新内容').props.accessibilityState.disabled).toBe(true)
-    );
     await fireEvent.press(owner.view.getByLabelText('我已知晓此更新内容'));
+    await waitFor(() => expect(owner.view.getByText('阅读确认已提交，正在核对原站状态。')).toBeTruthy());
     expect(owner.writes).toHaveLength(1);
-    owner.failRead(false);
-    await fireEvent.press(owner.view.getByRole('button', { name: '重试读取消息' }));
+
+    await act(async () => {
+      owner.navigation.reset({ index: 0, routes: [{ name: 'Other' }] });
+    });
+    expect(owner.view.getByText('其他页面')).toBeTruthy();
+    const enabled = { enabledSources: ['linuxdo', 'nodeseek'] as const, enabledSourcesKey: 'linuxdo|nodeseek' };
+    const disabled = { enabledSources: ['nodeseek'] as const, enabledSourcesKey: 'nodeseek' };
+    cleanupContentSourceQueries(appQueryClient, enabled, disabled);
+    cleanupContentSourceQueries(appQueryClient, disabled, enabled);
+    owner.loadDetail.mockResolvedValueOnce(detail);
+    await act(async () => {
+      owner.navigation.navigate('NotificationDetail', { notification: detail.notification, identityKey: 'linuxdo:7' });
+    });
+    try {
+      await waitFor(() => expect(owner.view.getByLabelText('我已知晓此更新内容')).toBeTruthy());
+      const action = owner.view.getByLabelText('我已知晓此更新内容');
+      await fireEvent.press(action);
+      expect(owner.writes).toHaveLength(1);
+      expect(action.props.accessibilityState.disabled).toBe(true);
+      expect(owner.view.getByText('阅读确认已提交，正在核对原站状态。')).toBeTruthy();
+    } finally {
+      await act(async () => {
+        firstRead.resolve();
+      });
+    }
+
+    expect(owner.view.getByLabelText('我已知晓此更新内容').props.accessibilityState.disabled).toBe(true);
+    await act(async () => {
+      await appQueryClient.refetchQueries({ queryKey: owner.queryKey, exact: true });
+    });
+    await waitFor(() => expect(owner.view.getByText('已确认阅读当前版本')).toBeTruthy());
+    expect(owner.writes).toHaveLength(1);
+  });
+
+  it('blocks an old announcement version while the same post has a newer acknowledgement to reconcile', async () => {
+    const owner = await renderAnnouncementPolicy(true);
+    const account = { identityKey: 'linuxdo:7', sessionEpoch: 0 };
+    const initial = owner.loadDetail.mock.results[0];
+    if (initial?.type !== 'return') throw new Error('Opening announcement read missing');
+    const stale = await initial.value;
+    const newer = { ...stale.policy, version: '2604181601', revokeLabel: '撤销新版阅读确认' };
+    const readStarted = Promise.withResolvers<void>();
+    const releaseRead = Promise.withResolvers<void>();
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    try {
+      await act(async () => owner.navigation.reset({ index: 0, routes: [{ name: 'Other' }] }));
+      recordDiscoursePolicyReceipt(appQueryClient, account, {
+        postId: newer.postId,
+        version: newer.version,
+        accepted: true
+      });
+      owner.loadDetail.mockImplementationOnce(async () => {
+        readStarted.resolve();
+        await releaseRead.promise;
+        return { ...stale, policy: newer };
+      });
+      await act(async () =>
+        owner.navigation.navigate('NotificationDetail', { notification: stale.notification, identityKey: 'linuxdo:7' })
+      );
+      await readStarted.promise;
+      const action = owner.view.getByLabelText('等我再仔细阅读一番');
+      expect(action.props.accessibilityState.disabled).toBe(true);
+      await fireEvent.press(action);
+      expect(alert).not.toHaveBeenCalled();
+      expect(owner.writes).toHaveLength(0);
+    } finally {
+      await act(async () => releaseRead.resolve());
+      alert.mockRestore();
+    }
+    await waitFor(() =>
+      expect(owner.view.getByLabelText('撤销新版阅读确认').props.accessibilityState.disabled).toBe(false)
+    );
+  });
+
+  it('keeps the authoritative announcement result when an older GET settles after cross-entry readback', async () => {
+    const owner = await renderAnnouncementPolicy();
+    const account = { identityKey: 'linuxdo:7', sessionEpoch: 0 };
+    const topicId = '293017';
+    const topicKey = forumQueryKeys.topic({
+      source: 'linuxdo',
+      topicId,
+      scope: initialForumSessionEpochs,
+      readPlanScope: 'authenticated:0'
+    });
+    const initial = owner.loadDetail.mock.results[0];
+    if (initial?.type !== 'return') throw new Error('Opening announcement read missing');
+    const stale = await initial.value;
+    const accepted = { ...stale.policy, accepted: true, canAccept: false, canRevoke: true };
+    const readStarted = Promise.withResolvers<void>();
+    const releaseRead = Promise.withResolvers<void>();
+    owner.loadDetail.mockImplementationOnce(async () => {
+      readStarted.resolve();
+      await releaseRead.promise;
+      return stale;
+    });
+    appQueryClient.setQueryData<TopicDetail>(topicKey, {
+      source: 'linuxdo',
+      id: topicId,
+      title: stale.title,
+      author: 'author',
+      url: 'https://linux.do/t/293017',
+      createdAt: '',
+      contentHtml: stale.contentHtml,
+      replies: [],
+      policy: stale.policy
+    });
+    let slowRead!: Promise<void>;
+    await act(async () => {
+      slowRead = appQueryClient.refetchQueries({ queryKey: owner.queryKey, exact: true });
+      await readStarted.promise;
+    });
+    try {
+      await act(async () => {
+        recordDiscoursePolicyReceipt(appQueryClient, account, {
+          postId: accepted.postId,
+          version: accepted.version,
+          accepted: true
+        });
+        captureDiscoursePolicyRead(appQueryClient, account, topicId)({ policy: accepted });
+      });
+      expect(appQueryClient.getQueryData<TopicDetail>(topicKey)?.policy?.accepted).toBe(true);
+      expect(appQueryClient.getQueryData<NotificationDetail>(owner.queryKey)?.policy?.accepted).toBe(true);
+    } finally {
+      await act(async () => {
+        releaseRead.resolve();
+        await slowRead;
+      });
+    }
+    expect(appQueryClient.getQueryData<TopicDetail>(topicKey)?.policy?.accepted).toBe(true);
+    expect(appQueryClient.getQueryData<NotificationDetail>(owner.queryKey)?.policy?.accepted).toBe(true);
     await waitFor(() => expect(owner.view.getByText('已确认阅读当前版本')).toBeTruthy());
   });
 
@@ -1541,6 +2216,63 @@ describe('notification routes', () => {
       await waitFor(() => expect(owner.view.getByText('已撤销阅读确认')).toBeTruthy());
       expect(owner.writes).toHaveLength(1);
       expect(owner.view.getByLabelText('我已知晓此更新内容')).toBeTruthy();
+    } finally {
+      write.resolve();
+      alert.mockRestore();
+    }
+  });
+
+  it('reopens announcement revocation confirmation after Android dismiss without letting stale callbacks cancel or double-submit', async () => {
+    const owner = await renderAnnouncementPolicy(true);
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    const write = Promise.withResolvers<void>();
+    owner.holdWrite(write.promise);
+    try {
+      await fireEvent.press(owner.view.getByLabelText('等我再仔细阅读一番'));
+      expect(alert).toHaveBeenCalledTimes(1);
+      const firstButtons = alert.mock.calls[0]?.[2];
+      const firstOptions = alert.mock.calls[0]?.[3];
+      expect(firstOptions?.onDismiss).toBeDefined();
+
+      // Dismissed/replaced by another Android dialog: release immediately without writing.
+      await act(async () => {
+        firstOptions?.onDismiss?.();
+      });
+      expect(owner.writes).toHaveLength(0);
+
+      // Immediately reopenable on the same page; explicit cancel writes 0 times.
+      await fireEvent.press(owner.view.getByLabelText('等我再仔细阅读一番'));
+      expect(alert).toHaveBeenCalledTimes(2);
+      const secondCancel = alert.mock.calls[1]?.[2]?.find((button) => button.text === '取消')?.onPress;
+      await act(async () => {
+        secondCancel?.();
+      });
+      expect(owner.writes).toHaveLength(0);
+
+      // Reopen a third time; stale callbacks from dialog #1 must not close dialog #3 or write.
+      await fireEvent.press(owner.view.getByLabelText('等我再仔细阅读一番'));
+      expect(alert).toHaveBeenCalledTimes(3);
+      await act(async () => {
+        firstOptions?.onDismiss?.();
+        firstButtons?.find((button) => button.text === '取消')?.onPress?.();
+        firstButtons?.find((button) => button.text === '撤销确认')?.onPress?.();
+      });
+      expect(owner.writes).toHaveLength(0);
+
+      // Confirm dialog #3, followed by Android onDismiss while in flight: must write once and complete.
+      const thirdConfirm = alert.mock.calls[2]?.[2]?.find((button) => button.text === '撤销确认')?.onPress;
+      const thirdDismiss = alert.mock.calls[2]?.[3]?.onDismiss;
+      await act(async () => {
+        thirdConfirm?.();
+        thirdDismiss?.();
+        thirdConfirm?.();
+      });
+      await waitFor(() => expect(owner.writes).toHaveLength(1));
+      await act(async () => {
+        write.resolve();
+      });
+      await waitFor(() => expect(owner.view.getByText('已撤销阅读确认')).toBeTruthy());
+      expect(owner.writes).toHaveLength(1);
     } finally {
       write.resolve();
       alert.mockRestore();
@@ -2948,7 +3680,7 @@ describe('notification routes', () => {
         privateAccessAllowed: () => true,
         sourceAllowed: () => true
       });
-      let recovery: LinuxDoReadRecovery | undefined;
+      let recovery: ReadRecovery | undefined;
       const runtime = {
         ...routeRuntime(gateway),
         activeSources: ['linuxdo'],
@@ -3550,6 +4282,101 @@ describe('notification routes', () => {
     }
   );
 
+  it('reopens mark-all confirmation after Android dismiss without letting stale callbacks cancel or double-submit', async () => {
+    appQueryClient.clear();
+    const pendingPost = Promise.withResolvers<void>();
+    const posts = jest.fn<Fetcher>(async (_url, init) => {
+      if (init?.method?.toUpperCase() === 'POST') await pendingPost.promise;
+      return new Response(JSON.stringify({ success: true, data: [] }));
+    });
+    const gateway = createNotificationGateway({
+      adapters: {
+        ...notificationAdapters,
+        nodeseek: {
+          ...notificationAdapters.nodeseek,
+          getCategories: async () => [
+            { id: 'all', label: '全部消息' },
+            { id: 'replies', label: '回复' }
+          ],
+          listPage: async () => ({ quality: 'complete', items: [notification], cursor: null, hasMore: false })
+        }
+      },
+      readAccess: () => ({ identityKey: 'nodeseek:new-account', userId: 'new-account', fetcher: posts }),
+      privateAccessAllowed: () => true,
+      sourceAllowed: () => true
+    });
+    const markAllSpy = jest.spyOn(gateway, 'markAllRead');
+    const runtime = routeRuntime(gateway);
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    const view = await render(
+      <NotificationRouteRuntimeProvider value={runtime}>
+        <NavigationContainer>
+          <FocusTestStack.Navigator>
+            <FocusTestStack.Screen name="notifications" initialParams={{ source: 'nodeseek' }}>
+              {(props) => <NotificationsRoute navigation={props.navigation as never} route={props.route} />}
+            </FocusTestStack.Screen>
+          </FocusTestStack.Navigator>
+        </NavigationContainer>
+      </NotificationRouteRuntimeProvider>,
+      { wrapper: QueryTestWrapper }
+    );
+    try {
+      await waitFor(() => expect(view.getByText('全部已读')).toBeTruthy());
+      posts.mockClear();
+
+      // Open dialog #1 and simulate Android replacing/dismissing it via onDismiss.
+      await fireEvent.press(view.getByText('全部已读'));
+      expect(alert).toHaveBeenCalledTimes(1);
+      const firstButtons = alert.mock.calls[0]?.[2];
+      const firstOptions = alert.mock.calls[0]?.[3];
+      expect(firstOptions?.onDismiss).toBeDefined();
+      await act(async () => {
+        firstOptions?.onDismiss?.();
+      });
+      expect(markAllSpy).not.toHaveBeenCalled();
+
+      // Immediately reopenable on the same page; cancel writes 0 times.
+      await fireEvent.press(view.getByText('全部已读'));
+      expect(alert).toHaveBeenCalledTimes(2);
+      const secondCancel = alert.mock.calls[1]?.[2]?.find((button) => button.text === '取消')?.onPress;
+      await act(async () => {
+        secondCancel?.();
+      });
+      expect(markAllSpy).not.toHaveBeenCalled();
+
+      // Reopen dialog #3; stale callbacks from dialog #1 must not close dialog #3 or write.
+      await fireEvent.press(view.getByText('全部已读'));
+      expect(alert).toHaveBeenCalledTimes(3);
+      await act(async () => {
+        firstOptions?.onDismiss?.();
+        firstButtons?.find((button) => button.text === '取消')?.onPress?.();
+        firstButtons?.find((button) => button.text === '确认')?.onPress?.();
+      });
+      expect(markAllSpy).not.toHaveBeenCalled();
+
+      // Confirm dialog #3; trailing Android onDismiss during submission must not abort it.
+      const thirdConfirm = alert.mock.calls[2]?.[2]?.find((button) => button.text === '确认')?.onPress;
+      const thirdDismiss = alert.mock.calls[2]?.[3]?.onDismiss;
+      await act(async () => {
+        thirdConfirm?.();
+        thirdDismiss?.();
+        thirdConfirm?.();
+      });
+      expect(markAllSpy).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(posts).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        pendingPost.resolve();
+      });
+      await waitFor(() => expect(runtime.notify).toHaveBeenCalledWith('已按原站状态标记全部已读'));
+      expect(markAllSpy).toHaveBeenCalledTimes(1);
+      expect(posts).toHaveBeenCalledTimes(3);
+    } finally {
+      pendingPost.resolve();
+      alert.mockRestore();
+      await view.unmount();
+    }
+  });
+
   it.each(['source', 'category', 'unread', 'focus'] as const)(
     'releases mark-all busy on a change of %s and ignores the old settlement',
     async (scope) => {
@@ -4014,6 +4841,146 @@ describe('notification routes', () => {
     await waitFor(() => expect(view.getByText('旧账号消息')).toBeTruthy());
     expect(listPage).toHaveBeenCalledTimes(2);
     expect(listPage).toHaveBeenLastCalledWith('nodeseek', expect.objectContaining({ cursor: '30' }));
+  });
+
+  it('does not replay an empty-page continuation when the App goes to the background', async () => {
+    const listPage = jest.fn<NotificationAdapter['listPage']>(async ({ cursor }) => {
+      if (!cursor) return { quality: 'complete', items: [], cursor: '30', hasMore: true };
+      return new Promise(() => {});
+    });
+    const gateway = createNotificationGateway({
+      adapters: {
+        ...notificationAdapters,
+        nodeseek: {
+          ...notificationAdapters.nodeseek,
+          getCategories: async () => [{ id: 'all', label: '全部' }],
+          listPage
+        }
+      },
+      privateAccessAllowed: () => true,
+      sourceAllowed: () => true,
+      readAccess: () => ({ identityKey: 'nodeseek:new-account', userId: 'new-account' })
+    });
+    focusManager.setFocused(true);
+    const view = await render(
+      <NotificationRouteRuntimeProvider value={routeRuntime(gateway)}>
+        <NavigationContainer>
+          <NotificationsRoute
+            navigation={{ navigate: jest.fn(), setParams: jest.fn() } as never}
+            route={{ key: 'notifications', name: 'notifications', params: { source: 'nodeseek' } }}
+          />
+        </NavigationContainer>
+      </NotificationRouteRuntimeProvider>,
+      { wrapper: QueryTestWrapper }
+    );
+    try {
+      await waitFor(() => expect(listPage).toHaveBeenCalledTimes(2));
+      await act(async () => focusManager.setFocused(false));
+      expect(listPage.mock.calls[1]?.[0].signal?.aborted).toBe(true);
+      await fireEvent.press(view.getByTestId('notification-list-end'));
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      });
+      expect(listPage).toHaveBeenCalledTimes(2);
+    } finally {
+      await view.unmount();
+      focusManager.setFocused(true);
+    }
+  });
+
+  it('resumes the first notification list read after App background canceled it', async () => {
+    appQueryClient.clear();
+    focusManager.setFocused(true);
+    const pending = Promise.withResolvers<NotificationPage>();
+    const page: NotificationPage = { quality: 'complete', items: [notification], cursor: null, hasMore: false };
+    const listPage = jest
+      .fn<NotificationAdapter['listPage']>(async () => page)
+      .mockImplementationOnce(() => pending.promise);
+    const gateway = createNotificationGateway({
+      adapters: { ...notificationAdapters, nodeseek: { ...notificationAdapters.nodeseek, listPage } },
+      privateAccessAllowed: () => true,
+      sourceAllowed: () => true,
+      readAccess: () => ({ identityKey: 'nodeseek:new-account', userId: 'new-account' })
+    });
+    const view = await render(
+      <NotificationRouteRuntimeProvider value={routeRuntime(gateway)}>
+        <NavigationContainer>
+          <NotificationsRoute
+            navigation={{ navigate: jest.fn(), setParams: jest.fn() } as never}
+            route={{ key: 'notifications', name: 'notifications', params: undefined }}
+          />
+        </NavigationContainer>
+      </NotificationRouteRuntimeProvider>,
+      { wrapper: QueryTestWrapper }
+    );
+    try {
+      await waitFor(() => expect(listPage).toHaveBeenCalledTimes(1));
+      await act(async () => focusManager.setFocused(false));
+      expect(listPage.mock.calls[0]?.[0].signal?.aborted).toBe(true);
+      expect(listPage).toHaveBeenCalledTimes(1);
+      await act(async () => focusManager.setFocused(true));
+      await view.findByText('旧账号消息');
+      expect(listPage).toHaveBeenCalledTimes(2);
+    } finally {
+      await view.unmount();
+      await act(async () => pending.resolve(page));
+      appQueryClient.clear();
+      focusManager.setFocused(true);
+    }
+  });
+
+  it('cancels pending linux.do category discovery and its account recovery when the App goes to the background', async () => {
+    appQueryClient.clear();
+    focusManager.setFocused(true);
+    const pending = Promise.withResolvers<Response>();
+    const fetcher = jest.fn<Fetcher>(async () => new Response('{}')).mockImplementationOnce(() => pending.promise);
+    const requestAccountRecheck = jest.fn(async () => true);
+    const gateway = createNotificationGateway({
+      adapters: {
+        ...notificationAdapters,
+        linuxdo: {
+          ...notificationAdapters.linuxdo,
+          listPage: async () => ({ quality: 'complete', items: [], cursor: null, hasMore: false })
+        }
+      },
+      readAccess: () => ({ identityKey: 'linuxdo:42', userId: '42', username: 'test-user', fetcher }),
+      privateAccessAllowed: () => true,
+      sourceAllowed: () => true,
+      requestAccountRecheck
+    });
+    const runtime = routeRuntime(gateway);
+    runtime.activeSources = ['linuxdo'];
+    runtime.identityKeys = { linuxdo: 'linuxdo:42' };
+    const view = await render(
+      <NotificationRouteRuntimeProvider value={runtime}>
+        <NavigationContainer>
+          <NotificationsRoute
+            navigation={{ navigate: jest.fn(), setParams: jest.fn() } as never}
+            route={{ key: 'notifications', name: 'notifications', params: { source: 'linuxdo' } }}
+          />
+        </NavigationContainer>
+      </NotificationRouteRuntimeProvider>,
+      { wrapper: QueryTestWrapper }
+    );
+    try {
+      await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+      expect(String(fetcher.mock.calls[0]?.[0])).toContain('/site.json');
+      const signal = fetcher.mock.calls[0]?.[1]?.signal;
+      await act(async () => focusManager.setFocused(false));
+      expect(signal?.aborted).toBe(true);
+      await act(async () => pending.resolve(new Response('{}', { status: 401 })));
+      expect(requestAccountRecheck).not.toHaveBeenCalled();
+      expect(fetcher).toHaveBeenCalledTimes(1);
+
+      await act(async () => focusManager.setFocused(true));
+      await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+      expect(fetcher.mock.calls[1]?.[1]?.signal?.aborted).toBe(false);
+    } finally {
+      await view.unmount();
+      await act(async () => pending.resolve(new Response('{}')));
+      appQueryClient.clear();
+      focusManager.setFocused(true);
+    }
   });
 
   it.each(['all', 'nodeseek'] as const)(
@@ -4493,6 +5460,3013 @@ describe('notification routes', () => {
       expect(view.getByText(notification.title)).toBeTruthy();
     }
   );
+
+  it.each([
+    'first-commits-first',
+    'second-commits-during-check',
+    'all-commit-together',
+    'all-commit-after-checks'
+  ] as const)(
+    'loads every newly confirmed source across an all-source unknown retry when commits arrive as %s',
+    async (mode) => {
+      appQueryClient.clear();
+      const identities: Record<NotificationSource, string> = {
+        nodeseek: 'nodeseek:1',
+        linuxdo: 'linuxdo:2',
+        yaohuo: 'yaohuo:3'
+      };
+      const releaseAggregate = Promise.withResolvers<void>();
+      let holdAggregate = true;
+      const adapterCalls: NotificationSource[] = [];
+      const makeAdapter = (source: NotificationSource): NotificationAdapter =>
+        ({
+          listPage: jest.fn(async () => {
+            adapterCalls.push(source);
+            if (holdAggregate) await releaseAggregate.promise;
+            return {
+              quality: 'complete' as const,
+              items: [{ ...notification, source, id: `${source}-1`, title: `${source} 本轮消息` }],
+              cursor: `${source}-2`,
+              hasMore: true
+            };
+          })
+        }) as unknown as NotificationAdapter;
+      const gateway = createNotificationGateway({
+        adapters: {
+          nodeseek: makeAdapter('nodeseek'),
+          linuxdo: makeAdapter('linuxdo'),
+          yaohuo: makeAdapter('yaohuo')
+        },
+        readAccess: (source) => ({
+          identityKey: identities[source],
+          userId: identities[source].split(':')[1]!
+        }),
+        privateAccessAllowed: () => true,
+        sourceAllowed: () => true
+      });
+      const listAllPageSpy = jest.spyOn(gateway, 'listAllPage');
+      const listPageSpy = jest.spyOn(gateway, 'listPage');
+
+      let currentRuntime = routeRuntime(gateway);
+      currentRuntime.activeSources = [];
+      currentRuntime.identityKeys = { ...identities };
+      currentRuntime.identitySignature = 'nodeseek|linuxdo|yaohuo:nodeseek:1|linuxdo:2|yaohuo:3';
+      for (const site of notificationSources) {
+        currentRuntime.sessions[site] = { ...currentRuntime.sessions[site], identityTrust: 'unknown' };
+      }
+
+      const tree = (value: NotificationRouteRuntimeValue) => (
+        <NotificationRouteRuntimeProvider value={value}>
+          <NavigationContainer>
+            <NotificationsRoute
+              navigation={{ navigate: jest.fn(), setParams: jest.fn() } as never}
+              route={{ key: 'notifications', name: 'notifications', params: undefined }}
+            />
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>
+      );
+
+      let view: Awaited<ReturnType<typeof render>> | undefined;
+      const commitSources = async (sources: NotificationSource[]) => {
+        const nextActive = notificationSources.filter(
+          (site) => currentRuntime.activeSources.includes(site) || sources.includes(site)
+        );
+        const nextSessions = { ...currentRuntime.sessions };
+        for (const site of sources) {
+          nextSessions[site] = { ...nextSessions[site], isLoggedIn: true, identityTrust: 'confirmed' };
+        }
+        currentRuntime = { ...currentRuntime, activeSources: nextActive, sessions: nextSessions };
+        await view!.rerender(tree(currentRuntime));
+      };
+
+      const reconcile = jest.fn<NotificationRouteRuntimeValue['reconcileAccountStatus']>(async (candidate) => {
+        if (mode === 'all-commit-together') {
+          await commitSources(['nodeseek', 'linuxdo', 'yaohuo']);
+        } else if (mode === 'second-commits-during-check' && candidate === 'nodeseek') {
+          await commitSources(['nodeseek']);
+          await commitSources(['linuxdo']);
+        } else if (mode !== 'all-commit-after-checks') {
+          await commitSources([candidate]);
+        }
+        return { status: 'same', session: createSiteSessionStates()[candidate] };
+      });
+      currentRuntime.reconcileAccountStatus = reconcile;
+
+      view = await render(tree(currentRuntime), { wrapper: QueryTestWrapper });
+      try {
+        await fireEvent.press(view.getByText('重试账号核对'));
+        if (mode === 'all-commit-after-checks') {
+          await waitFor(() => expect(reconcile).toHaveBeenCalledTimes(3));
+          expect(listAllPageSpy).not.toHaveBeenCalled();
+          await commitSources(['nodeseek', 'linuxdo', 'yaohuo']);
+        }
+        await waitFor(() => expect(listAllPageSpy).toHaveBeenCalledTimes(1));
+        if (mode === 'all-commit-together' || mode === 'all-commit-after-checks') {
+          expect(listAllPageSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ sources: ['nodeseek', 'linuxdo', 'yaohuo'] })
+          );
+        } else {
+          expect(listAllPageSpy).toHaveBeenCalledWith(expect.objectContaining({ sources: ['nodeseek'] }));
+        }
+        expect(listPageSpy).not.toHaveBeenCalled();
+
+        holdAggregate = false;
+        await act(async () => {
+          releaseAggregate.resolve();
+        });
+
+        expect(await view.findByText('nodeseek 本轮消息')).toBeTruthy();
+        expect(await view.findByText('linuxdo 本轮消息')).toBeTruthy();
+        expect(await view.findByText('yaohuo 本轮消息')).toBeTruthy();
+
+        expect(listAllPageSpy).toHaveBeenCalledTimes(1);
+        if (mode === 'all-commit-together' || mode === 'all-commit-after-checks') {
+          expect(listPageSpy).not.toHaveBeenCalled();
+          expect(reconcile).toHaveBeenCalledTimes(mode === 'all-commit-together' ? 1 : 3);
+        } else {
+          expect(listPageSpy).toHaveBeenCalledTimes(2);
+          expect(listPageSpy.mock.calls.map(([site]) => site).sort()).toEqual(['linuxdo', 'yaohuo']);
+          expect(reconcile.mock.calls.map(([site]) => site)).toEqual(
+            mode === 'second-commits-during-check' ? ['nodeseek', 'yaohuo'] : ['nodeseek', 'linuxdo', 'yaohuo']
+          );
+        }
+        expect(adapterCalls.sort()).toEqual(['linuxdo', 'nodeseek', 'yaohuo']);
+      } finally {
+        holdAggregate = false;
+        releaseAggregate.resolve();
+        await view.unmount();
+        appQueryClient.clear();
+      }
+    }
+  );
+
+  it('retains loaded history pages and skips re-reading an empty site already covered by the aggregate retry', async () => {
+    appQueryClient.clear();
+    const identities: Record<NotificationSource, string> = {
+      nodeseek: 'nodeseek:1',
+      linuxdo: 'linuxdo:2',
+      yaohuo: 'yaohuo:3'
+    };
+    const identitySignature = 'nodeseek|linuxdo|yaohuo:nodeseek:1|linuxdo:2|yaohuo:3';
+    const listQueryKey = forumQueryKeys.notificationList({
+      source: 'all',
+      categoryId: null,
+      identityKey: identitySignature,
+      unreadOnly: false
+    });
+    appQueryClient.setQueryData(listQueryKey, {
+      pages: [
+        {
+          items: [
+            { ...notification, source: 'nodeseek', id: 'old-ns-1', title: '旧缓存 NS-1' },
+            { ...notification, source: 'linuxdo', id: 'old-ld-1', title: '旧缓存 LD-1' }
+          ],
+          errors: {},
+          hasMore: true,
+          nextPage: { allCursors: { nodeseek: 'ns-old-2', linuxdo: 'ld-old-2', yaohuo: 'yh-old-2' } }
+        },
+        {
+          items: [{ ...notification, source: 'nodeseek', id: 'old-ns-2', title: '旧缓存 NS-2' }],
+          errors: {},
+          hasMore: true,
+          nextPage: { allCursors: { nodeseek: 'ns-old-3', linuxdo: null, yaohuo: null } }
+        }
+      ],
+      pageParams: [{}, { allCursors: { nodeseek: 'ns-old-2', linuxdo: 'ld-old-2', yaohuo: 'yh-old-2' } }]
+    });
+
+    const adapterReads: Record<NotificationSource, (string | null | undefined)[]> = {
+      nodeseek: [],
+      linuxdo: [],
+      yaohuo: []
+    };
+    const gateway = createNotificationGateway({
+      adapters: {
+        nodeseek: {
+          listPage: jest.fn(async ({ cursor }: { cursor?: string | null }) => {
+            adapterReads.nodeseek.push(cursor);
+            return cursor === 'ns-2'
+              ? {
+                  quality: 'complete' as const,
+                  items: [{ ...notification, source: 'nodeseek', id: 'ns-p2', title: 'NodeSeek 历史页' }],
+                  cursor: 'ns-3',
+                  hasMore: true
+                }
+              : {
+                  quality: 'complete' as const,
+                  items: [{ ...notification, source: 'nodeseek', id: 'ns-p1', title: 'NodeSeek 首页' }],
+                  cursor: 'ns-2',
+                  hasMore: true
+                };
+          })
+        } as unknown as NotificationAdapter,
+        linuxdo: {
+          listPage: jest.fn(async ({ cursor }: { cursor?: string | null }) => {
+            adapterReads.linuxdo.push(cursor);
+            return { quality: 'complete' as const, items: [], cursor: null, hasMore: false };
+          })
+        } as unknown as NotificationAdapter,
+        yaohuo: {
+          listPage: jest.fn(async ({ cursor }: { cursor?: string | null }) => {
+            adapterReads.yaohuo.push(cursor);
+            return {
+              quality: 'complete' as const,
+              items: [{ ...notification, source: 'yaohuo', id: 'yh-p1', title: '妖火 补读消息' }],
+              cursor: 'yh-2',
+              hasMore: true
+            };
+          })
+        } as unknown as NotificationAdapter
+      },
+      readAccess: (source) => ({
+        identityKey: identities[source],
+        userId: identities[source].split(':')[1]!
+      }),
+      privateAccessAllowed: () => true,
+      sourceAllowed: () => true
+    });
+    const listAllPageSpy = jest.spyOn(gateway, 'listAllPage');
+    const listPageSpy = jest.spyOn(gateway, 'listPage');
+
+    let currentRuntime = routeRuntime(gateway);
+    currentRuntime.activeSources = [];
+    currentRuntime.identityKeys = { ...identities };
+    currentRuntime.identitySignature = identitySignature;
+    for (const site of notificationSources) {
+      currentRuntime.sessions[site] = { ...currentRuntime.sessions[site], identityTrust: 'unknown' };
+    }
+    const tree = (value: NotificationRouteRuntimeValue) => (
+      <NotificationRouteRuntimeProvider value={value}>
+        <NavigationContainer>
+          <NotificationsRoute
+            navigation={{ navigate: jest.fn(), setParams: jest.fn() } as never}
+            route={{ key: 'notifications', name: 'notifications', params: undefined }}
+          />
+        </NavigationContainer>
+      </NotificationRouteRuntimeProvider>
+    );
+
+    let view: Awaited<ReturnType<typeof render>> | undefined;
+    const commitSources = async (sources: NotificationSource[]) => {
+      const nextActive = notificationSources.filter(
+        (site) => currentRuntime.activeSources.includes(site) || sources.includes(site)
+      );
+      const nextSessions = { ...currentRuntime.sessions };
+      for (const site of sources) {
+        nextSessions[site] = { ...nextSessions[site], isLoggedIn: true, identityTrust: 'confirmed' };
+      }
+      currentRuntime = { ...currentRuntime, activeSources: nextActive, sessions: nextSessions };
+      await view!.rerender(tree(currentRuntime));
+    };
+    currentRuntime.reconcileAccountStatus = jest.fn<NotificationRouteRuntimeValue['reconcileAccountStatus']>(
+      async (candidate) => {
+        if (candidate === 'nodeseek') await commitSources(['nodeseek', 'linuxdo']);
+        else await commitSources([candidate]);
+        return { status: 'same', session: createSiteSessionStates()[candidate] };
+      }
+    );
+
+    view = await render(tree(currentRuntime), { wrapper: QueryTestWrapper });
+    try {
+      await fireEvent.press(view.getByText('重试账号核对'));
+      expect(await view.findByText('NodeSeek 首页')).toBeTruthy();
+      expect(await view.findByText('NodeSeek 历史页')).toBeTruthy();
+      expect(await view.findByText('妖火 补读消息')).toBeTruthy();
+      expect(view.queryByText('旧缓存 NS-1')).toBeNull();
+      expect(view.queryByText('旧缓存 LD-1')).toBeNull();
+
+      expect(adapterReads.linuxdo).toEqual([undefined]);
+      expect(adapterReads.nodeseek).toEqual([undefined, 'ns-2']);
+      expect(adapterReads.yaohuo).toEqual([undefined]);
+      expect(listAllPageSpy).toHaveBeenCalledTimes(2);
+      expect(listPageSpy).toHaveBeenCalledTimes(1);
+      expect(listPageSpy).toHaveBeenCalledWith('yaohuo', expect.objectContaining({ cursor: undefined }));
+
+      const cached = appQueryClient.getQueryData<{
+        pages: { nextPage: { allCursors?: Partial<Record<NotificationSource, string | null>> } }[];
+      }>(listQueryKey);
+      expect(cached?.pages).toHaveLength(2);
+      expect(cached?.pages[0]?.nextPage.allCursors).toEqual({
+        nodeseek: 'ns-2',
+        linuxdo: null,
+        yaohuo: 'yh-2'
+      });
+      expect(cached?.pages[1]?.nextPage.allCursors).toEqual({
+        nodeseek: 'ns-3',
+        linuxdo: null,
+        yaohuo: 'yh-2'
+      });
+    } finally {
+      await view.unmount();
+      appQueryClient.clear();
+    }
+  });
+
+  it.each(['blur', 'account-switch', 'filter-change'] as const)(
+    'discards stale all-source retry and backfill results after %s',
+    async (change) => {
+      appQueryClient.clear();
+      let linuxdoIdentity = 'linuxdo:userA';
+      let linuxdoEpoch = 0;
+      const pendingLinuxdoA = Promise.withResolvers<NotificationPage>();
+      const linuxdoCalls: string[] = [];
+      const gateway = createNotificationGateway({
+        adapters: {
+          nodeseek: {
+            listPage: jest.fn(async () => ({
+              quality: 'complete' as const,
+              items: [{ ...notification, source: 'nodeseek', id: 'ns-a', title: 'NodeSeek A 消息' }],
+              cursor: null,
+              hasMore: false
+            }))
+          } as unknown as NotificationAdapter,
+          linuxdo: {
+            listPage: jest.fn(async ({ identityKey }: NotificationAdapterAccess) => {
+              linuxdoCalls.push(identityKey);
+              if (identityKey === 'linuxdo:userA') return pendingLinuxdoA.promise;
+              return {
+                quality: 'complete' as const,
+                items: [{ ...notification, source: 'linuxdo', id: 'ld-b', title: 'linuxdo B 新账号消息' }],
+                cursor: null,
+                hasMore: false
+              };
+            })
+          } as unknown as NotificationAdapter,
+          yaohuo: {
+            listPage: jest.fn(async () => ({
+              quality: 'complete' as const,
+              items: [{ ...notification, source: 'yaohuo', id: 'yh-a', title: '妖火 A 消息' }],
+              cursor: null,
+              hasMore: false
+            }))
+          } as unknown as NotificationAdapter
+        },
+        readAccess: (source) =>
+          source === 'linuxdo'
+            ? { identityKey: linuxdoIdentity, userId: linuxdoIdentity.split(':')[1]! }
+            : { identityKey: `${source}:userA`, userId: 'userA' },
+        requestSessionEpoch: (source) => (source === 'linuxdo' ? linuxdoEpoch : 0),
+        privateAccessAllowed: (source, id) => (source === 'linuxdo' ? id === linuxdoIdentity : true),
+        sourceAllowed: () => true
+      });
+
+      const oldSignature = 'nodeseek|linuxdo|yaohuo:nodeseek:userA|linuxdo:userA|yaohuo:userA';
+      const oldQueryKey = forumQueryKeys.notificationList({
+        source: 'all',
+        categoryId: null,
+        identityKey: oldSignature,
+        unreadOnly: false
+      });
+      let currentRuntime = routeRuntime(gateway);
+      currentRuntime.activeSources = [];
+      currentRuntime.identityKeys = {
+        nodeseek: 'nodeseek:userA',
+        linuxdo: 'linuxdo:userA',
+        yaohuo: 'yaohuo:userA'
+      };
+      currentRuntime.identitySignature = oldSignature;
+      for (const site of notificationSources) {
+        currentRuntime.sessions[site] = { ...currentRuntime.sessions[site], identityTrust: 'unknown' };
+      }
+
+      const navigation = createNavigationContainerRef<FocusTestStackParamList>();
+      const tree = (value: NotificationRouteRuntimeValue) => (
+        <NotificationRouteRuntimeProvider value={value}>
+          <NavigationContainer ref={navigation}>
+            <FocusTestStack.Navigator initialRouteName="notifications">
+              <FocusTestStack.Screen name="notifications">
+                {(props) => <NotificationsRoute navigation={props.navigation as never} route={props.route} />}
+              </FocusTestStack.Screen>
+              <FocusTestStack.Screen name="Other">{() => <Text>其他页面</Text>}</FocusTestStack.Screen>
+            </FocusTestStack.Navigator>
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>
+      );
+
+      let view: Awaited<ReturnType<typeof render>> | undefined;
+      const reconcile = jest.fn<NotificationRouteRuntimeValue['reconcileAccountStatus']>(async (candidate) => {
+        const nextActive = notificationSources.filter(
+          (site) => currentRuntime.activeSources.includes(site) || site === candidate
+        );
+        currentRuntime = {
+          ...currentRuntime,
+          activeSources: nextActive,
+          sessions: {
+            ...currentRuntime.sessions,
+            [candidate]: { ...currentRuntime.sessions[candidate], isLoggedIn: true, identityTrust: 'confirmed' }
+          }
+        };
+        await view!.rerender(tree(currentRuntime));
+        return { status: 'same', session: createSiteSessionStates()[candidate] };
+      });
+      currentRuntime.reconcileAccountStatus = reconcile;
+
+      view = await render(tree(currentRuntime), { wrapper: QueryTestWrapper });
+      try {
+        await fireEvent.press(view.getByText('重试账号核对'));
+        expect(await view.findByText('NodeSeek A 消息')).toBeTruthy();
+        await waitFor(() => expect(linuxdoCalls).toEqual(['linuxdo:userA']));
+
+        if (change === 'blur') {
+          await act(async () => navigation.navigate('Other'));
+        } else if (change === 'account-switch') {
+          linuxdoIdentity = 'linuxdo:userB';
+          linuxdoEpoch = 1;
+          const nextSignature = 'nodeseek|linuxdo|yaohuo:nodeseek:userA|linuxdo:userB|yaohuo:userA';
+          currentRuntime = {
+            ...currentRuntime,
+            identityKeys: { ...currentRuntime.identityKeys, linuxdo: 'linuxdo:userB' },
+            identitySignature: nextSignature,
+            sessionEpochs: { ...currentRuntime.sessionEpochs, linuxdo: 1 }
+          };
+          await view.rerender(tree(currentRuntime));
+        } else {
+          await fireEvent(view.getByTestId('notification-unread-switch'), 'valueChange', true);
+        }
+
+        await act(async () => {
+          pendingLinuxdoA.resolve({
+            quality: 'complete',
+            items: [{ ...notification, source: 'linuxdo', id: 'ld-stale', title: '过期 linuxdo A 消息' }],
+            cursor: 'ld-stale-2',
+            hasMore: true
+          });
+        });
+
+        const oldCached = appQueryClient.getQueryData<{ pages: { items: ForumNotification[] }[] }>(oldQueryKey);
+        expect(oldCached?.pages.flatMap((page) => page.items).map((item) => item.id)).not.toContain('ld-stale');
+        expect(view.queryByText('过期 linuxdo A 消息')).toBeNull();
+        if (change === 'account-switch') {
+          expect(await view.findByText('linuxdo B 新账号消息')).toBeTruthy();
+        } else {
+          expect(reconcile).not.toHaveBeenCalledWith('yaohuo');
+        }
+      } finally {
+        pendingLinuxdoA.resolve({ quality: 'complete', items: [], cursor: null, hasMore: false });
+        await view.unmount();
+        appQueryClient.clear();
+      }
+    }
+  );
+
+  it('coordinates pending aggregate source backfill with concurrent pagination without duplicating page zero or losing later pages', async () => {
+    appQueryClient.clear();
+    const identities: Record<NotificationSource, string> = {
+      nodeseek: 'nodeseek:1',
+      linuxdo: 'linuxdo:2',
+      yaohuo: 'yaohuo:3'
+    };
+    const pendingLinuxdoPage0 = Promise.withResolvers<NotificationPage>();
+    const linuxdoReads: (string | null | undefined)[] = [];
+    let heldFirstLinuxdoPage0 = false;
+    const gateway = createNotificationGateway({
+      adapters: {
+        nodeseek: {
+          listPage: jest.fn(async ({ cursor }: { cursor?: string | null }) => {
+            if (cursor === 'ns-2') {
+              return {
+                quality: 'complete' as const,
+                items: [{ ...notification, source: 'nodeseek', id: 'ns-2', title: 'NodeSeek 第 2 页' }],
+                cursor: 'ns-3',
+                hasMore: true
+              };
+            }
+            if (cursor === 'ns-3') {
+              return {
+                quality: 'complete' as const,
+                items: [{ ...notification, source: 'nodeseek', id: 'ns-3', title: 'NodeSeek 第 3 页' }],
+                cursor: null,
+                hasMore: false
+              };
+            }
+            return {
+              quality: 'complete' as const,
+              items: [{ ...notification, source: 'nodeseek', id: 'ns-1', title: 'NodeSeek 第 1 页' }],
+              cursor: 'ns-2',
+              hasMore: true
+            };
+          })
+        } as unknown as NotificationAdapter,
+        linuxdo: {
+          listPage: jest.fn(async ({ cursor }: { cursor?: string | null }) => {
+            linuxdoReads.push(cursor);
+            if (!cursor) {
+              if (!heldFirstLinuxdoPage0) {
+                heldFirstLinuxdoPage0 = true;
+                return pendingLinuxdoPage0.promise;
+              }
+              return {
+                quality: 'complete' as const,
+                items: [{ ...notification, source: 'linuxdo', id: 'ld-1', title: 'linuxdo 第 1 页' }],
+                cursor: 'ld-2',
+                hasMore: true
+              };
+            }
+            if (cursor === 'ld-2') {
+              return {
+                quality: 'complete' as const,
+                items: [{ ...notification, source: 'linuxdo', id: 'ld-2', title: 'linuxdo 第 2 页' }],
+                cursor: 'ld-3',
+                hasMore: true
+              };
+            }
+            if (cursor === 'ld-3') {
+              return {
+                quality: 'complete' as const,
+                items: [{ ...notification, source: 'linuxdo', id: 'ld-3', title: 'linuxdo 第 3 页' }],
+                cursor: null,
+                hasMore: false
+              };
+            }
+            return { quality: 'complete' as const, items: [], cursor: null, hasMore: false };
+          })
+        } as unknown as NotificationAdapter,
+        yaohuo: {
+          listPage: jest.fn(async () => ({ quality: 'complete' as const, items: [], cursor: null, hasMore: false }))
+        } as unknown as NotificationAdapter
+      },
+      readAccess: (source) => ({
+        identityKey: identities[source],
+        userId: identities[source].split(':')[1]!
+      }),
+      privateAccessAllowed: () => true,
+      sourceAllowed: () => true
+    });
+
+    const states = createSiteSessionStates();
+    for (const site of ['nodeseek', 'linuxdo'] as const) {
+      states[site] = {
+        ...states[site],
+        status: 'logged-in',
+        currentUser: { ...testAccountUser(site), id: identities[site].split(':')[1]! }
+      };
+    }
+    let currentRuntime = routeRuntime(gateway);
+    currentRuntime.enabledNotificationSources = ['nodeseek', 'linuxdo'];
+    currentRuntime.activeSources = ['nodeseek'];
+    currentRuntime.identityKeys = { nodeseek: identities.nodeseek, linuxdo: identities.linuxdo };
+    currentRuntime.identitySignature = 'nodeseek|linuxdo:nodeseek:1|linuxdo:2';
+    currentRuntime.sessions = projectTestAccountSessions(states);
+    currentRuntime.sessions.linuxdo = { ...currentRuntime.sessions.linuxdo, identityTrust: 'unknown' };
+
+    const tree = (value: NotificationRouteRuntimeValue) => (
+      <NotificationRouteRuntimeProvider value={value}>
+        <NavigationContainer>
+          <NotificationsRoute
+            navigation={{ navigate: jest.fn(), setParams: jest.fn() } as never}
+            route={{ key: 'notifications', name: 'notifications', params: undefined }}
+          />
+        </NavigationContainer>
+      </NotificationRouteRuntimeProvider>
+    );
+
+    let view: Awaited<ReturnType<typeof render>> | undefined;
+    currentRuntime.reconcileAccountStatus = jest.fn<NotificationRouteRuntimeValue['reconcileAccountStatus']>(
+      async (candidate) => {
+        if (candidate === 'linuxdo') {
+          currentRuntime = {
+            ...currentRuntime,
+            activeSources: ['nodeseek', 'linuxdo'],
+            sessions: {
+              ...currentRuntime.sessions,
+              linuxdo: { ...currentRuntime.sessions.linuxdo, isLoggedIn: true, identityTrust: 'confirmed' }
+            }
+          };
+          await view!.rerender(tree(currentRuntime));
+        }
+        return { status: 'same', session: createSiteSessionStates()[candidate] };
+      }
+    );
+
+    view = await render(tree(currentRuntime), { wrapper: QueryTestWrapper });
+    try {
+      expect(await view.findByText('NodeSeek 第 1 页')).toBeTruthy();
+
+      await fireEvent.press(view.getByRole('button', { name: '重试账号核对 linux.do' }));
+      await waitFor(() => expect(linuxdoReads).toEqual([undefined]));
+
+      // Advance pagination twice while linux.do page-0 backfill is still in-flight.
+      await fireEvent.press(view.getByTestId('notification-list-end'));
+      expect(await view.findByText('NodeSeek 第 2 页')).toBeTruthy();
+      await fireEvent.press(view.getByTestId('notification-list-end'));
+      expect(await view.findByText('NodeSeek 第 3 页')).toBeTruthy();
+
+      expect(linuxdoReads.filter((cursor) => cursor === undefined)).toHaveLength(1);
+
+      await act(async () => {
+        pendingLinuxdoPage0.resolve({
+          quality: 'complete',
+          items: [{ ...notification, source: 'linuxdo', id: 'ld-1', title: 'linuxdo 第 1 页' }],
+          cursor: 'ld-2',
+          hasMore: true
+        });
+      });
+
+      expect(await view.findByText('linuxdo 第 1 页')).toBeTruthy();
+      expect(view.queryByText(/重复的消息分页/)).toBeNull();
+
+      await waitFor(() => expect(view.getByTestId('notification-list-end').props.onPress).toBeDefined());
+      await fireEvent.press(view.getByTestId('notification-list-end'));
+      expect(await view.findByText('linuxdo 第 2 页')).toBeTruthy();
+
+      await waitFor(() => expect(view.getByTestId('notification-list-end').props.onPress).toBeDefined());
+      await fireEvent.press(view.getByTestId('notification-list-end'));
+      expect(await view.findByText('linuxdo 第 3 页')).toBeTruthy();
+
+      expect(linuxdoReads).toEqual([undefined, 'ld-2', 'ld-3']);
+      expect(view.queryByText(/重复的消息分页/)).toBeNull();
+    } finally {
+      pendingLinuxdoPage0.resolve({ quality: 'complete', items: [], cursor: null, hasMore: false });
+      await view.unmount();
+      appQueryClient.clear();
+    }
+  });
+
+  it('keeps aggregate backfill items and next cursor when backfill settles while pagination is in flight', async () => {
+    appQueryClient.clear();
+    const identities: Record<NotificationSource, string> = {
+      nodeseek: 'nodeseek:1',
+      linuxdo: 'linuxdo:2',
+      yaohuo: 'yaohuo:3'
+    };
+    const pendingLinuxdoPage0 = Promise.withResolvers<NotificationPage>();
+    const pendingNodeSeekPage2 = Promise.withResolvers<NotificationPage>();
+    const linuxdoReads: (string | null | undefined)[] = [];
+    const gateway = createNotificationGateway({
+      adapters: {
+        nodeseek: {
+          listPage: jest.fn(async ({ cursor }: { cursor?: string | null }) => {
+            if (cursor === 'ns-2') return pendingNodeSeekPage2.promise;
+            return {
+              quality: 'complete' as const,
+              items: [{ ...notification, source: 'nodeseek', id: 'ns-1', title: 'NodeSeek 首页' }],
+              cursor: 'ns-2',
+              hasMore: true
+            };
+          })
+        } as unknown as NotificationAdapter,
+        linuxdo: {
+          listPage: jest.fn(async ({ cursor }: { cursor?: string | null }) => {
+            linuxdoReads.push(cursor);
+            if (!cursor) return pendingLinuxdoPage0.promise;
+            if (cursor === 'ld-2') {
+              return {
+                quality: 'complete' as const,
+                items: [{ ...notification, source: 'linuxdo', id: 'ld-2', title: 'linuxdo 次页' }],
+                cursor: 'ld-3',
+                hasMore: true
+              };
+            }
+            if (cursor === 'ld-3') {
+              return {
+                quality: 'complete' as const,
+                items: [{ ...notification, source: 'linuxdo', id: 'ld-3', title: 'linuxdo 末页' }],
+                cursor: null,
+                hasMore: false
+              };
+            }
+            return { quality: 'complete' as const, items: [], cursor: null, hasMore: false };
+          })
+        } as unknown as NotificationAdapter,
+        yaohuo: {
+          listPage: jest.fn(async () => ({ quality: 'complete' as const, items: [], cursor: null, hasMore: false }))
+        } as unknown as NotificationAdapter
+      },
+      readAccess: (source) => ({
+        identityKey: identities[source],
+        userId: identities[source].split(':')[1]!
+      }),
+      privateAccessAllowed: () => true,
+      sourceAllowed: () => true
+    });
+
+    const states = createSiteSessionStates();
+    for (const site of ['nodeseek', 'linuxdo'] as const) {
+      states[site] = {
+        ...states[site],
+        status: 'logged-in',
+        currentUser: { ...testAccountUser(site), id: identities[site].split(':')[1]! }
+      };
+    }
+    let currentRuntime = routeRuntime(gateway);
+    currentRuntime.enabledNotificationSources = ['nodeseek', 'linuxdo'];
+    currentRuntime.activeSources = ['nodeseek'];
+    currentRuntime.identityKeys = { nodeseek: identities.nodeseek, linuxdo: identities.linuxdo };
+    currentRuntime.identitySignature = 'nodeseek|linuxdo:nodeseek:1|linuxdo:2';
+    currentRuntime.sessions = projectTestAccountSessions(states);
+    currentRuntime.sessions.linuxdo = { ...currentRuntime.sessions.linuxdo, identityTrust: 'unknown' };
+
+    const tree = (value: NotificationRouteRuntimeValue) => (
+      <NotificationRouteRuntimeProvider value={value}>
+        <NavigationContainer>
+          <NotificationsRoute
+            navigation={{ navigate: jest.fn(), setParams: jest.fn() } as never}
+            route={{ key: 'notifications', name: 'notifications', params: undefined }}
+          />
+        </NavigationContainer>
+      </NotificationRouteRuntimeProvider>
+    );
+
+    let view: Awaited<ReturnType<typeof render>> | undefined;
+    currentRuntime.reconcileAccountStatus = jest.fn<NotificationRouteRuntimeValue['reconcileAccountStatus']>(
+      async (candidate) => {
+        if (candidate === 'linuxdo') {
+          currentRuntime = {
+            ...currentRuntime,
+            activeSources: ['nodeseek', 'linuxdo'],
+            sessions: {
+              ...currentRuntime.sessions,
+              linuxdo: { ...currentRuntime.sessions.linuxdo, isLoggedIn: true, identityTrust: 'confirmed' }
+            }
+          };
+          await view!.rerender(tree(currentRuntime));
+        }
+        return { status: 'same', session: createSiteSessionStates()[candidate] };
+      }
+    );
+
+    view = await render(tree(currentRuntime), { wrapper: QueryTestWrapper });
+    try {
+      expect(await view.findByText('NodeSeek 首页')).toBeTruthy();
+
+      await fireEvent.press(view.getByRole('button', { name: '重试账号核对 linux.do' }));
+      await waitFor(() => expect(linuxdoReads).toEqual([undefined]));
+
+      // Start pagination while backfill is pending, then finish backfill BEFORE pagination finishes.
+      await fireEvent.press(view.getByTestId('notification-list-end'));
+      await act(async () => {
+        pendingLinuxdoPage0.resolve({
+          quality: 'complete',
+          items: [{ ...notification, source: 'linuxdo', id: 'ld-1', title: 'linuxdo 首页' }],
+          cursor: 'ld-2',
+          hasMore: true
+        });
+      });
+      await act(async () => {
+        pendingNodeSeekPage2.resolve({
+          quality: 'complete',
+          items: [{ ...notification, source: 'nodeseek', id: 'ns-2', title: 'NodeSeek 末页' }],
+          cursor: null,
+          hasMore: false
+        });
+      });
+
+      expect(await view.findByText('NodeSeek 末页')).toBeTruthy();
+      expect(await view.findByText('linuxdo 首页')).toBeTruthy();
+
+      await waitFor(() => expect(view.getByTestId('notification-list-end').props.onPress).toBeDefined());
+      await fireEvent.press(view.getByTestId('notification-list-end'));
+      expect(await view.findByText('linuxdo 次页')).toBeTruthy();
+
+      await waitFor(() => expect(view.getByTestId('notification-list-end').props.onPress).toBeDefined());
+      await fireEvent.press(view.getByTestId('notification-list-end'));
+      expect(await view.findByText('linuxdo 末页')).toBeTruthy();
+
+      expect(linuxdoReads).toEqual([undefined, 'ld-2', 'ld-3']);
+    } finally {
+      pendingLinuxdoPage0.resolve({ quality: 'complete', items: [], cursor: null, hasMore: false });
+      pendingNodeSeekPage2.resolve({ quality: 'complete', items: [], cursor: null, hasMore: false });
+      await view.unmount();
+      appQueryClient.clear();
+    }
+  });
+
+  it('never rewinds an already-advanced aggregate tail cursor when a page-zero source retry settles late', async () => {
+    appQueryClient.clear();
+    const identities: Record<NotificationSource, string> = {
+      nodeseek: 'nodeseek:1',
+      linuxdo: 'linuxdo:2',
+      yaohuo: 'yaohuo:3'
+    };
+    const identitySignature = 'nodeseek|linuxdo:nodeseek:1|linuxdo:2';
+    const listQueryKey = forumQueryKeys.notificationList({
+      source: 'all',
+      categoryId: null,
+      identityKey: identitySignature,
+      unreadOnly: false
+    });
+    const linuxdoReads: (string | null | undefined)[] = [];
+    const gateway = createNotificationGateway({
+      adapters: {
+        nodeseek: {
+          listPage: jest.fn(async () => ({
+            quality: 'complete' as const,
+            items: [{ ...notification, source: 'nodeseek', id: 'ns-1', title: 'NodeSeek 首页' }],
+            cursor: 'ns-2',
+            hasMore: true
+          }))
+        } as unknown as NotificationAdapter,
+        linuxdo: {
+          listPage: jest.fn(async ({ cursor }: { cursor?: string | null }) => {
+            linuxdoReads.push(cursor);
+            if (!cursor) {
+              return {
+                quality: 'complete' as const,
+                items: [{ ...notification, source: 'linuxdo', id: 'ld-1', title: 'linuxdo 第 1 页' }],
+                cursor: 'ld-2',
+                hasMore: true
+              };
+            }
+            if (cursor === 'ld-3') {
+              return {
+                quality: 'complete' as const,
+                items: [{ ...notification, source: 'linuxdo', id: 'ld-3', title: 'linuxdo 第 3 页' }],
+                cursor: null,
+                hasMore: false
+              };
+            }
+            return { quality: 'complete' as const, items: [], cursor: null, hasMore: false };
+          })
+        } as unknown as NotificationAdapter,
+        yaohuo: {
+          listPage: jest.fn(async () => ({ quality: 'complete' as const, items: [], cursor: null, hasMore: false }))
+        } as unknown as NotificationAdapter
+      },
+      readAccess: (source) => ({
+        identityKey: identities[source],
+        userId: identities[source].split(':')[1]!
+      }),
+      privateAccessAllowed: () => true,
+      sourceAllowed: () => true
+    });
+
+    const runtime = routeRuntime(gateway);
+    runtime.enabledNotificationSources = ['nodeseek', 'linuxdo'];
+    runtime.activeSources = ['nodeseek', 'linuxdo'];
+    runtime.identityKeys = { nodeseek: identities.nodeseek, linuxdo: identities.linuxdo };
+    runtime.identitySignature = identitySignature;
+
+    const view = await render(
+      <NotificationRouteRuntimeProvider value={runtime}>
+        <NavigationContainer>
+          <NotificationsRoute
+            navigation={{ navigate: jest.fn(), setParams: jest.fn() } as never}
+            route={{ key: 'notifications', name: 'notifications', params: undefined }}
+          />
+        </NavigationContainer>
+      </NotificationRouteRuntimeProvider>,
+      { wrapper: QueryTestWrapper }
+    );
+    try {
+      expect(await view.findByText('NodeSeek 首页')).toBeTruthy();
+      linuxdoReads.length = 0;
+
+      // Simulate page 0 needing retry while pages 1-2 already advanced linux.do from page 2 (ld-2) to page 3 (ld-3).
+      await act(async () => {
+        appQueryClient.setQueryData(listQueryKey, {
+          pages: [
+            {
+              items: [{ ...notification, source: 'nodeseek', id: 'ns-1', title: 'NodeSeek 首页' }],
+              errors: { linuxdo: { kind: 'ordinary', message: '暂不可用' } },
+              hasMore: true,
+              nextPage: { allCursors: { nodeseek: 'ns-2', linuxdo: null } }
+            },
+            {
+              items: [{ ...notification, source: 'linuxdo', id: 'ld-1-dup', title: 'linuxdo 已拉取页 1' }],
+              errors: {},
+              hasMore: true,
+              nextPage: { allCursors: { nodeseek: 'ns-3', linuxdo: 'ld-2' } }
+            },
+            {
+              items: [{ ...notification, source: 'linuxdo', id: 'ld-2', title: 'linuxdo 第 2 页' }],
+              errors: {},
+              hasMore: true,
+              nextPage: { allCursors: { nodeseek: null, linuxdo: 'ld-3' } }
+            }
+          ],
+          pageParams: [{}, { allCursors: { nodeseek: 'ns-2' } }, { allCursors: { nodeseek: 'ns-3', linuxdo: 'ld-2' } }]
+        });
+      });
+
+      await fireEvent.press(await view.findByRole('button', { name: '重试 linux.do' }));
+      expect(await view.findByText('linuxdo 第 1 页')).toBeTruthy();
+      expect(view.queryByText(/重复的消息分页/)).toBeNull();
+
+      await fireEvent.press(view.getByTestId('notification-list-end'));
+      expect(await view.findByText('linuxdo 第 3 页')).toBeTruthy();
+      expect(linuxdoReads).toEqual([undefined, 'ld-3']);
+    } finally {
+      await view.unmount();
+      appQueryClient.clear();
+    }
+  });
+
+  it('binds account status retry callbacks to their originating source filter and ignores stale callbacks after switching', async () => {
+    appQueryClient.clear();
+    const identities: Record<NotificationSource, string> = {
+      nodeseek: 'nodeseek:1',
+      linuxdo: 'linuxdo:2',
+      yaohuo: 'yaohuo:3'
+    };
+    const makeAdapter = (source: NotificationSource): NotificationAdapter =>
+      ({
+        getCategories: jest.fn(async () => [{ id: 'all', label: '全部' }]),
+        listPage: jest.fn(async () => ({
+          quality: 'complete' as const,
+          items: [{ ...notification, source, id: `${source}-1`, title: `${source} 恢复消息` }],
+          cursor: null,
+          hasMore: false
+        }))
+      }) as unknown as NotificationAdapter;
+    const gateway = createNotificationGateway({
+      adapters: {
+        nodeseek: makeAdapter('nodeseek'),
+        linuxdo: makeAdapter('linuxdo'),
+        yaohuo: makeAdapter('yaohuo')
+      },
+      readAccess: (source) => ({
+        identityKey: identities[source],
+        userId: identities[source].split(':')[1]!
+      }),
+      privateAccessAllowed: () => true,
+      sourceAllowed: () => true
+    });
+    const listAllPageSpy = jest.spyOn(gateway, 'listAllPage');
+    const listPageSpy = jest.spyOn(gateway, 'listPage');
+
+    let currentRuntime = routeRuntime(gateway);
+    currentRuntime.activeSources = [];
+    currentRuntime.identityKeys = { ...identities };
+    currentRuntime.identitySignature = 'nodeseek|linuxdo|yaohuo:nodeseek:1|linuxdo:2|yaohuo:3';
+    for (const site of notificationSources) {
+      currentRuntime.sessions[site] = { ...currentRuntime.sessions[site], identityTrust: 'unknown' };
+    }
+
+    const navigation = createNavigationContainerRef<FocusTestStackParamList>();
+    const tree = (value: NotificationRouteRuntimeValue) => (
+      <NotificationRouteRuntimeProvider value={value}>
+        <NavigationContainer ref={navigation}>
+          <FocusTestStack.Navigator initialRouteName="notifications">
+            <FocusTestStack.Screen name="notifications" initialParams={{ source: 'nodeseek' }}>
+              {(props) => <NotificationsRoute navigation={props.navigation as never} route={props.route} />}
+            </FocusTestStack.Screen>
+          </FocusTestStack.Navigator>
+        </NavigationContainer>
+      </NotificationRouteRuntimeProvider>
+    );
+
+    let view: Awaited<ReturnType<typeof render>> | undefined;
+    const reconcile = jest.fn<NotificationRouteRuntimeValue['reconcileAccountStatus']>(async (candidate) => {
+      const nextActive = notificationSources.filter(
+        (site) => currentRuntime.activeSources.includes(site) || site === candidate
+      );
+      currentRuntime = {
+        ...currentRuntime,
+        activeSources: nextActive,
+        sessions: {
+          ...currentRuntime.sessions,
+          [candidate]: { ...currentRuntime.sessions[candidate], isLoggedIn: true, identityTrust: 'confirmed' }
+        }
+      };
+      await view!.rerender(tree(currentRuntime));
+      return { status: 'same', session: createSiteSessionStates()[candidate] };
+    });
+    currentRuntime.reconcileAccountStatus = reconcile;
+
+    view = await render(tree(currentRuntime), { wrapper: QueryTestWrapper });
+    try {
+      expect(view.getByText('账号状态暂不可确认')).toBeTruthy();
+      expect(mockListNavigationProps.source).toBe('nodeseek');
+      const staleNodeSeekRetry = mockListNavigationProps.onRetryAccountStatus;
+
+      // Switch from NodeSeek single-site view to the aggregate "全部" view, then invoke the stale callback.
+      await fireEvent.press(view.getByTestId('notification-source-all'));
+      await waitFor(() => expect(mockListNavigationProps.source).toBe('all'));
+
+      await act(async () => {
+        await staleNodeSeekRetry();
+      });
+
+      expect(reconcile).not.toHaveBeenCalled();
+      expect(listAllPageSpy).not.toHaveBeenCalled();
+      expect(listPageSpy).not.toHaveBeenCalled();
+
+      // The fresh "全部" retry button still recovers every unknown site one by one.
+      await fireEvent.press(view.getByRole('button', { name: '重试账号核对' }));
+      expect(await view.findByText('nodeseek 恢复消息')).toBeTruthy();
+      expect(await view.findByText('linuxdo 恢复消息')).toBeTruthy();
+      expect(await view.findByText('yaohuo 恢复消息')).toBeTruthy();
+      expect(reconcile.mock.calls.map(([site]) => site)).toEqual(['nodeseek', 'linuxdo', 'yaohuo']);
+    } finally {
+      await view.unmount();
+      appQueryClient.clear();
+    }
+  });
+
+  it.each<['retry-first' | 'refresh-first', 'success' | 'failure', 'pull-to-refresh' | 'refetch']>([
+    ['retry-first', 'success', 'pull-to-refresh'],
+    ['refresh-first', 'success', 'pull-to-refresh'],
+    ['retry-first', 'failure', 'pull-to-refresh'],
+    ['refresh-first', 'failure', 'pull-to-refresh'],
+    ['retry-first', 'success', 'refetch'],
+    ['refresh-first', 'failure', 'refetch']
+  ])(
+    'prevents a stale single-site page-zero retry (%s, %s, via %s) from overwriting a newer refresh or attaching errors',
+    async (order, outcome, trigger) => {
+      appQueryClient.clear();
+      const identityKey = 'linuxdo:7';
+      const listQueryKey = forumQueryKeys.notificationList({
+        source: 'linuxdo',
+        categoryId: 'all',
+        identityKey,
+        unreadOnly: false
+      });
+      const pendingOldRetry = Promise.withResolvers<NotificationPage>();
+      const pendingRefresh = Promise.withResolvers<NotificationPage>();
+      const page0Attempts: number[] = [];
+      const nextCursorsRequested: (string | null | undefined)[] = [];
+      let page0Calls = 0;
+
+      const gateway = createNotificationGateway({
+        adapters: {
+          ...notificationAdapters,
+          linuxdo: {
+            ...notificationAdapters.linuxdo,
+            getCategories: jest.fn(async () => [{ id: 'all', label: '所有通知' }]),
+            listPage: jest.fn(async ({ cursor }: { cursor?: string | null }) => {
+              if (!cursor) {
+                page0Calls += 1;
+                page0Attempts.push(page0Calls);
+                if (page0Calls === 1) throw new Error('首页加载失败');
+                if (page0Calls === 2) return pendingOldRetry.promise;
+                return pendingRefresh.promise;
+              }
+              nextCursorsRequested.push(cursor);
+              if (cursor === '30') {
+                return {
+                  quality: 'complete' as const,
+                  items: [{ ...notification, source: 'linuxdo', id: 'ld-fresh-p2', title: '新刷新下一页消息' }],
+                  cursor: null,
+                  hasMore: false
+                };
+              }
+              return {
+                quality: 'complete' as const,
+                items: [{ ...notification, source: 'linuxdo', id: 'ld-stale-p2', title: '旧重试下一页消息' }],
+                cursor: null,
+                hasMore: false
+              };
+            })
+          } as unknown as NotificationAdapter
+        },
+        privateAccessAllowed: () => true,
+        sourceAllowed: () => true,
+        readAccess: () => ({ identityKey, userId: '7' })
+      });
+
+      const runtime = routeRuntime(gateway);
+      runtime.enabledNotificationSources = ['linuxdo'];
+      runtime.activeSources = ['linuxdo'];
+      runtime.identityKeys = { linuxdo: identityKey };
+      runtime.identitySignature = `linuxdo:${identityKey}`;
+
+      const view = await render(
+        <NotificationRouteRuntimeProvider value={runtime}>
+          <NavigationContainer>
+            <NotificationsRoute
+              navigation={{ navigate: jest.fn(), setParams: jest.fn() } as never}
+              route={{ key: 'notifications', name: 'notifications', params: { source: 'linuxdo' } }}
+            />
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>,
+        { wrapper: QueryTestWrapper }
+      );
+
+      let refetchPromise: Promise<void> | undefined;
+      try {
+        expect(await view.findByRole('button', { name: '重试 linux.do' })).toBeTruthy();
+
+        await fireEvent.press(view.getByRole('button', { name: '重试 linux.do' }));
+        await waitFor(() => expect(page0Attempts).toEqual([1, 2]));
+
+        if (trigger === 'pull-to-refresh') {
+          await fireEvent.press(view.getByTestId('notification-list-refresh'));
+        } else {
+          await act(async () => {
+            refetchPromise = appQueryClient.refetchQueries({ queryKey: listQueryKey, exact: true });
+          });
+        }
+        await waitFor(() => expect(page0Attempts).toEqual([1, 2, 3]));
+
+        const settleOldRetry = async () => {
+          await act(async () => {
+            if (outcome === 'success') {
+              pendingOldRetry.resolve({
+                quality: 'complete',
+                items: [{ ...notification, source: 'linuxdo', id: 'ld-old-retry', title: '旧重试消息' }],
+                cursor: '15',
+                hasMore: true
+              });
+            } else {
+              pendingOldRetry.reject(new Error('旧重试失败'));
+            }
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
+          });
+        };
+        const settleRefresh = async () => {
+          await act(async () => {
+            pendingRefresh.resolve({
+              quality: 'complete',
+              items: [{ ...notification, source: 'linuxdo', id: 'ld-fresh-refresh', title: '新刷新消息' }],
+              cursor: '30',
+              hasMore: true
+            });
+            await refetchPromise;
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
+          });
+        };
+
+        if (order === 'retry-first') {
+          await settleOldRetry();
+          await settleRefresh();
+        } else {
+          await settleRefresh();
+          expect(await view.findByText('新刷新消息')).toBeTruthy();
+          await settleOldRetry();
+        }
+
+        expect(await view.findByText('新刷新消息')).toBeTruthy();
+        expect(view.queryByText('旧重试消息')).toBeNull();
+        expect(view.queryByText(/旧重试失败|首页加载失败/)).toBeNull();
+        expect(view.queryByRole('button', { name: '重试 linux.do' })).toBeNull();
+
+        await waitFor(() => expect(view.getByTestId('notification-list-end').props.onPress).toBeDefined());
+        await fireEvent.press(view.getByTestId('notification-list-end'));
+        expect(await view.findByText('新刷新下一页消息')).toBeTruthy();
+        expect(nextCursorsRequested).toEqual(['30']);
+      } finally {
+        pendingOldRetry.resolve({ quality: 'complete', items: [], cursor: null, hasMore: false });
+        pendingRefresh.resolve({ quality: 'complete', items: [], cursor: null, hasMore: false });
+        await refetchPromise?.catch(() => undefined);
+        await view.unmount();
+        appQueryClient.clear();
+      }
+    }
+  );
+
+  it.each<['retry-first' | 'refresh-first', 'success' | 'failure']>([
+    ['retry-first', 'success'],
+    ['refresh-first', 'success'],
+    ['retry-first', 'failure'],
+    ['refresh-first', 'failure']
+  ])(
+    'prevents a stale aggregate page-two retry (%s, %s) from overwriting a newer pull-to-refresh or re-attaching errors',
+    async (order, outcome) => {
+      appQueryClient.clear();
+      const identities: Record<NotificationSource, string> = {
+        nodeseek: 'nodeseek:1',
+        linuxdo: 'linuxdo:2',
+        yaohuo: 'yaohuo:3'
+      };
+      const identitySignature = 'nodeseek|linuxdo:nodeseek:1|linuxdo:2';
+      const listQueryKey = forumQueryKeys.notificationList({
+        source: 'all',
+        categoryId: null,
+        identityKey: identitySignature,
+        unreadOnly: false
+      });
+      const pendingOldRetry = Promise.withResolvers<NotificationPage>();
+      const pendingRefreshPage2 = Promise.withResolvers<NotificationPage>();
+      let refreshStarted = false;
+      let ldPage2FailedOnce = false;
+      let oldRetryStarted = false;
+      let refreshPage2Started = false;
+      const linuxdoCursors: (string | null | undefined)[] = [];
+
+      const gateway = createNotificationGateway({
+        adapters: {
+          nodeseek: {
+            listPage: jest.fn(async ({ cursor }: { cursor?: string | null }) => {
+              if (!cursor) {
+                return refreshStarted
+                  ? {
+                      quality: 'complete' as const,
+                      items: [{ ...notification, source: 'nodeseek', id: 'ns-r1', title: 'NodeSeek 刷新第 1 页' }],
+                      cursor: 'ns-r2',
+                      hasMore: true
+                    }
+                  : {
+                      quality: 'complete' as const,
+                      items: [{ ...notification, source: 'nodeseek', id: 'ns-1', title: 'NodeSeek 第 1 页' }],
+                      cursor: 'ns-2',
+                      hasMore: true
+                    };
+              }
+              if (cursor === 'ns-2') {
+                return {
+                  quality: 'complete' as const,
+                  items: [{ ...notification, source: 'nodeseek', id: 'ns-2', title: 'NodeSeek 第 2 页' }],
+                  cursor: 'ns-3',
+                  hasMore: true
+                };
+              }
+              if (cursor === 'ns-3') {
+                return {
+                  quality: 'complete' as const,
+                  items: [{ ...notification, source: 'nodeseek', id: 'ns-3', title: 'NodeSeek 第 3 页' }],
+                  cursor: null,
+                  hasMore: false
+                };
+              }
+              if (cursor === 'ns-r2') {
+                return {
+                  quality: 'complete' as const,
+                  items: [{ ...notification, source: 'nodeseek', id: 'ns-r2', title: 'NodeSeek 刷新第 2 页' }],
+                  cursor: 'ns-r3',
+                  hasMore: true
+                };
+              }
+              if (cursor === 'ns-r3') {
+                return {
+                  quality: 'complete' as const,
+                  items: [{ ...notification, source: 'nodeseek', id: 'ns-r3', title: 'NodeSeek 刷新第 3 页' }],
+                  cursor: null,
+                  hasMore: false
+                };
+              }
+              return { quality: 'complete' as const, items: [], cursor: null, hasMore: false };
+            })
+          } as unknown as NotificationAdapter,
+          linuxdo: {
+            listPage: jest.fn(async ({ cursor }: { cursor?: string | null }) => {
+              linuxdoCursors.push(cursor);
+              if (!cursor) {
+                return refreshStarted
+                  ? {
+                      quality: 'complete' as const,
+                      items: [{ ...notification, source: 'linuxdo', id: 'ld-r1', title: 'linuxdo 刷新第 1 页' }],
+                      cursor: 'ld-r2',
+                      hasMore: true
+                    }
+                  : {
+                      quality: 'complete' as const,
+                      items: [{ ...notification, source: 'linuxdo', id: 'ld-1', title: 'linuxdo 第 1 页' }],
+                      cursor: 'ld-2',
+                      hasMore: true
+                    };
+              }
+              if (cursor === 'ld-2') {
+                return {
+                  quality: 'complete' as const,
+                  items: [{ ...notification, source: 'linuxdo', id: 'ld-2', title: 'linuxdo 第 2 页' }],
+                  cursor: 'ld-3',
+                  hasMore: true
+                };
+              }
+              if (cursor === 'ld-3') {
+                if (!ldPage2FailedOnce) {
+                  ldPage2FailedOnce = true;
+                  throw new Error('第3页加载失败');
+                }
+                oldRetryStarted = true;
+                return pendingOldRetry.promise;
+              }
+              if (cursor === 'ld-r2') {
+                return {
+                  quality: 'complete' as const,
+                  items: [{ ...notification, source: 'linuxdo', id: 'ld-r2', title: 'linuxdo 刷新第 2 页' }],
+                  cursor: 'ld-r3',
+                  hasMore: true
+                };
+              }
+              if (cursor === 'ld-r3') {
+                refreshPage2Started = true;
+                return pendingRefreshPage2.promise;
+              }
+              if (cursor === 'ld-r4') {
+                return {
+                  quality: 'complete' as const,
+                  items: [{ ...notification, source: 'linuxdo', id: 'ld-r4', title: 'linuxdo 刷新第 4 页' }],
+                  cursor: null,
+                  hasMore: false
+                };
+              }
+              return {
+                quality: 'complete' as const,
+                items: [{ ...notification, source: 'linuxdo', id: 'ld-old-4', title: 'linuxdo 旧第 4 页' }],
+                cursor: null,
+                hasMore: false
+              };
+            })
+          } as unknown as NotificationAdapter,
+          yaohuo: {
+            listPage: jest.fn(async () => ({ quality: 'complete' as const, items: [], cursor: null, hasMore: false }))
+          } as unknown as NotificationAdapter
+        },
+        readAccess: (source) => ({
+          identityKey: identities[source],
+          userId: identities[source].split(':')[1]!
+        }),
+        privateAccessAllowed: () => true,
+        sourceAllowed: () => true
+      });
+
+      const runtime = routeRuntime(gateway);
+      runtime.enabledNotificationSources = ['nodeseek', 'linuxdo'];
+      runtime.activeSources = ['nodeseek', 'linuxdo'];
+      runtime.identityKeys = { nodeseek: identities.nodeseek, linuxdo: identities.linuxdo };
+      runtime.identitySignature = identitySignature;
+
+      const view = await render(
+        <NotificationRouteRuntimeProvider value={runtime}>
+          <NavigationContainer>
+            <NotificationsRoute
+              navigation={{ navigate: jest.fn(), setParams: jest.fn() } as never}
+              route={{ key: 'notifications', name: 'notifications', params: undefined }}
+            />
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>,
+        { wrapper: QueryTestWrapper }
+      );
+
+      try {
+        expect(await view.findByText('linuxdo 第 1 页')).toBeTruthy();
+
+        await fireEvent.press(view.getByTestId('notification-list-end'));
+        expect(await view.findByText('linuxdo 第 2 页')).toBeTruthy();
+
+        await fireEvent.press(view.getByTestId('notification-list-end'));
+        expect(await view.findByText('NodeSeek 第 3 页')).toBeTruthy();
+        expect(await view.findByRole('button', { name: '重试 linux.do' })).toBeTruthy();
+
+        await fireEvent.press(view.getByRole('button', { name: '重试 linux.do' }));
+        await waitFor(() => expect(oldRetryStarted).toBe(true));
+
+        refreshStarted = true;
+        await fireEvent.press(view.getByTestId('notification-list-refresh'));
+        await waitFor(() => expect(refreshPage2Started).toBe(true));
+
+        const settleOldRetry = async () => {
+          await act(async () => {
+            if (outcome === 'success') {
+              pendingOldRetry.resolve({
+                quality: 'complete',
+                items: [{ ...notification, source: 'linuxdo', id: 'ld-old-3', title: 'linuxdo 旧第 3 页重试消息' }],
+                cursor: 'ld-old-4',
+                hasMore: true
+              });
+            } else {
+              pendingOldRetry.reject(new Error('旧第3页重试失败'));
+            }
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
+          });
+        };
+        const settleRefresh = async () => {
+          await act(async () => {
+            pendingRefreshPage2.resolve({
+              quality: 'complete',
+              items: [{ ...notification, source: 'linuxdo', id: 'ld-r3', title: 'linuxdo 刷新第 3 页' }],
+              cursor: 'ld-r4',
+              hasMore: true
+            });
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
+          });
+        };
+
+        if (order === 'retry-first') {
+          await settleOldRetry();
+          await settleRefresh();
+        } else {
+          await settleRefresh();
+          expect(await view.findByText('linuxdo 刷新第 3 页')).toBeTruthy();
+          await settleOldRetry();
+        }
+
+        expect(await view.findByText('linuxdo 刷新第 3 页')).toBeTruthy();
+        expect(view.queryByText('linuxdo 旧第 3 页重试消息')).toBeNull();
+        expect(view.queryByText(/旧第3页重试失败|第3页加载失败/)).toBeNull();
+        expect(view.queryByRole('button', { name: '重试 linux.do' })).toBeNull();
+
+        const cached = appQueryClient.getQueryData<{
+          pages: {
+            errors: Partial<Record<NotificationSource, unknown>>;
+            nextPage: { allCursors?: Partial<Record<NotificationSource, string | null>> };
+          }[];
+        }>(listQueryKey);
+        expect(cached?.pages[2]?.errors.linuxdo).toBeUndefined();
+        expect(cached?.pages[2]?.nextPage.allCursors?.linuxdo).toBe('ld-r4');
+
+        await waitFor(() => expect(view.getByTestId('notification-list-end').props.onPress).toBeDefined());
+        await fireEvent.press(view.getByTestId('notification-list-end'));
+        expect(await view.findByText('linuxdo 刷新第 4 页')).toBeTruthy();
+        expect(linuxdoCursors).not.toContain('ld-old-4');
+        expect(linuxdoCursors.at(-1)).toBe('ld-r4');
+      } finally {
+        pendingOldRetry.resolve({ quality: 'complete', items: [], cursor: null, hasMore: false });
+        pendingRefreshPage2.resolve({ quality: 'complete', items: [], cursor: null, hasMore: false });
+        await view.unmount();
+        appQueryClient.clear();
+      }
+    }
+  );
+
+  it('keeps the first partial page visible when a source retry is also partial', async () => {
+    appQueryClient.clear();
+    const identities = { linuxdo: 'linuxdo:42', nodeseek: 'nodeseek:44' };
+    const partialPage = (id: string): NotificationPage => ({
+      items: [{ ...notification, source: 'linuxdo', id, title: id }],
+      cursor: 'ld:2',
+      hasMore: true,
+      quality: 'partial'
+    });
+    const linuxdo = jest
+      .fn<NotificationAdapter['listPage']>()
+      .mockResolvedValueOnce(partialPage('第一次有效消息'))
+      .mockResolvedValueOnce(partialPage('重试新消息'));
+    const nodeseek = jest.fn<NotificationAdapter['listPage']>(async ({ cursor }) => ({
+      items: [{ ...notification, id: cursor ?? 'ns:1', title: cursor ? 'NodeSeek 续页' : 'NodeSeek 首屏' }],
+      cursor: cursor ? null : 'ns:2',
+      hasMore: !cursor,
+      quality: 'complete'
+    }));
+    const gateway = createNotificationGateway({
+      adapters: {
+        ...notificationAdapters,
+        linuxdo: { ...notificationAdapters.linuxdo, listPage: linuxdo },
+        nodeseek: { ...notificationAdapters.nodeseek, listPage: nodeseek }
+      },
+      readAccess: (source) => {
+        const userId = source === 'linuxdo' ? '42' : '44';
+        return { identityKey: `${source}:${userId}`, userId };
+      },
+      privateAccessAllowed: () => true,
+      sourceAllowed: () => true
+    });
+    const runtime = routeRuntime(gateway);
+    runtime.enabledNotificationSources = runtime.activeSources = ['linuxdo', 'nodeseek'];
+    runtime.identityKeys = identities;
+    runtime.identitySignature = 'linuxdo:42|nodeseek:44';
+    const view = await render(
+      <NotificationRouteRuntimeProvider value={runtime}>
+        <NavigationContainer>
+          <NotificationsRoute
+            navigation={{ navigate: jest.fn(), setParams: jest.fn() } as never}
+            route={{ key: 'notifications', name: 'notifications', params: undefined }}
+          />
+        </NavigationContainer>
+      </NotificationRouteRuntimeProvider>,
+      { wrapper: QueryTestWrapper }
+    );
+    try {
+      await view.findByText('第一次有效消息');
+      await fireEvent.press(view.getByRole('button', { name: '重试 linux.do' }));
+      await view.findByText('重试新消息');
+      expect(view.getByText('第一次有效消息')).toBeTruthy();
+      expect(view.getByRole('button', { name: '重试 linux.do' })).toBeTruthy();
+
+      await fireEvent.press(view.getByTestId('notification-list-end'));
+      await view.findByText('NodeSeek 续页');
+      expect(linuxdo.mock.calls.map(([request]) => request.cursor)).toEqual([undefined, undefined]);
+      expect(nodeseek.mock.calls.map(([request]) => request.cursor)).toEqual([undefined, 'ns:2']);
+    } finally {
+      await view.unmount();
+      appQueryClient.clear();
+    }
+  });
+
+  it.each([
+    { retryNext: '54', continuedAt: '54', refreshPartial: false },
+    { retryNext: '60', continuedAt: '90', refreshPartial: false },
+    { retryNext: null, continuedAt: null, refreshPartial: false },
+    { retryNext: '60', continuedAt: '90', refreshPartial: true }
+  ])(
+    'keeps successful refresh pages and repairs a failed source with retry cursor $retryNext (partial refresh: $refreshPartial)',
+    async ({ retryNext, continuedAt, refreshPartial }) => {
+      appQueryClient.clear();
+      const identities = { linuxdo: 'linuxdo:42', yaohuo: 'yaohuo:43', nodeseek: 'nodeseek:44' };
+      const page = (
+        source: NotificationSource,
+        id: string,
+        cursor: string | null,
+        quality: NotificationPage['quality'] = 'complete'
+      ): NotificationPage => ({
+        items: [{ ...notification, source, id, title: id }],
+        cursor,
+        hasMore: cursor !== null,
+        quality
+      });
+      let phase: 'initial' | 'refresh' | 'partial' | 'complete' = 'initial';
+      const linuxdo = jest.fn<NotificationAdapter['listPage']>(async ({ cursor }) => {
+        if (phase === 'initial') {
+          if (!cursor) return page('linuxdo', 'linuxdo 旧首页', '30');
+          if (cursor === '30') return page('linuxdo', 'linuxdo 旧第 2 页', '60');
+          if (cursor === '60') return page('linuxdo', 'linuxdo 旧第 3 页', '90');
+        }
+        if (phase === 'refresh' && !cursor) return page('linuxdo', 'linuxdo 新首页', '24');
+        if (phase === 'refresh' && cursor === '24' && refreshPartial)
+          return page('linuxdo', 'linuxdo 刷新部分有效消息', '54', 'partial');
+        if (phase === 'partial' && cursor === '24') return page('linuxdo', 'linuxdo 部分有效消息', '54', 'partial');
+        if (phase === 'complete' && cursor === '24') return page('linuxdo', 'linuxdo 恢复第 2 页', retryNext);
+        if (phase === 'complete' && cursor === continuedAt) return page('linuxdo', 'linuxdo 恢复续页', null);
+        throw new Error('linuxdo 消息读取失败');
+      });
+      const yaohuo = jest.fn<NotificationAdapter['listPage']>(async ({ cursor }) => {
+        const index = Number(cursor || '1');
+        const cycle = phase === 'initial' ? '初始' : '刷新';
+        return page('yaohuo', `妖火 ${cycle}第 ${index} 页`, index < 5 ? String(index + 1) : null);
+      });
+      const gateway = createNotificationGateway({
+        adapters: {
+          ...notificationAdapters,
+          linuxdo: { ...notificationAdapters.linuxdo, listPage: linuxdo },
+          yaohuo: { ...notificationAdapters.yaohuo, listPage: yaohuo }
+        },
+        readAccess: (source) => ({ identityKey: identities[source], userId: identities[source].split(':')[1]! }),
+        privateAccessAllowed: () => true,
+        sourceAllowed: () => true
+      });
+      const runtime = routeRuntime(gateway);
+      runtime.enabledNotificationSources = runtime.activeSources = ['linuxdo', 'yaohuo'];
+      runtime.identityKeys = identities;
+      runtime.identitySignature = 'linuxdo:42|yaohuo:43';
+      const view = await render(
+        <NotificationRouteRuntimeProvider value={runtime}>
+          <NavigationContainer>
+            <NotificationsRoute
+              navigation={{ navigate: jest.fn(), setParams: jest.fn() } as never}
+              route={{ key: 'notifications', name: 'notifications', params: undefined }}
+            />
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>,
+        { wrapper: QueryTestWrapper }
+      );
+      try {
+        await view.findByText('linuxdo 旧首页');
+        await fireEvent.press(view.getByTestId('notification-list-end'));
+        await view.findByText('linuxdo 旧第 2 页');
+        await fireEvent.press(view.getByTestId('notification-list-end'));
+        await view.findByText('linuxdo 旧第 3 页');
+        phase = 'refresh';
+        await fireEvent.press(view.getByTestId('notification-list-refresh'));
+        await view.findByText('妖火 刷新第 3 页');
+        if (refreshPartial) {
+          expect(view.getByText('linuxdo 刷新部分有效消息')).toBeTruthy();
+          expect(view.getByText('linuxdo 旧第 2 页')).toBeTruthy();
+          expect(view.getByText('linuxdo 旧第 3 页')).toBeTruthy();
+        }
+        await fireEvent.press(view.getByTestId('notification-list-end'));
+        await view.findByText('妖火 刷新第 4 页');
+        expect(linuxdo.mock.calls.map(([request]) => request.cursor)).toEqual([undefined, '30', '60', undefined, '24']);
+
+        phase = 'partial';
+        await fireEvent.press(view.getByRole('button', { name: '重试 linux.do' }));
+        await view.findByText('linuxdo 部分有效消息');
+        expect(view.getByRole('button', { name: '重试 linux.do' })).toBeTruthy();
+        expect(view.getByText('linuxdo 旧第 2 页')).toBeTruthy();
+        expect(view.getByText('linuxdo 旧第 3 页')).toBeTruthy();
+        expect(linuxdo.mock.calls.at(-1)?.[0].cursor).toBe('24');
+
+        phase = 'complete';
+        await fireEvent.press(view.getByRole('button', { name: '重试 linux.do' }));
+        await view.findByText('linuxdo 恢复第 2 页');
+        expect(view.getByText('linuxdo 新首页')).toBeTruthy();
+        expect(view.queryByText('linuxdo 旧首页')).toBeNull();
+        expect(view.queryByText('linuxdo 部分有效消息')).toBeNull();
+        expect(view.queryByText('linuxdo 刷新部分有效消息')).toBeNull();
+        expect(Boolean(view.queryByText('linuxdo 旧第 3 页'))).toBe(retryNext === '60');
+        expect(view.queryByRole('button', { name: '重试 linux.do' })).toBeNull();
+        await fireEvent.press(view.getByTestId('notification-list-end'));
+        await view.findByText('妖火 刷新第 5 页');
+        expect(linuxdo.mock.calls.map(([request]) => request.cursor)).toEqual([
+          undefined,
+          '30',
+          '60',
+          undefined,
+          '24',
+          '24',
+          '24',
+          ...(continuedAt ? [continuedAt] : [])
+        ]);
+      } finally {
+        await view.unmount();
+        appQueryClient.clear();
+      }
+    }
+  );
+
+  it.each(['failed head', 'retry settles first', 'refresh settles first', 'incompatible cursor'] as const)(
+    'retains loaded history or a newer page retry when %s',
+    async (scenario) => {
+      appQueryClient.clear();
+      const identities = { nodeseek: 'nodeseek:1', linuxdo: 'linuxdo:2', yaohuo: 'yaohuo:3' };
+      const firstRefresh = Promise.withResolvers<NotificationPage>();
+      const sourceRetry = Promise.withResolvers<NotificationPage>();
+      let refreshing = false;
+      let failedRefreshHead = false;
+      let initialLinuxDoSecondPage = true;
+      let retrySignal: AbortSignal | undefined;
+      const page = (source: NotificationSource, id: string, cursor: string | null = null): NotificationPage => ({
+        quality: 'complete',
+        items: [{ ...notification, source, id, title: id }],
+        cursor,
+        hasMore: cursor !== null
+      });
+      const nodeSeek = jest.fn(async ({ cursor }: { cursor?: string | null }) =>
+        cursor
+          ? page('nodeseek', refreshing ? 'NodeSeek 新历史' : 'NodeSeek 旧历史')
+          : page('nodeseek', refreshing ? 'NodeSeek 新首页' : 'NodeSeek 旧首页', refreshing ? null : 'ns:2')
+      );
+      const linuxDo = jest.fn(async ({ cursor, signal }: { cursor?: string | null; signal?: AbortSignal }) => {
+        if (!cursor) {
+          if (refreshing && scenario === 'failed head') {
+            if (failedRefreshHead) return page('linuxdo', 'linux.do 新重试首页', 'ld:2');
+            failedRefreshHead = true;
+            throw new Error('linux.do 首页连接失败');
+          }
+          if (refreshing) return firstRefresh.promise;
+          return page('linuxdo', 'linux.do 旧首页', 'ld:2');
+        }
+        if (cursor === 'ld:3') return page('linuxdo', 'linux.do 第三页');
+        if (scenario === 'failed head') return page('linuxdo', 'linux.do 旧历史', 'ld:3');
+        if (initialLinuxDoSecondPage) {
+          initialLinuxDoSecondPage = false;
+          throw new Error('linux.do 历史暂时不可用');
+        }
+        if (!retrySignal) {
+          retrySignal = signal;
+          return sourceRetry.promise;
+        }
+        return page('linuxdo', 'linux.do 旧刷新回执');
+      });
+      const gateway = createNotificationGateway({
+        adapters: {
+          nodeseek: { listPage: nodeSeek } as unknown as NotificationAdapter,
+          linuxdo: { listPage: linuxDo } as unknown as NotificationAdapter,
+          yaohuo: { listPage: jest.fn(async () => page('yaohuo', '妖火')) } as unknown as NotificationAdapter
+        },
+        readAccess: (source) => ({ identityKey: identities[source], userId: identities[source].split(':')[1]! }),
+        privateAccessAllowed: () => true,
+        sourceAllowed: () => true
+      });
+      const runtime = routeRuntime(gateway);
+      runtime.enabledNotificationSources = runtime.activeSources = ['nodeseek', 'linuxdo'];
+      runtime.identityKeys = { nodeseek: identities.nodeseek, linuxdo: identities.linuxdo };
+      runtime.identitySignature = 'nodeseek|linuxdo:nodeseek:1|linuxdo:2';
+      const view = await render(
+        <NotificationRouteRuntimeProvider value={runtime}>
+          <NavigationContainer>
+            <NotificationsRoute
+              navigation={{ navigate: jest.fn(), setParams: jest.fn() } as never}
+              route={{ key: 'notifications', name: 'notifications', params: undefined }}
+            />
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>,
+        { wrapper: QueryTestWrapper }
+      );
+      try {
+        expect(await view.findByText('linux.do 旧首页')).toBeTruthy();
+        await fireEvent.press(view.getByTestId('notification-list-end'));
+        expect(await view.findByText('NodeSeek 旧历史')).toBeTruthy();
+        if (scenario === 'failed head') expect(await view.findByText('linux.do 旧历史')).toBeTruthy();
+        else expect(await view.findByRole('button', { name: '重试 linux.do' })).toBeTruthy();
+        refreshing = true;
+        await fireEvent.press(view.getByTestId('notification-list-refresh'));
+        if (scenario !== 'failed head') {
+          await waitFor(() => expect(linuxDo).toHaveBeenCalledTimes(3));
+          await fireEvent.press(view.getByRole('button', { name: '重试 linux.do' }));
+          await waitFor(() => expect(retrySignal).toBeDefined());
+          if (scenario === 'retry settles first') {
+            await act(async () => sourceRetry.resolve(page('linuxdo', 'linux.do 新重试成功', 'ld:3')));
+          }
+        }
+        await act(async () =>
+          firstRefresh.resolve(
+            page('linuxdo', 'linux.do 刷新首页', scenario === 'incompatible cursor' ? 'ld:other' : 'ld:2')
+          )
+        );
+        expect(await view.findByText('NodeSeek 新首页')).toBeTruthy();
+        expect(view.queryByText('NodeSeek 旧历史')).toBeNull();
+        if (scenario !== 'failed head') {
+          expect(retrySignal?.aborted).toBe(false);
+          await act(async () => sourceRetry.resolve(page('linuxdo', 'linux.do 新重试成功', 'ld:3')));
+          expect(await view.findByText('linux.do 新重试成功')).toBeTruthy();
+          expect(view.queryByText('linux.do 旧刷新回执')).toBeNull();
+          expect(
+            view.getByText(scenario === 'incompatible cursor' ? 'linux.do 旧首页' : 'linux.do 刷新首页')
+          ).toBeTruthy();
+        } else {
+          expect(view.getByText('linux.do 旧历史')).toBeTruthy();
+          expect(linuxDo.mock.calls.map(([request]) => request.cursor)).toEqual([undefined, 'ld:2', undefined]);
+          await fireEvent.press(view.getByRole('button', { name: '重试 linux.do' }));
+          expect(await view.findByText('linux.do 新重试首页')).toBeTruthy();
+          expect(view.getByText('linux.do 旧历史')).toBeTruthy();
+          await fireEvent.press(view.getByTestId('notification-list-end'));
+          expect(await view.findByText('linux.do 第三页')).toBeTruthy();
+          expect(linuxDo.mock.calls.map(([request]) => request.cursor)).toEqual([
+            undefined,
+            'ld:2',
+            undefined,
+            undefined,
+            'ld:3'
+          ]);
+        }
+      } finally {
+        firstRefresh.resolve(page('linuxdo', 'linux.do 清理首页'));
+        sourceRetry.resolve(page('linuxdo', 'linux.do 清理重试'));
+        await view.unmount();
+      }
+    }
+  );
+
+  it('still applies normal non-raced retries on single-site page zero and aggregate page two', async () => {
+    appQueryClient.clear();
+    const identities: Record<NotificationSource, string> = {
+      nodeseek: 'nodeseek:1',
+      linuxdo: 'linuxdo:2',
+      yaohuo: 'yaohuo:3'
+    };
+    const identitySignature = 'nodeseek|linuxdo:nodeseek:1|linuxdo:2';
+    let singlePage0Failed = false;
+    let aggPage2Failed = false;
+    const singleCursors: (string | null | undefined)[] = [];
+    const aggCursors: (string | null | undefined)[] = [];
+
+    const gateway = createNotificationGateway({
+      adapters: {
+        nodeseek: {
+          listPage: jest.fn(async ({ cursor }: { cursor?: string | null }) => {
+            if (!cursor) {
+              return {
+                quality: 'complete' as const,
+                items: [{ ...notification, source: 'nodeseek', id: 'ns-1', title: 'NodeSeek 第 1 页' }],
+                cursor: 'ns-2',
+                hasMore: true
+              };
+            }
+            if (cursor === 'ns-2') {
+              return {
+                quality: 'complete' as const,
+                items: [{ ...notification, source: 'nodeseek', id: 'ns-2', title: 'NodeSeek 第 2 页' }],
+                cursor: 'ns-3',
+                hasMore: true
+              };
+            }
+            return {
+              quality: 'complete' as const,
+              items: [{ ...notification, source: 'nodeseek', id: 'ns-3', title: 'NodeSeek 第 3 页' }],
+              cursor: null,
+              hasMore: false
+            };
+          })
+        } as unknown as NotificationAdapter,
+        linuxdo: {
+          getCategories: jest.fn(async () => [{ id: 'all', label: '所有通知' }]),
+          listPage: jest.fn(async ({ categoryId, cursor }: { categoryId?: string; cursor?: string | null }) => {
+            if (categoryId) {
+              singleCursors.push(cursor);
+              if (!cursor) {
+                if (!singlePage0Failed) {
+                  singlePage0Failed = true;
+                  throw new Error('单站首页失败');
+                }
+                return {
+                  quality: 'complete' as const,
+                  items: [{ ...notification, source: 'linuxdo', id: 'ld-s1', title: '单站重试恢复首页' }],
+                  cursor: '15',
+                  hasMore: true
+                };
+              }
+              return {
+                quality: 'complete' as const,
+                items: [{ ...notification, source: 'linuxdo', id: 'ld-s2', title: '单站重试下一页' }],
+                cursor: null,
+                hasMore: false
+              };
+            }
+            aggCursors.push(cursor);
+            if (!cursor) {
+              return {
+                quality: 'complete' as const,
+                items: [{ ...notification, source: 'linuxdo', id: 'ld-a1', title: '聚合第 1 页' }],
+                cursor: 'ld-2',
+                hasMore: true
+              };
+            }
+            if (cursor === 'ld-2') {
+              return {
+                quality: 'complete' as const,
+                items: [{ ...notification, source: 'linuxdo', id: 'ld-a2', title: '聚合第 2 页' }],
+                cursor: 'ld-3',
+                hasMore: true
+              };
+            }
+            if (cursor === 'ld-3') {
+              if (!aggPage2Failed) {
+                aggPage2Failed = true;
+                throw new Error('聚合第 3 页失败');
+              }
+              return {
+                quality: 'complete' as const,
+                items: [{ ...notification, source: 'linuxdo', id: 'ld-a3', title: '聚合第 3 页恢复' }],
+                cursor: 'ld-4',
+                hasMore: true
+              };
+            }
+            return {
+              quality: 'complete' as const,
+              items: [{ ...notification, source: 'linuxdo', id: 'ld-a4', title: '聚合第 4 页' }],
+              cursor: null,
+              hasMore: false
+            };
+          })
+        } as unknown as NotificationAdapter,
+        yaohuo: {
+          listPage: jest.fn(async () => ({ quality: 'complete' as const, items: [], cursor: null, hasMore: false }))
+        } as unknown as NotificationAdapter
+      },
+      readAccess: (source) => ({
+        identityKey: identities[source],
+        userId: identities[source].split(':')[1]!
+      }),
+      privateAccessAllowed: () => true,
+      sourceAllowed: () => true
+    });
+
+    const runtime = routeRuntime(gateway);
+    runtime.enabledNotificationSources = ['nodeseek', 'linuxdo'];
+    runtime.activeSources = ['nodeseek', 'linuxdo'];
+    runtime.identityKeys = { nodeseek: identities.nodeseek, linuxdo: identities.linuxdo };
+    runtime.identitySignature = identitySignature;
+
+    const view = await render(
+      <NotificationRouteRuntimeProvider value={runtime}>
+        <NavigationContainer>
+          <NotificationsRoute
+            navigation={{ navigate: jest.fn(), setParams: jest.fn() } as never}
+            route={{ key: 'notifications', name: 'notifications', params: undefined }}
+          />
+        </NavigationContainer>
+      </NotificationRouteRuntimeProvider>,
+      { wrapper: QueryTestWrapper }
+    );
+
+    try {
+      expect(await view.findByText('聚合第 1 页')).toBeTruthy();
+      await fireEvent.press(view.getByTestId('notification-list-end'));
+      expect(await view.findByText('聚合第 2 页')).toBeTruthy();
+      await fireEvent.press(view.getByTestId('notification-list-end'));
+      expect(await view.findByRole('button', { name: '重试 linux.do' })).toBeTruthy();
+
+      await fireEvent.press(view.getByRole('button', { name: '重试 linux.do' }));
+      expect(await view.findByText('聚合第 3 页恢复')).toBeTruthy();
+      expect(view.queryByRole('button', { name: '重试 linux.do' })).toBeNull();
+      await fireEvent.press(view.getByTestId('notification-list-end'));
+      expect(await view.findByText('聚合第 4 页')).toBeTruthy();
+      expect(aggCursors).toEqual([undefined, 'ld-2', 'ld-3', 'ld-3', 'ld-4']);
+
+      await fireEvent.press(view.getByTestId('notification-source-linuxdo'));
+      expect(await view.findByRole('button', { name: '重试 linux.do' })).toBeTruthy();
+      await fireEvent.press(view.getByRole('button', { name: '重试 linux.do' }));
+      expect(await view.findByText('单站重试恢复首页')).toBeTruthy();
+      expect(view.queryByRole('button', { name: '重试 linux.do' })).toBeNull();
+      await fireEvent.press(view.getByTestId('notification-list-end'));
+      expect(await view.findByText('单站重试下一页')).toBeTruthy();
+      expect(singleCursors).toEqual([undefined, undefined, '15']);
+    } finally {
+      await view.unmount();
+      appQueryClient.clear();
+    }
+  });
+
+  it.each(['switched-to-confirmed', 'switched-to-anonymous', 'switched-while-still-unknown'] as const)(
+    'ignores a stale unified account-status retry callback after an account switch while staying on all sources: %s',
+    async (mode) => {
+      appQueryClient.clear();
+      const identities: Record<NotificationSource, string> = {
+        nodeseek: 'nodeseek:userA',
+        linuxdo: 'linuxdo:userA',
+        yaohuo: 'yaohuo:userA'
+      };
+      const makeAdapter = (source: NotificationSource): NotificationAdapter =>
+        ({
+          listPage: jest.fn(async () => ({
+            quality: 'complete' as const,
+            items: [{ ...notification, source, id: `${source}-1`, title: `${source} 新账号消息` }],
+            cursor: null,
+            hasMore: false
+          }))
+        }) as unknown as NotificationAdapter;
+      const gateway = createNotificationGateway({
+        adapters: {
+          nodeseek: makeAdapter('nodeseek'),
+          linuxdo: makeAdapter('linuxdo'),
+          yaohuo: makeAdapter('yaohuo')
+        },
+        readAccess: (source) => ({
+          identityKey: identities[source],
+          userId: identities[source].split(':')[1]!
+        }),
+        privateAccessAllowed: () => true,
+        sourceAllowed: () => true
+      });
+      const listAllPageSpy = jest.spyOn(gateway, 'listAllPage');
+      const listPageSpy = jest.spyOn(gateway, 'listPage');
+
+      let currentRuntime = routeRuntime(gateway);
+      currentRuntime.activeSources = [];
+      currentRuntime.identityKeys = { ...identities };
+      currentRuntime.identitySignature = 'nodeseek|linuxdo|yaohuo:nodeseek:userA|linuxdo:userA|yaohuo:userA';
+      for (const site of notificationSources) {
+        currentRuntime.sessions[site] = { ...currentRuntime.sessions[site], identityTrust: 'unknown' };
+      }
+
+      const tree = (value: NotificationRouteRuntimeValue) => (
+        <NotificationRouteRuntimeProvider value={value}>
+          <NavigationContainer>
+            <NotificationsRoute
+              navigation={{ navigate: jest.fn(), setParams: jest.fn() } as never}
+              route={{ key: 'notifications', name: 'notifications', params: undefined }}
+            />
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>
+      );
+
+      let view: Awaited<ReturnType<typeof render>> | undefined;
+      const reconcile = jest.fn<NotificationRouteRuntimeValue['reconcileAccountStatus']>(async (candidate) => {
+        const nextActive = notificationSources.filter(
+          (site) => currentRuntime.activeSources.includes(site) || site === candidate
+        );
+        currentRuntime = {
+          ...currentRuntime,
+          activeSources: nextActive,
+          sessions: {
+            ...currentRuntime.sessions,
+            [candidate]: { ...currentRuntime.sessions[candidate], isLoggedIn: true, identityTrust: 'confirmed' }
+          }
+        };
+        await view!.rerender(tree(currentRuntime));
+        return { status: 'same', session: createSiteSessionStates()[candidate] };
+      });
+      currentRuntime.reconcileAccountStatus = reconcile;
+
+      view = await render(tree(currentRuntime), { wrapper: QueryTestWrapper });
+      try {
+        expect(view.getByText('账号状态暂不可确认')).toBeTruthy();
+        expect(mockListNavigationProps.source).toBe('all');
+        expect(mockListNavigationProps.categoryId).toBe('');
+        expect(mockListNavigationProps.unreadOnly).toBe(false);
+        expect(view.getByRole('button', { name: '重试账号核对' })).toBeTruthy();
+        const staleUnifiedRetry = mockListNavigationProps.onRetryAccountStatus;
+
+        // Switch NodeSeek account while remaining on "全部" with identical source/categoryId/unreadOnly.
+        if (mode === 'switched-to-confirmed') {
+          identities.nodeseek = 'nodeseek:userB';
+          currentRuntime = {
+            ...currentRuntime,
+            activeSources: ['nodeseek'],
+            identityKeys: { ...currentRuntime.identityKeys, nodeseek: 'nodeseek:userB' },
+            identitySignature: 'nodeseek|linuxdo|yaohuo:nodeseek:userB|linuxdo:userA|yaohuo:userA',
+            sessionEpochs: { ...currentRuntime.sessionEpochs, nodeseek: 1 },
+            sessions: {
+              ...currentRuntime.sessions,
+              nodeseek: {
+                ...currentRuntime.sessions.nodeseek,
+                isLoggedIn: true,
+                identityTrust: 'confirmed',
+                currentUser: { ...testAccountUser('nodeseek'), id: 'userB' }
+              }
+            }
+          };
+        } else if (mode === 'switched-to-anonymous') {
+          currentRuntime = {
+            ...currentRuntime,
+            activeSources: [],
+            identityKeys: { ...currentRuntime.identityKeys, nodeseek: undefined },
+            identitySignature: 'nodeseek|linuxdo|yaohuo:nodeseek:none|linuxdo:userA|yaohuo:userA',
+            sessionEpochs: { ...currentRuntime.sessionEpochs, nodeseek: 1 },
+            sessions: {
+              ...currentRuntime.sessions,
+              nodeseek: {
+                ...currentRuntime.sessions.nodeseek,
+                isLoggedIn: false,
+                identityTrust: 'none',
+                currentUser: undefined
+              }
+            }
+          };
+        } else {
+          identities.nodeseek = 'nodeseek:userB';
+          currentRuntime = {
+            ...currentRuntime,
+            activeSources: [],
+            identityKeys: { ...currentRuntime.identityKeys, nodeseek: 'nodeseek:userB' },
+            identitySignature: 'nodeseek|linuxdo|yaohuo:nodeseek:userB|linuxdo:userA|yaohuo:userA',
+            sessionEpochs: { ...currentRuntime.sessionEpochs, nodeseek: 1 }
+          };
+        }
+        await view.rerender(tree(currentRuntime));
+
+        expect(mockListNavigationProps.source).toBe('all');
+        expect(mockListNavigationProps.categoryId).toBe('');
+        expect(mockListNavigationProps.unreadOnly).toBe(false);
+        if (mode === 'switched-to-confirmed') {
+          expect(await view.findByText('nodeseek 新账号消息')).toBeTruthy();
+          expect(view.queryByRole('button', { name: '重试账号核对' })).toBeNull();
+        } else if (mode === 'switched-to-anonymous') {
+          expect(view.queryByRole('button', { name: '重试账号核对' })).toBeNull();
+        }
+
+        const listAllCallsBeforeStale = listAllPageSpy.mock.calls.length;
+        const listPageCallsBeforeStale = listPageSpy.mock.calls.length;
+
+        await act(async () => {
+          await staleUnifiedRetry();
+        });
+
+        expect(reconcile).not.toHaveBeenCalled();
+        expect(listAllPageSpy).toHaveBeenCalledTimes(listAllCallsBeforeStale);
+        expect(listPageSpy).toHaveBeenCalledTimes(listPageCallsBeforeStale);
+
+        if (mode === 'switched-while-still-unknown') {
+          await fireEvent.press(view.getByRole('button', { name: '重试账号核对' }));
+          expect(await view.findByText('nodeseek 新账号消息')).toBeTruthy();
+          expect(await view.findByText('linuxdo 新账号消息')).toBeTruthy();
+          expect(await view.findByText('yaohuo 新账号消息')).toBeTruthy();
+          expect(reconcile.mock.calls.map(([site]) => site)).toEqual(['nodeseek', 'linuxdo', 'yaohuo']);
+        }
+      } finally {
+        await view.unmount();
+        appQueryClient.clear();
+      }
+    }
+  );
+
+  it.each(['poll-first', 'backfill-first'] as const)(
+    'keeps pending linuxdo verification backfill eligible and clears its block when 60s poll only reads NodeSeek (%s)',
+    async (order) => {
+      jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+      focusManager.setFocused(true);
+      appQueryClient.clear();
+      const identities: Record<NotificationSource, string> = {
+        nodeseek: 'nodeseek:1',
+        linuxdo: 'linuxdo:2',
+        yaohuo: 'yaohuo:3'
+      };
+      const identitySignature = 'nodeseek|linuxdo:nodeseek:1|linuxdo:2';
+      const pendingBackfill = Promise.withResolvers<NotificationPage>();
+      const pendingPollNodeSeek = Promise.withResolvers<NotificationPage>();
+      let nodeSeekInitialCalls = 0;
+      let linuxdoCalls = 0;
+      const requestedAllSources: NotificationSource[][] = [];
+      const requestedLinuxdoCursors: (string | null | undefined)[] = [];
+      const requestedNodeSeekCursors: (string | null | undefined)[] = [];
+
+      const gateway = createNotificationGateway({
+        adapters: {
+          nodeseek: {
+            listPage: jest.fn(async ({ cursor }: { cursor?: string | null }) => {
+              requestedNodeSeekCursors.push(cursor);
+              if (!cursor) {
+                nodeSeekInitialCalls += 1;
+                if (nodeSeekInitialCalls === 1) {
+                  return {
+                    quality: 'complete' as const,
+                    items: [{ ...notification, source: 'nodeseek', id: 'ns-1', title: 'NodeSeek 首轮消息' }],
+                    cursor: 'ns-2',
+                    hasMore: true
+                  };
+                }
+                return pendingPollNodeSeek.promise;
+              }
+              return {
+                quality: 'complete' as const,
+                items: [{ ...notification, source: 'nodeseek', id: 'ns-p2', title: 'NodeSeek 轮询次页' }],
+                cursor: null,
+                hasMore: false
+              };
+            })
+          } as unknown as NotificationAdapter,
+          linuxdo: {
+            listPage: jest.fn(async ({ cursor }: { cursor?: string | null }) => {
+              requestedLinuxdoCursors.push(cursor);
+              if (!cursor) {
+                linuxdoCalls += 1;
+                if (linuxdoCalls === 1) {
+                  throw Object.assign(new Error('请先完成 Cloudflare 验证'), { verificationRequired: true });
+                }
+                return pendingBackfill.promise;
+              }
+              return {
+                quality: 'complete' as const,
+                items: [{ ...notification, source: 'linuxdo', id: 'ld-p2', title: 'linuxdo 补读次页' }],
+                cursor: null,
+                hasMore: false
+              };
+            })
+          } as unknown as NotificationAdapter,
+          yaohuo: {
+            listPage: jest.fn(async () => ({ quality: 'complete' as const, items: [], cursor: null, hasMore: false }))
+          } as unknown as NotificationAdapter
+        },
+        readAccess: (source) => ({
+          identityKey: identities[source],
+          userId: identities[source].split(':')[1]!
+        }),
+        privateAccessAllowed: () => true,
+        sourceAllowed: () => true
+      });
+      const listAllPageOriginal = gateway.listAllPage;
+      const listAllPageSpy = jest.spyOn(gateway, 'listAllPage').mockImplementation((options) => {
+        requestedAllSources.push([...options.sources]);
+        return listAllPageOriginal(options);
+      });
+      const listPageSpy = jest.spyOn(gateway, 'listPage');
+
+      const readBlocks = new Map<NotificationSource, { epoch: number; error: SourceErrorInfo }>();
+      let capturedRecovery: ReadRecovery | undefined;
+      let view: Awaited<ReturnType<typeof render>> | undefined;
+      let currentRuntime!: NotificationRouteRuntimeValue;
+      const rerenderRuntime = () => {
+        currentRuntime = { ...currentRuntime };
+        view?.rerender(tree(currentRuntime));
+      };
+      const clearReadBlock = jest.fn((source: NotificationSource, epoch: number) => {
+        if (readBlocks.get(source)?.epoch === epoch) {
+          readBlocks.delete(source);
+          rerenderRuntime();
+        }
+      });
+      const reportReadError = jest.fn((source: NotificationSource, error: SourceErrorInfo, epoch: number) => {
+        if (
+          error.kind === 'verification-required' ||
+          error.kind === 'login-required' ||
+          error.kind === 'login-expired'
+        ) {
+          readBlocks.set(source, { epoch, error });
+          rerenderRuntime();
+        }
+      });
+      const getReadBlock = jest.fn((source: NotificationSource) => {
+        const block = readBlocks.get(source);
+        return block && block.epoch === currentRuntime.sessionEpochs[source] ? block.error : undefined;
+      });
+
+      currentRuntime = {
+        ...routeRuntime(gateway),
+        enabledNotificationSources: ['nodeseek', 'linuxdo'],
+        activeSources: ['nodeseek', 'linuxdo'],
+        identityKeys: { nodeseek: identities.nodeseek, linuxdo: identities.linuxdo },
+        identitySignature,
+        clearReadBlock,
+        getReadBlock,
+        reportReadError,
+        openAccountSurface: jest.fn(async (_source, _message, recovery?: ReadRecovery) => {
+          capturedRecovery = recovery;
+        })
+      };
+
+      const tree = (value: NotificationRouteRuntimeValue) => (
+        <NotificationRouteRuntimeProvider value={value}>
+          <NavigationContainer>
+            <NotificationsRoute
+              navigation={{ navigate: jest.fn(), setParams: jest.fn() } as never}
+              route={{ key: 'notifications', name: 'notifications', params: undefined }}
+            />
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>
+      );
+
+      let resumePromise: Promise<string> | undefined;
+      view = await render(tree(currentRuntime), { wrapper: QueryTestWrapper });
+      try {
+        expect(await view.findByText('NodeSeek 首轮消息')).toBeTruthy();
+        expect(await view.findByRole('button', { name: '去验证 linux.do' })).toBeTruthy();
+        expect(readBlocks.get('linuxdo')?.error.kind).toBe('verification-required');
+
+        await fireEvent.press(view.getByRole('button', { name: '去验证 linux.do' }));
+        expect(capturedRecovery).toBeDefined();
+
+        // Start linux.do verification backfill; linux.do read block is still active until backfill completes.
+        await act(async () => {
+          resumePromise = capturedRecovery!.resume();
+        });
+        await waitFor(() => expect(linuxdoCalls).toBe(2));
+
+        // Trigger the 60s aggregate poll while linux.do backfill is still pending.
+        await act(async () => {
+          await jest.advanceTimersByTimeAsync(60_000);
+        });
+        await waitFor(() => expect(nodeSeekInitialCalls).toBe(2));
+        expect(requestedAllSources).toEqual([['nodeseek', 'linuxdo'], ['nodeseek']]);
+
+        const settlePoll = async () => {
+          await act(async () => {
+            pendingPollNodeSeek.resolve({
+              quality: 'complete',
+              items: [{ ...notification, source: 'nodeseek', id: 'ns-poll-1', title: 'NodeSeek 轮询新消息' }],
+              cursor: 'ns-poll-2',
+              hasMore: true
+            });
+            await Promise.resolve();
+          });
+        };
+        const settleBackfill = async () => {
+          await act(async () => {
+            pendingBackfill.resolve({
+              quality: 'complete',
+              items: [{ ...notification, source: 'linuxdo', id: 'ld-bf-1', title: 'linuxdo 验证补读消息' }],
+              cursor: 'ld-2',
+              hasMore: true
+            });
+            await Promise.resolve();
+          });
+        };
+
+        if (order === 'poll-first') {
+          await settlePoll();
+          await settleBackfill();
+        } else {
+          await settleBackfill();
+          await settlePoll();
+        }
+
+        const outcome = await act(async () => resumePromise);
+        expect(outcome).toBe('completed');
+        expect(await view.findByText('NodeSeek 轮询新消息')).toBeTruthy();
+        expect(await view.findByText('linuxdo 验证补读消息')).toBeTruthy();
+        expect(readBlocks.get('linuxdo')).toBeUndefined();
+        expect(clearReadBlock).toHaveBeenCalledWith('linuxdo', 0);
+        expect(view.queryByRole('button', { name: '去验证 linux.do' })).toBeNull();
+
+        // Next pagination continues with BOTH NodeSeek's new poll cursor and linux.do's backfill cursor.
+        await waitFor(() => expect(view.getByTestId('notification-list-end').props.onPress).toBeDefined());
+        await fireEvent.press(view.getByTestId('notification-list-end'));
+        expect(await view.findByText('NodeSeek 轮询次页')).toBeTruthy();
+        expect(await view.findByText('linuxdo 补读次页')).toBeTruthy();
+        expect(requestedAllSources).toEqual([['nodeseek', 'linuxdo'], ['nodeseek'], ['nodeseek', 'linuxdo']]);
+        expect(requestedNodeSeekCursors).toEqual([undefined, undefined, 'ns-poll-2']);
+        expect(requestedLinuxdoCursors).toEqual([undefined, undefined, 'ld-2']);
+        expect(listAllPageSpy).toHaveBeenCalledTimes(3);
+        expect(listPageSpy.mock.calls.filter(([site]) => site === 'linuxdo')).toHaveLength(1);
+      } finally {
+        pendingBackfill.resolve({ quality: 'complete', items: [], cursor: null, hasMore: false });
+        pendingPollNodeSeek.resolve({ quality: 'complete', items: [], cursor: null, hasMore: false });
+        await resumePromise?.catch(() => undefined);
+        await view.unmount();
+        appQueryClient.clear();
+        focusManager.setFocused(true);
+        jest.useRealTimers();
+      }
+    }
+  );
+
+  it.each<['older-first' | 'newer-first', 'success' | 'failure', 'success' | 'failure']>([
+    ['older-first', 'success', 'success'],
+    ['newer-first', 'success', 'success'],
+    ['older-first', 'success', 'failure'],
+    ['newer-first', 'success', 'failure'],
+    ['older-first', 'failure', 'success'],
+    ['newer-first', 'failure', 'success'],
+    ['older-first', 'failure', 'failure'],
+    ['newer-first', 'failure', 'failure']
+  ])(
+    'always keeps the newer valid read when older aggregate and newer source retry callbacks swap completion order (%s, older=%s, newer=%s)',
+    async (order, olderOutcome, newerOutcome) => {
+      appQueryClient.clear();
+      focusManager.setFocused(true);
+      const identities: Record<NotificationSource, string> = {
+        nodeseek: 'nodeseek:1',
+        linuxdo: 'linuxdo:2',
+        yaohuo: 'yaohuo:3'
+      };
+      const identitySignature = 'nodeseek|linuxdo:nodeseek:1|linuxdo:2';
+      const listQueryKey = forumQueryKeys.notificationList({
+        source: 'all',
+        categoryId: null,
+        identityKey: identitySignature,
+        unreadOnly: false
+      });
+      const pendingOlderNodeSeek = Promise.withResolvers<NotificationPage>();
+      const pendingOlderLinuxdo = Promise.withResolvers<NotificationPage>();
+      const pendingNewerLinuxdo = Promise.withResolvers<NotificationPage>();
+      let nodeSeekInitialCalls = 0;
+      let linuxdoInitialCalls = 0;
+      const nextLinuxdoCursors: (string | null | undefined)[] = [];
+
+      const gateway = createNotificationGateway({
+        adapters: {
+          nodeseek: {
+            listPage: jest.fn(async ({ cursor }: { cursor?: string | null }) => {
+              if (!cursor) {
+                nodeSeekInitialCalls += 1;
+                if (nodeSeekInitialCalls === 1) {
+                  return {
+                    quality: 'complete' as const,
+                    items: [{ ...notification, source: 'nodeseek', id: 'ns-init', title: 'NodeSeek 初始消息' }],
+                    cursor: null,
+                    hasMore: false
+                  };
+                }
+                return pendingOlderNodeSeek.promise;
+              }
+              return { quality: 'complete' as const, items: [], cursor: null, hasMore: false };
+            })
+          } as unknown as NotificationAdapter,
+          linuxdo: {
+            listPage: jest.fn(async ({ cursor }: { cursor?: string | null }) => {
+              if (!cursor) {
+                linuxdoInitialCalls += 1;
+                if (linuxdoInitialCalls === 1) throw new Error('初始加载失败');
+                if (linuxdoInitialCalls === 2) return pendingOlderLinuxdo.promise;
+                return pendingNewerLinuxdo.promise;
+              }
+              nextLinuxdoCursors.push(cursor);
+              return {
+                quality: 'complete' as const,
+                items: [
+                  { ...notification, source: 'linuxdo', id: `ld-next-${cursor}`, title: `linuxdo 续页 ${cursor}` }
+                ],
+                cursor: null,
+                hasMore: false
+              };
+            })
+          } as unknown as NotificationAdapter,
+          yaohuo: {
+            listPage: jest.fn(async () => ({ quality: 'complete' as const, items: [], cursor: null, hasMore: false }))
+          } as unknown as NotificationAdapter
+        },
+        readAccess: (source) => ({
+          identityKey: identities[source],
+          userId: identities[source].split(':')[1]!
+        }),
+        privateAccessAllowed: () => true,
+        sourceAllowed: () => true
+      });
+
+      const readBlocks = new Map<NotificationSource, { epoch: number; error: SourceErrorInfo }>();
+      let view: Awaited<ReturnType<typeof render>> | undefined;
+      let currentRuntime!: NotificationRouteRuntimeValue;
+      const rerenderRuntime = () => {
+        currentRuntime = { ...currentRuntime };
+        view?.rerender(tree(currentRuntime));
+      };
+      currentRuntime = {
+        ...routeRuntime(gateway),
+        enabledNotificationSources: ['nodeseek', 'linuxdo'],
+        activeSources: ['nodeseek', 'linuxdo'],
+        identityKeys: { nodeseek: identities.nodeseek, linuxdo: identities.linuxdo },
+        identitySignature,
+        clearReadBlock: jest.fn((source: NotificationSource, epoch: number) => {
+          if (readBlocks.get(source)?.epoch === epoch) {
+            readBlocks.delete(source);
+            rerenderRuntime();
+          }
+        }),
+        getReadBlock: jest.fn((source: NotificationSource) => {
+          const block = readBlocks.get(source);
+          return block && block.epoch === currentRuntime.sessionEpochs[source] ? block.error : undefined;
+        }),
+        reportReadError: jest.fn((source: NotificationSource, error: SourceErrorInfo, epoch: number) => {
+          if (
+            error.kind === 'verification-required' ||
+            error.kind === 'login-required' ||
+            error.kind === 'login-expired'
+          ) {
+            readBlocks.set(source, { epoch, error });
+            rerenderRuntime();
+          }
+        })
+      };
+
+      const tree = (value: NotificationRouteRuntimeValue) => (
+        <NotificationRouteRuntimeProvider value={value}>
+          <NavigationContainer>
+            <NotificationsRoute
+              navigation={{ navigate: jest.fn(), setParams: jest.fn() } as never}
+              route={{ key: 'notifications', name: 'notifications', params: undefined }}
+            />
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>
+      );
+
+      let refetchPromise: Promise<void> | undefined;
+      view = await render(tree(currentRuntime), { wrapper: QueryTestWrapper });
+      try {
+        expect(await view.findByText('NodeSeek 初始消息')).toBeTruthy();
+        expect(await view.findByRole('button', { name: '重试 linux.do' })).toBeTruthy();
+
+        // Launch older aggregate refetch reading BOTH NodeSeek and linux.do.
+        await act(async () => {
+          refetchPromise = appQueryClient.refetchQueries({ queryKey: listQueryKey, exact: true });
+        });
+        await waitFor(() => expect(linuxdoInitialCalls).toBe(2));
+
+        // While older aggregate refetch is still in flight, user triggers newer retry for linux.do.
+        await fireEvent.press(view.getByRole('button', { name: '重试 linux.do' }));
+        await waitFor(() => expect(linuxdoInitialCalls).toBe(3));
+
+        const settleOlder = async () => {
+          await act(async () => {
+            pendingOlderNodeSeek.resolve({
+              quality: 'complete',
+              items: [{ ...notification, source: 'nodeseek', id: 'ns-poll', title: 'NodeSeek 轮询更新消息' }],
+              cursor: null,
+              hasMore: false
+            });
+            if (olderOutcome === 'success') {
+              pendingOlderLinuxdo.resolve({
+                quality: 'complete',
+                items: [{ ...notification, source: 'linuxdo', id: 'ld-older', title: '旧聚合成功消息' }],
+                cursor: 'ld-old-2',
+                hasMore: true
+              });
+            } else {
+              pendingOlderLinuxdo.reject(Object.assign(new Error('旧聚合验证失败'), { verificationRequired: true }));
+            }
+            await refetchPromise;
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
+          });
+        };
+        const settleNewer = async () => {
+          await act(async () => {
+            if (newerOutcome === 'success') {
+              pendingNewerLinuxdo.resolve({
+                quality: 'complete',
+                items: [{ ...notification, source: 'linuxdo', id: 'ld-newer', title: '新重试成功消息' }],
+                cursor: 'ld-new-2',
+                hasMore: true
+              });
+            } else {
+              pendingNewerLinuxdo.reject(new Error('新重试失败'));
+            }
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
+          });
+        };
+
+        if (order === 'older-first') {
+          await settleOlder();
+          await settleNewer();
+        } else {
+          await settleNewer();
+          await settleOlder();
+        }
+
+        expect(await view.findByText('NodeSeek 轮询更新消息')).toBeTruthy();
+        if (newerOutcome === 'success') {
+          expect(await view.findByText('新重试成功消息')).toBeTruthy();
+          expect(view.queryByText('旧聚合成功消息')).toBeNull();
+          expect(view.queryByText(/旧聚合验证失败|新重试失败|初始加载失败/)).toBeNull();
+          expect(view.queryByRole('button', { name: '重试 linux.do' })).toBeNull();
+          expect(view.queryByRole('button', { name: '去验证 linux.do' })).toBeNull();
+          expect(readBlocks.get('linuxdo')).toBeUndefined();
+
+          await waitFor(() => expect(view.getByTestId('notification-list-end').props.onPress).toBeDefined());
+          await fireEvent.press(view.getByTestId('notification-list-end'));
+          expect(await view.findByText('linuxdo 续页 ld-new-2')).toBeTruthy();
+          expect(nextLinuxdoCursors).toEqual(['ld-new-2']);
+        } else {
+          expect(await view.findByText('新重试失败')).toBeTruthy();
+          expect(view.queryByText('旧聚合成功消息')).toBeNull();
+          expect(view.queryByText('旧聚合验证失败')).toBeNull();
+          expect(view.queryByRole('button', { name: '去验证 linux.do' })).toBeNull();
+          expect(readBlocks.get('linuxdo')).toBeUndefined();
+        }
+      } finally {
+        pendingOlderNodeSeek.resolve({ quality: 'complete', items: [], cursor: null, hasMore: false });
+        pendingOlderLinuxdo.resolve({ quality: 'complete', items: [], cursor: null, hasMore: false });
+        pendingNewerLinuxdo.resolve({ quality: 'complete', items: [], cursor: null, hasMore: false });
+        await refetchPromise?.catch(() => undefined);
+        await view.unmount();
+        appQueryClient.clear();
+      }
+    }
+  );
+
+  it.each(['success', 'failure'] as const)(
+    'prevents a stale offset pagination callback from reattaching after a full-chain refresh and continues from the new cursor (%s)',
+    async (outcome) => {
+      appQueryClient.clear();
+      focusManager.setFocused(true);
+      const identities: Record<NotificationSource, string> = {
+        nodeseek: 'nodeseek:1',
+        linuxdo: 'linuxdo:2',
+        yaohuo: 'yaohuo:3'
+      };
+      const identitySignature = 'nodeseek|linuxdo:nodeseek:1|linuxdo:2';
+      const pendingOldOffset = Promise.withResolvers<NotificationPage>();
+      let refreshStarted = false;
+      let oldOffsetStarted = false;
+      const linuxdoCursors: (string | null | undefined)[] = [];
+      const nodeSeekCursors: (string | null | undefined)[] = [];
+
+      const gateway = createNotificationGateway({
+        adapters: {
+          nodeseek: {
+            listPage: jest.fn(async ({ cursor }: { cursor?: string | null }) => {
+              nodeSeekCursors.push(cursor);
+              if (!cursor) {
+                return refreshStarted
+                  ? {
+                      quality: 'complete' as const,
+                      items: [{ ...notification, source: 'nodeseek', id: 'ns-r1', title: 'NodeSeek 刷新首页' }],
+                      cursor: 'ns-r2',
+                      hasMore: true
+                    }
+                  : {
+                      quality: 'complete' as const,
+                      items: [{ ...notification, source: 'nodeseek', id: 'ns-1', title: 'NodeSeek 初始首页' }],
+                      cursor: 'ns-2',
+                      hasMore: true
+                    };
+              }
+              if (cursor === 'ns-2') {
+                return {
+                  quality: 'complete' as const,
+                  items: [{ ...notification, source: 'nodeseek', id: 'ns-2', title: 'NodeSeek 旧第2页' }],
+                  cursor: null,
+                  hasMore: false
+                };
+              }
+              return {
+                quality: 'complete' as const,
+                items: [{ ...notification, source: 'nodeseek', id: 'ns-r2', title: 'NodeSeek 新链第2页' }],
+                cursor: null,
+                hasMore: false
+              };
+            })
+          } as unknown as NotificationAdapter,
+          linuxdo: {
+            listPage: jest.fn(async ({ cursor }: { cursor?: string | null }) => {
+              linuxdoCursors.push(cursor);
+              if (!cursor) {
+                return refreshStarted
+                  ? {
+                      quality: 'complete' as const,
+                      items: [{ ...notification, source: 'linuxdo', id: 'ld-r1', title: 'linuxdo 刷新首页' }],
+                      cursor: 'ld-r2',
+                      hasMore: true
+                    }
+                  : {
+                      quality: 'complete' as const,
+                      items: [{ ...notification, source: 'linuxdo', id: 'ld-1', title: 'linuxdo 初始首页' }],
+                      cursor: 'ld-2',
+                      hasMore: true
+                    };
+              }
+              if (cursor === 'ld-2') {
+                oldOffsetStarted = true;
+                return pendingOldOffset.promise;
+              }
+              return {
+                quality: 'complete' as const,
+                items: [{ ...notification, source: 'linuxdo', id: 'ld-r2', title: 'linuxdo 新链第2页' }],
+                cursor: null,
+                hasMore: false
+              };
+            })
+          } as unknown as NotificationAdapter,
+          yaohuo: {
+            listPage: jest.fn(async () => ({ quality: 'complete' as const, items: [], cursor: null, hasMore: false }))
+          } as unknown as NotificationAdapter
+        },
+        readAccess: (source) => ({
+          identityKey: identities[source],
+          userId: identities[source].split(':')[1]!
+        }),
+        privateAccessAllowed: () => true,
+        sourceAllowed: () => true
+      });
+      // Simulate an aggregate transport whose older offset call settles even after abort.
+      const originalListAll = gateway.listAllPage;
+      jest.spyOn(gateway, 'listAllPage').mockImplementation(async (options) => {
+        if (options.cursors?.linuxdo === 'ld-2') {
+          oldOffsetStarted = true;
+          try {
+            const page = await pendingOldOffset.promise;
+            return {
+              items: page.items,
+              errors: {},
+              qualities: { linuxdo: page.quality },
+              nextCursors: { linuxdo: page.cursor },
+              hasMore: page.hasMore
+            };
+          } catch (error) {
+            return {
+              items: [],
+              errors: { linuxdo: sourceErrorFromUnknown('linuxdo', error) },
+              qualities: { linuxdo: 'invalid' },
+              nextCursors: { linuxdo: null },
+              hasMore: false
+            };
+          }
+        }
+        return originalListAll(options);
+      });
+
+      const reportReadError = jest.fn();
+      const runtime: NotificationRouteRuntimeValue = {
+        ...routeRuntime(gateway),
+        enabledNotificationSources: ['nodeseek', 'linuxdo'],
+        activeSources: ['nodeseek', 'linuxdo'],
+        identityKeys: { nodeseek: identities.nodeseek, linuxdo: identities.linuxdo },
+        identitySignature,
+        reportReadError
+      };
+
+      const view = await render(
+        <NotificationRouteRuntimeProvider value={runtime}>
+          <NavigationContainer>
+            <NotificationsRoute
+              navigation={{ navigate: jest.fn(), setParams: jest.fn() } as never}
+              route={{ key: 'notifications', name: 'notifications', params: undefined }}
+            />
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>,
+        { wrapper: QueryTestWrapper }
+      );
+      try {
+        expect(await view.findByText('linuxdo 初始首页')).toBeTruthy();
+
+        // Start forward pagination with old offset cursor ld-2.
+        await fireEvent.press(view.getByTestId('notification-list-end'));
+        await waitFor(() => expect(oldOffsetStarted).toBe(true));
+
+        // Full-chain refresh starts and replaces page chain with ld-r2 / ns-r2.
+        refreshStarted = true;
+        await fireEvent.press(view.getByTestId('notification-list-refresh'));
+        expect(await view.findByText('linuxdo 刷新首页')).toBeTruthy();
+
+        // Late old offset callback settles after full-chain refresh completed.
+        await act(async () => {
+          if (outcome === 'success') {
+            pendingOldOffset.resolve({
+              quality: 'complete',
+              items: [{ ...notification, source: 'linuxdo', id: 'ld-old-2', title: '旧分页回调消息' }],
+              cursor: 'ld-old-3',
+              hasMore: true
+            });
+          } else {
+            pendingOldOffset.reject(Object.assign(new Error('旧分页验证失败'), { verificationRequired: true }));
+          }
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        });
+
+        expect(view.queryByText('旧分页回调消息')).toBeNull();
+        expect(view.queryByText('旧分页验证失败')).toBeNull();
+        expect(reportReadError).not.toHaveBeenCalled();
+
+        await waitFor(() => expect(view.getByTestId('notification-list-end').props.onPress).toBeDefined());
+        await fireEvent.press(view.getByTestId('notification-list-end'));
+        expect(await view.findByText('linuxdo 新链第2页')).toBeTruthy();
+        expect(await view.findByText('NodeSeek 新链第2页')).toBeTruthy();
+        expect(linuxdoCursors).not.toContain('ld-old-3');
+        expect(linuxdoCursors.at(-1)).toBe('ld-r2');
+        expect(nodeSeekCursors.at(-1)).toBe('ns-r2');
+      } finally {
+        pendingOldOffset.resolve({ quality: 'complete', items: [], cursor: null, hasMore: false });
+        await view.unmount();
+        appQueryClient.clear();
+      }
+    }
+  );
+
+  it.each(['blur', 'account-switch', 'verification-cancel'] as const)(
+    'stops stale verification backfill after waiting for an aggregate poll when %s happens mid-wait',
+    async (change) => {
+      jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+      focusManager.setFocused(true);
+      appQueryClient.clear();
+      let linuxdoIdentity = 'linuxdo:userA';
+      let linuxdoEpoch = 0;
+      const pendingBackfill = Promise.withResolvers<NotificationPage>();
+      const pendingPollNodeSeek = Promise.withResolvers<NotificationPage>();
+      const verification = new AbortController();
+      let backfillSignal: AbortSignal | undefined;
+      let nodeSeekInitialCalls = 0;
+      let linuxdoUserACalls = 0;
+      const requestedAllSources: NotificationSource[][] = [];
+      const requestedListPageSources: NotificationSource[] = [];
+
+      const gateway = createNotificationGateway({
+        adapters: {
+          nodeseek: {
+            listPage: jest.fn(async () => {
+              nodeSeekInitialCalls += 1;
+              if (nodeSeekInitialCalls === 1) {
+                return {
+                  quality: 'complete' as const,
+                  items: [{ ...notification, source: 'nodeseek', id: 'ns-a1', title: 'NodeSeek 首轮消息' }],
+                  cursor: null,
+                  hasMore: false
+                };
+              }
+              if (nodeSeekInitialCalls === 2) return pendingPollNodeSeek.promise;
+              return {
+                quality: 'complete' as const,
+                items: [{ ...notification, source: 'nodeseek', id: 'ns-b1', title: 'NodeSeek 切换后消息' }],
+                cursor: null,
+                hasMore: false
+              };
+            })
+          } as unknown as NotificationAdapter,
+          linuxdo: {
+            listPage: jest.fn(async ({ identityKey, signal }: NotificationAdapterAccess) => {
+              if (identityKey === 'linuxdo:userA') {
+                linuxdoUserACalls += 1;
+                if (linuxdoUserACalls === 1) {
+                  throw Object.assign(new Error('请先完成 Cloudflare 验证'), { verificationRequired: true });
+                }
+                if (linuxdoUserACalls === 2) {
+                  backfillSignal = signal;
+                  return pendingBackfill.promise;
+                }
+                return {
+                  quality: 'complete' as const,
+                  items: [{ ...notification, source: 'linuxdo', id: 'ld-fresh-bf', title: 'linuxdo 新验证补读消息' }],
+                  cursor: null,
+                  hasMore: false
+                };
+              }
+              return {
+                quality: 'complete' as const,
+                items: [{ ...notification, source: 'linuxdo', id: 'ld-b1', title: 'linuxdo userB 新账号消息' }],
+                cursor: null,
+                hasMore: false
+              };
+            })
+          } as unknown as NotificationAdapter,
+          yaohuo: {
+            listPage: jest.fn(async () => ({ quality: 'complete' as const, items: [], cursor: null, hasMore: false }))
+          } as unknown as NotificationAdapter
+        },
+        readAccess: (source) =>
+          source === 'linuxdo'
+            ? { identityKey: linuxdoIdentity, userId: linuxdoIdentity.split(':')[1]! }
+            : { identityKey: 'nodeseek:1', userId: '1' },
+        requestSessionEpoch: (source) => (source === 'linuxdo' ? linuxdoEpoch : 0),
+        privateAccessAllowed: (source, id) => (source === 'linuxdo' ? id === linuxdoIdentity : true),
+        sourceAllowed: () => true
+      });
+      const originalListAll = gateway.listAllPage;
+      jest.spyOn(gateway, 'listAllPage').mockImplementation((options) => {
+        requestedAllSources.push([...options.sources]);
+        return originalListAll(options);
+      });
+      const originalListPage = gateway.listPage;
+      jest.spyOn(gateway, 'listPage').mockImplementation((source, options) => {
+        requestedListPageSources.push(source);
+        return originalListPage(source, options);
+      });
+
+      const oldSignature = 'nodeseek|linuxdo:nodeseek:1|linuxdo:userA';
+      const oldQueryKey = forumQueryKeys.notificationList({
+        source: 'all',
+        categoryId: null,
+        identityKey: oldSignature,
+        unreadOnly: false
+      });
+      const readBlocks = new Map<NotificationSource, { epoch: number; error: SourceErrorInfo }>();
+      let capturedRecovery: ReadRecovery | undefined;
+      let view: Awaited<ReturnType<typeof render>> | undefined;
+      let currentRuntime!: NotificationRouteRuntimeValue;
+      const navigation = createNavigationContainerRef<FocusTestStackParamList>();
+      const tree = (value: NotificationRouteRuntimeValue) => (
+        <NotificationRouteRuntimeProvider value={value}>
+          <NavigationContainer ref={navigation}>
+            <FocusTestStack.Navigator initialRouteName="notifications">
+              <FocusTestStack.Screen name="notifications">
+                {(props) => <NotificationsRoute navigation={props.navigation as never} route={props.route} />}
+              </FocusTestStack.Screen>
+              <FocusTestStack.Screen name="Other">{() => <Text>其他页面</Text>}</FocusTestStack.Screen>
+            </FocusTestStack.Navigator>
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>
+      );
+      const clearReadBlock = jest.fn((source: NotificationSource, epoch: number) => {
+        if (readBlocks.get(source)?.epoch === epoch) {
+          readBlocks.delete(source);
+          currentRuntime = { ...currentRuntime };
+          view?.rerender(tree(currentRuntime));
+        }
+      });
+      const reportReadError = jest.fn((source: NotificationSource, error: SourceErrorInfo, epoch: number) => {
+        if (
+          error.kind === 'verification-required' ||
+          error.kind === 'login-required' ||
+          error.kind === 'login-expired'
+        ) {
+          readBlocks.set(source, { epoch, error });
+          currentRuntime = { ...currentRuntime };
+          view?.rerender(tree(currentRuntime));
+        }
+      });
+      currentRuntime = {
+        ...routeRuntime(gateway),
+        enabledNotificationSources: ['nodeseek', 'linuxdo'],
+        activeSources: ['nodeseek', 'linuxdo'],
+        identityKeys: { nodeseek: 'nodeseek:1', linuxdo: 'linuxdo:userA' },
+        identitySignature: oldSignature,
+        clearReadBlock,
+        getReadBlock: jest.fn((source: NotificationSource) => {
+          const block = readBlocks.get(source);
+          return block && block.epoch === currentRuntime.sessionEpochs[source] ? block.error : undefined;
+        }),
+        reportReadError,
+        openAccountSurface: jest.fn(async (_source, _message, recovery?: ReadRecovery) => {
+          capturedRecovery = recovery;
+        })
+      };
+
+      let resumePromise: Promise<string> | undefined;
+      view = await render(tree(currentRuntime), { wrapper: QueryTestWrapper });
+      try {
+        expect(await view.findByText('NodeSeek 首轮消息')).toBeTruthy();
+        await fireEvent.press(await view.findByRole('button', { name: '去验证 linux.do' }));
+
+        await act(async () => {
+          resumePromise = capturedRecovery!.resume(verification.signal);
+        });
+        await waitFor(() => expect(linuxdoUserACalls).toBe(2));
+
+        // 60s aggregate poll launches reading ONLY NodeSeek while linux.do backfill is in flight.
+        await act(async () => {
+          await jest.advanceTimersByTimeAsync(60_000);
+        });
+        await waitFor(() => expect(nodeSeekInitialCalls).toBe(2));
+
+        // linux.do backfill resolves its transport first and now waits for the in-flight aggregate poll to settle.
+        await act(async () => {
+          pendingBackfill.resolve({
+            quality: 'complete',
+            items: [{ ...notification, source: 'linuxdo', id: 'ld-stale-bf', title: 'linuxdo 旧验证补读消息' }],
+            cursor: 'ld-stale-2',
+            hasMore: true
+          });
+          await Promise.resolve();
+        });
+
+        if (change === 'blur') {
+          await act(async () => navigation.navigate('Other'));
+          expect(await view.findByText('其他页面')).toBeTruthy();
+        } else if (change === 'account-switch') {
+          linuxdoIdentity = 'linuxdo:userB';
+          linuxdoEpoch = 1;
+          readBlocks.delete('linuxdo');
+          currentRuntime = {
+            ...currentRuntime,
+            identityKeys: { nodeseek: 'nodeseek:1', linuxdo: 'linuxdo:userB' },
+            identitySignature: 'nodeseek|linuxdo:nodeseek:1|linuxdo:userB',
+            sessionEpochs: { ...currentRuntime.sessionEpochs, linuxdo: 1 }
+          };
+          await view.rerender(tree(currentRuntime));
+        } else {
+          verification.abort();
+          capturedRecovery!.cancel?.();
+          expect(backfillSignal?.aborted).toBe(true);
+        }
+
+        // Now settle the old aggregate poll and flush all microtasks.
+        await act(async () => {
+          pendingPollNodeSeek.resolve({
+            quality: 'complete',
+            items: [{ ...notification, source: 'nodeseek', id: 'ns-old-poll', title: 'NodeSeek 过期轮询消息' }],
+            cursor: null,
+            hasMore: false
+          });
+          for (let tick = 0; tick < 12; tick += 1) await Promise.resolve();
+        });
+
+        const outcome = await act(async () => resumePromise);
+        expect(outcome).toBe('stale');
+        expect(clearReadBlock).not.toHaveBeenCalledWith('linuxdo', 0);
+        const oldCached = appQueryClient.getQueryData<{ pages: { items: ForumNotification[] }[] }>(oldQueryKey);
+        expect(oldCached?.pages.flatMap((page) => page.items).map((item) => item.id)).not.toContain('ld-stale-bf');
+        expect(view.queryByText('linuxdo 旧验证补读消息')).toBeNull();
+        expect(requestedListPageSources).toEqual(['linuxdo']);
+        if (change === 'verification-cancel') {
+          expect(oldCached?.pages.flatMap((page) => page.items).map((item) => item.id)).toContain('ns-old-poll');
+          const canceled = capturedRecovery;
+          await fireEvent.press(await view.findByRole('button', { name: '去验证 linux.do' }));
+          expect(capturedRecovery).not.toBe(canceled);
+          const nextVerification = new AbortController();
+          expect(await act(() => capturedRecovery!.resume(nextVerification.signal))).toBe('completed');
+          expect(await view.findByText('linuxdo 新验证补读消息')).toBeTruthy();
+          expect(requestedListPageSources).toEqual(['linuxdo', 'linuxdo']);
+        } else if (change === 'account-switch') {
+          expect(oldCached?.pages.flatMap((page) => page.items).map((item) => item.id)).not.toContain('ns-old-poll');
+          expect(await view.findByText('linuxdo userB 新账号消息')).toBeTruthy();
+          expect(requestedAllSources).toEqual([['nodeseek', 'linuxdo'], ['nodeseek'], ['nodeseek', 'linuxdo']]);
+        } else {
+          expect(oldCached?.pages.flatMap((page) => page.items).map((item) => item.id)).not.toContain('ns-old-poll');
+          expect(requestedAllSources).toEqual([['nodeseek', 'linuxdo'], ['nodeseek']]);
+        }
+      } finally {
+        pendingBackfill.resolve({ quality: 'complete', items: [], cursor: null, hasMore: false });
+        pendingPollNodeSeek.resolve({ quality: 'complete', items: [], cursor: null, hasMore: false });
+        await resumePromise?.catch(() => undefined);
+        await view.unmount();
+        appQueryClient.clear();
+        focusManager.setFocused(true);
+        jest.useRealTimers();
+      }
+    }
+  );
+
+  it('backfills a newly confirmed source once in aggregate view when activeSources updates after initial load', async () => {
+    appQueryClient.clear();
+    focusManager.setFocused(true);
+    const identities: Record<NotificationSource, string> = {
+      nodeseek: 'nodeseek:1',
+      linuxdo: 'linuxdo:2',
+      yaohuo: 'yaohuo:3'
+    };
+    const identitySignature = 'nodeseek|linuxdo:nodeseek:1|linuxdo:2';
+    const gateway = createNotificationGateway({
+      adapters: {
+        nodeseek: {
+          listPage: jest.fn(async () => ({
+            quality: 'complete' as const,
+            items: [{ ...notification, source: 'nodeseek', id: 'ns-1', title: 'NodeSeek 首轮消息' }],
+            cursor: null,
+            hasMore: false
+          }))
+        } as unknown as NotificationAdapter,
+        linuxdo: {
+          listPage: jest.fn(async () => ({
+            quality: 'complete' as const,
+            items: [{ ...notification, source: 'linuxdo', id: 'ld-1', title: 'linuxdo 新确认消息' }],
+            cursor: null,
+            hasMore: false
+          }))
+        } as unknown as NotificationAdapter,
+        yaohuo: {
+          listPage: jest.fn(async () => ({ quality: 'complete' as const, items: [], cursor: null, hasMore: false }))
+        } as unknown as NotificationAdapter
+      },
+      readAccess: (source) => ({
+        identityKey: identities[source],
+        userId: identities[source].split(':')[1]!
+      }),
+      privateAccessAllowed: () => true,
+      sourceAllowed: () => true
+    });
+    const listAllPageSpy = jest.spyOn(gateway, 'listAllPage');
+    const listPageSpy = jest.spyOn(gateway, 'listPage');
+
+    const states = createSiteSessionStates();
+    for (const site of ['nodeseek', 'linuxdo'] as const) {
+      states[site] = {
+        ...states[site],
+        status: 'logged-in',
+        currentUser: { ...testAccountUser(site), id: identities[site].split(':')[1]! }
+      };
+    }
+    let currentRuntime: NotificationRouteRuntimeValue = {
+      ...routeRuntime(gateway),
+      enabledNotificationSources: ['nodeseek', 'linuxdo'],
+      activeSources: ['nodeseek'],
+      identityKeys: { nodeseek: identities.nodeseek, linuxdo: identities.linuxdo },
+      identitySignature,
+      sessions: projectTestAccountSessions(states)
+    };
+    currentRuntime.sessions.linuxdo = {
+      ...currentRuntime.sessions.linuxdo,
+      identityTrust: 'unknown',
+      isVerifying: true
+    };
+
+    const tree = (value: NotificationRouteRuntimeValue) => (
+      <NotificationRouteRuntimeProvider value={value}>
+        <NavigationContainer>
+          <NotificationsRoute
+            navigation={{ navigate: jest.fn(), setParams: jest.fn() } as never}
+            route={{ key: 'notifications', name: 'notifications', params: undefined }}
+          />
+        </NavigationContainer>
+      </NotificationRouteRuntimeProvider>
+    );
+
+    const view = await render(tree(currentRuntime), { wrapper: QueryTestWrapper });
+    try {
+      expect(await view.findByText('NodeSeek 首轮消息')).toBeTruthy();
+      expect(listAllPageSpy).toHaveBeenCalledTimes(1);
+      expect(listAllPageSpy).toHaveBeenCalledWith(expect.objectContaining({ sources: ['nodeseek'] }));
+      expect(listPageSpy).not.toHaveBeenCalled();
+
+      // linux.do finishes account confirmation while user stays on "全部".
+      currentRuntime = {
+        ...currentRuntime,
+        activeSources: ['nodeseek', 'linuxdo'],
+        sessions: {
+          ...currentRuntime.sessions,
+          linuxdo: { ...currentRuntime.sessions.linuxdo, identityTrust: 'confirmed', isVerifying: false }
+        }
+      };
+      await view.rerender(tree(currentRuntime));
+
+      expect(await view.findByText('linuxdo 新确认消息')).toBeTruthy();
+      expect(listPageSpy).toHaveBeenCalledTimes(1);
+      expect(listPageSpy).toHaveBeenCalledWith('linuxdo', expect.objectContaining({ cursor: undefined }));
+      expect(listAllPageSpy).toHaveBeenCalledTimes(1);
+
+      // Subsequent benign re-render must not duplicate the backfill.
+      await view.rerender(tree({ ...currentRuntime }));
+      expect(listPageSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      await view.unmount();
+      appQueryClient.clear();
+    }
+  });
 
   it('retries only the selected failed source in the aggregate list', async () => {
     appQueryClient.clear();
@@ -5933,6 +9907,76 @@ describe('notification routes', () => {
       expect(runtime.notify).not.toHaveBeenCalled();
     } finally {
       alert.mockRestore();
+    }
+  });
+
+  it.each([
+    { status: 403, unconfirmed: false },
+    { status: 408, unconfirmed: true },
+    { status: 409, unconfirmed: true },
+    { status: 503, unconfirmed: true }
+  ])('retries a LinuxDo private reply according to the HTTP $status receipt', async ({ status, unconfirmed }) => {
+    appQueryClient.clear();
+    focusManager.setFocused(true);
+    const item: ForumNotification = {
+      ...notification,
+      source: 'linuxdo',
+      id: 'pm:9',
+      kind: 'private-message',
+      unread: false,
+      target: { type: 'private-conversation', conversationId: '9' }
+    };
+    let posts = 0;
+    const fetcher: Fetcher = async (url, init) => {
+      const request = prepareRequestToSend(init);
+      if (url === 'https://linux.do/session/csrf') return new Response('{"csrf":"fixture"}');
+      expect(url).toBe('https://linux.do/posts.json');
+      expect(request?.method).toBe('POST');
+      posts++;
+      return posts === 1 ? new Response('{"errors":["发送请求返回异常"]}', { status }) : new Response('{"id":20}');
+    };
+    const loadDetail = jest.fn(async () => ({
+      notification: item,
+      title: '私信详情',
+      messages: [],
+      reply: { format: 'markdown' as const }
+    }));
+    const gateway = createNotificationGateway({
+      adapters: { ...notificationAdapters, linuxdo: { ...notificationAdapters.linuxdo, loadDetail } },
+      privateAccessAllowed: () => true,
+      sourceAllowed: (source) => source === 'linuxdo',
+      readAccess: () => ({ identityKey: 'linuxdo:7', userId: '7', userAgent: 'fixture', fetcher })
+    });
+    const runtime: NotificationRouteRuntimeValue = {
+      ...routeRuntime(gateway),
+      activeSources: ['linuxdo'],
+      identityKeys: { linuxdo: 'linuxdo:7' },
+      identitySignature: 'linuxdo:7'
+    };
+    const navigation = createNavigationContainerRef<FocusTestStackParamList>();
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    const view = await render(linuxDoDetailTree(runtime, item, navigation), { wrapper: QueryTestWrapper });
+    try {
+      await waitFor(() => expect(view.getByLabelText('回复私信')).toBeTruthy());
+      await fireEvent.press(view.getByLabelText('回复私信'));
+      await fireEvent.changeText(view.getByLabelText('私信回复内容'), '待发送私信');
+      await fireEvent.press(view.getByLabelText('测试发送私信'));
+      await waitFor(() => expect(view.getByText(/发送请求返回异常/)).toBeTruthy());
+      expect(posts).toBe(1);
+      expect(Boolean(view.queryByText(/发送结果未确认/))).toBe(unconfirmed);
+      await fireEvent.press(view.getByLabelText('测试发送私信'));
+      if (unconfirmed) {
+        expect(posts).toBe(1);
+        expect(alert).toHaveBeenCalledWith('私信可能已发送', expect.any(String), expect.any(Array), expect.any(Object));
+      } else {
+        await waitFor(() => expect(posts).toBe(2));
+        expect(alert).not.toHaveBeenCalled();
+      }
+    } finally {
+      await view.unmount();
+      alert.mockRestore();
+      focusManager.setFocused(undefined);
+      appQueryClient.clear();
     }
   });
 });

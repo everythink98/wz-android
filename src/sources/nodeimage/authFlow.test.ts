@@ -196,6 +196,7 @@ describe('NodeImage authorization flow', () => {
     expect(nodeImageAuthFlowCanAcceptMessage(flow, { ...runtime, identityKey: 'nodeseek:99' }, 7)).toBe(false);
     expect(nodeImageAuthFlowCanAcceptMessage(flow, { ...runtime, sessionEpoch: 4 }, 7)).toBe(false);
     expect(nodeImageAuthFlowCanAcceptMessage(flow, { ...runtime, identityTrust: 'unknown' }, 7)).toBe(false);
+    expect(nodeImageAuthFlowCanAcceptMessage(flow, { ...runtime, sourceEnabled: false }, 7)).toBe(false);
     expect(nodeImageAuthFlowCanAcceptMessage(flow, runtime, 8)).toBe(false);
 
     expect(terminateNodeImageAuthFlow(flow)).toBe(true);

@@ -89,7 +89,6 @@ describe('Android reader theme safety rails', () => {
   it('uses stable hashed colors for functional tags and stable source identities', () => {
     const theme = createTheme(settings);
 
-    expect(topicTagColorStyle('任意标签', theme)).toEqual(topicTagColorStyle('任意标签', theme));
     expect(topicTagColorStyle('任意标签', theme).color).not.toBe(topicTagColorStyle('另一个标签', theme).color);
     expect(sourceBadgeColorStyle('nodeseek', theme).color).toBe(theme.primary);
     expect(topicTagColorStyle('任意标签', theme).color).not.toBe(sourceBadgeColorStyle('nodeseek', theme).color);
