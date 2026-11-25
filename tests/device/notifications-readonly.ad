@@ -31,5 +31,6 @@ wait text="妖火" 10000
 back --system
 wait id="notification-source-all" 10000
 back --system
-wait id="main-tab-feed" 10000
+# Returning to the Feed can briefly show a site verification page.
+wait id="main-tab-feed" 60000
 wait id="main-tab-notifications" 10000
