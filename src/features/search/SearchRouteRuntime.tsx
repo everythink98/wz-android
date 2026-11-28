@@ -1,7 +1,7 @@
 import type { Source, SessionSource } from '@/domain/forum/sourceCatalog';
 import { createContext, useContext, type ReactNode } from 'react';
 import type { Category } from '@/domain/forum/models';
-import type { TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
+import type { TopicListItemStateSource } from '@/domain/forum/topicListItemState';
 import type { AccountReconcileResult } from '@/domain/session/sessionContracts';
 import type { ReadRecovery } from '@/platform/query/readRecovery';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
@@ -22,7 +22,7 @@ export type SearchRouteRuntimeValue = {
   };
   catalogCategories: Category[];
   notify: (message: string) => void;
-  topicStateIndex: TopicListItemStateIndex;
+  topicStateIndex: TopicListItemStateSource;
 };
 
 const SearchRouteRuntimeContext = createContext<SearchRouteRuntimeValue | null>(null);

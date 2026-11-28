@@ -3,12 +3,12 @@ import { createContext, type ReactNode, useCallback, useContext, useRef } from '
 import { CommonActions, StackActions, useIsFocused, useNavigation, useScrollToTop } from '@react-navigation/native';
 import type { FlashListRef } from '@shopify/flash-list';
 import type { Category, Topic } from '@/domain/forum/models';
-import type { TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
+import type { TopicListItemStateSource } from '@/domain/forum/topicListItemState';
 import type { ReaderView } from '@/domain/reader/readerRecordState';
 import type { ReadRecovery } from '@/platform/query/readRecovery';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import type { ReadGateway } from '@/sources/readGateway';
-import { dispatchFocusedRoute, manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
+import { dispatchFocusedRoute, dispatchTopicRoute, manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
 import { FeedScreen } from './FeedScreen';
 import { useFeedController } from './useFeedController';
 
@@ -27,7 +27,7 @@ export type FeedRouteRuntimeValue = {
   catalogCategories: Category[];
   notify: (message: string) => void;
   onInitialContentReady: () => void;
-  topicStateIndex: TopicListItemStateIndex;
+  topicStateIndex: TopicListItemStateSource;
   reader: {
     data: ReaderView;
     loaded: boolean;
@@ -75,7 +75,7 @@ export function FeedRoute() {
     if (feedAllowsRemotePagination) return loadFeed();
   }, [feedAllowsRemotePagination, loadFeed]);
   const openTopic = useCallback(
-    (topic: Topic) => dispatchFocusedRoute(navigation, StackActions.push('Topic', { topic })),
+    (topic: Topic) => dispatchTopicRoute(() => dispatchFocusedRoute(navigation, StackActions.push('Topic', { topic }))),
     [navigation]
   );
   const manageContentSources = useCallback(
@@ -105,12 +105,13 @@ export function FeedRoute() {
       feedHasMore={controller.activeFeedState.hasMore && controller.feedAllowsRemotePagination}
       feedManualContinuation={controller.activeFeedState.manualContinuation}
       feedItems={controller.shownFeedItems}
-      feedOutcomeKind={active ? controller.feedOutcomeKind : undefined}
+      feedOutcomeKind={controller.feedOutcomeKind}
       feedPage={controller.activeFeedState.page}
       feedSource={controller.feedSource}
       feedFilter={controller.feedFilter}
       feedFilters={controller.feedFilters}
       enabledFeedSources={controller.enabledFeedSources}
+      failedFeedSources={controller.failedFeedSources}
       loadMoreFailureSignal={controller.activeFeedState.loadMoreFailureSignal}
       loadMoreErrorMessage={controller.activeFeedState.loadMoreErrorMessage}
       loadingMore={controller.activeFeedState.loadingMore}

@@ -17,6 +17,16 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 describe('runNodeSeekAction', () => {
+  it('preserves the HTTP status when the vote info endpoint returns a plain error page', async () => {
+    await expect(
+      fetchNodeSeekVoteInfo({
+        pollId: '12',
+        userAgent: 'test-agent',
+        fetcher: async () => new Response('unavailable', { status: 502 })
+      })
+    ).rejects.toMatchObject({ status: 502 });
+  });
+
   it('delegates NodeSeek write authentication to the native exact-url cookie jar', async () => {
     const fetcher = vi.fn(async () => jsonResponse({ success: true }));
 
@@ -246,6 +256,21 @@ describe('runNodeSeekAction', () => {
         timeoutMs: 1
       })
     ).rejects.toThrow('请求超时，请稍后重试');
+  });
+
+  it('identifies a verification page after one write attempt', async () => {
+    const fetcher = vi.fn(
+      async () =>
+        new Response('<title>NodeSeek | security check</title>', {
+          status: 403,
+          headers: { 'content-type': 'text/html' }
+        })
+    );
+
+    await expect(
+      runNodeSeekAction({ request: { path: '/api/attendance?random=false', method: 'POST', headers: {} }, fetcher })
+    ).rejects.toMatchObject({ source: 'nodeseek', reason: 'cloudflare', status: 403, serverRejected: false });
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   it('does not mark generic 403 refusals as expired login cookies', async () => {

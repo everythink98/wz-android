@@ -258,14 +258,14 @@ describe('Yaohuo notifications', () => {
   });
 
   it.each(['private-message', 'system'] as const)(
-    'opens the current anchored %s body without mixing other messages or controls',
+    'keeps the current %s anchor and the other messages in its original window',
     async (kind) => {
       const actor = kind === 'system' ? '系统' : '张三';
       const body = '<b>目标正文</b><img src="/face.gif" onerror="bad()"/><a href="/bbs-321.html">查看主题帖</a>';
       const fetcher = vi.fn(async (url: string) =>
         new URL(url).pathname.endsWith('/messagelist_view.aspx')
           ? html(`
-            <div class="msgview-page" data-message-id="41" data-partner-id="9" data-partner-name="张三">
+            <div class="msgview-page" data-message-id="41" data-partner-id="${kind === 'system' ? '0' : '9'}" data-partner-name="张三">
               <div class="chat-list">
                 <div class="chat-date" data-date="2026-10-03"><span>昨天</span></div>
                 <div class="chat-msg chat-msg--in" data-message-id="40" data-date="2026-10-03">
@@ -277,7 +277,7 @@ describe('Yaohuo notifications', () => {
                 </div>
                 <div class="chat-msg chat-msg--notice" data-message-id="42" data-date="2026-10-04">
                   <div class="chat-bubble bubble">邻近通知<a href="/bbs/book_re.aspx?id=321&tofloor=90">查看完整回复</a></div>
-                  <div class="chat-time">13:47</div>
+                  <div class="chat-time">13:46</div>
                 </div>
                 <div class="chat-msg chat-msg--out" data-message-id="43" data-date="2026-10-04">
                   <div class="chat-bubble bubble">自己的回复</div><div class="chat-time">13:40</div>
@@ -291,23 +291,31 @@ describe('Yaohuo notifications', () => {
       const access = { fetcher, identityKey: 'yaohuo:7', userId: '7' };
       const item = (await yaohuoNotificationAdapter.listPage(access)).items[0]!;
       const detail = await yaohuoNotificationAdapter.loadDetail(item, access);
-      expect(detail.contentHtml).toContain('目标正文');
-      expect(detail.contentHtml).toContain('https://www.yaohuo.me/face.gif');
-      expect(detail.contentHtml).toContain('https://www.yaohuo.me/bbs-321.html');
-      expect(detail.contentHtml).not.toMatch(/邻近通知|自己的回复|加载更早|草稿|回复内容|回复时间|onerror/);
+      const selectedBody = detail.messages?.find((message) => message.id === 'chat:41')?.contentHtml;
+      expect(selectedBody).toContain('目标正文');
+      expect(selectedBody).toContain('https://www.yaohuo.me/face.gif');
+      expect(selectedBody).toContain('https://www.yaohuo.me/bbs-321.html');
+      expect(selectedBody).not.toMatch(/邻近通知|自己的回复|加载更早|草稿|回复内容|回复时间|onerror/);
+      expect(detail.contentHtml).toBeUndefined();
+      expect(detail.messageAnchorId).toBe('chat:41');
       if (kind === 'system') {
         expect(detail.notification.actor).toEqual({ name: '系统' });
-        expect(detail).not.toHaveProperty('messages');
+        expect(detail.messages?.map((message) => [message.id, message.author, message.mine])).toEqual([
+          ['chat:41', '系统', false],
+          ['chat:42', '系统', false]
+        ]);
+        expect(detail.messages?.[1]?.contentHtml).toContain('tofloor=90');
         expect(detail).not.toHaveProperty('reply');
       } else {
         expect(detail.notification.actor).toEqual({ name: '张三', id: '9' });
         expect(detail.messages?.map(({ id, author, mine, createdAt }) => ({ id, author, mine, createdAt }))).toEqual([
           { id: 'chat:40', author: '张三', mine: false, createdAt: '2026-10-03T01:30:00.000Z' },
           { id: 'chat:43', author: '我', mine: true, createdAt: '2026-10-04T05:40:00.000Z' },
-          { id: 'chat:42', author: '系统', mine: false, createdAt: '2026-10-04T05:47:00.000Z' }
+          { id: 'chat:41', author: '张三', mine: false, createdAt: '2026-10-04T05:46:00.000Z' },
+          { id: 'chat:42', author: '系统', mine: false, createdAt: '2026-10-04T05:46:00.000Z' }
         ]);
         expect(detail.messages?.[0]?.contentHtml).toContain('目标正文');
-        expect(detail.messages?.[2]?.contentHtml).toContain('tofloor=90');
+        expect(detail.messages?.[3]?.contentHtml).toContain('tofloor=90');
         expect(detail.reply).toEqual({ format: 'plain-text' });
         expect(detail.historyNotice).toBe('仅展示原站当前返回的聊天记录。');
       }
@@ -315,10 +323,181 @@ describe('Yaohuo notifications', () => {
     }
   );
 
+  it('keeps both participants around a system notice anchored inside their conversation', async () => {
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+      const target = new URL(url);
+      if (target.searchParams.get('action') === 'csrftoken') return Response.json({ success: true, token: 'fixture' });
+      if (init?.method === 'POST') {
+        return Response.json({
+          success: true,
+          count: 1,
+          hasMore: false,
+          html: '<div class="chat-msg chat-msg--in" data-message-id="43" data-sender="9"><div class="chat-bubble">对方后来回复</div></div>'
+        });
+      }
+      return html(
+        target.pathname.endsWith('/messagelist_view.aspx')
+          ? `<div class="msgview-page" data-message-id="41" data-partner-id="9" data-partner-name="张三">
+              <div class="chat-list">
+                <div class="chat-msg chat-msg--in" data-message-id="40" data-sender="9"><div class="chat-bubble">对方消息</div></div>
+                <div class="chat-msg chat-msg--notice is-anchor" data-message-id="41" data-sender="notice"><div class="chat-bubble">点击的系统提醒</div></div>
+                <div class="chat-msg chat-msg--out" data-message-id="42" data-sender="7"><div class="chat-bubble">自己的消息</div></div>
+                <div class="chat-msg chat-msg--in" data-message-id="98" data-sender="6"><div class="chat-bubble">另一会话的消息</div></div>
+              </div>
+              <div id="msgviewNewer"><button>加载更新</button></div>
+            </div>`
+          : messageListRow({ actor: '系统' })
+      );
+    });
+    const access = { fetcher, identityKey: 'yaohuo:7', userId: '7' };
+    const item = (await yaohuoNotificationAdapter.listPage(access)).items[0]!;
+    const detail = await yaohuoNotificationAdapter.loadDetail(item, access);
+    expect(detail.notification.actor).toEqual({ name: '系统' });
+    expect(detail).not.toHaveProperty('reply');
+    expect(detail.messageAnchorId).toBe('chat:41');
+    expect(detail.messages?.map((message) => [message.id, message.author, message.mine])).toEqual([
+      ['chat:40', '张三', false],
+      ['chat:41', '系统', false],
+      ['chat:42', '我', true]
+    ]);
+    expect(detail.messageHistory).toEqual({ olderCursor: null, newerCursor: '41:9:42' });
+    await expect(yaohuoNotificationAdapter.loadLaterMessages(item, '41:9:42', access)).resolves.toMatchObject({
+      messages: [{ id: 'chat:43', author: '张三', contentHtml: '对方后来回复' }],
+      newerCursor: null
+    });
+    fetcher.mockClear();
+    await expect(yaohuoNotificationAdapter.loadLaterMessages(item, '41:6:42', access)).rejects.toThrow('会话游标');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls[0]?.[0]).toBe('https://www.yaohuo.me/bbs/messagelist_view.aspx?id=41');
+  });
+
+  it('finds the exact message supplied by the original page ID even without a highlight class', async () => {
+    const fetcher = async (url: string) =>
+      html(
+        new URL(url).pathname.endsWith('/messagelist_view.aspx')
+          ? `<div class="msgview-page" data-message-id="41" data-partner-id="9"><div class="chat-list">
+               <div class="chat-msg chat-msg--in" data-message-id="40"><div class="chat-bubble">邻近消息</div></div>
+               <div class="chat-msg chat-msg--in" data-message-id="41"><div class="chat-bubble">本条消息</div></div>
+             </div></div>`
+          : messageListRow({ actorId: '9' })
+      );
+    const access = { fetcher, identityKey: 'yaohuo:7', userId: '7' };
+    const item = (await yaohuoNotificationAdapter.listPage(access)).items[0]!;
+    await expect(yaohuoNotificationAdapter.loadDetail(item, access)).resolves.toMatchObject({
+      messageAnchorId: 'chat:41',
+      messages: [{ id: 'chat:40' }, { id: 'chat:41', contentHtml: '本条消息' }]
+    });
+  });
+
+  it.each([
+    [
+      'login redirect',
+      () => new Response(null, { status: 302, headers: { location: '/waplogin.aspx?siteid=1000' } }),
+      'expired'
+    ],
+    ['verification page', () => new Response('<title>访问验证</title>', { status: 403 }), 'verification']
+  ] as const)('preserves the session outcome for a chat history %s', async (_kind, rejected, reason) => {
+    const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
+      if (new URL(input).searchParams.get('action') === 'csrftoken')
+        return Response.json({ success: true, token: 'fixture' });
+      if (init?.method === 'POST') return rejected();
+      return html(messageListRow({ actorId: '9' }));
+    });
+    const access = { fetcher, identityKey: 'yaohuo:7', userId: '7' };
+    const item = (await yaohuoNotificationAdapter.listPage(access)).items[0]!;
+    await expect(yaohuoNotificationAdapter.loadEarlierMessages(item, '41:9:40', access)).rejects.toMatchObject({
+      reason
+    });
+    expect(fetcher.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1);
+    expect(fetcher.mock.calls.at(-1)?.[1]?.redirect).toBe('manual');
+  });
+
+  it('follows the original earlier and later controls with the corresponding message IDs', async () => {
+    const formBodies: URLSearchParams[] = [];
+    const chatRow = (id: string, body: string, anchor = false) =>
+      `<div class="chat-msg chat-msg--in${anchor ? ' is-anchor' : ''}" data-message-id="${id}">
+         <div class="chat-bubble">${body}</div>
+       </div>`;
+    const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
+      const url = new URL(input);
+      if (url.searchParams.get('action') === 'csrftoken') return Response.json({ success: true, token: 'fixture' });
+      if (init?.method === 'POST') {
+        const form = new URLSearchParams(String(init.body));
+        formBodies.push(form);
+        const earlier = form.get('direction') === 'up';
+        return Response.json({
+          success: true,
+          count: earlier ? 4 : 1,
+          hasMore: earlier,
+          html: earlier
+            ? [
+                '<div class="chat-date" data-date="2026-10-04"></div>',
+                chatRow('37', '发送中').replace('chat-msg--in', 'chat-msg--in is-pending'),
+                chatRow('39', '上一段的消息'),
+                chatRow('39', '重复的消息'),
+                chatRow('38', '更早的消息').replace('</div>', '</div><span class="chat-time">13:41</span>'),
+                chatRow('99', '另一会话').replace('data-message-id', 'data-sender="6" data-message-id')
+              ].join('')
+            : chatRow('43', '后来的回复')
+        });
+      }
+      return html(
+        url.pathname.endsWith('/messagelist_view.aspx')
+          ? `<div class="msgview-page" data-message-id="41" data-partner-id="9">
+               <div id="msgviewOlder"><button>加载更早</button></div>
+               <div class="chat-list">${chatRow('40', '上一条')}${chatRow('41', '点中的消息', true)}${chatRow('42', '下一条')}</div>
+               <div id="msgviewNewer"><button>加载更新</button></div>
+             </div>`
+          : messageListRow({ actorId: '9' })
+      );
+    });
+    const access = { fetcher, identityKey: 'yaohuo:7', userId: '7' };
+    const item = (await yaohuoNotificationAdapter.listPage(access)).items[0]!;
+    const detail = await yaohuoNotificationAdapter.loadDetail(item, access);
+    expect(detail.messageHistory).toEqual({ olderCursor: '41:9:40', newerCursor: '41:9:42' });
+    await expect(yaohuoNotificationAdapter.loadEarlierMessages(item, '41:9:40', access)).resolves.toMatchObject({
+      messages: [
+        { id: 'chat:38', contentHtml: '更早的消息', createdAt: '2026-10-04T05:41:00.000Z' },
+        { id: 'chat:39', contentHtml: '上一段的消息' }
+      ],
+      olderCursor: '41:9:39'
+    });
+    await expect(yaohuoNotificationAdapter.loadLaterMessages(item, '41:9:42', access)).resolves.toMatchObject({
+      messages: [{ id: 'chat:43', contentHtml: '后来的回复' }],
+      newerCursor: null
+    });
+    expect(formBodies.map((form) => Object.fromEntries(form))).toEqual([
+      {
+        action: 'loadMore',
+        direction: 'up',
+        lastMessageId: '40',
+        partnerId: '9',
+        format: 'html',
+        ajax: '1',
+        __CSRFToken: 'fixture'
+      },
+      {
+        action: 'loadMore',
+        direction: 'down',
+        lastMessageId: '42',
+        partnerId: '9',
+        format: 'html',
+        ajax: '1',
+        __CSRFToken: 'fixture'
+      }
+    ]);
+    expect(fetcher.mock.calls.filter(([url]) => new URL(url).searchParams.get('action') === 'csrftoken')).toHaveLength(
+      2
+    );
+    fetcher.mockClear();
+    await expect(yaohuoNotificationAdapter.loadLaterMessages(item, '41:8:42', access)).rejects.toThrow('会话游标');
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['wrong page identity', '42', '41', 'is-anchor', '目标正文'],
     ['wrong anchor identity', '41', '42', 'is-anchor', '邻近正文'],
-    ['missing anchor', '41', '41', '', '邻近正文'],
+    ['missing exact message', '41', '42', '', '邻近正文'],
     ['empty body', '41', '41', 'is-anchor', '<script>bad()</script>']
   ])('rejects a current message page with %s', async (_case, pageId, anchorId, anchorClass, body) => {
     const access = {

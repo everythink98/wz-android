@@ -549,7 +549,7 @@ describe('session controller browser flow', () => {
       await waitFor(() => expect(hook.result.current.hiddenBrowserFetchRequests.nodeSeek?.url).toBe(urls[0]));
       const view = await render(host());
       const firstDocument = view.getByTestId('hidden-browser');
-      const oldLoadStart = firstDocument.props.onLoadStart;
+      const oldLoadStart = firstDocument.props.onMainFrameLoadStart;
       const oldHttpError = firstDocument.props.onHttpError;
       const postDocument = async (html: string) => {
         const request = hook.result.current.hiddenBrowserFetchRequests.nodeSeek!;
@@ -561,9 +561,10 @@ describe('session controller browser flow', () => {
         });
       };
       try {
+        await fireEvent(firstDocument, 'mainFrameLoadStart', { nativeEvent: { url: urls[0] } });
         await fireEvent(firstDocument, 'httpError', { nativeEvent: { url: urls[0], statusCode: initialStatus } });
         // A new main document succeeds after the site's security page redirects.
-        await fireEvent(firstDocument, 'loadStart', { nativeEvent: { url: urls[0] } });
+        await fireEvent(firstDocument, 'mainFrameLoadStart', { nativeEvent: { url: urls[0] } });
         await postDocument('<article class="post-content">recovered document</article>');
         const recovered = await responses[0]!;
         expect(recovered.status).toBe(200);
@@ -572,7 +573,7 @@ describe('session controller browser flow', () => {
         await waitFor(() => expect(hook.result.current.hiddenBrowserFetchRequests.nodeSeek?.url).toBe(urls[1]));
         await view.rerender(host());
         const currentDocument = view.getByTestId('hidden-browser');
-        await fireEvent(currentDocument, 'loadStart', { nativeEvent: { url: urls[1] } });
+        await fireEvent(currentDocument, 'mainFrameLoadStart', { nativeEvent: { url: urls[1] } });
         await fireEvent(currentDocument, 'httpError', {
           nativeEvent: { url: urls[1], statusCode: initialStatus }
         });

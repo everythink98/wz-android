@@ -14,6 +14,7 @@ import type { DiscourseBoost, Reply, TopicDetail } from '@/domain/forum/models';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { prepareRequestToSend } from '@/platform/network/request';
+import { LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
 import { useTopicSessionController } from '@/features/topic/useTopicSessionController';
 import { useTopicActionsController } from '@/features/topic/actions/useTopicActionsController';
 import {
@@ -143,7 +144,8 @@ function Harness({
   recycledBoostPost,
   onBoostCommit,
   onReadingCommit,
-  readInteractionConfig
+  readInteractionConfig,
+  showLinuxDoVerification = noop
 }: {
   active?: boolean;
   emojiCatalog?: Record<string, string>;
@@ -153,6 +155,7 @@ function Harness({
   onBoostCommit?: ProfilerOnRenderCallback;
   onReadingCommit?: ProfilerOnRenderCallback;
   readInteractionConfig?: ReturnType<typeof testPostInteractionReads>['getLinuxDoInteractionConfig'];
+  showLinuxDoVerification?: Parameters<typeof useTopicActionsController>[0]['showLinuxDoVerification'];
 }) {
   const { data: topic = opening } = useQuery({ queryKey, queryFn: async () => opening, enabled: false });
   const topicSession = useTopicSessionController({ topic, notify: noop });
@@ -166,7 +169,7 @@ function Harness({
         })
       ),
       linuxDoUserAgent: () => 'safe-agent',
-      showLinuxDoVerification: noop,
+      showLinuxDoVerification,
       ensureNodeImageApiKey: async () => null,
       ensureWritableSession: async (source) => ({ source, identityKey: `${source}:7`, sessionEpoch: 0 }),
       isWritableSessionTicketCurrent: () => true,
@@ -193,7 +196,7 @@ function Harness({
       Parameters<typeof useTopicActionsController>[0],
       'active' | 'topicDetail' | 'topicReplies' | 'topicSession'
     >;
-  }, [readInteractionConfig]);
+  }, [readInteractionConfig, showLinuxDoVerification]);
   const actions = useTopicActionsController({
     ...environment,
     active,
@@ -472,6 +475,11 @@ describe('LinuxDo native post interactions', () => {
         'source',
         expect.arrayContaining([expect.objectContaining({ uri: emojiUrls.heart })])
       );
+      for (const shortcode of [':star_struck:', ':heart:']) {
+        const emoji = bubble.getByLabelText(shortcode);
+        expect(emoji).toHaveStyle({ width: 16, height: 16 });
+        expect(emoji.parent).toHaveStyle({ width: 16, height: 12 });
+      }
       expect(bubble.getByText(/:unknown:/)).toBeTruthy();
       expect(bubble.getByText(/:constructor:/)).toBeTruthy();
       expect(bubble.queryByText(/:star_struck:/)).toBeNull();
@@ -656,6 +664,50 @@ describe('LinuxDo native post interactions', () => {
     expect(fetcher).not.toHaveBeenCalled();
     await view.unmount();
   });
+  it('does not reopen the boost editor when its reply returns to the data window', async () => {
+    const view = await render(<Harness />, { wrapper: QueryTestWrapper });
+    await fireEvent.press(within(view.getByTestId('comment-actions')).getByLabelText('添加加电'));
+    await fireEvent.changeText(view.getByLabelText('加电内容'), 'saved text');
+    await act(() => appQueryClient.setQueryData(queryKey, { ...opening, replies: [] }));
+    await waitFor(() => expect(view.queryByTestId('comment-actions')).toBeNull());
+    expect(view.queryByLabelText('加电内容')).toBeNull();
+    await act(() => appQueryClient.setQueryData(queryKey, opening));
+    await waitFor(() => expect(view.getByTestId('comment-actions')).toBeTruthy());
+    expect(view.queryByLabelText('加电内容')).toBeNull();
+    await fireEvent.press(within(view.getByTestId('comment-actions')).getByLabelText('添加加电'));
+    expect(view.getByLabelText('加电内容')).toHaveProp('value', 'saved text');
+  });
+
+  it.each(['reaction picker', 'boost composer'])('offers a CF verification action from the %s', async (mode) => {
+    const showLinuxDoVerification = jest.fn();
+    const readConfig = jest.fn(async () => {
+      throw new LinuxDoCloudflareError();
+    });
+    const view = await render(
+      <Harness readInteractionConfig={readConfig} showLinuxDoVerification={showLinuxDoVerification} />,
+      { wrapper: QueryTestWrapper }
+    );
+    if (mode === 'reaction picker') {
+      await fireEvent(view.getByLabelText('主帖点赞'), 'longPress', { nativeEvent: { pageX: 120, pageY: 350 } });
+    } else {
+      await fireEvent.press(within(view.getByTestId('opening-actions')).getByLabelText('添加加电'));
+      await fireEvent.changeText(view.getByLabelText('加电内容'), '保留加电草稿');
+    }
+    await fireEvent.press(await view.findByLabelText('去验证'));
+    await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
+    expect(showLinuxDoVerification).toHaveBeenCalledWith(
+      expect.stringContaining('Cloudflare'),
+      expect.objectContaining({ resume: expect.any(Function) })
+    );
+    expect(readConfig).toHaveBeenCalledTimes(1);
+    if (mode === 'boost composer') {
+      expect(view.queryByLabelText('加电内容')).toBeNull();
+      await fireEvent.press(within(view.getByTestId('opening-actions')).getByLabelText('添加加电'));
+      expect(view.getByLabelText('加电内容')).toHaveProp('value', '保留加电草稿');
+    } else expect(view.queryByText('选择表情反应')).toBeNull();
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it('closes an opened reaction picker when its route stops being active', async () => {
     const view = await render(<Harness />, { wrapper: QueryTestWrapper });
     await fireEvent(view.getByLabelText('主帖点赞'), 'longPress', { nativeEvent: { pageX: 120, pageY: 350 } });

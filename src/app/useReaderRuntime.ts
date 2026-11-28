@@ -91,24 +91,19 @@ export function useReaderRuntime({ notify }: { notify: (message: string) => void
       publish();
       // Storage is the single ordering owner. UI completion handlers preserve the
       // same order and rebase pending absolute intents after success or rollback.
-      const result = commitReaderCommand(command)
-        .then(
-          (change) => {
-            commands.confirmed(change);
-            for (const collection of change.changed)
-              void queryClient.invalidateQueries({ queryKey: readerLibraryQueryKeys.collection(collection) });
-            finishDiagnosticTrace(trace, 'success');
-          },
-          (error) => {
-            finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
-            if (commands.current(operation.owner)) notifyRef.current(errorMessage(error));
-          }
-        )
-        .finally(() => {
-          commands.settled(operation);
-          publish();
-        });
-      void result;
+      void commitReaderCommand(command).then(
+        (change) => {
+          if (commands.settled(operation, change)) publish();
+          for (const collection of change.changed)
+            void queryClient.invalidateQueries({ queryKey: readerLibraryQueryKeys.collection(collection) });
+          finishDiagnosticTrace(trace, 'success');
+        },
+        (error) => {
+          if (commands.settled(operation)) publish();
+          finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
+          if (commands.current(operation.owner)) notifyRef.current(errorMessage(error));
+        }
+      );
     },
     [commands, notifyRef, publish, queryClient]
   );

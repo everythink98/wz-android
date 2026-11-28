@@ -1,11 +1,12 @@
 import { withDefaultBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
-import type { DiscourseTagOption, DiscourseUserOption, SearchResponse, Topic } from '@/domain/forum/models';
-import { isRecord, textContentFromHtml, textExcerptFromPlainText } from '@/domain/forum/html';
+import type { DiscourseTagOption, DiscourseUserOption, SearchResponse, SearchTopic } from '@/domain/forum/models';
+import { isRecord, recordText, textContentFromHtml, textExcerptFromPlainText } from '@/domain/forum/html';
 import {
   annotateSourceDiagnosticSummary,
   sourceDiagnosticSummary
 } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import {
+  discourseDisplayName,
   discourseOriginalPoster,
   discourseTagOptions,
   discourseUserOptions,
@@ -24,8 +25,14 @@ import {
 const SEARCH_PAGE_SIZE = 50;
 
 type LinuxDoSearchScan =
-  | { kind: 'reading'; page: number; raw: (Topic | null)[]; candidateCount: number; droppedCount: number }
-  | { kind: 'ready'; raw: (Topic | null)[]; candidateCount: number; droppedCount: number; remoteHasMore: boolean };
+  | { kind: 'reading'; page: number; raw: (SearchTopic | null)[]; candidateCount: number; droppedCount: number }
+  | {
+      kind: 'ready';
+      raw: (SearchTopic | null)[];
+      candidateCount: number;
+      droppedCount: number;
+      remoteHasMore: boolean;
+    };
 
 type LinuxDoSearchOptions = LinuxDoOptions & {
   limit?: number;
@@ -91,7 +98,7 @@ async function linuxDoCsrfToken(options: LinuxDoOptions) {
 async function topicsFromLinuxDoSearchData(
   data: Record<string, unknown>,
   options: LinuxDoOptions
-): Promise<{ items: Topic[]; rawItems: (Topic | null)[]; hasMore: boolean }> {
+): Promise<{ items: SearchTopic[]; rawItems: (SearchTopic | null)[]; hasMore: boolean }> {
   const users = discourseUsersById(data.users);
   const postsByTopicId = new Map<string, Record<string, unknown>>();
   if (Array.isArray(data.posts)) {
@@ -99,23 +106,27 @@ async function topicsFromLinuxDoSearchData(
   }
   const topics = Array.isArray(data.topics) ? data.topics : [];
   const categoryMap = await categoryMapForTopics(data, topics, categoryMapFromData(data), options);
-  const rawItems: (Topic | null)[] = topics.map((topic) => {
+  const rawItems = topics.map<SearchTopic | null>((topic) => {
     const post = isRecord(topic) ? postsByTopicId.get(String(topic.id)) : undefined;
+    const postNumber = Number(post?.post_number);
     const authorData =
-      (isRecord(topic) ? discourseOriginalPoster(topic, users) : undefined) ||
-      (Number(post?.post_number) === 1 ? post : undefined);
+      (isRecord(topic) ? discourseOriginalPoster(topic, users) : undefined) || (postNumber === 1 ? post : undefined);
     const normalized = normalizeTopic(topic, categoryMap, authorData);
+    if (!normalized) return null;
+
+    const matchedReply = postNumber > 1 ? post : undefined;
+    const author = matchedReply ? discourseDisplayName(matchedReply) || recordText(matchedReply, 'username') : '';
+    const authorAvatar = avatarUrl(matchedReply?.avatar_template);
     const rawBlurb = typeof post?.blurb === 'string' && post.blurb.trim() ? post.blurb : '';
-    return normalized
-      ? {
-          ...normalized,
-          excerpt: rawBlurb
-            ? textExcerptFromPlainText(stripDiscourseCalloutMarkersFromExcerpt(textContentFromHtml(rawBlurb)))
-            : textExcerptFromPlainText(stripDiscourseCalloutMarkersFromExcerpt(normalized.excerpt || ''))
-        }
-      : null;
+    return {
+      ...normalized,
+      excerpt: rawBlurb
+        ? textExcerptFromPlainText(stripDiscourseCalloutMarkersFromExcerpt(textContentFromHtml(rawBlurb)))
+        : textExcerptFromPlainText(stripDiscourseCalloutMarkersFromExcerpt(normalized.excerpt || '')),
+      ...(author || authorAvatar ? { matchedReplyAuthor: { author, authorAvatar } } : {})
+    };
   });
-  const items = rawItems.filter((topic): topic is Topic => topic !== null);
+  const items = rawItems.filter((topic): topic is SearchTopic => topic !== null);
   const grouped = isRecord(data.grouped_search_result) ? data.grouped_search_result : {};
   const result = {
     items,
@@ -175,7 +186,7 @@ export async function searchLinuxDo(query: string, options: LinuxDoSearchOptions
       scan = { kind: 'ready', raw: scan.raw, candidateCount, droppedCount, remoteHasMore: result.hasMore };
     }
   }
-  const items = scan.raw.slice(firstOffset, needed).filter((topic): topic is Topic => topic !== null);
+  const items = scan.raw.slice(firstOffset, needed).filter((topic): topic is SearchTopic => topic !== null);
   const hasMore = scan.raw.length > needed || scan.remoteHasMore;
   const result = {
     items,

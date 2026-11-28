@@ -21,6 +21,8 @@ import { useTopicSessionController } from '@/features/topic/useTopicSessionContr
 import type { TopicScreen } from '@/features/topic/TopicScreen';
 import { ForumSessionEpochProvider } from '@/platform/media/mediaSessionEpoch';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import { createSiteSessionStates } from '@/domain/session/siteSessionState';
+import { projectTestAccountSessions } from '../../helpers/accountSessions';
 import { forumQueryKeys } from '@/platform/query/serverState';
 import { ImagePreviewModal } from '@/ui/media/ImagePreviewModal';
 import { saveImageUriToLibrary } from '@/platform/media/imageSave';
@@ -93,7 +95,7 @@ function latestScreen() {
 function setup(topicDetail: TopicDetail | null = null, routeTopic = topic) {
   const data = createEmptyReaderData();
   jest.mocked(useTopicSessionController).mockReturnValue({
-    state: { replyComposerIntent: { kind: 'closed' }, selectedTopic: routeTopic },
+    state: { replyComposerIntent: { kind: 'closed' }, replyEditRecovery: null, selectedTopic: routeTopic },
     commands: {
       composer: { toggle: jest.fn() },
       view: {
@@ -133,7 +135,7 @@ function setup(topicDetail: TopicDetail | null = null, routeTopic = topic) {
       reconcileAccountStatus: jest.fn(),
       requestNodeSeekVerification: jest.fn(),
       sessionEpochs: initialForumSessionEpochs,
-      sessionViewModels: { nodeseek: { currentUser: null } },
+      sessionViewModels: projectTestAccountSessions(createSiteSessionStates()),
       showLinuxDoVerification: jest.fn(),
       showYaohuoLogin: jest.fn()
     },

@@ -118,6 +118,7 @@ import {
 } from '@/domain/session/writableSessionGate';
 import { readNodeSeekPollJournalEntry, saveNodeSeekPollJournalEntry } from '@/platform/persistence/nodeSeekPollJournal';
 import { prepareRequestToSend } from '@/platform/network/request';
+import { LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { readManagedCookieHeader } from '@/platform/network/managedCookies';
 import { useNetworkProxyRuntime } from '@/platform/network/useNetworkProxyRuntime';
@@ -313,11 +314,15 @@ async function renderActions({
       topicReplies?: Reply[];
       topicDetail?: TopicDetail;
     }) => {
-      const topicSession = useTopicSessionController({ notify, topic: topicDetail });
       const sessionViews =
         props.siteSessionViewModels ||
         siteSessionViewModels ||
         projectTestAccountSessions(siteSessionStates || loggedInStates(topicDetail.source as ActionSource));
+      const accountScope =
+        topicDetail.source === 'v2ex'
+          ? ''
+          : JSON.stringify([sessionViews[topicDetail.source].currentUser?.id, props.sessionEpochs[topicDetail.source]]);
+      const topicSession = useTopicSessionController({ notify, topic: topicDetail, accountScope });
       const actions = useTopicActionsController({
         active: props.active ?? active,
         isRouteFocused,
@@ -534,6 +539,45 @@ describe('topic action query mutations', () => {
       })
     );
   });
+
+  it.each([
+    { stage: 'token', challenge: true, writes: 0 },
+    { stage: 'reaction', challenge: true, writes: 1 },
+    { stage: 'reaction', challenge: false, writes: 1 }
+  ])(
+    'routes a $stage rejection to website verification only for CF ($challenge)',
+    async ({ stage, challenge, writes }) => {
+      mockRunLinuxDoAction.mockImplementation(runLinuxDoActionActual);
+      const opening = detailFor('linuxdo', { canLike: true, currentUserReaction: null });
+      const { detailKey } = seedTopicCache(opening);
+      const showLinuxDoVerification = jest.fn();
+      const fetcher = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        prepareRequestToSend(init);
+        if (String(input).endsWith('/session/csrf') && stage !== 'token') return Response.json({ csrf: 'fixture' });
+        return challenge
+          ? new Response('<title>Just a moment...</title>', {
+              status: 403,
+              headers: { 'cf-mitigated': 'challenge', 'content-type': 'text/html' }
+            })
+          : Response.json({ errors: ['permission denied'] }, { status: 403 });
+      });
+      const hook = await renderActions({ topicDetail: opening, showLinuxDoVerification, fetcher });
+      await act(async () => {
+        await expect(hook.result.current.actions.reactToPost(opening.commentId!)).resolves.toBe(false);
+      });
+      expect(showLinuxDoVerification).toHaveBeenCalledTimes(Number(challenge));
+      expect(fetcher.mock.calls.filter(([, init]) => init?.method === 'PUT')).toHaveLength(writes);
+      expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.siteExtension?.interactionUnconfirmed === true).toBe(
+        stage === 'reaction' && challenge
+      );
+      if (challenge) {
+        expect(showLinuxDoVerification).toHaveBeenCalledWith(
+          'linux.do 需要完成 Cloudflare 验证',
+          expect.objectContaining({ kind: 'website', isCurrent: expect.any(Function) })
+        );
+      }
+    }
+  );
 
   it('adds short text and custom emoji to the target comment without creating a floor', async () => {
     const events: DiagnosticEvent[] = [];
@@ -759,28 +803,35 @@ describe('topic action query mutations', () => {
     );
   });
 
-  it('stops a reaction before dispatch if the route becomes inactive while settings are loading', async () => {
-    const opening = detailFor('linuxdo', { canLike: true, currentUserReaction: null });
-    seedTopicCache(opening);
-    const loading =
-      Promise.withResolvers<
-        Awaited<ReturnType<ReturnType<typeof testPostInteractionReads>['getLinuxDoInteractionConfig']>>
-      >();
-    const hook = await renderActions({
-      topicDetail: opening,
-      interactionReads: { getLinuxDoInteractionConfig: () => loading.promise }
-    });
-    let pending!: Promise<boolean>;
-    await act(async () => {
-      pending = hook.result.current.actions.reactToPost(opening.commentId!, 'heart');
-    });
-    await hook.rerender({ active: false, sessionEpochs: initialForumSessionEpochs });
-    await act(async () => {
-      loading.resolve(await testPostInteractionReads().getLinuxDoInteractionConfig());
-      await pending;
-    });
-    expect(mockRunLinuxDoAction).not.toHaveBeenCalled();
-  });
+  it.each(['config loaded', 'verification required'])(
+    'stops a reaction after leaving the route while settings are loading (%s)',
+    async (result) => {
+      const opening = detailFor('linuxdo', { canLike: true, currentUserReaction: null });
+      seedTopicCache(opening);
+      const showLinuxDoVerification = jest.fn();
+      const loading =
+        Promise.withResolvers<
+          Awaited<ReturnType<ReturnType<typeof testPostInteractionReads>['getLinuxDoInteractionConfig']>>
+        >();
+      const hook = await renderActions({
+        showLinuxDoVerification,
+        topicDetail: opening,
+        interactionReads: { getLinuxDoInteractionConfig: () => loading.promise }
+      });
+      let pending!: Promise<boolean>;
+      await act(async () => {
+        pending = hook.result.current.actions.reactToPost(opening.commentId!, 'heart');
+      });
+      await hook.rerender({ active: false, sessionEpochs: initialForumSessionEpochs });
+      await act(async () => {
+        if (result === 'config loaded') loading.resolve(await testPostInteractionReads().getLinuxDoInteractionConfig());
+        else loading.reject(new LinuxDoCloudflareError());
+        await expect(pending).resolves.toBe(false);
+      });
+      expect(mockRunLinuxDoAction).not.toHaveBeenCalled();
+      expect(showLinuxDoVerification).not.toHaveBeenCalled();
+    }
+  );
 
   it.each(['opening', 'reply'] as const)(
     'shares an in-flight %s interaction recheck and permits a later read',
@@ -2600,7 +2651,8 @@ describe('topic action query mutations', () => {
       });
 
       expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
-      expect(hook.result.current.topicSession.state.replyContent).toBe(draft);
+      expect(hook.result.current.topicSession.state.replyContent).toBe('');
+      expect(hook.result.current.topicSession.state.replyEditRecovery).toBeNull();
 
       await act(async () => {
         await staleSubmitReply();
@@ -2657,7 +2709,8 @@ describe('topic action query mutations', () => {
     });
     expect(hook.result.current.topicSession.state.selectedTopic?.id).toBe(nodeSeekDetail.id);
     expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
-    expect(hook.result.current.topicSession.state.replyContent).toBe('同账号返回后保留的草稿');
+    expect(hook.result.current.topicSession.state.replyContent).toBe('');
+    expect(hook.result.current.topicSession.state.replyEditRecovery).toBeNull();
 
     await act(async () => {
       await staleSubmitReply();
@@ -2914,7 +2967,7 @@ describe('topic action query mutations', () => {
       });
       expect(fetcher).toHaveBeenCalledTimes(1);
       expect(mockRunLinuxDoAction).not.toHaveBeenCalled();
-      expect(hook.result.current.topicSession.state.replyContent).toBe('old');
+      expect(hook.result.current.topicSession.state.replyEditRecovery).toBeNull();
     }
   );
 
@@ -3073,7 +3126,7 @@ describe('topic action query mutations', () => {
       await second.result.current.actions.submitReply();
     });
     expect(mockRunLinuxDoAction).toHaveBeenCalledTimes(1);
-    expect(second.result.current.topicSession.state.replyContent).toBe('draft from the older version');
+    expect(second.result.current.topicSession.state.replyEditRecovery).toBe('draft from the older version');
   });
 
   it('rechecks the exact cached reply permission before editing', async () => {
@@ -3102,7 +3155,7 @@ describe('topic action query mutations', () => {
 
     expect(mockRunLinuxDoAction).not.toHaveBeenCalled();
     expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
-    expect(hook.result.current.topicSession.state.replyContent).toBe('不能以旧权限提交的正文');
+    expect(hook.result.current.topicSession.state.replyEditRecovery).toBe('不能以旧权限提交的正文');
 
     seedTopicCache(linuxDoDetail, [reply]);
     await act(async () => {
@@ -3116,7 +3169,7 @@ describe('topic action query mutations', () => {
 
     expect(mockRunLinuxDoAction).not.toHaveBeenCalled();
     expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
-    expect(hook.result.current.topicSession.state.replyContent).toBe('缓存已不存在的正文');
+    expect(hook.result.current.topicSession.state.replyEditRecovery).toBe('缓存已不存在的正文');
   });
 
   it('fails closed on conflicting duplicate edit permissions across cached pages', async () => {
@@ -3155,7 +3208,7 @@ describe('topic action query mutations', () => {
 
     expect(mockRunLinuxDoAction).not.toHaveBeenCalled();
     expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
-    expect(hook.result.current.topicSession.state.replyContent).toBe('跨页权限冲突时保留的正文');
+    expect(hook.result.current.topicSession.state.replyEditRecovery).toBe('跨页权限冲突时保留的正文');
   });
 
   it.each([
@@ -3214,7 +3267,7 @@ describe('topic action query mutations', () => {
     });
 
     expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
-    expect(hook.result.current.topicSession.state.replyContent).toBe('权限撤回后保留的草稿');
+    expect(hook.result.current.topicSession.state.replyEditRecovery).toBe('权限撤回后保留的草稿');
 
     await act(async () => {
       hook.rerender({ sessionEpochs: initialForumSessionEpochs, topicReplies: [reply] });
@@ -3226,7 +3279,7 @@ describe('topic action query mutations', () => {
     });
 
     expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
-    expect(hook.result.current.topicSession.state.replyContent).toBe('回复消失后保留的草稿');
+    expect(hook.result.current.topicSession.state.replyEditRecovery).toBe('回复消失后保留的草稿');
     expect(mockRunLinuxDoAction).not.toHaveBeenCalled();
     expect(mockGetDocument).not.toHaveBeenCalled();
   });
@@ -3267,7 +3320,7 @@ describe('topic action query mutations', () => {
 
     expect(mockRunLinuxDoAction).not.toHaveBeenCalled();
     expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
-    expect(hook.result.current.topicSession.state.replyContent).toBe('取消查询期间失效的正文');
+    expect(hook.result.current.topicSession.state.replyEditRecovery).toBe('取消查询期间失效的正文');
   });
 
   it.each([
@@ -3306,7 +3359,7 @@ describe('topic action query mutations', () => {
     expect(mockUploadNodeSeekReplyImage).not.toHaveBeenCalled();
     expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
     expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
-    expect(hook.result.current.topicSession.state.replyContent).toBe('old');
+    expect(hook.result.current.topicSession.state.replyEditRecovery).toBeNull();
   });
 
   it('rechecks edit permission after NodeImage credentials and before file selection', async () => {
@@ -3348,7 +3401,7 @@ describe('topic action query mutations', () => {
     expect(mockUploadNodeSeekReplyImage).not.toHaveBeenCalled();
     expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
     expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
-    expect(hook.result.current.topicSession.state.replyContent).toBe('old');
+    expect(hook.result.current.topicSession.state.replyEditRecovery).toBeNull();
   });
 
   it('derives edit cache keys without a competing refetch', async () => {
@@ -3992,7 +4045,7 @@ describe('topic action query mutations', () => {
     expect(showLinuxDoLogin).toHaveBeenCalledWith('linux.do 登录已失效');
   });
 
-  it('leaves identity unchanged for typed linux.do verification', async () => {
+  it('opens website verification for a blocked linux.do reply without expiring the identity', async () => {
     mockRunLinuxDoAction.mockRejectedValueOnce(
       Object.assign(new Error('linux.do 需要完成 Cloudflare 验证'), {
         reason: 'cloudflare',
@@ -4020,9 +4073,12 @@ describe('topic action query mutations', () => {
 
     expect(mockRunLinuxDoAction).toHaveBeenCalledTimes(1);
     expect(onSessionExpired).not.toHaveBeenCalled();
-    expect(showLinuxDoLogin).not.toHaveBeenCalled();
-    expect(notify).toHaveBeenCalledTimes(1);
-    expect(notify).toHaveBeenCalledWith('linux.do 需要完成 Cloudflare 验证');
+    expect(showLinuxDoLogin).toHaveBeenCalledTimes(1);
+    expect(showLinuxDoLogin).toHaveBeenCalledWith(
+      'linux.do 需要完成 Cloudflare 验证',
+      expect.objectContaining({ kind: 'website', isCurrent: expect.any(Function) })
+    );
+    expect(notify).not.toHaveBeenCalled();
   });
 
   it('suppresses a NodeSeek failure after a newer login takes ownership', async () => {
@@ -4895,27 +4951,60 @@ describe('topic action query mutations', () => {
     expect(mockRunYaohuoAction).toHaveBeenCalledTimes(1);
   });
 
-  it('applies a confirmed LinuxDo vote only to the exact topic cache', async () => {
+  it.each([
+    { results: 'on_vote', counts: [8, 3] },
+    { results: 'on_close', counts: [] }
+  ])('applies the authoritative LinuxDo vote with $results results', async ({ results, counts }) => {
     const linuxDoPoll: TopicPoll = {
-      id: 'linuxdo-poll',
+      id: '18',
       name: 'poll_name',
       postId: '42',
-      options: [{ id: '1', label: 'A' }]
+      options: [
+        { id: '1', label: 'A' },
+        { id: '2', label: 'B' }
+      ]
     };
+    const receipt = {
+      poll: {
+        id: 18,
+        name: 'poll_name',
+        type: 'regular',
+        status: 'open',
+        results,
+        voters: 11,
+        options: linuxDoPoll.options.map(({ id, label }, index) => ({
+          id,
+          html: label,
+          ...(counts[index] !== undefined ? { votes: counts[index] } : {})
+        }))
+      },
+      vote: ['1']
+    };
+    mockRunLinuxDoAction.mockImplementation(runLinuxDoActionActual);
+    const requests: string[] = [];
+    const fetcher = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const { pathname } = new URL(String(input));
+      requests.push(`${init?.method || 'GET'} ${pathname}`);
+      if (pathname === '/session/csrf') return Response.json({ csrf: 'fixture' });
+      if (pathname === '/polls/vote') return Response.json(receipt);
+      throw new Error(`Unexpected request: ${pathname}`);
+    });
     const linuxDoDetail = detailFor('linuxdo', { polls: [linuxDoPoll] });
     const { detailKey } = seedTopicCache(linuxDoDetail);
-    const hook = await renderActions({ topicDetail: linuxDoDetail });
+    const hook = await renderActions({ topicDetail: linuxDoDetail, fetcher });
 
     await act(async () => {
       await hook.result.current.actions.votePoll(linuxDoPoll, ['1']);
     });
 
     expect(mockRunLinuxDoAction).toHaveBeenCalledTimes(1);
-    expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.polls?.[0]).toMatchObject({
-      id: 'linuxdo-poll',
-      voted: true,
-      options: [{ id: '1', selected: true }]
-    });
+    expect(requests).toEqual(['GET /session/csrf', 'PUT /polls/vote']);
+    const updated = appQueryClient.getQueryData<TopicDetail>(detailKey)?.polls?.[0];
+    expect(updated).toMatchObject({ id: '18', postId: '42', voted: true, participantCount: 11 });
+    expect(updated?.options.map(({ count, selected }) => ({ count, selected }))).toEqual([
+      { count: counts[0], selected: true },
+      { count: counts[1], selected: false }
+    ]);
   });
 
   it('prepares Stardust but sends nothing when the confirmation is canceled', async () => {
@@ -5458,7 +5547,7 @@ describe('topic action query mutations', () => {
       }
       await act(() => hook.result.current.actions.submitReply(snapshot));
       expect(alert).not.toHaveBeenCalled();
-      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(fetcher).toHaveBeenCalledTimes(change === 'account' ? 1 : 2);
     }
   );
 

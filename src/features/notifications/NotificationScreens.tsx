@@ -5,7 +5,7 @@ import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
 import { Image, PixelRatio, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
-import { ChevronDown, SquarePen } from 'lucide-react-native';
+import { ChevronDown, FileText, MessageSquare, SquarePen } from 'lucide-react-native';
 import RenderHTML, {
   HTMLContentModel,
   HTMLElementModel,
@@ -26,6 +26,7 @@ import type {
 } from '@/domain/forum/structuredComposer';
 import type { NotificationPermissionState } from './useNotificationsRuntime';
 import type { NotificationState } from '@/platform/notifications/notificationStore';
+import { recordUserInteraction } from '@/platform/network/userPresence';
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { Avatar } from '@/ui/avatar/Avatar';
 import { AppButton, FloatingIconButton } from '@/ui/controls/ButtonControls';
@@ -480,23 +481,26 @@ export const NotificationsScreen = memo(function NotificationsScreen({
   );
   const onPageLayout = useStartupPageLayout();
   if (!storageReady) {
-    return initializationError ? (
-      <EmptyState
-        title="通知初始化失败"
-        text={initializationError}
-        action={onRetryInitialization ? { label: '重试通知初始化', run: onRetryInitialization } : undefined}
-      />
-    ) : (
-      <NotificationListPlaceholder animating={active} label="正在恢复通知" />
+    return (
+      <View style={styles.screen} onLayout={onPageLayout}>
+        {initializationError ? (
+          <EmptyState
+            title="通知初始化失败"
+            text={initializationError}
+            action={onRetryInitialization ? { label: '重试通知初始化', run: onRetryInitialization } : undefined}
+          />
+        ) : (
+          <NotificationListPlaceholder animating={active} label="正在恢复通知" />
+        )}
+      </View>
     );
   }
   return (
-    <View style={styles.screen}>
+    <View style={styles.screen} onLayout={onPageLayout}>
       {toolbar}
       {emptyList ? null : failedSites}
       <FlashList
         ref={listRef}
-        onLayout={onPageLayout}
         nestedScrollEnabled={false}
         accessibilityLabel="消息列表"
         testID={outcome ? `notification-outcome-${outcome}-${source}` : undefined}
@@ -742,6 +746,25 @@ const DetailHtml = memo(function DetailHtml({
     [htmlTagsStyles, message, styles.detailLink]
   );
   const bodyStyle = message ? styles.messageBody : styles.detailBody;
+  const documentUrl = mediaContext.referrer?.documentUrl;
+  const onPressHtmlLink = useCallback(
+    (event: { stopPropagation?: () => void }, href: string) => {
+      if (isPreviewableImageUrl(href)) {
+        event.stopPropagation?.();
+        onOpenImagePreview(href);
+        return;
+      }
+      const destination = parseForumTopicDestination(href, documentUrl);
+      if (!destination) {
+        onOpenExternalUrl(href);
+        return;
+      }
+      event.stopPropagation?.();
+      if (destination.location) onOpenTopic(destination.topic, destination.location);
+      else onOpenTopic(destination.topic);
+    },
+    [documentUrl, onOpenExternalUrl, onOpenImagePreview, onOpenTopic]
+  );
   const renderers = useMemo(() => {
     const PreviewImageRenderer: CustomBlockRenderer = (props) => {
       const imageProps = useIMGElementProps(props);
@@ -852,6 +875,66 @@ const DetailHtml = memo(function DetailHtml({
         </View>
       );
     };
+    const YaohuoNoticeActionsRenderer: CustomBlockRenderer = (props) => {
+      const { TDefaultRenderer, tnode } = props;
+      if (!tnode.hasClass('notice-card-actions')) return <TDefaultRenderer {...props} />;
+
+      const content = tnode.children[0];
+      const links =
+        tnode.children.length === 1 && content.type === 'phrasing' && content.tagName === null
+          ? content.children
+          : tnode.children;
+      const actions: { label: string; href: string; reply: boolean }[] = [];
+      for (const child of links) {
+        if (child.type !== 'text') return <TDefaultRenderer {...props} />;
+        const label = child.data.trim();
+        if (!child.tagName && !label) continue;
+        if (child.tagName !== 'a') return <TDefaultRenderer {...props} />;
+        if (label !== '查看帖子' && label !== '查看回复') return <TDefaultRenderer {...props} />;
+        const href = child.attributes.href;
+        if (!href) return <TDefaultRenderer {...props} />;
+        const reply = label === '查看回复';
+        const destination = parseForumTopicDestination(href, documentUrl);
+        if (
+          destination?.topic.source !== 'yaohuo' ||
+          (reply ? destination.location?.kind !== 'reply' : destination.location) ||
+          actions.some((action) => action.label === label)
+        )
+          return <TDefaultRenderer {...props} />;
+        actions.push({ label, href, reply });
+      }
+      if (!actions.length) return <TDefaultRenderer {...props} />;
+
+      return (
+        <View style={styles.noticeActions} testID="notification-notice-actions">
+          {actions.map(({ label, href, reply }) => {
+            const Icon = reply ? MessageSquare : FileText;
+            return (
+              <Pressable
+                key={label}
+                accessibilityRole="link"
+                accessibilityLabel={label}
+                style={styles.noticeActionTarget}
+                testID={reply ? 'notification-notice-action-reply' : 'notification-notice-action-post'}
+                onPress={(event) => {
+                  recordUserInteraction();
+                  onPressHtmlLink(event, href);
+                }}
+              >
+                <View style={[styles.noticeAction, reply && styles.noticeReplyAction]}>
+                  <Icon
+                    accessible={false}
+                    size={14}
+                    color={reply ? styles.noticeReplyActionLabel.color : styles.noticeActionLabel.color}
+                  />
+                  <Text style={[styles.noticeActionLabel, reply && styles.noticeReplyActionLabel]}>{label}</Text>
+                </View>
+              </Pressable>
+            );
+          })}
+        </View>
+      );
+    };
     return {
       ...createForumStickerRenderers({
         fontScale: settings.fontScale,
@@ -875,32 +958,24 @@ const DetailHtml = memo(function DetailHtml({
           </Pressable>
         )
       }),
+      ...(source === 'yaohuo' ? { div: YaohuoNoticeActionsRenderer } : {}),
       img: PreviewImageRenderer,
       [INLINE_FORUM_IMAGE_TAG]: InlineImageRenderer
     };
-  }, [bodyStyle, contentWidth, mediaContext, message, onOpenImagePreview, settings.fontScale, theme.surface2]);
-  const renderersProps = useMemo(
-    () => ({
-      a: {
-        onPress: (event: { stopPropagation?: () => void }, href: string) => {
-          if (isPreviewableImageUrl(href)) {
-            event.stopPropagation?.();
-            onOpenImagePreview(href);
-            return;
-          }
-          const destination = parseForumTopicDestination(href);
-          if (!destination) {
-            onOpenExternalUrl(href);
-            return;
-          }
-          event.stopPropagation?.();
-          if (destination.location) onOpenTopic(destination.topic, destination.location);
-          else onOpenTopic(destination.topic);
-        }
-      }
-    }),
-    [onOpenExternalUrl, onOpenImagePreview, onOpenTopic]
-  );
+  }, [
+    bodyStyle,
+    contentWidth,
+    documentUrl,
+    mediaContext,
+    message,
+    onOpenImagePreview,
+    onPressHtmlLink,
+    settings.fontScale,
+    source,
+    styles,
+    theme.surface2
+  ]);
+  const renderersProps = useMemo(() => ({ a: { onPress: onPressHtmlLink } }), [onPressHtmlLink]);
   return (
     <RenderHTML
       baseStyle={bodyStyle}
@@ -915,7 +990,7 @@ const DetailHtml = memo(function DetailHtml({
       ignoredStyles={htmlIgnoredStyles}
       renderers={renderers}
       renderersProps={renderersProps}
-      source={{ html: renderableHtml, baseUrl: mediaContext.referrer?.documentUrl }}
+      source={{ html: renderableHtml, baseUrl: documentUrl }}
       tagsStyles={tagsStyles}
       {...forumHtmlFonts}
     />
@@ -946,6 +1021,7 @@ export function NotificationDetailScreen({
   historyBusy = false,
   historyError,
   onLoadEarlierMessages,
+  onLoadLaterMessages,
   onResetMessageHistory,
   policyBusy = false,
   policyDisabled = false,
@@ -992,6 +1068,7 @@ export function NotificationDetailScreen({
   historyBusy?: boolean;
   historyError?: string;
   onLoadEarlierMessages?: () => void;
+  onLoadLaterMessages?: () => void;
   onResetMessageHistory?: () => void;
   policyBusy?: boolean;
   policyDisabled?: boolean;
@@ -1069,6 +1146,29 @@ export function NotificationDetailScreen({
   }, [conversationAutoScroll, conversationIdentity]);
   const messages = detail?.messages;
   const messageSource = detail?.notification.source;
+  const systemTimeline = Boolean(messages && detail?.notification.kind === 'system');
+  const messageAnchorId = detail?.messageAnchorId;
+  const messageAnchorScope = messageAnchorId ? `${previewScope}:${messageAnchorId}` : undefined;
+  const messageAnchorLayout = useRef<{ scope: string; y: number } | undefined>(undefined);
+  const handledMessageAnchor = useRef<string | undefined>(undefined);
+  const positionMessageAnchor = useLatestCallback(() => {
+    const layout = messageAnchorLayout.current;
+    const scroll = scrollRef.current;
+    if (
+      !layout ||
+      layout.scope !== messageAnchorScope ||
+      handledMessageAnchor.current === layout.scope ||
+      !automaticScrollAllowedRef.current ||
+      !scroll
+    )
+      return;
+    handledMessageAnchor.current = layout.scope;
+    conversationAutoScroll.userScrolled();
+    scroll.scrollTo({ y: Math.max(0, layout.y - 12), animated: false });
+  });
+  useEffect(() => {
+    if (routeActive && messageAnchorScope) requestAnimationFrame(positionMessageAnchor);
+  }, [messageAnchorScope, positionMessageAnchor, routeActive]);
   const conversationKey = useMemo(() => messages?.map((message) => message.id).join(':') || '', [messages]);
   const messageRows = useMemo(() => {
     if (!messageSource) return undefined;
@@ -1076,6 +1176,14 @@ export function NotificationDetailScreen({
       <View
         key={message.id}
         testID={`notification-message-${message.id}`}
+        onLayout={
+          message.id === messageAnchorId && messageAnchorScope
+            ? ({ nativeEvent: { layout } }) => {
+                messageAnchorLayout.current = { scope: messageAnchorScope, y: layout.y };
+                requestAnimationFrame(positionMessageAnchor);
+              }
+            : undefined
+        }
         style={[styles.messageRow, message.mine && styles.messageRowMine]}
       >
         <View style={[styles.messageMetaRow, message.mine && styles.messageMetaMine]}>
@@ -1086,11 +1194,17 @@ export function NotificationDetailScreen({
             <Text style={styles.messageTime}>{formatNotificationTime(message.createdAt)}</Text>
           ) : null}
         </View>
-        <View style={[styles.messageBubble, message.mine && styles.messageBubbleMine]}>
+        <View
+          style={[
+            styles.messageBubble,
+            message.mine && styles.messageBubbleMine,
+            message.id === messageAnchorId && styles.messageBubbleAnchor
+          ]}
+        >
           {message.contentHtml ? (
             <DetailHtml
-              message
-              contentWidth={Math.round(contentWidth * 0.72)}
+              message={!systemTimeline}
+              contentWidth={systemTimeline ? contentWidth - 56 : Math.round(contentWidth * 0.72)}
               html={message.contentHtml}
               source={messageSource}
               mediaContext={mediaContext}
@@ -1107,7 +1221,20 @@ export function NotificationDetailScreen({
         </View>
       </View>
     ));
-  }, [contentWidth, mediaContext, messages, messageSource, onOpenExternalUrl, onOpenTopic, openImagePreview, styles]);
+  }, [
+    contentWidth,
+    mediaContext,
+    messages,
+    messageAnchorId,
+    messageAnchorScope,
+    messageSource,
+    onOpenExternalUrl,
+    onOpenTopic,
+    openImagePreview,
+    positionMessageAnchor,
+    styles,
+    systemTimeline
+  ]);
   const dockSafeAreaStyle = { paddingBottom: Math.max(9, insets.bottom + 9) };
   const replyToTopic =
     topicReplyAction || detail?.notification.kind === 'mention' || detail?.notification.kind === 'reply';
@@ -1145,6 +1272,8 @@ export function NotificationDetailScreen({
     onOpenTopic
   };
   const conversation = Boolean(detail.messages);
+  const anchoredHistory = detail.messageHistory?.newerCursor !== undefined;
+  const newerCursor = detail.messageHistory?.newerCursor;
   const emptyConversation = item.source === 'nodeseek' && detail.messages?.length === 0;
   const readOnlyText =
     item.kind === 'system' ? '系统通知由原站提供为只读。' : '原站没有为这条通知提供可回复的会话或主题。';
@@ -1162,6 +1291,10 @@ export function NotificationDetailScreen({
           maintainVisibleContentPosition={conversation ? { minIndexForVisible: 2 } : undefined}
           onContentSizeChange={() => {
             if (!automaticScrollAllowedRef.current || !conversationAutoScroll.contentChanged(conversationKey)) return;
+            if (messageAnchorScope && handledMessageAnchor.current !== messageAnchorScope) {
+              requestAnimationFrame(positionMessageAnchor);
+              return;
+            }
             requestAnimationFrame(() => {
               if (automaticScrollAllowedRef.current && conversationAutoScroll.contentChanged(conversationKey))
                 scrollRef.current?.scrollToEnd({ animated: false });
@@ -1169,6 +1302,7 @@ export function NotificationDetailScreen({
           }}
           onScrollBeginDrag={() => {
             if (conversation) {
+              if (messageAnchorScope) handledMessageAnchor.current = messageAnchorScope;
               conversationAutoScroll.userScrolled();
             }
           }}
@@ -1185,7 +1319,7 @@ export function NotificationDetailScreen({
             {conversation ? (
               <View style={styles.conversationContext}>
                 <Text style={styles.conversationContextText}>
-                  {sourceCatalog[item.source].label} · 私信会话
+                  {sourceCatalog[item.source].label} · {systemTimeline ? '系统通知' : '私信会话'}
                   {item.createdAt || item.displayTime ? ` · ${notificationTimeText(item)}` : ''}
                 </Text>
                 {canOpenTopic ? (
@@ -1261,10 +1395,10 @@ export function NotificationDetailScreen({
                       onLoadEarlierMessages();
                     }}
                   />
-                ) : detail.messageHistory.olderCursor === null && !historyError ? (
+                ) : detail.messageHistory.olderCursor === null && !anchoredHistory && !historyError ? (
                   <Text style={styles.conversationNotice}>已到最早消息</Text>
                 ) : null}
-                {historyError ? (
+                {historyError && !anchoredHistory ? (
                   <>
                     <Text style={styles.errorText}>{historyError}</Text>
                     {onResetMessageHistory ? (
@@ -1285,6 +1419,22 @@ export function NotificationDetailScreen({
             <>
               <View key="spacer" collapsable={false} style={styles.conversationSpacer} />
               {messageRows}
+              {systemTimeline ? (
+                <View style={styles.readOnlyNotice}>
+                  <Text style={styles.noticeText}>{readOnlyText}</Text>
+                </View>
+              ) : null}
+              {newerCursor && onLoadLaterMessages ? (
+                <AppButton
+                  compact
+                  variant="ghost"
+                  loading={historyBusy}
+                  label={historyBusy ? '加载中' : '加载更新消息'}
+                  accessibilityLabel="加载更新消息"
+                  disabled={historyBusy || !routeActive}
+                  onPress={onLoadLaterMessages}
+                />
+              ) : null}
             </>
           ) : (
             <>
@@ -1318,7 +1468,7 @@ export function NotificationDetailScreen({
           <View testID="notification-latest-message-action" pointerEvents="box-none" style={styles.latestMessageAction}>
             <FloatingIconButton
               icon={ChevronDown}
-              label="回到最新消息"
+              label={newerCursor ? '跳到当前末尾' : '回到最新消息'}
               onPress={() => {
                 conversationAutoScroll.reset();
                 setShowLatestMessage(false);
@@ -1328,6 +1478,20 @@ export function NotificationDetailScreen({
           </View>
         ) : null}
       </View>
+      {anchoredHistory && historyError ? (
+        <View style={styles.detailRecovery} accessibilityLiveRegion="polite">
+          <Text style={styles.errorText}>{historyError}</Text>
+          {onResetMessageHistory ? (
+            <AppButton
+              compact
+              variant="ghost"
+              label="重新读取会话"
+              disabled={historyBusy || !routeActive}
+              onPress={onResetMessageHistory}
+            />
+          ) : null}
+        </View>
+      ) : null}
       {error ? (
         <View style={styles.detailRecovery} accessibilityLiveRegion="polite">
           <Text style={[styles.errorText, styles.sourceErrorText]}>{error}</Text>

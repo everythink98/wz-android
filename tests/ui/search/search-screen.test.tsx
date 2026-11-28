@@ -11,7 +11,7 @@ import type { SearchGroup } from '@/features/search/listItems';
 import { SearchScreen } from '@/features/search/SearchScreen';
 import { SearchFilterSheet, type SearchFilterPlacement } from '@/features/search/SearchFilterSheet';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
-import type { Category, FeedSource, Source, Topic } from '@/domain/forum/models';
+import type { Category, FeedSource, SearchTopic, Source, Topic } from '@/domain/forum/models';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { aggregateSearchSources, isSessionSource } from '@/domain/forum/sourceCatalog';
@@ -45,8 +45,11 @@ jest.mock('@react-navigation/native', () => ({
 
 jest.mock('@react-native-async-storage/async-storage', () => require('@react-native-async-storage/async-storage/jest'));
 
-function render(element: React.ReactElement) {
-  return renderNative(element, { wrapper: QueryTestWrapper });
+async function render(element: React.ReactElement) {
+  const view = await renderNative(element, { wrapper: QueryTestWrapper });
+  const screen = view.queryByTestId('search-screen', { includeHiddenElements: true });
+  if (screen) await fireEvent(screen, 'layout', { nativeEvent: { layout: { height: 800, width: 400, x: 0, y: 0 } } });
+  return view;
 }
 
 jest.mock('@shopify/flash-list', () => {
@@ -489,6 +492,21 @@ function renderSearchScreen(overrides: SearchFixtureProps = {}) {
 }
 
 describe('Search state', () => {
+  it('makes the search field available before admitting saved history after layout', async () => {
+    const props = createSearchScreenProps({ query: '', submittedQuery: '', recentSearches: ['Android', 'codex'] });
+    const view = await renderNative(<SearchScreen {...props} />, { wrapper: QueryTestWrapper });
+
+    expect(view.getByTestId('search-query')).toBeTruthy();
+    expect(view.queryByLabelText('搜索最近记录 Android')).toBeNull();
+
+    await fireEvent(view.getByTestId('search-screen'), 'layout', {
+      nativeEvent: { layout: { width: 400, height: 800, x: 0, y: 0 } }
+    });
+
+    expect(view.getByLabelText('搜索最近记录 Android')).toBeTruthy();
+    expect(view.getByLabelText('搜索最近记录 codex')).toBeTruthy();
+  });
+
   it('restores failed history edits when Search returns from a frozen stack', async () => {
     const storageKey = 'reader-search-history';
     const previous = await AsyncStorage.getItem(storageKey);
@@ -1600,14 +1618,10 @@ describe('Search state', () => {
   it('renders external search as an action and hides anonymous source filters', async () => {
     const onOpenExternalSearch = jest.fn<(url: string) => void>();
     const url = 'https://www.google.com/search?q=site%3Alinux.do+codex';
-    const externalProps = {
+    const externalProps: SearchFixtureProps = {
       externalSearchSources: ['linuxdo'],
-      onOpenExternalSearch
-    } as unknown as Partial<React.ComponentProps<typeof SearchScreen>>;
-    const view = await renderSearchScreen({
-      ...externalProps,
+      onOpenExternalSearch,
       expectedSearchSources: ['linuxdo'],
-      searchSource: 'linuxdo',
       searchGroups: [
         {
           source: 'linuxdo',
@@ -1617,7 +1631,8 @@ describe('Search state', () => {
           settled: true
         }
       ]
-    });
+    };
+    const view = await renderSearchScreen({ ...externalProps, searchSource: 'linuxdo' });
 
     expect(view.getByTestId('search-complete')).toBeTruthy();
     expect(view.getByLabelText('搜索结果，已完成，有可打开入口')).toBeTruthy();
@@ -1627,6 +1642,12 @@ describe('Search state', () => {
 
     await fireEvent.press(view.getByTestId('search-external-linuxdo'));
     expect(onOpenExternalSearch).toHaveBeenCalledWith(url);
+
+    await view.rerender(<SearchScreen {...createSearchScreenProps(externalProps)} />);
+    const externalRow = within(view.getByTestId('search-external-linuxdo').parent!);
+    expect(externalRow.getByText('linux.do')).toHaveStyle({ fontSize: 16, fontWeight: '600' });
+    expect(view.getByText('去 Google 搜索')).toBeTruthy();
+    expect(view.queryByLabelText('查看 linux.do 全部搜索结果')).toBeNull();
   });
 
   it('shows fixed all-source previews and opens the selected source list', async () => {
@@ -1682,6 +1703,35 @@ describe('Search state', () => {
     await fireEvent.press(view.getByLabelText('查看 V2EX 全部搜索结果'));
     expect(onSearchSourceChange).toHaveBeenCalledWith('v2ex');
   });
+
+  it.each(['all', 'linuxdo'] as const)(
+    'shows the matched reply author in %s results and opens the same topic',
+    async (searchSource) => {
+      const authorAvatar = 'https://linux.do/user_avatar/linux.do/reply-author/96/1.png';
+      const result: SearchTopic = {
+        ...firstTopic,
+        source: 'linuxdo',
+        id: '510',
+        url: 'https://linux.do/t/ai-discussion/510',
+        title: '回复命中的主题',
+        author: '楼主',
+        authorId: 'op',
+        matchedReplyAuthor: { author: '回帖佬', authorAvatar }
+      };
+      const onOpenTopic = jest.fn();
+      const view = await renderSearchScreen({
+        searchSource,
+        onOpenTopic,
+        expectedSearchSources: ['linuxdo'],
+        searchGroups: [{ source: 'linuxdo', label: 'linux.do', items: [result], settled: true }]
+      });
+
+      expect(view.getByText('回帖佬 · 回复者')).toBeTruthy();
+      expect(JSON.stringify(view.toJSON())).toContain(authorAvatar);
+      await fireEvent.press(view.getByLabelText(/^回复命中的主题，.*回帖佬 · 回复者/));
+      expect(onOpenTopic).toHaveBeenCalledWith(expect.objectContaining({ id: '510', author: '楼主', authorId: 'op' }));
+    }
+  );
 
   it('hides stale results as soon as the input differs from the submitted query', async () => {
     const view = await renderSearchScreen({

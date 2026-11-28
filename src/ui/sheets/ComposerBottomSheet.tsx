@@ -19,7 +19,10 @@ export function ComposerBottomSheet({
   dark,
   fixedContent = false,
   presentation = 'sheet',
+  releaseAfterClose = false,
   visible,
+  onBackDuringClose,
+  onClosed,
   onOpenChange,
   onPresentationChange
 }: {
@@ -32,7 +35,10 @@ export function ComposerBottomSheet({
   dark: boolean;
   fixedContent?: boolean;
   presentation?: ComposerPresentation;
+  releaseAfterClose?: boolean;
   visible: boolean;
+  onBackDuringClose?: () => boolean;
+  onClosed?: () => void;
   onOpenChange: (open: boolean) => void;
   onPresentationChange?: (presentation: ComposerPresentation) => void;
 }) {
@@ -44,6 +50,7 @@ export function ComposerBottomSheet({
   }, [presented]);
   const { height } = useWindowDimensions();
   const committedVisible = useCommittedRef(presented);
+  const wantedOpen = useCommittedRef(visible);
   const [focusSignal, setFocusSignal] = useState(0);
   const [keyboardActive, setKeyboardActive] = useState(presented);
   const pickerReady = useSharedValue(false);
@@ -60,7 +67,10 @@ export function ComposerBottomSheet({
     // A late animation cannot release a reopened editor's keyboard subscription.
     if (committedVisible.current) return;
     setKeyboardActive(false);
-  }, [committedVisible]);
+    if (wantedOpen.current) return;
+    if (releaseAfterClose) setHasPresented(false);
+    onClosed?.();
+  }, [committedVisible, onClosed, releaseAfterClose, wantedOpen]);
   const availableContentHeight = Math.max(320, height - insets.top - insets.bottom);
   const fixedSheetContentHeight = Math.min(
     Math.round(availableContentHeight * 0.75),
@@ -87,6 +97,7 @@ export function ComposerBottomSheet({
   );
   useEffect(() => {
     const back = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (onBackDuringClose?.()) return true;
       if (!presented) return false;
       if (Keyboard.isVisible()) {
         void awaitKeyboardSettled().catch(() => undefined);
@@ -100,7 +111,7 @@ export function ComposerBottomSheet({
       return true;
     });
     return () => back.remove();
-  }, [awaitKeyboardSettled, onOpenChange, onPresentationChange, presentation, presented]);
+  }, [awaitKeyboardSettled, onBackDuringClose, onOpenChange, onPresentationChange, presentation, presented]);
 
   if (!presented && !hasPresented) return null;
   return (
@@ -125,6 +136,7 @@ export function ComposerBottomSheet({
         presented={presented}
         sheetHeight={fixedSheetHeight}
         onClose={close}
+        onImeBack={onBackDuringClose}
         onOpenReady={handleSheetChange}
       >
         {children(focusSignal, awaitKeyboardSettled)}

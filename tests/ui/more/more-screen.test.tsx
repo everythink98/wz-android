@@ -458,6 +458,7 @@ describe('content source settings persisted through ReaderRuntime', () => {
 });
 
 type MoreScreenProps = ComponentProps<typeof MoreScreen>;
+const openReleaseNoteLink = jest.fn<(href: string) => void>();
 type MoreScreenOverrides = {
   account?: {
     active?: boolean;
@@ -587,6 +588,7 @@ function moreProps(overrides: MoreScreenOverrides = {}): MoreScreenProps {
       info: null,
       message: '',
       check: jest.fn(),
+      openReleaseNoteLink,
       start: jest.fn(),
       pause: jest.fn(),
       resume: jest.fn(),
@@ -1014,8 +1016,10 @@ describe('More screen state and actions', () => {
     }
   });
 
-  it('ignores a queued install after a warm link and permits a fresh install after returning', async () => {
+  it('ignores queued install and release-note links after a warm link and permits fresh actions after returning', async () => {
     const installAppUpdate = jest.fn(async () => undefined);
+    const notesUrl = 'https://example.test/release-notes';
+    const open = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined);
     const runtime = createMoreRouteRuntime();
     runtime.update = {
       ...runtime.update,
@@ -1035,7 +1039,7 @@ describe('More screen state and actions', () => {
           sha256: 'a'.repeat(64),
           signerSha256: 'b'.repeat(64),
           apkUrl: 'https://github.com/everythink98/wz-android/releases/download/v9.0.0/app-arm64-v8a-release.apk',
-          notes: ''
+          notes: `[本次修复](${notesUrl})`
         }
       }
     };
@@ -1044,16 +1048,25 @@ describe('More screen state and actions', () => {
     ));
     try {
       const queued = view.getByLabelText('安装');
+      const queuedLink = view.getByText('本次修复');
       await act(async () => {
         followLink();
         await fireEvent.press(queued);
+        await fireEvent.press(queuedLink);
       });
       expect(installAppUpdate).not.toHaveBeenCalled();
+      expect(open).not.toHaveBeenCalled();
 
       await act(() => navigationRef.goBack());
+      await fireEvent.press(view.getByText('本次修复'));
+      expect(open.mock.calls).toEqual([[notesUrl]]);
+      open.mockRejectedValueOnce(new Error('无法启动浏览器'));
+      await fireEvent.press(view.getByText('本次修复'));
+      await waitFor(() => expect(runtime.notify).toHaveBeenCalledWith('无法启动浏览器'));
       await fireEvent.press(view.getByLabelText('安装'));
       expect(installAppUpdate).toHaveBeenCalledTimes(1);
     } finally {
+      open.mockRestore();
       await dispose();
     }
   });
@@ -3178,7 +3191,7 @@ describe('More screen state and actions', () => {
     expect(view.queryByTestId('more-notifications-unread-dot')).toBeNull();
   });
 
-  it('keeps the same update control and installed version from checking through download progress', async () => {
+  it('checks in the header and keeps the same download control through progress updates', async () => {
     const onCheckAppUpdate = jest.fn();
     const onDownloadAppUpdate = jest.fn();
     const view = await render(
@@ -3186,8 +3199,9 @@ describe('More screen state and actions', () => {
     );
 
     expect(view.queryByText('有新版本')).toBeNull();
-    const action = view.getByRole('button', { name: '检查更新' });
-    await fireEvent.press(action);
+    const check = view.getByTestId('more-update-check');
+    expect(view.queryByTestId('more-update-action')).toBeNull();
+    await fireEvent.press(check);
     expect(onCheckAppUpdate).toHaveBeenCalledTimes(1);
 
     await view.rerender(
@@ -3196,11 +3210,13 @@ describe('More screen state and actions', () => {
       />
     );
     expect(view.getByLabelText('检查中').props.accessibilityState.disabled).toBe(true);
+    expect(view.getByTestId('more-update-check')).toBe(check);
+    expect(view.queryByTestId('more-update-action')).toBeNull();
 
     const appUpdateInfo = {
       version: '1.4.0',
       apkUrl: 'https://github.com/everythink98/wz-android/releases/download/v1.4.0/app-arm64-v8a-release.apk',
-      notes: '修复已知问题',
+      notes: '## 更新内容\n\n- 优化版本检查\n\n## 问题修复\n\n- 修复已知问题',
       sha256: 'a'.repeat(64),
       packageName: 'com.everythink.wzandroid',
       versionName: '1.4.0',
@@ -3218,13 +3234,18 @@ describe('More screen state and actions', () => {
         })}
       />
     );
-    expect(view.getByRole('button', { name: '下载并安装' }) === action).toBe(true);
+    const action = view.getByRole('button', { name: '下载并安装' });
+    expect(view.queryByTestId('more-update-check')).toBeNull();
     expect(view.getByText(`当前版本 ${CURRENT_APP_VERSION} → 1.4.0`)).toBeTruthy();
     expect(view.getByLabelText(`当前版本 ${CURRENT_APP_VERSION}，更新至 1.4.0`)).toBeTruthy();
     expect(view.queryByText('1.4.0')).toBeNull();
-    expect(view.queryByText('修复已知问题')).toBeNull();
-    await fireEvent.press(view.getByRole('button', { name: '展开更新说明' }));
+    expect(view.getByRole('button', { name: '收起更新说明' })).toBeTruthy();
+    expect(view.getByText('更新内容')).toBeTruthy();
+    expect(view.getByText('问题修复')).toBeTruthy();
+    expect(view.getByText('优化版本检查')).toBeTruthy();
     expect(view.getByText('修复已知问题')).toBeTruthy();
+    await fireEvent.press(view.getByRole('button', { name: '收起更新说明' }));
+    expect(view.queryByText('修复已知问题')).toBeNull();
     await fireEvent.press(view.getByLabelText('下载并安装'));
     expect(onDownloadAppUpdate).toHaveBeenCalledTimes(1);
 
@@ -3250,6 +3271,9 @@ describe('More screen state and actions', () => {
     );
     expect(view.getByText('1 KB / 2 KB')).toBeTruthy();
     expect(view.getByText('50%')).toBeTruthy();
+    expect(view.queryByTestId('more-update-check')).toBeNull();
+    expect(view.queryByText('修复已知问题')).toBeNull();
+    await fireEvent.press(view.getByRole('button', { name: '展开更新说明' }));
     expect(view.getByText('修复已知问题')).toBeTruthy();
     expect(view.getByText(`当前版本 ${CURRENT_APP_VERSION} → 1.4.0`)).toBeTruthy();
     expect(view.queryByLabelText('下载中')).toBeNull();

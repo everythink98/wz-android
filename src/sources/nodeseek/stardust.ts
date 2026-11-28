@@ -1,6 +1,6 @@
 import type { NodeSeekStardustReceive } from '@/domain/forum/structuredComposer';
 import { optionalNonNegativeInteger, NODESEEK_BASE_URL } from './protocol';
-import { NODESEEK_ACTION_HEADERS } from './actionClient';
+import { NODESEEK_ACTION_HEADERS, readNodeSeekActionPayload } from './actionClient';
 import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
 import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
@@ -82,8 +82,9 @@ async function fetchStardustList({
 }) {
   const params = new URLSearchParams({ member_id: receive.receiverMemberId, ref_id: String(receive.refId) });
   if (peerId) params.set('peer_id', peerId);
+  const url = `${NODESEEK_BASE_URL}/api/stardust/list?${params.toString()}`;
   const response = await fetchWithTimeout(
-    `${NODESEEK_BASE_URL}/api/stardust/list?${params.toString()}`,
+    url,
     withBrowserFetchIntent(
       {
         method: 'GET',
@@ -96,13 +97,12 @@ async function fetchStardustList({
     ),
     { fetcher, signal }
   );
-  let data: unknown;
-  try {
-    data = await response.json();
-  } catch {
-    throw new Error('NodeSeek Stardust 返回内容格式不正确');
-  }
-  if (!response.ok) throw new Error(`NodeSeek Stardust 状态读取失败：HTTP ${response.status}`);
+  const { data, parsedJson } = await readNodeSeekActionPayload(response, url);
+  if (!response.ok)
+    throw Object.assign(new Error(`NodeSeek Stardust 状态读取失败：HTTP ${response.status}`), {
+      status: response.status
+    });
+  if (!parsedJson) throw new Error('NodeSeek Stardust 返回内容格式不正确');
   return data;
 }
 

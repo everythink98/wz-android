@@ -1,4 +1,5 @@
 import { positiveInteger } from '@/domain/forum/numericValues';
+import { accessRequirementFromObject } from '@/domain/forum/accessRequirements';
 import { absoluteUrl, isRecord, recordText as text, toIsoString } from '@/domain/forum/html';
 import { notificationPageQuality } from '@/domain/notifications/notificationQuality';
 import {
@@ -148,7 +149,11 @@ async function fetchJson(path: string, options: NotificationAdapterAccess) {
     const error = Object.assign(new Error(message || `NodeSeek 消息请求失败：HTTP ${response.status}`), {
       status: response.status
     });
-    if (response.status === 401 || response.status === 403) {
+    const conversationRefusal =
+      /^\/api\/notification\/message\/with\/\d+$/.test(path) &&
+      Boolean(message) &&
+      accessRequirementFromObject(data)?.type !== 'login';
+    if (response.status === 401 || (response.status === 403 && !conversationRefusal)) {
       Object.assign(error, { source: 'nodeseek', loginRequired: true });
     }
     throw error;

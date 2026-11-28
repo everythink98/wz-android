@@ -24,7 +24,12 @@ export type ComposerKeyboardHostHandle = {
 };
 
 type HiddenEvent = NativeSyntheticEvent<{ requestId: number; success: boolean }>;
-export type ComposerImeInsetsEvent = NativeSyntheticEvent<{ bottom: number }>;
+export type ComposerImeInsetsEvent = NativeSyntheticEvent<{
+  bottom: number;
+  keyboardBottom: number;
+  focusEpoch: number;
+  focused: boolean;
+}>;
 type NativeHostProps = ViewProps & {
   enabled: boolean;
   dismissOnDisable?: boolean;
@@ -32,15 +37,16 @@ type NativeHostProps = ViewProps & {
   trackImeInsets?: boolean;
   autoShowIme?: boolean;
   onImeInsets?: (event: ComposerImeInsetsEvent) => void;
+  onImeBack?: () => void;
 };
-const NativeHost = requireNativeComponent<NativeHostProps & { onKeyboardHidden: (event: HiddenEvent) => void }>(
-  'WzComposerKeyboardHost'
-);
+const NativeHost = requireNativeComponent<
+  NativeHostProps & { onKeyboardHidden: (event: HiddenEvent) => void; reportImeBack?: boolean }
+>('WzComposerKeyboardHost');
 const AnimatedNativeHost = Animated.createAnimatedComponent(NativeHost);
 type HostProps = Omit<NativeHostProps, 'style'> & Pick<ComponentProps<typeof AnimatedNativeHost>, 'style'>;
 
 export const ComposerKeyboardHost = forwardRef<ComposerKeyboardHostHandle, HostProps>(function ComposerKeyboardHost(
-  { enabled, dismissOnDisable, hiddenLayoutHeight, ...props },
+  { enabled, dismissOnDisable, hiddenLayoutHeight, onImeBack, ...props },
   ref
 ) {
   const nativeRef = useRef<ComponentRef<typeof NativeHost>>(null);
@@ -121,6 +127,8 @@ export const ComposerKeyboardHost = forwardRef<ComposerKeyboardHostHandle, HostP
       enabled={enabled}
       dismissOnDisable={dismissOnDisable}
       hiddenLayoutHeight={hiddenLayoutHeight}
+      reportImeBack={onImeBack !== undefined}
+      onImeBack={onImeBack}
       onKeyboardHidden={({ nativeEvent }) => {
         if (pending.current?.id !== nativeEvent.requestId) return;
         finish(nativeEvent.success ? undefined : '键盘尚未收起，请重试');

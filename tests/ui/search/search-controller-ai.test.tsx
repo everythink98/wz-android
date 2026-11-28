@@ -1,6 +1,7 @@
 import { projectTestAccountSessions, testAccountUser } from '../../helpers/accountSessions';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
+import { useLayoutEffect } from 'react';
 import { useSearchCandidateQueries } from '@/features/search/DiscourseFilterPickers';
 import { useSearchController } from '@/features/search/useSearchController';
 import type { AccountReconcileResult } from '@/domain/session/sessionContracts';
@@ -323,6 +324,52 @@ describe('linux.do AI search controller', () => {
       ['first', 1],
       ['second', 1]
     ]);
+  });
+
+  it('commits an edited draft and its invalidated submission together', async () => {
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => ({
+      items: [standardTopic],
+      errors: {},
+      hasMore: false,
+      nextPage: null
+    }));
+    const options: Parameters<typeof useSearchController>[0] = {
+      active: true,
+      categories: [],
+      enabledSearchSources: ['v2ex'],
+      linuxDoVerificationActive: false,
+      notify: jest.fn(),
+      reconcileIdentityStatus: reconcileSameIdentity,
+      sessionViewModels: loggedInSessions,
+      showLinuxDoVerification: () => undefined,
+      showNodeSeekVerification: jest.fn(),
+      showYaohuoLogin: jest.fn(),
+      readGateway: createGateway({ searchTopics })
+    };
+    const commits: string[][] = [];
+    const hook = await renderHook(
+      () => {
+        const controller = useSearchController(options);
+        const { searchQuery, submittedSearchQuery } = controller;
+        useLayoutEffect(() => {
+          commits.push([searchQuery, submittedSearchQuery]);
+        }, [searchQuery, submittedSearchQuery]);
+        return controller;
+      },
+      { wrapper: QueryTestWrapper }
+    );
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'initial', source: 'v2ex' });
+    });
+    await waitFor(() => expect(hook.result.current.searchGroups[0]?.items.length).toBe(1));
+    commits.length = 0;
+    await act(() => hook.result.current.setSearchQuery('initial '));
+    await act(() => hook.result.current.setSearchQuery('initials'));
+    expect(commits).toEqual([
+      ['initial ', 'initial'],
+      ['initials', '']
+    ]);
+    expect(searchTopics).toHaveBeenCalledTimes(1);
   });
 
   it('keeps the first search submit enabled before any Query has started', async () => {

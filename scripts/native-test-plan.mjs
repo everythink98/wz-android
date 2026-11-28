@@ -68,6 +68,7 @@ export const nativeTestTasks = {
       'NotificationDigestExecutorTest',
       'PreviewRegionImageMathTest',
       'ForumPlatformPackageTest',
+      'RetainedTabSceneTest',
       'SearchHistoryArtworkTest'
     ].map((name) => `com.wz.reader.${name}`)
   },
@@ -110,6 +111,12 @@ export const nativeTestTasks = {
     args: reactClasses.flatMap((name) => ['--tests', name]),
     reports: 'node_modules/react-native/ReactAndroid/build/test-results/testDebugUnitTest',
     classes: reactClasses
+  },
+  ':react-native-screens:testDebugUnitTest': {
+    related: (file) => file.startsWith('patches/react-native-screens+') || file.startsWith('tests/native/screens/'),
+    args: ['-I', '../tests/native/screens/animation.gradle', '--tests', 'com.swmansion.rnscreens.FeedPopAnimationTest'],
+    reports: 'node_modules/react-native-screens/android/build/test-results/testDebugUnitTest',
+    classes: ['com.swmansion.rnscreens.FeedPopAnimationTest']
   },
   ':expo-file-system:testDebugUnitTest': {
     related: (file) => file.startsWith('patches/expo-file-system+') || file.startsWith('src/platform/update/'),

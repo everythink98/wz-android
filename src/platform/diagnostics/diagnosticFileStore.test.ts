@@ -1383,6 +1383,26 @@ describe('diagnostic export leases', () => {
     }
   );
 
+  it('serializes each startup event once without reparsing the JSON line', async () => {
+    vi.resetModules();
+    const store = await import('./diagnosticFileStore');
+    const diagnostics = await import('./diagnostics');
+    const serialize = vi.spyOn(JSON, 'stringify');
+    const parse = vi.spyOn(JSON, 'parse');
+    try {
+      store.initializeDiagnosticFileLogging();
+      const encoded = serialize.mock.calls.filter(([value]) => value?.operation === 'startup');
+      const decoded = parse.mock.calls.filter(([line]) => line.includes('"operation":"startup"'));
+      expect(encoded).toHaveLength(2);
+      expect(decoded).toHaveLength(0);
+    } finally {
+      serialize.mockRestore();
+      parse.mockRestore();
+      diagnostics.setDiagnosticWriter(null);
+      await Promise.resolve();
+    }
+  });
+
   it('installs startup diagnostics without scanning or deleting retained exports', async () => {
     vi.resetModules();
     const expired = `file:///documents/diagnostic-exports/diagnostic-${Date.now() - 86400000}-old.txt`;

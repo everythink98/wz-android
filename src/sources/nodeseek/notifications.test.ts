@@ -1080,6 +1080,16 @@ describe('NodeSeek notifications', () => {
     const error = await nodeSeekNotificationAdapter.loadDetail(item, access).catch((value: unknown) => value);
     expect(error).toBeInstanceOf(Error);
     expect(error).not.toHaveProperty('reason', 'account-recheck-required');
+    fetcher.mockImplementation(async () =>
+      Response.json({ success: false, message: '对方不允许私信' }, { status: 403 })
+    );
+    const denied = await nodeSeekNotificationAdapter.loadDetail(item, access).catch((value: unknown) => value);
+    expect(sourceErrorFromUnknown('nodeseek', denied)).toMatchObject({
+      kind: 'permission-denied',
+      message: '对方不允许私信'
+    });
+    fetcher.mockImplementation(async () => Response.json({ success: false, message: '请先登录' }, { status: 403 }));
+    await expect(nodeSeekNotificationAdapter.loadDetail(item, access)).rejects.toMatchObject({ loginRequired: true });
   });
 
   it.each(['', 'not-a-uid', '0', '9007199254740992'])(

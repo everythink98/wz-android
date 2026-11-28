@@ -1,6 +1,6 @@
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import { type ReactNode } from 'react';
-import { Modal, ScrollView, Text, View } from 'react-native';
+import { Modal, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { ActivityIndicator } from 'react-native-paper';
 import { CircleAlert, X, type LucideIcon } from 'lucide-react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
@@ -58,11 +58,14 @@ export function LoginWebViewAction({
   );
 }
 
+export type InlineLoginWebView = { presented: boolean; bottom?: number };
+
 export function LoginWebViewModal({
   actions,
   children,
   error,
   footer,
+  inline,
   loading,
   loadingText,
   showContentWhileLoading = false,
@@ -77,6 +80,7 @@ export function LoginWebViewModal({
   children: ReactNode;
   error?: string;
   footer?: ReactNode;
+  inline?: InlineLoginWebView;
   loading: boolean;
   loadingText: string;
   showContentWhileLoading?: boolean;
@@ -90,6 +94,80 @@ export function LoginWebViewModal({
   const { styles, theme } = useReaderThemeStyles(createLoginWebViewStyles);
 
   const loadingBackground = loading && showContentWhileLoading ? { backgroundColor: 'transparent' } : undefined;
+  const page = (
+    <SafeAreaView
+      edges={inline?.bottom !== undefined ? ['top'] : undefined}
+      onTouchStart={recordUserInteraction}
+      onTouchMove={recordUserInteraction}
+      style={[styles.loginWebViewModal, loadingBackground]}
+    >
+      <View style={styles.loginWebViewChrome}>
+        <View style={styles.loginWebViewHeader}>
+          <View style={styles.loginWebViewTitleBlock}>
+            <Text style={styles.loginWebViewTitle}>{title}</Text>
+            {subtitle ? <Text style={styles.loginWebViewSubtitle}>{subtitle}</Text> : null}
+          </View>
+          <LoginWebViewAction
+            label="关闭"
+            displayLabel=""
+            icon={X}
+            testID={inline ? 'linuxdo-read-recovery-close' : undefined}
+            onPress={onClose}
+          />
+        </View>
+        {actions ? (
+          <ScrollView
+            overScrollMode="never"
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.loginWebViewToolbar}
+            contentContainerStyle={styles.toolbarContent}
+          >
+            <View style={styles.actions}>{actions}</View>
+          </ScrollView>
+        ) : null}
+        {error ? (
+          <View style={styles.errorBox} accessibilityLiveRegion="polite">
+            <CircleAlert size={18} strokeWidth={1.8} color={theme.danger} accessible={false} />
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        ) : null}
+      </View>
+      <View style={[styles.loginWebViewBody, loadingBackground]} testID="login-webview-content">
+        {loading ? (
+          <View pointerEvents="none" style={styles.loading} accessibilityLiveRegion="polite">
+            <ActivityIndicator size="small" color={theme.primary} accessible={false} />
+            <Text style={styles.loadingText}>{loadingText}</Text>
+          </View>
+        ) : null}
+        {children}
+      </View>
+      {footer || primaryAction || refreshAction ? (
+        <View style={styles.loginWebViewFooter}>
+          {footer}
+          {primaryAction || refreshAction ? (
+            <View style={styles.footerActions}>
+              {primaryAction ? <View style={styles.primaryAction}>{primaryAction}</View> : null}
+              {refreshAction}
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+    </SafeAreaView>
+  );
+  if (inline) {
+    const presented = visible && inline.presented;
+    return (
+      <View
+        testID="linuxdo-read-recovery"
+        pointerEvents={presented ? 'auto' : 'none'}
+        importantForAccessibility={presented ? 'auto' : 'no-hide-descendants'}
+        style={[StyleSheet.absoluteFill, { bottom: inline.bottom ?? 0 }, !presented && { display: 'none' }]}
+      >
+        {page}
+      </View>
+    );
+  }
   return (
     <Modal
       visible={visible}
@@ -100,60 +178,7 @@ export function LoginWebViewModal({
       navigationBarTranslucent
       onRequestClose={onClose}
     >
-      <SafeAreaProvider style={[styles.loginWebViewModal, loadingBackground]}>
-        <SafeAreaView
-          onTouchStart={recordUserInteraction}
-          onTouchMove={recordUserInteraction}
-          style={[styles.loginWebViewModal, loadingBackground]}
-        >
-          <View style={styles.loginWebViewChrome}>
-            <View style={styles.loginWebViewHeader}>
-              <View style={styles.loginWebViewTitleBlock}>
-                <Text style={styles.loginWebViewTitle}>{title}</Text>
-                {subtitle ? <Text style={styles.loginWebViewSubtitle}>{subtitle}</Text> : null}
-              </View>
-              <LoginWebViewAction label="关闭" displayLabel="" icon={X} onPress={onClose} />
-            </View>
-            {actions ? (
-              <ScrollView
-                overScrollMode="never"
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                style={styles.loginWebViewToolbar}
-                contentContainerStyle={styles.toolbarContent}
-              >
-                <View style={styles.actions}>{actions}</View>
-              </ScrollView>
-            ) : null}
-            {error ? (
-              <View style={styles.errorBox} accessibilityLiveRegion="polite">
-                <CircleAlert size={18} strokeWidth={1.8} color={theme.danger} accessible={false} />
-                <Text style={styles.errorText}>{error}</Text>
-              </View>
-            ) : null}
-          </View>
-          <View style={[styles.loginWebViewBody, loadingBackground]} testID="login-webview-content">
-            {loading ? (
-              <View pointerEvents="none" style={styles.loading} accessibilityLiveRegion="polite">
-                <ActivityIndicator size="small" color={theme.primary} accessible={false} />
-                <Text style={styles.loadingText}>{loadingText}</Text>
-              </View>
-            ) : null}
-            {children}
-          </View>
-          {footer || primaryAction || refreshAction ? (
-            <View style={styles.loginWebViewFooter}>
-              {footer}
-              {primaryAction || refreshAction ? (
-                <View style={styles.footerActions}>
-                  {primaryAction ? <View style={styles.primaryAction}>{primaryAction}</View> : null}
-                  {refreshAction}
-                </View>
-              ) : null}
-            </View>
-          ) : null}
-        </SafeAreaView>
-      </SafeAreaProvider>
+      <SafeAreaProvider style={[styles.loginWebViewModal, loadingBackground]}>{page}</SafeAreaProvider>
     </Modal>
   );
 }

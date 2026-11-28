@@ -54,7 +54,7 @@ import * as uploadImagePreparation from '@/platform/media/prepareUploadImage';
 import { MessageSubmissionFixture } from '../composerMessageFixture';
 import { COMPOSER_DRAFT, createComposerTransport } from '../composerSubmissionFixture';
 import { QueryTestWrapper } from '../QueryTestWrapper';
-import { act, fireEvent, render, waitFor } from '../render';
+import { act, fireEvent, render, waitFor, within } from '../render';
 
 afterEach(() => setDiagnosticWriter(null));
 
@@ -176,7 +176,7 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
 
 jest.mock('lucide-react-native', () => {
   const Icon = () => null;
-  return { ChevronDown: Icon, ChevronRight: Icon, SquarePen: Icon };
+  return { ChevronDown: Icon, ChevronRight: Icon, FileText: Icon, MessageSquare: Icon, SquarePen: Icon };
 });
 
 jest.mock('react-native-safe-area-context', () => ({
@@ -1219,7 +1219,7 @@ describe('notification routes', () => {
         identitySignature: 'linuxdo:7',
         openAccountSurface: jest.fn<NotificationRouteRuntimeValue['openAccountSurface']>(
           async (_source, _message, next) => {
-            recovery = next;
+            recovery = next && 'queryKey' in next ? next : undefined;
           }
         )
       } satisfies NotificationRouteRuntimeValue;
@@ -1377,7 +1377,7 @@ describe('notification routes', () => {
         identitySignature: 'nodeseek:7',
         openAccountSurface: jest.fn<NotificationRouteRuntimeValue['openAccountSurface']>(
           async (_source, _message, next) => {
-            recovery = next;
+            recovery = next && 'queryKey' in next ? next : undefined;
           }
         )
       } satisfies NotificationRouteRuntimeValue;
@@ -3688,7 +3688,7 @@ describe('notification routes', () => {
         identitySignature: 'linuxdo:user',
         openAccountSurface: jest.fn<NotificationRouteRuntimeValue['openAccountSurface']>(
           async (_source, _message, next) => {
-            recovery = next;
+            recovery = next && 'queryKey' in next ? next : undefined;
           }
         )
       } satisfies NotificationRouteRuntimeValue;
@@ -7610,9 +7610,11 @@ describe('notification routes', () => {
         clearReadBlock,
         getReadBlock,
         reportReadError,
-        openAccountSurface: jest.fn(async (_source, _message, recovery?: ReadRecovery) => {
-          capturedRecovery = recovery;
-        })
+        openAccountSurface: jest.fn<NotificationRouteRuntimeValue['openAccountSurface']>(
+          async (_source, _message, request) => {
+            capturedRecovery = request && 'queryKey' in request ? request : undefined;
+          }
+        )
       };
 
       const tree = (value: NotificationRouteRuntimeValue) => (
@@ -8262,9 +8264,11 @@ describe('notification routes', () => {
           return block && block.epoch === currentRuntime.sessionEpochs[source] ? block.error : undefined;
         }),
         reportReadError,
-        openAccountSurface: jest.fn(async (_source, _message, recovery?: ReadRecovery) => {
-          capturedRecovery = recovery;
-        })
+        openAccountSurface: jest.fn<NotificationRouteRuntimeValue['openAccountSurface']>(
+          async (_source, _message, request) => {
+            capturedRecovery = request && 'queryKey' in request ? request : undefined;
+          }
+        )
       };
 
       let resumePromise: Promise<string> | undefined;
@@ -8816,7 +8820,73 @@ describe('notification routes', () => {
     }
   );
 
-  it('forwards the Yaohuo full-reply floor into the Topic route', async () => {
+  it('shows the Yaohuo system window and appends later replies in the same read-only timeline', async () => {
+    appQueryClient.clear();
+    const item: ForumNotification = {
+      source: 'yaohuo',
+      id: '41',
+      kind: 'system',
+      actor: { name: '系统' },
+      title: '回复通知',
+      createdAt: null,
+      unread: false,
+      target: { type: 'message-detail', messageId: '41', url: 'https://www.yaohuo.me/bbs/messagelist_view.aspx?id=41' }
+    };
+    const gateway = {
+      loadDetail: jest.fn(async () =>
+        notificationAdapters.yaohuo.loadDetail(item, {
+          identityKey: 'yaohuo:7',
+          userId: '7',
+          fetcher: async () =>
+            new Response(`<div class="msgview-page" data-message-id="41" data-partner-id="0">
+              <div class="chat-list">
+                <div class="chat-msg chat-msg--notice" data-message-id="40"><div class="chat-bubble">相邻的回复</div></div>
+                <div class="chat-msg chat-msg--notice is-anchor" data-message-id="41"><div class="chat-bubble">点中的回复</div></div>
+              </div>
+              <div id="msgviewNewer"><button>加载更新</button></div>
+            </div>`)
+        })
+      ),
+      loadLaterMessages: jest.fn(async () => ({
+        messages: [{ id: 'chat:42', author: '系统', contentText: '后来的回复', createdAt: null }],
+        newerCursor: null
+      })),
+      markRead: jest.fn(async () => ({ confirmed: true }))
+    } as unknown as NotificationRouteRuntimeValue['gateway'];
+    const runtime = {
+      ...routeRuntime(gateway),
+      activeSources: ['yaohuo'],
+      identityKeys: { yaohuo: 'yaohuo:7' },
+      identitySignature: 'yaohuo:7'
+    } satisfies NotificationRouteRuntimeValue;
+    const navigation = { navigate: jest.fn(), setParams: jest.fn(), isFocused: () => true };
+    const view = await render(
+      <NotificationRouteRuntimeProvider value={runtime}>
+        <NavigationContainer>
+          <NotificationDetailRoute
+            navigation={navigation as never}
+            route={{
+              key: 'detail',
+              name: 'NotificationDetail',
+              params: { notification: item, identityKey: 'yaohuo:7' }
+            }}
+          />
+        </NavigationContainer>
+      </NotificationRouteRuntimeProvider>,
+      { wrapper: QueryTestWrapper }
+    );
+
+    expect(await view.findByText('相邻的回复')).toBeTruthy();
+    expect(view.getByText('点中的回复')).toBeTruthy();
+    expect(view.queryByLabelText('回复私信')).toBeNull();
+    await fireEvent.press(view.getByRole('button', { name: '加载更新消息' }));
+    expect(await view.findByText('后来的回复')).toBeTruthy();
+    expect(gateway.loadLaterMessages).toHaveBeenCalledWith(item, '41:0:41', 'yaohuo:7', expect.any(AbortSignal));
+    expect(view.getAllByText(/(?:相邻的|点中的|后来的)回复/)).toHaveLength(3);
+    expect(view.queryByRole('button', { name: '加载更新消息' })).toBeNull();
+  });
+
+  it('opens the topic and exact reply from the Yaohuo notice action row', async () => {
     appQueryClient.clear();
     const item: ForumNotification = {
       source: 'yaohuo',
@@ -8840,7 +8910,16 @@ describe('notification routes', () => {
           fetcher: async () =>
             new Response(`<div class="msgview-page" data-message-id="41" data-partner-id="9">
               <div class="chat-list"><div class="chat-msg chat-msg--in is-anchor" data-message-id="41">
-                <div class="chat-bubble"><a href="/bbs/book_re.aspx?classid=177&amp;id=1560939&amp;tofloor=90&amp;fromuserid=1000">查看完整回复</a></div>
+                <div class="chat-bubble">
+                  <div class="notice-card">
+                    <p>有人回复了你的帖子。</p>
+                    <div class="notice-card-actions">
+                      <a href="/bbs-1560939.html">查看帖子</a>
+                      <a href="/bbs/book_re.aspx?classid=177&amp;id=1560939&amp;tofloor=90&amp;fromuserid=1000">查看回复</a>
+                    </div>
+                  </div>
+                  <p><a href="/bbs-1560940.html">查看帖子</a></p>
+                </div>
               </div></div></div>`)
         })
       ),
@@ -8869,10 +8948,17 @@ describe('notification routes', () => {
       { wrapper: QueryTestWrapper }
     );
 
-    await waitFor(() => expect(view.getByRole('link', { name: '查看完整回复' })).toBeTruthy());
-    await fireEvent.press(view.getByRole('link', { name: '查看完整回复' }));
+    const actions = within(await view.findByTestId('notification-notice-actions'));
+    expect(view.getByText('有人回复了你的帖子。')).toBeTruthy();
+    expect(view.getAllByRole('link', { name: '查看帖子' })).toHaveLength(2);
+    await fireEvent.press(actions.getByRole('link', { name: '查看帖子' }));
+    await fireEvent.press(actions.getByRole('link', { name: '查看回复' }));
 
-    expect(navigation.navigate).toHaveBeenCalledWith('Topic', {
+    expect(navigation.navigate).toHaveBeenNthCalledWith(1, 'Topic', {
+      topic: expect.objectContaining({ source: 'yaohuo', id: '1560939' }),
+      location: undefined
+    });
+    expect(navigation.navigate).toHaveBeenNthCalledWith(2, 'Topic', {
       topic: expect.objectContaining({ source: 'yaohuo', id: '1560939', categoryId: '177' }),
       location: { kind: 'reply', target: { floor: 90 } }
     });
@@ -9291,6 +9377,68 @@ describe('notification routes', () => {
 
     await view.unmount();
     expect(signals.every((signal) => signal.aborted)).toBe(true);
+  });
+
+  it('opens website verification for a challenged linux.do private reply and keeps its draft', async () => {
+    appQueryClient.clear();
+    const item: ForumNotification = {
+      ...notification,
+      source: 'linuxdo',
+      id: 'conversation:cf',
+      unread: false,
+      kind: 'private-message',
+      target: { type: 'private-conversation', conversationId: '9' }
+    };
+    const fetcher = jest.fn<Fetcher>(
+      async () =>
+        new Response('<title>Just a moment...</title>', {
+          status: 403,
+          headers: { 'cf-mitigated': 'challenge' }
+        })
+    );
+    const gateway = createNotificationGateway({
+      adapters: {
+        ...notificationAdapters,
+        linuxdo: {
+          ...notificationAdapters.linuxdo,
+          loadDetail: async () => ({
+            notification: item,
+            title: '私信详情',
+            messages: [],
+            reply: { format: 'markdown' }
+          })
+        }
+      },
+      sourceAllowed: () => true,
+      privateAccessAllowed: () => true,
+      readAccess: () => ({ identityKey: 'linuxdo:7', userId: '7', fetcher })
+    });
+    const openAccountSurface = jest.fn<NotificationRouteRuntimeValue['openAccountSurface']>(async () => {});
+    const runtime = {
+      ...routeRuntime(gateway),
+      activeSources: ['linuxdo'] as const,
+      identityKeys: { linuxdo: 'linuxdo:7' },
+      identitySignature: 'linuxdo:7',
+      openAccountSurface
+    } as NotificationRouteRuntimeValue;
+    const navigation = createNavigationContainerRef<FocusTestStackParamList>();
+    const view = await render(linuxDoDetailTree(runtime, item, navigation), { wrapper: QueryTestWrapper });
+
+    await fireEvent.press(await view.findByLabelText('回复私信'));
+    await fireEvent.changeText(view.getByLabelText('私信回复内容'), '保留这段草稿');
+    await fireEvent.press(view.getByLabelText('测试发送私信'));
+    await waitFor(() => expect(openAccountSurface).toHaveBeenCalledTimes(1));
+    expect(openAccountSurface).toHaveBeenCalledWith(
+      'linuxdo',
+      expect.stringContaining('Cloudflare'),
+      expect.objectContaining({ kind: 'website', isCurrent: expect.any(Function) })
+    );
+    expect(fetcher.mock.calls.map(([url]) => String(url))).toEqual(['https://linux.do/session/csrf']);
+    expect(view.getByLabelText('私信回复内容').props.value).toBe('保留这段草稿');
+    const request = openAccountSurface.mock.calls[0][2];
+    if (!request || !('kind' in request) || request.kind !== 'website') throw new Error('Missing website request');
+    await act(async () => navigation.navigate('Other'));
+    expect(request.isCurrent()).toBe(false);
   });
 
   it('opens a first conversation without writing and preserves failed or unconfirmed drafts until confirmation', async () => {

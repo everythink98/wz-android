@@ -8,6 +8,7 @@ import type { RequestAccountRecheck } from '@/domain/session/sessionContracts';
 import type {
   ForumNotification,
   NotificationDetail,
+  NotificationLaterMessagePage,
   NotificationMessagePage,
   NotificationPage
 } from '@/domain/notifications/models';
@@ -410,6 +411,25 @@ export function createNotificationGateway({
           return load(item, cursor, access);
         },
         (page) => ({ itemCount: page.messages.length, hasMore: Boolean(page.olderCursor) })
+      );
+    },
+
+    async loadLaterMessages(
+      item: ForumNotification,
+      cursor: string,
+      expectedIdentityKey: string,
+      signal?: AbortSignal
+    ): Promise<NotificationLaterMessagePage> {
+      return runWithAccess(
+        item.source,
+        'notification-history',
+        { signal, expectedIdentityKey },
+        (access, adapter) => {
+          if (!adapter.loadLaterMessages) throw new Error('该来源暂不支持读取更新消息');
+          if (!cursor) throw new Error('私信历史游标不正确');
+          return adapter.loadLaterMessages(item, cursor, access);
+        },
+        (page) => ({ itemCount: page.messages.length, hasMore: Boolean(page.newerCursor) })
       );
     },
 

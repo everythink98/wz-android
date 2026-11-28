@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { useReaderRuntime } from './useReaderRuntime';
 import { useAppUpdateRuntime } from '@/platform/update/useAppUpdateRuntime';
 import { useAccountRuntime } from '@/features/account/useAccountRuntime';
@@ -13,7 +13,7 @@ import type { UserRouteRuntimeValue } from '@/features/user/UserRouteRuntime';
 import { nodeSeekUserIdForSession } from '@/domain/session/siteSessionState';
 import { useAppTheme } from './useAppTheme';
 import { useEffectiveReaderFontSettings } from '@/ui/theme/useReaderFonts';
-import { useForumCatalogRuntime } from './useForumCatalogRuntime';
+import { useForumCatalogRuntime, type ForumCatalogRuntimeOptions } from './useForumCatalogRuntime';
 import { useAppBackHandler } from './useAppBackHandler';
 import { useAppDiagnosticsRuntime } from './useAppDiagnosticsRuntime';
 import { useAppLifecycleRuntime } from './useAppLifecycleRuntime';
@@ -21,6 +21,8 @@ import { useNotificationsRuntime } from '@/features/notifications/useNotificatio
 import type { NotificationRouteRuntimeValue } from '@/features/notifications/NotificationRouteRuntime';
 import { moreBadgeState as notificationMoreBadgeState } from '@/ui/navigation/moreBadge';
 import {
+  currentRecoveryRoute,
+  hasAppRoute,
   isAccountCenterFocused,
   openLibraryRoute,
   openNodeSeekCreditsRoute,
@@ -33,6 +35,42 @@ import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState
 import { useDiscourseVisited } from '@/platform/query/useDiscourseVisited';
 import { withLinuxDoPresence } from '@/sources/linuxdo/presence';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
+import { useAppTopicNavigationRuntime } from './useAppTopicNavigationRuntime';
+
+type RuntimeRoutes = NonNullable<ReturnType<typeof useAppRuntime>['routes']>;
+
+export function ForumCatalogRoutes({
+  options,
+  routes,
+  children
+}: {
+  options: ForumCatalogRuntimeOptions;
+  routes: RuntimeRoutes | null;
+  children: (
+    routes: RuntimeRoutes & {
+      feedRouteRuntime: FeedRouteRuntimeValue;
+      searchRouteRuntime: SearchRouteRuntimeValue;
+    }
+  ) => ReactNode;
+}) {
+  const { categories } = useForumCatalogRuntime(options);
+  const feed = routes?.feedRouteRuntime;
+  const search = routes?.searchRouteRuntime;
+  const feedRouteRuntime = useMemo(() => feed && { ...feed, catalogCategories: categories }, [feed, categories]);
+  const searchRouteRuntime = useMemo(
+    () => search && { ...search, catalogCategories: categories },
+    [search, categories]
+  );
+
+  // Query enablement changes on reader focus even when the cached category data stays the same.
+  return useMemo(
+    () =>
+      routes && feedRouteRuntime && searchRouteRuntime
+        ? children({ ...routes, feedRouteRuntime, searchRouteRuntime })
+        : null,
+    [children, routes, feedRouteRuntime, searchRouteRuntime]
+  );
+}
 
 export function useAppRuntime() {
   const lifecycle = useAppLifecycleRuntime();
@@ -46,7 +84,7 @@ export function useAppRuntime() {
     onCatalogSettled,
     onFeedInitialContentReady,
     onReady: handleNavigationReady,
-    onScreenChange: handleNavigationScreenChange,
+    onScreenChange: publishNavigationScreen,
     openUserRoute,
     screen,
     width
@@ -99,6 +137,12 @@ export function useAppRuntime() {
     nodeSeekRecoveryThreshold: readerData.settings.nodeSeekRecoveryThreshold,
     openUser: openUserRoute,
     ready: readerDataLoaded,
+    recoveryNavigation: {
+      route: lifecycle.recoveryRoute,
+      getRoute: currentRecoveryRoute,
+      hasRoute: hasAppRoute,
+      tabBarHeight: lifecycle.tabBarHeight
+    },
     screen,
     webViewBlockMessage: networkProxyWebViewBlockMessage
   });
@@ -109,7 +153,7 @@ export function useAppRuntime() {
     notify
   });
   const readingState = useDiscourseVisited(accountRuntime.read.readGateway.reading?.scope());
-  const topicStateIndex = useMemo(
+  const nextTopicStateIndex = useMemo(
     () => createTopicListItemStateIndex({ favorites, history, settings: { listDensity }, reading: readingState }),
     [favorites, history, listDensity, readingState]
   );
@@ -139,6 +183,20 @@ export function useAppRuntime() {
     showLinuxDoVerification,
     showYaohuoLogin
   } = accountRuntime.hosts;
+  const {
+    entryPrefetch,
+    topicStateIndex,
+    onScreenChange: handleNavigationScreenChange
+  } = useAppTopicNavigationRuntime({
+    appActive,
+    enabledSources,
+    readGateway,
+    sessionEpochs: forumSessionEpochs,
+    sessions: accountSessionViewModels,
+    sessionsReady,
+    publishNavigationScreen,
+    cardIndex: nextTopicStateIndex
+  });
   const nodeSeekMediaUserAgent = getNodeSeekUserAgent();
   const effectiveNodeSeekUserId = nodeSeekUserIdForSession(accountSessionViewModels.nodeseek);
   const notificationsRuntime = useNotificationsRuntime({
@@ -168,9 +226,10 @@ export function useAppRuntime() {
       contentWidth,
       notify,
       reconcileAccountStatus,
-      openAccountSurface: async (source, message, recovery) => {
-        if (source === 'linuxdo') await showLinuxDoVerification(message, recovery);
-        else if (source === 'nodeseek') requestNodeSeekVerification(message, recovery);
+      openAccountSurface: async (source, message, request) => {
+        if (source === 'linuxdo') await showLinuxDoVerification(message, request);
+        else if (source === 'nodeseek')
+          requestNodeSeekVerification(message, request && 'queryKey' in request ? request : undefined);
         else showYaohuoLogin(message);
       }
     }),
@@ -197,14 +256,14 @@ export function useAppRuntime() {
     [handleNavigationReady, handleNotificationNavigationReady]
   );
 
-  const { categories: catalogCategories } = useForumCatalogRuntime({
+  const forumCatalog: ForumCatalogRuntimeOptions = {
     active: settingsTrusted && sessionsReady && (screen === 'feed' || screen === 'search') && !showLinuxDoPanel,
     deferSecondary: screen === 'feed' && !feedContentReady,
     enabledFeedSources,
     onSettled: readerDataLoaded && sessionsReady ? onCatalogSettled : undefined,
     readGateway,
     sessionEpochs: forumSessionEpochs
-  });
+  };
   const { appUpdateBusy, appUpdateInfo } = updateRuntime;
   const { metadata: diagnosticMetadata } = useAppDiagnosticsRuntime({
     accountSessionViewModels,
@@ -222,6 +281,7 @@ export function useAppRuntime() {
   const topicRouteRuntime = useMemo<TopicRouteRuntimeValue>(
     () => ({
       enabledSources,
+      entryPrefetch,
       account: {
         sessionEpochs: forumSessionEpochs,
         sessionViewModels: accountSessionViewModels,
@@ -261,6 +321,7 @@ export function useAppRuntime() {
       commitReaderData,
       contentWidth,
       effectiveNodeSeekUserId,
+      entryPrefetch,
       ensureNetworkProxyReady,
       ensureNodeImageApiKey,
       ensureWritableSession,
@@ -384,7 +445,7 @@ export function useAppRuntime() {
   );
 
   const showNodeSeekPanel = accountRuntime.hosts.surfaces.nodeseek;
-  const feedRouteRuntime = useMemo<FeedRouteRuntimeValue>(
+  const feedRouteRuntime = useMemo<Omit<FeedRouteRuntimeValue, 'catalogCategories'>>(
     () => ({
       enabledSources,
       enabledSourcesKey,
@@ -397,7 +458,6 @@ export function useAppRuntime() {
         showLinuxDoVerification,
         showYaohuoLogin
       },
-      catalogCategories,
       notify,
       reader: {
         data: readerView,
@@ -409,7 +469,6 @@ export function useAppRuntime() {
     [
       enabledSources,
       enabledSourcesKey,
-      catalogCategories,
       forumSessionEpochs,
       onFeedInitialContentReady,
       notify,
@@ -425,7 +484,7 @@ export function useAppRuntime() {
     ]
   );
 
-  const searchRouteRuntime = useMemo<SearchRouteRuntimeValue>(
+  const searchRouteRuntime = useMemo<Omit<SearchRouteRuntimeValue, 'catalogCategories'>>(
     () => ({
       enabledSources,
       account: {
@@ -438,14 +497,12 @@ export function useAppRuntime() {
         showLinuxDoVerification,
         showYaohuoLogin
       },
-      catalogCategories,
       notify,
       topicStateIndex
     }),
     [
       enabledSources,
       accountSessionViewModels,
-      catalogCategories,
       forumSessionEpochs,
       notify,
       readGateway,
@@ -649,6 +706,7 @@ export function useAppRuntime() {
     ]
   );
   return {
+    forumCatalog,
     accountHost: accountRuntime.hosts.element,
     ...(accountRuntime.hosts.startupRecovery
       ? {
@@ -674,6 +732,7 @@ export function useAppRuntime() {
             notificationRouteRuntime,
             onReady: onNavigationReady,
             onScreenChange: handleNavigationScreenChange,
+            onBottomTabBarLayout: lifecycle.onBottomTabBarLayout,
             searchRouteRuntime,
             styles: appStyles,
             theme,

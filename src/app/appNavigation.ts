@@ -1,9 +1,15 @@
-import { StackActions, createNavigationContainerRef } from '@react-navigation/native';
+import {
+  StackActions,
+  createNavigationContainerRef,
+  type NavigationState,
+  type PartialState
+} from '@react-navigation/native';
 import type { UserActivityTab, UserReference } from '@/domain/forum/models';
 import type { MainTabParamList, RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import type { Screen } from '@/ui/navigation/types';
 import type { NotificationSource } from '@/domain/forum/sourceCatalog';
 import type { LibraryTab } from '@/domain/forum/feed';
+import { dispatchTopicRoute } from '@/ui/navigation/appRouteActions';
 
 export const navigationRef = createNavigationContainerRef<RootStackParamList>();
 
@@ -29,6 +35,22 @@ export function currentAppRoute() {
     routeKey: route?.name === 'ReadingSettings' ? '' : route?.key || '',
     screen: appScreenForRouteName(route?.name)
   };
+}
+
+export function currentRecoveryRoute() {
+  const route = navigationRef.getCurrentRoute();
+  if (!route) return undefined;
+  const { key, name, params } = route;
+  const tab = name === 'feed' || name === 'search' || name === 'notifications' || name === 'more';
+  const reading = name === 'Topic' && (params as RootStackParamList['Topic'] | undefined)?.topic.source === 'linuxdo';
+  return { key, tab, reading };
+}
+
+export function hasAppRoute(key: string) {
+  const root = navigationRef.getRootState();
+  const contains = (state: NavigationState | PartialState<NavigationState>): boolean =>
+    state.routes.some((route) => route.key === key || (route.state !== undefined && contains(route.state)));
+  return !!root && contains(root);
 }
 
 export function isAccountCenterFocused() {
@@ -59,7 +81,7 @@ export function isNativeStackScreen() {
 
 export function pushTopicRoute(destination: RootStackParamList['Topic']) {
   if (!navigationRef.isReady()) return false;
-  navigationRef.dispatch(StackActions.push('Topic', destination));
+  dispatchTopicRoute(() => navigationRef.dispatch(StackActions.push('Topic', destination)));
   return true;
 }
 

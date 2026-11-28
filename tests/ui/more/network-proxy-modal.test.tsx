@@ -71,6 +71,20 @@ afterEach(() => {
 });
 
 describe('Network proxy settings', () => {
+  it('allows tapping the current profile to retry a failed application', async () => {
+    const onSelectProfile = jest.fn(async () => undefined);
+    const view = await render(
+      proxyScreen({
+        applyStatus: 'failed',
+        applyError: '代理应用失败',
+        proxyState: { enabled: true, activeId: primaryProfile.id, profiles: [primaryProfile] },
+        onSelectProfile
+      })
+    );
+    await fireEvent.press(view.getByText(primaryProfile.name));
+    expect(onSelectProfile).toHaveBeenCalledWith(primaryProfile.id);
+  });
+
   it.each(['light', 'dark'] as const)('matches the %s page background throughout its transition', async (mode) => {
     const theme = createTheme({ theme: mode });
     const view = await render(proxyScreen({ theme }));

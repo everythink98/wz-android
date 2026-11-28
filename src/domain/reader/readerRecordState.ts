@@ -93,7 +93,7 @@ export function applyReaderChange(
   return next;
 }
 
-export function projectReaderCommand(current: ReaderState, command: ReaderCommand): ReaderState {
+export function readerCommandChange(current: ReaderState, command: ReaderCommand) {
   const change: Pick<ReaderChange, 'membership' | 'counts' | 'settings'> = { membership: [], counts: {} };
   const set = (collection: ReaderCollection, key: string, present: boolean) => {
     if (Object.hasOwn(current[collection], key) === present) return;
@@ -120,5 +120,9 @@ export function projectReaderCommand(current: ReaderState, command: ReaderComman
       change.settings = applyReaderSettings(current.settings, command.patch);
       break;
   }
-  return applyReaderChange(current, change);
+  return change;
+}
+
+export function projectReaderCommand(current: ReaderState, command: ReaderCommand): ReaderState {
+  return applyReaderChange(current, readerCommandChange(current, command));
 }

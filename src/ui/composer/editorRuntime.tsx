@@ -46,6 +46,7 @@ import {
   normalizeNodeSeekStardustRefId,
   normalizePendingNodeSeekPoll,
   parseNodeSeekStardustReceive,
+  replyEditRecoveryText,
   serializeNodeSeekStardustReceive,
   type ComposerMode,
   type ComposerSnapshot,
@@ -64,6 +65,7 @@ import { maskMarkdownCode } from '@/domain/forum/markdownCode';
 import { useCommittedRef, useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 import {
   composerHostMessageSchema,
+  EDIT_RECOVERY_CHUNK_LENGTH,
   linuxDoPollCapabilitiesSchema,
   MAX_COMPOSER_MARKDOWN_LENGTH,
   type ComposerHostMessage,
@@ -883,6 +885,7 @@ const ComposerTextCaret = Extension.create({
 });
 
 const ComposerImage = Image.extend({
+  draggable: false,
   addStorage() {
     return { site: undefined as RuntimeConfig['site'] | undefined };
   },
@@ -932,6 +935,13 @@ const ComposerImage = Image.extend({
       const dom = document.createElement('div');
       dom.className = 'composer-image';
       dom.contentEditable = 'false';
+      // ProseMirror enables dragging again on mouse down over a selected node.
+      Object.defineProperty(dom, 'draggable', {
+        get: () => false,
+        set: () => undefined
+      });
+      const preventDrag = (event: Event) => event.preventDefault();
+      dom.addEventListener('dragstart', preventDrag, true);
       const feedback = document.createElement('button');
       feedback.type = 'button';
       feedback.className = 'tiptap-button composer-image-feedback';
@@ -968,6 +978,7 @@ const ComposerImage = Image.extend({
         Object.entries(HTMLAttributes).forEach(([key, value]) => {
           if (key !== 'src' && value != null) image.setAttribute(key, String(value));
         });
+        image.draggable = false;
         image.onload = () => settle(image, 'loaded');
         image.onerror = () => settle(image, 'failed');
         settle(image, 'loading');
@@ -1004,9 +1015,12 @@ const ComposerImage = Image.extend({
       load();
       return {
         dom,
+        selectNode: () => dom.classList.add('ProseMirror-selectednode'),
+        deselectNode: () => dom.classList.remove('ProseMirror-selectednode'),
         stopEvent: (event) => event.target === feedback,
         ignoreMutation: () => true,
         destroy: () => {
+          dom.removeEventListener('dragstart', preventDrag, true);
           feedback.onclick = null;
           releaseImage();
           attempt = { kind: 'disposed' };
@@ -2772,13 +2786,31 @@ export function ComposerEditorRuntime() {
         }
         return;
       }
+      if (message.type === 'REQUEST_EDIT_RECOVERY') {
+        const config = runtimeDocument.config;
+        const { documentEpoch, requestId } = message.payload;
+        if (config?.intentKind !== 'edit-reply' || (config.documentEpoch ?? 0) !== documentEpoch) return;
+        const source = modeRef.current === 'source';
+        const markdown = source ? (sourceViewRef.current?.state.doc.toString() ?? '') : getRichMarkdown();
+        const text = replyEditRecoveryText(
+          markdown,
+          source ? pollsForSource(markdown) : readPollsFromEditor(editorRef.current)
+        );
+        const count = Math.max(1, Math.ceil(text.length / EDIT_RECOVERY_CHUNK_LENGTH));
+        for (let index = 0; index < count; index++) {
+          postMessage('EDIT_RECOVERY', {
+            documentEpoch,
+            requestId,
+            index,
+            last: index + 1 === count,
+            text: text.slice(index * EDIT_RECOVERY_CHUNK_LENGTH, (index + 1) * EDIT_RECOVERY_CHUNK_LENGTH)
+          });
+        }
+        return;
+      }
       if (message.type === 'REQUEST_SNAPSHOT') {
         const submission = message.payload.submission;
-        if (
-          submission &&
-          submission.documentEpoch === (runtimeDocument.config?.documentEpoch ?? 0) &&
-          submission.revision === revisionRef.current
-        ) {
+        if (submission?.documentEpoch === (runtimeDocument.config?.documentEpoch ?? 0)) {
           submissionLockedRef.current = true;
           editorRef.current?.setEditable(false, false);
         }
@@ -2868,6 +2900,7 @@ export function ComposerEditorRuntime() {
       closeBuilder,
       editorRef,
       finishImageUpload,
+      getRichMarkdown,
       postSnapshot,
       runtimeDocument,
       publishDocument

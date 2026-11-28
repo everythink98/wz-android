@@ -45,8 +45,12 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.facebook.react.bridge.Callback
+import com.facebook.react.bridge.JavaOnlyArray
+import com.facebook.react.bridge.JavaOnlyMap
 import com.facebook.react.soloader.OpenSourceMergedSoMapping
 import com.facebook.soloader.SoLoader
+import expo.modules.kotlin.ModuleHolder
+import expo.modules.kotlin.views.ViewManagerWrapperDelegate
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -95,6 +99,43 @@ private object LayoutApi34ForTest {
 
 @RunWith(AndroidJUnit4::class)
 class ForumContentSelectionViewTest {
+  @Test
+  fun rowsPropCopiesValidFieldsAndRejectsAnInvalidTokenField() {
+    ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
+      scenario.onActivity { activity ->
+        val fixture = SurfaceFixture(activity)
+        try {
+          val holder = ModuleHolder(ForumContentSelectionModule(), null)
+          val definition = holder.definition.viewManagerDefinitions.values.first()
+          val rowsProp = ViewManagerWrapperDelegate(holder, definition).props.getValue("rows")
+          fun setRows(token: Any) {
+            val row = JavaOnlyMap.of(
+              "documentId", "doc", "rowKey", "first", "nativeId", "native-first", "selectionToken", token
+            )
+            val prop = JavaOnlyMap.of("rows", JavaOnlyArray.of(row)).getDynamic("rows")
+            try {
+              rowsProp.set(prop, fixture.surface)
+            } finally {
+              prop.recycle()
+            }
+            definition.onViewDidUpdateProps?.invoke(fixture.surface)
+          }
+
+          val token = textToken("one two", "")
+          setRows(token)
+          val row = fixture.surface.pendingRows.single()
+          assertEquals(listOf("doc", "first", "native-first", token),
+            listOf(row.documentId, row.rowKey, row.nativeId, row.selectionToken))
+          setRows(81)
+          assertEquals("", fixture.surface.pendingRows.single().selectionToken)
+          assertNull(fixture.surface.selectionSnapshotForTest())
+        } finally {
+          fixture.close()
+        }
+      }
+    }
+  }
+
   @Test
   fun selectionActivityReportsItsOwnRevisionOncePerTransition() {
     ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
@@ -839,8 +880,8 @@ class ForumContentSelectionViewTest {
         fixture = SurfaceFixture(activity)
         fixture.surface.pendingRevision = "long-copy"
         fixture.surface.pendingRows = listOf(
-          ForumSelectionRowRecord("doc", "first", "native-first", textToken("one two", "\n")),
-          ForumSelectionRowRecord("doc", "long", "native-long", textToken(longText, ""))
+          ForumSelectionRowDefinition("doc", "first", "native-first", textToken("one two", "\n")),
+          ForumSelectionRowDefinition("doc", "long", "native-long", textToken(longText, ""))
         )
         fixture.surface.commitProps()
       }
@@ -1997,14 +2038,14 @@ class ForumContentSelectionViewTest {
       surface.addReactChild(scrollView, 0)
       surface.pendingRevision = "draw-time-scroll-v1"
       surface.pendingRows = listOf(
-        ForumSelectionRowRecord(
+        ForumSelectionRowDefinition(
           "draw-doc",
           "plain",
           "draw-native-plain",
           textToken(DRAW_PLAIN_TEXT, "\n")
         ),
-        ForumSelectionRowRecord("draw-doc", "inline", "draw-native-inline", inlineToken()),
-        ForumSelectionRowRecord(
+        ForumSelectionRowDefinition("draw-doc", "inline", "draw-native-inline", inlineToken()),
+        ForumSelectionRowDefinition(
           "draw-doc",
           "code",
           "draw-native-code",
@@ -2737,11 +2778,11 @@ class ForumContentSelectionViewTest {
       surface.addReactChild(mountedWindow, 0)
       surface.pendingRevision = "revision-1"
       surface.pendingRows = listOf(
-        ForumSelectionRowRecord("doc", "first", "native-first", textToken("one two", "\n")),
-        ForumSelectionRowRecord("doc", "media", "native-media", mediaToken("[sticker]\n")),
-        ForumSelectionRowRecord("doc", "second", "native-second", textToken("beta", "\n")),
-        ForumSelectionRowRecord("doc", "last", "native-last", textToken("gamma", "")),
-        ForumSelectionRowRecord("doc", "inline", "native-inline", inlineToken())
+        ForumSelectionRowDefinition("doc", "first", "native-first", textToken("one two", "\n")),
+        ForumSelectionRowDefinition("doc", "media", "native-media", mediaToken("[sticker]\n")),
+        ForumSelectionRowDefinition("doc", "second", "native-second", textToken("beta", "\n")),
+        ForumSelectionRowDefinition("doc", "last", "native-last", textToken("gamma", "")),
+        ForumSelectionRowDefinition("doc", "inline", "native-inline", inlineToken())
       )
       surface.commitProps()
       activity.setContentView(
@@ -2917,11 +2958,11 @@ class ForumContentSelectionViewTest {
       first.text.layoutDirection = layoutDirection
       surface.pendingRevision = "revision-first-text"
       surface.pendingRows = listOf(
-        ForumSelectionRowRecord("doc", "first", "native-first", textToken(value, "\n")),
-        ForumSelectionRowRecord("doc", "media", "native-media", mediaToken("[sticker]\n")),
-        ForumSelectionRowRecord("doc", "second", "native-second", textToken("beta", "\n")),
-        ForumSelectionRowRecord("doc", "last", "native-last", textToken("gamma", "")),
-        ForumSelectionRowRecord("doc", "inline", "native-inline", inlineToken())
+        ForumSelectionRowDefinition("doc", "first", "native-first", textToken(value, "\n")),
+        ForumSelectionRowDefinition("doc", "media", "native-media", mediaToken("[sticker]\n")),
+        ForumSelectionRowDefinition("doc", "second", "native-second", textToken("beta", "\n")),
+        ForumSelectionRowDefinition("doc", "last", "native-last", textToken("gamma", "")),
+        ForumSelectionRowDefinition("doc", "inline", "native-inline", inlineToken())
       )
       surface.commitProps()
     }

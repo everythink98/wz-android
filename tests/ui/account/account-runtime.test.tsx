@@ -8,7 +8,9 @@ import { PortalProvider } from '@gorhom/portal';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 import { resolveReaderStyleSettings, createTheme } from '@/ui/theme/tokens';
-import { NativeModules } from 'react-native';
+import { BackHandler, NativeModules, Text } from 'react-native';
+import { useAppBackHandler } from '@/app/useAppBackHandler';
+import { ComposerBottomSheet } from '@/ui/sheets/ComposerBottomSheet';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as legacyCookieMigration from '@/platform/storage/legacyCookieSnapshotMigration';
@@ -77,6 +79,7 @@ const mockWebViewStopLoading = jest.fn<void, []>();
 jest.mock('@/platform/network/managedCookies', () => ({
   ...jest.requireActual('@/platform/network/managedCookies'),
   setLinuxDoCookieResponseBarrier: jest.fn(async () => undefined),
+  setLinuxDoMediaRecheck: jest.fn(async () => undefined),
   readManagedCookieHeader: jest.fn(async () => ({ status: 'ok', header: 'test-session=fixture' }))
 }));
 jest.mock('@/platform/network/linuxDoLoginInitialization', () => ({
@@ -4460,6 +4463,136 @@ it.each(verificationRecoveryProofModes)(
   45_000
 );
 
+it('keeps a dedicated read verification on its originating tab with the measured bottom bar uncovered', async () => {
+  let runtime!: ReturnType<typeof useAccountRuntime>;
+  const fetcher: Fetcher = async () => new Response('{}');
+  const getRoute = () => focusedRoute;
+  const hasRoute = (key: string) => key === 'feed-origin' || key === 'search-other';
+  let focusedRoute = { key: 'feed-origin', tab: true, reading: false };
+  const getScreen = (): 'feed' | 'search' => (focusedRoute.key === 'feed-origin' ? 'feed' : 'search');
+  const closeComposer = jest.fn();
+  const changePresentation = jest.fn();
+  let renderedFeedActive = false;
+  const handlers = new Set<Parameters<typeof BackHandler.addEventListener>[1]>();
+  const register = jest.spyOn(BackHandler, 'addEventListener').mockImplementation((_event, handler) => {
+    handlers.add(handler);
+    return { remove: () => handlers.delete(handler) };
+  });
+  function Harness() {
+    const inFeed = focusedRoute.key === 'feed-origin';
+    useLayoutEffect(() => {
+      renderedFeedActive = inFeed;
+      return () => {
+        renderedFeedActive = false;
+      };
+    }, [inFeed]);
+    runtime = useAccountRuntime({
+      appActive: true,
+      enabledSources: ['linuxdo'],
+      fetcher,
+      loginNavigation: { linuxdo: () => true, nodeseek: () => true, yaohuo: () => true, nodeimage: () => true },
+      notify: () => undefined,
+      nodeSeekRecoveryThreshold: 1,
+      openUser: async () => undefined,
+      ready: true,
+      recoveryNavigation: { route: focusedRoute, getRoute, hasRoute, tabBarHeight: 68 },
+      screen: getScreen(),
+      webViewBlockMessage: ''
+    });
+    useAppBackHandler({ closeTopmostAccountSurface: runtime.hosts.closeTopmostSurface, getCurrentScreen: getScreen });
+    return (
+      <>
+        <ComposerBottomSheet
+          dark={false}
+          visible
+          presentation="fullscreen"
+          onOpenChange={closeComposer}
+          onPresentationChange={changePresentation}
+        >
+          {() => <Text>回复编辑器</Text>}
+        </ComposerBottomSheet>
+        {runtime.hosts.element}
+      </>
+    );
+  }
+
+  try {
+    const view = await render(<Harness />, { wrapper: QueryTestWrapper });
+    await waitFor(() => expect(runtime.read.sessionsReady).toBe(true));
+    const resume = jest.fn(async () => 'completed' as const);
+    const recovery = { queryKey: ['inline-read'], dismissalGroup: {}, isCurrent: () => renderedFeedActive, resume };
+    await act(async () => {
+      expect(await runtime.hosts.showLinuxDoVerification('read', recovery)).toBe(true);
+    });
+    const panel = view.getByTestId('linuxdo-read-recovery');
+    expect(panel.props.style).toEqual(expect.arrayContaining([expect.objectContaining({ bottom: 68 })]));
+    const document = await view.findByTestId('login-webview');
+    const postMessage = document.props.postMessageMock;
+
+    focusedRoute = { ...focusedRoute, key: 'search-other' };
+    let lateAccepted: boolean | undefined;
+    await act(async () => {
+      const previousFeedRead = { ...recovery, queryKey: ['feed-background-result'] };
+      lateAccepted = await runtime.hosts.showLinuxDoVerification('late feed result', previousFeedRead);
+    });
+    await view.rerender(<Harness />);
+    expect(view.queryByTestId('linuxdo-read-recovery')).toBeNull();
+    expect(lateAccepted).toBe(false);
+    expect(view.getByTestId('linuxdo-read-recovery', { includeHiddenElements: true }).props.pointerEvents).toBe('none');
+    expect(view.getByTestId('login-webview', { includeHiddenElements: true }).props.postMessageMock).toBe(postMessage);
+    expect(runtime.hosts.closeTopmostSurface()).toBeNull();
+
+    focusedRoute = { ...focusedRoute, key: 'feed-origin' };
+    await view.rerender(<Harness />);
+    expect(view.getByTestId('login-webview').props.postMessageMock).toBe(postMessage);
+    changePresentation.mockClear();
+    await act(async () => {
+      expect(
+        [...handlers].reverse().some((handle) => handle({ type: 'hardwareBackPress', timeStamp: Date.now() }))
+      ).toBe(true);
+    });
+    await waitFor(() => expect(view.queryByTestId('linuxdo-read-recovery')).toBeNull());
+    expect(closeComposer).not.toHaveBeenCalled();
+    expect(changePresentation).not.toHaveBeenCalled();
+    const sameBlock = { ...recovery, queryKey: ['inline-linuxdo-feed'] };
+    await act(async () => {
+      expect(await runtime.hosts.showLinuxDoVerification('related read', sameBlock)).toBe(false);
+      expect(await runtime.hosts.showLinuxDoVerification('explicit read', { ...sameBlock, explicit: true })).toBe(true);
+    });
+    expect(view.getByTestId('linuxdo-read-recovery')).toBeTruthy();
+    expect(resume).not.toHaveBeenCalled();
+
+    focusedRoute = { ...focusedRoute, key: 'search-other' };
+    await view.rerender(<Harness />);
+    const gate = Promise.withResolvers<void>();
+    const saveMarker = accountSessionStore.markAccountSessionHandoffPending;
+    const mark = jest
+      .spyOn(accountSessionStore, 'markAccountSessionHandoffPending')
+      .mockImplementationOnce(async (...args) => {
+        await gate.promise;
+        await saveMarker(...args);
+      });
+    try {
+      await act(async () => runtime.center.handleAccountCenterCommand({ type: 'open-login', site: 'linuxdo' }));
+      await waitFor(() => expect(mark).toHaveBeenCalledTimes(1));
+      expect(view.queryByTestId('login-webview')).toBeNull();
+      expect(runtime.read.readGateway.getReadPlan('linuxdo', 'account-data')).toMatchObject({ state: 'blocked' });
+    } finally {
+      await act(async () => gate.resolve());
+      mark.mockRestore();
+    }
+    await waitFor(async () => {
+      const saved = await AsyncStorage.getItem('account-session.v1.linuxdo');
+      expect(saved && JSON.parse(saved)).toMatchObject({ handoffPending: true });
+    });
+    expect(runtime.read.readGateway.getReadPlan('linuxdo', 'account-data')).toMatchObject({ state: 'blocked' });
+    expect(view.queryByTestId('linuxdo-read-recovery')).toBeNull();
+    expect(await view.findByTestId('login-webview')).toBeTruthy();
+  } finally {
+    register.mockRestore();
+  }
+});
+
 it('accepts an explicitly current read recovery without an active Query observer', async () => {
   const hook = await renderRuntime(async () => new Response('{}'));
   const resume = jest.fn(async () => 'completed' as const);
@@ -5083,11 +5216,19 @@ it.each([
         );
       if (status !== 401) {
         await waitFor(() => expect(probes()).toHaveLength(1));
-        await act(async () => {
-          await read();
-        });
+        const beforeHeldRead = fetcher.mock.calls.length;
+        let heldRead: Promise<Awaited<ReturnType<typeof read>>> | undefined;
+        if (entry === 'topic' && outcome === 'same') {
+          await act(async () => {
+            heldRead = read();
+          });
+          expect(fetcher).toHaveBeenCalledTimes(beforeHeldRead);
+          restored = true;
+        }
         expect(probes()).toHaveLength(1);
-        expect(runtime().read.accountSessionViewModels[source]).toMatchObject({ isLoggedIn: true, isVerifying: true });
+        await waitFor(() =>
+          expect(runtime().read.accountSessionViewModels[source]).toMatchObject({ isLoggedIn: true, isVerifying: true })
+        );
         await act(async () => {
           probe.resolve(
             outcome === 'unknown'
@@ -5103,6 +5244,12 @@ it.each([
                 })
           );
         });
+        if (heldRead) {
+          await act(async () => {
+            await expect(heldRead).resolves.toMatchObject({ id: topicId, contentHtml: '<p>opening</p>' });
+          });
+          expect(probes()).toHaveLength(1);
+        }
       } else expect(probes()).toHaveLength(source === 'linuxdo' ? 1 : 0);
       await waitFor(() => expect(runtime().read.accountSessionViewModels[source].isVerifying).toBe(false));
       const loggedOut = outcome === 'anonymous' || outcome === 'expired';

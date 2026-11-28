@@ -515,6 +515,12 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
   }
 
   @ReactMethod
+  fun setLinuxDoMediaRecheck(owner: String, active: Boolean, promise: Promise) {
+    LinuxDoCookieResponses.store.setMediaRecheck(owner, active)
+    promise.resolve(null)
+  }
+
+  @ReactMethod
   fun clearManagedLoginCookies(source: String, diagnostics: ReadableMap, promise: Promise) {
     runOnWorker(promise, "cookie_clear_failed") {
       try {

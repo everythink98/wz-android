@@ -12,7 +12,7 @@ import {
   RefreshCw,
   ShieldCheck
 } from 'lucide-react-native';
-import { LoginWebViewAction, LoginWebViewModal } from '@/ui/navigation/LoginWebViewModal';
+import { type InlineLoginWebView, LoginWebViewAction, LoginWebViewModal } from '@/ui/navigation/LoginWebViewModal';
 import {
   LINUXDO_SESSION_INIT_OBSERVER_SCRIPT,
   LINUXDO_WEBVIEW_PROBE_SCRIPT
@@ -24,6 +24,7 @@ import { useLinuxDoVerificationPage, type LinuxDoVerificationPageProps } from '.
 
 type Props = LinuxDoVerificationPageProps & {
   recoveryPanel?: LinuxDoRecoveryPanel;
+  inlineRecovery?: InlineLoginWebView;
   checking: boolean;
   credentialFillPending: boolean;
   credentialSaved: boolean;
@@ -108,6 +109,7 @@ export function LinuxDoVerifyModal(props: Props) {
   return (
     <LoginWebViewModal
       visible={showLinuxDoPanel}
+      inline={props.inlineRecovery}
       title={verifying ? 'linux.do 安全验证' : 'linux.do 登录'}
       subtitle={
         recovery

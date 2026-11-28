@@ -8,6 +8,9 @@ import {
   useState,
   type Ref
 } from 'react';
+import * as Clipboard from 'expo-clipboard';
+import { ScrollView, Text, ToastAndroid, View } from 'react-native';
+import { AppButton } from '@/ui/controls/ButtonControls';
 import type { TopicStyles } from '../styles';
 import type { ReplyComposerIntent } from '../useTopicSessionController';
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
@@ -25,23 +28,27 @@ import type {
 } from '@/domain/forum/structuredComposer';
 import type { LinuxDoTemplate } from '@/sources/linuxdo/templates';
 import type { LinuxDoPollCapabilities } from '@/domain/forum/linuxDoPoll';
+import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 
 export function ReplyComposerSheet({
   actionBusy,
   closeRequestRef,
   uploadingImage = false,
   discourseEmojiUrls = {},
+  editRecoveryRef,
   intent,
   nodeSeekMemberId,
   pendingNodeSeekPolls,
   replyContent,
   replyFace,
+  recoveryContent = null,
   routeActive = true,
   source,
   styles,
   theme,
   topicId = '',
   visible,
+  onBackAfterClose,
   onReplyComposerOpenChange,
   onReplyContentChange,
   onReplyFaceChange,
@@ -57,17 +64,20 @@ export function ReplyComposerSheet({
   closeRequestRef?: Ref<() => void>;
   uploadingImage?: boolean;
   discourseEmojiUrls?: DiscourseEmojiUrlMap;
+  editRecoveryRef?: Ref<() => Promise<string>>;
   intent: ReplyComposerIntent;
   nodeSeekMemberId?: string;
   pendingNodeSeekPolls?: PendingNodeSeekPoll[];
   replyContent: string;
   replyFace: string;
+  recoveryContent?: string | null;
   routeActive?: boolean;
   source?: Source;
   styles: TopicStyles;
   theme: ReaderTheme;
   topicId?: string;
   visible: boolean;
+  onBackAfterClose?: () => void;
   onReplyComposerOpenChange: (open: boolean) => void;
   onReplyContentChange: (value: string) => void;
   onReplyFaceChange: (value: string) => void;
@@ -81,12 +91,15 @@ export function ReplyComposerSheet({
 }) {
   const structured = source === 'linuxdo' || source === 'nodeseek';
   const structuredRef = useRef<StructuredReplyComposerHandle>(null);
-  const pendingClose = useRef<object | null>(null);
+  const pendingClose = useRef<{ intent: ReplyComposerIntent; backRequested: boolean } | null>(null);
+  useLayoutEffect(() => {
+    if (!routeActive || (visible && pendingClose.current?.intent !== intent)) pendingClose.current = null;
+  }, [intent, routeActive, visible]);
   useLayoutEffect(
     () => () => {
       pendingClose.current = null;
     },
-    [intent, visible]
+    []
   );
   const lastVisibleWasEditRef = useRef(intent.kind === 'edit');
   const [presentation, setPresentation] = useState<ComposerPresentation>('sheet');
@@ -109,7 +122,7 @@ export function ReplyComposerSheet({
     title = intent.target.floor ? `编辑 #${intent.target.floor}` : '编辑回复';
   }
   const structuredIntent = useMemo<ComposerIntent | null>(() => {
-    if (!structured || !source) return null;
+    if (!structured || !source || recoveryContent !== null) return null;
     if (intent.kind === 'edit') {
       return {
         kind: 'edit-reply',
@@ -125,13 +138,13 @@ export function ReplyComposerSheet({
       topicId,
       ...(intent.kind === 'floor' ? { replyTo: intent.target } : {})
     };
-  }, [intent, source, structured, topicId]);
+  }, [intent, recoveryContent, source, structured, topicId]);
   const handleSnapshot = useCallback(
     (snapshot: ComposerSnapshot) => {
-      if (!visible && lastVisibleWasEditRef.current) return;
+      if (recoveryContent !== null || (!visible && lastVisibleWasEditRef.current)) return;
       onReplySnapshot?.(snapshot);
     },
-    [onReplySnapshot, visible]
+    [onReplySnapshot, recoveryContent, visible]
   );
   useEffect(() => {
     if (routeActive || !visible || !structuredRef.current) return;
@@ -139,25 +152,54 @@ export function ReplyComposerSheet({
   }, [routeActive, visible]);
   const handleOpenChange = useCallback(
     (open: boolean) => {
-      if (open || !structured || !structuredRef.current) {
-        onReplyComposerOpenChange(open);
+      if (open) {
+        pendingClose.current = null;
+        onReplyComposerOpenChange(true);
         return;
       }
       if (pendingClose.current) return;
-      const request = {};
+      const request = { intent, backRequested: false };
       pendingClose.current = request;
+      if (!structuredRef.current) {
+        onReplyComposerOpenChange(false);
+        return;
+      }
       void structuredRef.current
         .requestSnapshot()
         .catch(() => undefined)
         .finally(() => {
-          if (pendingClose.current !== request) return;
-          pendingClose.current = null;
-          onReplyComposerOpenChange(false);
+          if (pendingClose.current === request) onReplyComposerOpenChange(false);
         });
     },
-    [onReplyComposerOpenChange, structured]
+    [intent, onReplyComposerOpenChange]
   );
-  useImperativeHandle(closeRequestRef, () => () => handleOpenChange(false), [handleOpenChange]);
+  const returnAfterClose = useLatestCallback(() => {
+    if (visible || !routeActive || !pendingClose.current?.backRequested) return;
+    pendingClose.current = null;
+    onBackAfterClose?.();
+  });
+  useEffect(() => {
+    // The navigation guard can accept Back once this route has committed the saved draft and closed reply state.
+    if (!visible) returnAfterClose();
+  }, [returnAfterClose, visible]);
+  const requestBackDuringClose = useLatestCallback(() => {
+    const request = pendingClose.current;
+    if (!request || !routeActive || !onBackAfterClose) return false;
+    request.backRequested = true;
+    returnAfterClose();
+    return true;
+  });
+  const handleClosed = useCallback(() => {
+    returnAfterClose();
+    pendingClose.current = null;
+  }, [returnAfterClose]);
+  useImperativeHandle(
+    closeRequestRef,
+    () => () => {
+      if (!requestBackDuringClose()) handleOpenChange(false);
+    },
+    [handleOpenChange, requestBackDuringClose]
+  );
   return (
     <ComposerBottomSheet
       active={routeActive}
@@ -165,20 +207,44 @@ export function ReplyComposerSheet({
       containerStyle={styles.replyComposerBottomSheetContainer}
       contentStyle={styles.replyComposerBottomSheetContent}
       dark={theme.dark}
-      fixedContent={structured}
+      fixedContent={structured && recoveryContent === null}
       presentation={presentation}
+      releaseAfterClose
       visible={visible}
+      onBackDuringClose={onBackAfterClose ? requestBackDuringClose : undefined}
+      onClosed={handleClosed}
       onOpenChange={handleOpenChange}
       onPresentationChange={setPresentation}
     >
       {(focusSignal, awaitKeyboardSettled) =>
-        structuredIntent ? (
+        recoveryContent !== null ? (
+          <View style={{ gap: 8, padding: 16, flexShrink: 1 }}>
+            <Text accessibilityRole="header" style={styles.panelTitle}>
+              {'保留的编辑内容'}
+            </Text>
+            <ScrollView overScrollMode="never">
+              <Text selectable style={{ color: theme.ink }}>
+                {recoveryContent}
+              </Text>
+            </ScrollView>
+            <AppButton
+              label={'复制编辑内容'}
+              onPress={() =>
+                void Clipboard.setStringAsync(recoveryContent)
+                  .then(() => ToastAndroid.show('已复制', ToastAndroid.SHORT))
+                  .catch(() => ToastAndroid.show('复制失败', ToastAndroid.SHORT))
+              }
+            />
+            <AppButton label={'关闭'} onPress={() => handleOpenChange(false)} />
+          </View>
+        ) : structuredIntent ? (
           <StructuredReplyComposer
             ref={structuredRef}
             actionBusy={actionBusy}
             closeLabel={closeLabel}
             content={replyContent}
             discourseEmojiUrls={discourseEmojiUrls}
+            editRecoveryRef={structuredIntent.kind === 'edit-reply' ? editRecoveryRef : undefined}
             focusSignal={focusSignal}
             intent={structuredIntent}
             nodeSeekMemberId={nodeSeekMemberId}

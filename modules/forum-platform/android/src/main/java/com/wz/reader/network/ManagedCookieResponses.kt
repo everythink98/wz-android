@@ -20,11 +20,7 @@ import okhttp3.Request
 import okhttp3.Response
 
 // Request-local observations only; CookieManager is the sole credential store.
-internal fun cfClearanceValue(header: String?): String? = header?.split(';')
-  ?.map { it.trim() }?.firstOrNull { it.startsWith("cf_clearance=") }
-  ?.substringAfter('=')?.takeIf { it.isNotEmpty() }
-
-private fun cfClearanceValues(header: String?): List<String> = header.orEmpty().split(';')
+internal fun cfClearanceValues(header: String?): List<String> = header.orEmpty().split(';')
   .map { it.trim() }.filter { it.startsWith("cf_clearance=") }.map { it.substringAfter('=') }
 
 internal class CookieResponseScope(val epoch: Long) {
@@ -127,6 +123,13 @@ internal class ManagedCookieResponses(
   // ponytail: serialize platform writes only; network requests remain concurrent.
   private val lock = Any()
   @Volatile private var epoch = 0L
+  private val mediaRecheck = AtomicReference<String?>(null)
+
+  fun setMediaRecheck(owner: String, active: Boolean) {
+    if (active) mediaRecheck.set(owner) else mediaRecheck.updateAndGet { current -> if (current == owner) null else current }
+  }
+
+  fun isMediaRechecking(): Boolean = mediaRecheck.get() != null
   private var writeSequence = 0L
   private sealed interface Handoff {
     data object Open : Handoff

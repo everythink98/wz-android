@@ -86,8 +86,7 @@ describe('large composer documents under repeated interaction', () => {
           expect(
             composerHostMessages(view).findLast((message) => message.type === 'REQUEST_SNAPSHOT')?.payload.submission
           ).toEqual({
-            documentEpoch,
-            revision: snapshot.revision
+            documentEpoch
           })
         );
         const settlement = composerHostMessages(view).findLast((message) => message.type === 'REQUEST_SNAPSHOT')!;

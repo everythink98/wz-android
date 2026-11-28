@@ -1,8 +1,17 @@
-import { memo, useCallback, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react';
+import {
+  memo,
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ComponentProps,
+  type ReactNode
+} from 'react';
 import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useMappingHelper } from '@shopify/flash-list';
 import { Eye, MessageCircle, Pin } from 'lucide-react-native';
-import type { Topic } from '@/domain/forum/models';
+import type { SearchTopic, Topic } from '@/domain/forum/models';
 import { forumAccessRequirementText, sourceLabel, topicListDisplayTimeText } from '@/domain/forum/presentation';
 import { highlightTextParts } from '@/ui/text/highlight';
 import {
@@ -18,7 +27,11 @@ import {
   type ReaderTheme,
   textSizeStyle
 } from '@/ui/theme/tokens';
-import type { TopicListItemState } from '@/domain/forum/topicListItemState';
+import {
+  selectTopicListItemState,
+  type TopicListItemState,
+  type TopicListItemStateSource
+} from '@/domain/forum/topicListItemState';
 import { Avatar } from '@/ui/avatar/Avatar';
 import { ContentLoadingPlaceholder, SkeletonBlock } from '@/ui/controls/ContentLoadingPlaceholder';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
@@ -32,6 +45,7 @@ const UNREAD_DOT_SIZE = 6;
 type TopicCardProps = {
   highlightQuery?: string;
   hideReplyCount?: boolean;
+  matchedReplyAuthor?: SearchTopic['matchedReplyAuthor'];
   showPinned?: boolean;
   showSource?: boolean;
   renderTrailingAction?: (topic: Topic) => ReactNode;
@@ -46,6 +60,7 @@ function topicCardPropsAreEqual(previous: TopicCardProps, next: TopicCardProps) 
   return (
     previous.highlightQuery === next.highlightQuery &&
     previous.hideReplyCount === next.hideReplyCount &&
+    previous.matchedReplyAuthor === next.matchedReplyAuthor &&
     previous.showPinned === next.showPinned &&
     (previous.showSource ?? true) === (next.showSource ?? true) &&
     previous.renderTrailingAction === next.renderTrailingAction &&
@@ -131,6 +146,7 @@ function UnreadTopicTitle({
 export function TopicCard({
   highlightQuery = '',
   hideReplyCount = false,
+  matchedReplyAuthor,
   showPinned = false,
   showSource = true,
   renderTrailingAction,
@@ -150,9 +166,10 @@ export function TopicCard({
     lastOpen.current = { key, at: now };
     onOpenTopic(topic);
   }, [onOpenTopic, topic]);
+  const displayedAuthor = matchedReplyAuthor ?? topic;
   const authorMeta = [
-    topic.author || '未知作者',
-    topic.authorLevelLabel,
+    displayedAuthor.author || (matchedReplyAuthor ? '' : '未知作者'),
+    matchedReplyAuthor ? '回复者' : topic.authorLevelLabel,
     scene !== 'favorites' && readerState.favorite ? '已收藏' : ''
   ]
     .filter(Boolean)
@@ -210,7 +227,7 @@ export function TopicCard({
   const footer = (
     <View style={styles.topicFooterRow}>
       <View style={styles.topicAuthorChip}>
-        <Avatar contentSource={topic.source} name={topic.author} uri={topic.authorAvatar} tiny />
+        <Avatar contentSource={topic.source} name={displayedAuthor.author} uri={displayedAuthor.authorAvatar} tiny />
         <View style={styles.topicAuthorTextGroup}>
           <View style={styles.topicByline}>
             <Text style={styles.topicAuthorName} numberOfLines={1}>
@@ -341,6 +358,16 @@ export function TopicCard({
 }
 
 export const MemoizedTopicCard = memo(TopicCard, topicCardPropsAreEqual);
+
+export function TopicListCard({
+  topicStateIndex,
+  topic,
+  ...props
+}: Omit<TopicCardProps, 'readerState'> & { topicStateIndex: TopicListItemStateSource }) {
+  const selection = useMemo(() => selectTopicListItemState(topicStateIndex, topic), [topicStateIndex, topic]);
+  const readerState = useSyncExternalStore(selection.subscribe, selection.getSnapshot, selection.getSnapshot);
+  return <MemoizedTopicCard {...props} readerState={readerState} topic={topic} />;
+}
 
 export function TopicListSeparator() {
   const { styles } = useReaderThemeStyles(createStyles);

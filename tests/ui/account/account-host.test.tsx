@@ -143,6 +143,10 @@ describe('AccountHost NodeImage authorization boundary', () => {
     expect(view.getByTestId('nodeimage-auth-touch-shield', { includeHiddenElements: true })).toBeTruthy();
     expect(nodeImageModalProps.actions).toBeUndefined();
     expect(nodeImageWebViewMounts).toBe(1);
+    const historyChange = nodeImageWebViewProps.onLoadStart as
+      ((event: { nativeEvent: { url: string; loading: boolean } }) => void) | undefined;
+    await act(() => historyChange?.({ nativeEvent: { url: 'https://www.nodeimage.com/#done', loading: false } }));
+    expect(baseProps.setLoadingNodeImageAuthPage).not.toHaveBeenCalled();
 
     await act(async () => {
       view.rerender(

@@ -12,7 +12,8 @@ import {
   useMemo,
   useRef,
   useState,
-  type ReactNode
+  type ReactNode,
+  type Ref
 } from 'react';
 import { WebView, type WebViewMessageEvent, type WebViewNavigation } from 'react-native-webview';
 import { ChevronDown, CodeXml, Maximize2, Minimize2, Redo2, TextCursorInput, Undo2, X } from 'lucide-react-native';
@@ -147,6 +148,7 @@ export const StructuredReplyComposer = forwardRef<
     content: string;
     disabledReason?: string;
     discourseEmojiUrls?: EmojiUrlMap;
+    editRecoveryRef?: Ref<() => Promise<string>>;
     replacementDocument?: { onReady(): void };
     error?: string;
     focusSignal?: number;
@@ -184,6 +186,7 @@ export const StructuredReplyComposer = forwardRef<
       content,
       disabledReason,
       discourseEmojiUrls = EMPTY_EMOJI_URLS,
+      editRecoveryRef,
       replacementDocument,
       error,
       focusSignal = 0,
@@ -264,6 +267,11 @@ export const StructuredReplyComposer = forwardRef<
     const toolbarHostRef = useRef<View>(null);
     const toolbarMenuHost = `composer-tools-${useId()}`;
     const consumedFocusSignalRef = useRef(0);
+    const editRecovery = useRef<{
+      id: string;
+      parts: string[];
+      finish: (text?: string) => void;
+    } | null>(null);
     const snapshotResolversRef = useRef(
       new Map<
         string,
@@ -449,6 +457,7 @@ export const StructuredReplyComposer = forwardRef<
       readyTimerRef.current = null;
     }, []);
     const rejectSnapshots = useCallback((message: string, reason: 'canceled' | 'superseded' | 'renderer_gone') => {
+      editRecovery.current?.finish();
       for (const { reject, timer, trace } of snapshotResolversRef.current.values()) {
         clearTimeout(timer);
         finishDiagnosticTrace(
@@ -623,7 +632,7 @@ export const StructuredReplyComposer = forwardRef<
     }, [readOnly, ready, replacementDocument, send]);
 
     const requestSnapshot = useCallback(
-      (submission?: { documentEpoch: number; revision: number }) => {
+      (submission?: { documentEpoch: number }) => {
         const trace = beginDiagnosticTrace('webview', 'composer-snapshot', {
           site: intent.site,
           isReady: ready,
@@ -645,6 +654,28 @@ export const StructuredReplyComposer = forwardRef<
         });
       },
       [documentLifecycle, intent.site, ready, send]
+    );
+
+    useImperativeHandle(
+      ready && !rendererGone && intent.kind === 'edit-reply' ? editRecoveryRef : undefined,
+      () => () => {
+        if (!ready || documentLifecycle.initializing || intent.kind !== 'edit-reply')
+          return Promise.reject(new Error('编辑器尚未就绪'));
+        editRecovery.current?.finish();
+        const id = requestId();
+        return new Promise<string>((resolve, reject) => {
+          const finish = (text?: string) => {
+            clearTimeout(timer);
+            if (editRecovery.current?.id === id) editRecovery.current = null;
+            if (text === undefined) reject(new Error('未取得最新编辑内容'));
+            else resolve(text);
+          };
+          const timer = setTimeout(finish, 1500);
+          editRecovery.current = { id, parts: [], finish };
+          send({ type: 'REQUEST_EDIT_RECOVERY', payload: { requestId: id, documentEpoch: documentEpochRef.current } });
+        });
+      },
+      [documentLifecycle, intent.kind, ready, send]
     );
 
     const insertMarkup = useCallback(
@@ -825,6 +856,18 @@ export const StructuredReplyComposer = forwardRef<
           return;
         }
         const message = parsed.data;
+        if (message.type === 'EDIT_RECOVERY') {
+          const pending = editRecovery.current;
+          const { requestId, documentEpoch, index, text, last } = message.payload;
+          if (!pending || pending.id !== requestId || documentEpoch !== documentEpochRef.current) return;
+          if (index !== pending.parts.length) {
+            pending.finish();
+            return;
+          }
+          pending.parts.push(text);
+          if (last) pending.finish(pending.parts.join(''));
+          return;
+        }
         if (message.type === 'ERROR') {
           if (message.payload.documentEpoch !== undefined && message.payload.documentEpoch !== documentEpochRef.current)
             return;
@@ -1195,11 +1238,15 @@ export const StructuredReplyComposer = forwardRef<
             if (!writes.ownsSubmission(submission) || documentEpochRef.current !== documentEpoch) return false;
             let completed = false;
             try {
-              const current = await requestSnapshot({ documentEpoch, revision: snapshot.revision });
+              // The runtime locks this document while capturing it. Editor transactions can
+              // advance the revision without changing the Markdown or any pending poll.
+              const current = await requestSnapshot({ documentEpoch });
               if (
                 writes.ownsSubmission(submission) &&
                 documentEpochRef.current === documentEpoch &&
-                current.revision === snapshot.revision
+                current.markdown === snapshot.markdown &&
+                current.validationIssues.length === 0 &&
+                JSON.stringify(current.pendingNodeSeekPolls) === JSON.stringify(snapshot.pendingNodeSeekPolls)
               )
                 completed = complete();
               return completed;

@@ -43,7 +43,9 @@ export function replyImageMarkupForSource(source: Source, url: string, name: str
   if (!cleanUrl) {
     throw new Error('图片上传返回缺少地址');
   }
-  return source === 'yaohuo' ? `[img]${cleanUrl}[/img]` : `![${safeImageAlt(name)}](${cleanUrl})`;
+  if (source === 'yaohuo') return `[img]${cleanUrl}[/img]`;
+  const destination = cleanUrl.replace(/\s/g, encodeURIComponent).replace(/\(/g, '%28').replace(/\)/g, '%29');
+  return `![${safeImageAlt(name)}](${destination})`;
 }
 
 export function appendReplyImageMarkup(content: string, markup: string) {

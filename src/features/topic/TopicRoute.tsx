@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ImagePreviewItem } from '@/platform/media/imagePreviewCatalog';
 import { AppState, Platform, Share, View } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
+import { NavigationBackdropProvider } from '@/ui/navigation/NavigationGlass';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { FlashListRef } from '@shopify/flash-list';
 import * as Clipboard from 'expo-clipboard';
@@ -20,7 +21,7 @@ import { siteSessionIdentityKey } from '@/domain/session/siteSessionState';
 
 import { ImagePreviewModal } from '@/ui/media/ImagePreviewModal';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
-import { goBackFromFocusedRoute } from '@/ui/navigation/appRouteActions';
+import { dispatchTopicRoute, goBackFromFocusedRoute } from '@/ui/navigation/appRouteActions';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { ContentSourceDisabledState } from '@/ui/controls/FeedbackStates';
 import { useTopicActionsController } from './actions/useTopicActionsController';
@@ -95,14 +96,21 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
   const topic = route.params.topic;
   const topicScrollRef = useRef<FlashListRef<TopicListItem> | null>(null);
   const locationRequestIdRef = useRef(route.params.locationRequestId ?? 0);
-  const topicSession = useTopicSessionController({ notify: runtime.notify, topic });
+  const accountScope =
+    topic.source === 'v2ex'
+      ? ''
+      : JSON.stringify([
+          runtime.account.sessionViewModels[topic.source].currentUser?.id,
+          runtime.account.sessionEpochs[topic.source]
+        ]);
+  const topicSession = useTopicSessionController({ notify: runtime.notify, topic, accountScope });
   const {
-    state: { replyComposerIntent, selectedTopic },
+    state: { replyComposerIntent, replyEditRecovery, selectedTopic },
     commands: { composer: topicComposer, view: topicView }
   } = topicSession;
   const openTopicRoute = useCallback(
     (nextTopic: Topic, location?: TopicLocationTarget) => {
-      if (navigation.isFocused()) navigation.push('Topic', { topic: nextTopic, location });
+      if (navigation.isFocused()) dispatchTopicRoute(() => navigation.push('Topic', { topic: nextTopic, location }));
     },
     [navigation]
   );
@@ -136,6 +144,8 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
   const linuxDoSession = runtime.account.sessionViewModels.linuxdo;
   const topicController = useTopicController({
     focused,
+    entryPrefetch: runtime.entryPrefetch,
+    routeKey: route.key,
     isSoleTopicRoute,
     appActive: runtime.appActive,
     commitReaderData: runtime.reader.commit,
@@ -367,124 +377,126 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
   return (
     <TopicRouteBackBoundary
       imagePreviewOpen={Boolean(imagePreviewController.imagePreview)}
-      replyComposerOpen={replyComposerIntent.kind !== 'closed'}
+      replyComposerOpen={replyComposerIntent.kind !== 'closed' || replyEditRecovery !== null}
       closeImagePreview={imagePreviewController.closeImagePreview}
       closeReplyComposer={closeReplyComposer}
     >
-      <OriginalImageUpgradeBoundary enabled={active}>
-        <LinuxDoPacketViewer.Provider value={packetViewer}>
-          {/* Background accessibility props must not change the native parent of media views. */}
-          <View
-            collapsable={false}
-            accessibilityElementsHidden={!active}
-            importantForAccessibility={active ? 'auto' : 'no-hide-descendants'}
-            pointerEvents={active ? 'auto' : 'none'}
-            style={{ flex: 1 }}
-          >
-            <TopicScreen
-              active={active}
-              composerRouteFocused={focused}
-              closeReplyComposerRequest={closeReplyComposerRequest}
-              actions={actions}
-              article={{
-                busy: topicBusy,
-                error: topicError || null,
-                topic: topicLayoutDetail,
-                ...(topicDetail?.source === 'yaohuo' ? { yaohuoBookmarked: topicDetail.bookmarked } : {})
-              }}
-              chrome={{
-                ...(topicDetail &&
-                topicDetail.source !== 'v2ex' &&
-                !(topicDetail.source === 'linuxdo' && topicDetail.isPrivateMessage) &&
-                topicDetail.canEdit &&
-                topicDetail.authorId &&
-                runtime.account.sessionViewModels[topicDetail.source].canWrite &&
-                String(runtime.account.sessionViewModels[topicDetail.source].currentUser?.id) === topicDetail.authorId
-                  ? {
-                      editTopic: () => {
-                        if (navigation.isFocused() && topicDetail.source !== 'v2ex')
-                          navigation.push('TopicComposer', {
-                            kind: 'edit',
-                            source: topicDetail.source,
-                            topicId: topicDetail.id
-                          });
-                      }
-                    }
-                  : {}),
-                back: () => goBackFromFocusedRoute(navigation),
-                favorite: topicFavorite,
-                getDiscourseEmojiUrls: runtime.account.readGateway.getEmojiUrls,
-                openOriginal: openOriginalUrl,
-                openReadingSettings: () => {
-                  if (navigation.isFocused()) navigation.push('ReadingSettings');
-                },
-                openTopic: stableOpenTopic,
-                openUser: stableOpenUser,
-                refreshReplies: stableRefreshReplies,
-                refreshTopic: stableRefreshWholeTopic,
-                share: openTopicShare,
-                toggleFavorite: toggleTopicFavorite,
-                verifyLinuxDo,
-                verifyNodeSeek
-              }}
-              currentNodeSeekUser={runtime.account.sessionViewModels.nodeseek.currentUser}
-              bodyMediaPaused={Boolean(imagePreviewController.imagePreview || sharingTopic)}
-              html={{ ...html, contentWidth: runtime.contentWidth, mediaSessionIdentity }}
-              nodeSeekUserId={runtime.account.nodeSeekUserId}
-              onImagePreviewDescriptors={imagePreviewController.registerImagePreviewDescriptors}
-              read={topicController}
-              session={topicSession}
-              location={topicController.readingEntry.location}
-              locationRequestId={route.params.locationRequestId}
-              topicScrollRef={topicScrollRef}
-            />
-            <ImagePreviewModal
-              preview={imagePreviewController.imagePreview}
-              nodeSeekMediaUserAgent={runtime.nodeSeekMediaUserAgent}
-              onClose={imagePreviewController.closeImagePreview}
-              onSave={imagePreviewController.savePreviewImage}
-              onSelect={imagePreviewController.selectPreviewImage}
-              onVisibleImageChange={setDisplayedPreview}
-              onInteraction={interactWithPreview}
-            />
-            {packetUrl ? (
-              <LinuxDoPacketPage
-                key={JSON.stringify([packetUrl, packetUsername, packetScope])}
-                url={packetUrl}
-                username={packetUsername}
-                blockMessage={runtime.networkProxyWebViewBlockMessage}
-                onClose={() => {
-                  setPacketPage(null);
-                  setPacketRefresh((value) => value + 1);
+      <NavigationBackdropProvider>
+        <OriginalImageUpgradeBoundary enabled={active}>
+          <LinuxDoPacketViewer.Provider value={packetViewer}>
+            {/* Background accessibility props must not change the native parent of media views. */}
+            <View
+              collapsable={false}
+              accessibilityElementsHidden={!active}
+              importantForAccessibility={active ? 'auto' : 'no-hide-descendants'}
+              pointerEvents={active ? 'auto' : 'none'}
+              style={{ flex: 1 }}
+            >
+              <TopicScreen
+                active={active}
+                composerRouteFocused={focused}
+                closeReplyComposerRequest={closeReplyComposerRequest}
+                actions={actions}
+                article={{
+                  busy: topicBusy,
+                  error: topicError || null,
+                  topic: topicLayoutDetail,
+                  ...(topicDetail?.source === 'yaohuo' ? { yaohuoBookmarked: topicDetail.bookmarked } : {})
                 }}
+                chrome={{
+                  ...(topicDetail &&
+                  topicDetail.source !== 'v2ex' &&
+                  !(topicDetail.source === 'linuxdo' && topicDetail.isPrivateMessage) &&
+                  topicDetail.canEdit &&
+                  topicDetail.authorId &&
+                  runtime.account.sessionViewModels[topicDetail.source].canWrite &&
+                  String(runtime.account.sessionViewModels[topicDetail.source].currentUser?.id) === topicDetail.authorId
+                    ? {
+                        editTopic: () => {
+                          if (navigation.isFocused() && topicDetail.source !== 'v2ex')
+                            navigation.push('TopicComposer', {
+                              kind: 'edit',
+                              source: topicDetail.source,
+                              topicId: topicDetail.id
+                            });
+                        }
+                      }
+                    : {}),
+                  back: () => goBackFromFocusedRoute(navigation),
+                  favorite: topicFavorite,
+                  getDiscourseEmojiUrls: runtime.account.readGateway.getEmojiUrls,
+                  openOriginal: openOriginalUrl,
+                  openReadingSettings: () => {
+                    if (navigation.isFocused()) navigation.push('ReadingSettings');
+                  },
+                  openTopic: stableOpenTopic,
+                  openUser: stableOpenUser,
+                  refreshReplies: stableRefreshReplies,
+                  refreshTopic: stableRefreshWholeTopic,
+                  share: openTopicShare,
+                  toggleFavorite: toggleTopicFavorite,
+                  verifyLinuxDo,
+                  verifyNodeSeek
+                }}
+                currentNodeSeekUser={runtime.account.sessionViewModels.nodeseek.currentUser}
+                bodyMediaPaused={Boolean(imagePreviewController.imagePreview || sharingTopic)}
+                html={{ ...html, contentWidth: runtime.contentWidth, mediaSessionIdentity }}
+                nodeSeekUserId={runtime.account.nodeSeekUserId}
+                onImagePreviewDescriptors={imagePreviewController.registerImagePreviewDescriptors}
+                read={topicController}
+                session={topicSession}
+                location={topicController.readingEntry.location}
+                locationRequestId={route.params.locationRequestId}
+                topicScrollRef={topicScrollRef}
               />
-            ) : null}
-            {sharingTopic?.kind === 'options' ? (
-              <TopicShareOptions
-                topic={sharingTopic.topic}
-                onClose={closeTopicShare}
-                onShareLink={(signal) => shareTopic(sharingTopic.topic, signal)}
-                onCopyLink={() => copyLink(sharingTopic.topic)}
-                onShareImage={
-                  imageShareDetail
-                    ? () => setShareSelection({ kind: 'image', topic: imageShareDetail, scope: sharingTopic.scope })
-                    : undefined
-                }
+              <ImagePreviewModal
+                preview={imagePreviewController.imagePreview}
+                nodeSeekMediaUserAgent={runtime.nodeSeekMediaUserAgent}
+                onClose={imagePreviewController.closeImagePreview}
+                onSave={imagePreviewController.savePreviewImage}
+                onSelect={imagePreviewController.selectPreviewImage}
+                onVisibleImageChange={setDisplayedPreview}
+                onInteraction={interactWithPreview}
               />
-            ) : null}
-            {sharingTopic?.kind === 'image' ? (
-              <TopicShareSheet
-                key={sharingTopic.scope}
-                topic={sharingTopic.topic}
-                mediaContext={html.mediaContext}
-                nodeSeekUserAgent={runtime.nodeSeekMediaUserAgent}
-                onClose={closeTopicShare}
-                onBack={openTopicShare}
-              />
-            ) : null}
-          </View>
-        </LinuxDoPacketViewer.Provider>
-      </OriginalImageUpgradeBoundary>
+              {packetUrl ? (
+                <LinuxDoPacketPage
+                  key={JSON.stringify([packetUrl, packetUsername, packetScope])}
+                  url={packetUrl}
+                  username={packetUsername}
+                  blockMessage={runtime.networkProxyWebViewBlockMessage}
+                  onClose={() => {
+                    setPacketPage(null);
+                    setPacketRefresh((value) => value + 1);
+                  }}
+                />
+              ) : null}
+              {sharingTopic?.kind === 'options' ? (
+                <TopicShareOptions
+                  topic={sharingTopic.topic}
+                  onClose={closeTopicShare}
+                  onShareLink={(signal) => shareTopic(sharingTopic.topic, signal)}
+                  onCopyLink={() => copyLink(sharingTopic.topic)}
+                  onShareImage={
+                    imageShareDetail
+                      ? () => setShareSelection({ kind: 'image', topic: imageShareDetail, scope: sharingTopic.scope })
+                      : undefined
+                  }
+                />
+              ) : null}
+              {sharingTopic?.kind === 'image' ? (
+                <TopicShareSheet
+                  key={sharingTopic.scope}
+                  topic={sharingTopic.topic}
+                  mediaContext={html.mediaContext}
+                  nodeSeekUserAgent={runtime.nodeSeekMediaUserAgent}
+                  onClose={closeTopicShare}
+                  onBack={openTopicShare}
+                />
+              ) : null}
+            </View>
+          </LinuxDoPacketViewer.Provider>
+        </OriginalImageUpgradeBoundary>
+      </NavigationBackdropProvider>
     </TopicRouteBackBoundary>
   );
 }

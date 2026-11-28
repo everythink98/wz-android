@@ -36,10 +36,14 @@ type DiagnosticRequestInit = RequestInit & { [DIAGNOSTIC_REQUEST]?: DiagnosticRe
 let traceSequence = 0;
 let requestSequence = 0;
 
-let writer: DiagnosticWriter | null = null;
+type EventWriter = (event: DiagnosticEvent) => void | Promise<void>;
+let writer: EventWriter | null = null;
 
-export function setDiagnosticWriter(nextWriter: DiagnosticWriter | null) {
-  writer = nextWriter;
+export function setDiagnosticWriter(nextWriter: DiagnosticWriter | { writeEvent: EventWriter } | null) {
+  writer =
+    typeof nextWriter === 'function'
+      ? (event) => nextWriter(`${JSON.stringify(event)}\n`)
+      : (nextWriter?.writeEvent ?? null);
 }
 
 export function beginDiagnosticTrace(
@@ -251,7 +255,7 @@ function emit(
     ...safeFields(fields)
   };
   try {
-    void Promise.resolve(writer(`${JSON.stringify(event)}\n`)).catch(() => undefined);
+    void Promise.resolve(writer(event)).catch(() => undefined);
   } catch {
     // Diagnostics must never change app behavior.
   }

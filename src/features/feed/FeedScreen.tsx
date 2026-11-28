@@ -2,6 +2,7 @@ import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import { createFeedStyles } from './styles';
 import { recordStartupPhase } from '@/platform/diagnostics/startupTiming';
 import {
+  createContext,
   memo,
   useCallback,
   useContext,
@@ -10,7 +11,8 @@ import {
   useMemo,
   useRef,
   useState,
-  type RefObject
+  type RefObject,
+  type SetStateAction
 } from 'react';
 import {
   Animated as NativeAnimated,
@@ -50,22 +52,25 @@ import {
 import { shouldLoadMoreFeedFromScroll } from './floatingActions';
 import { createFeedPageRequests } from './feedPageRequests';
 import type { ReadingFilter } from '@/domain/forum/feed';
-import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
+import type { TopicListItemStateSource } from '@/domain/forum/topicListItemState';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { AppButton, FloatingIconButton } from '@/ui/controls/ButtonControls';
 import { EmptyText, LoadingState, RecoverableEmptyState } from '@/ui/controls/FeedbackStates';
 import { PillRail } from '@/ui/controls/SelectionControls';
 import { PopupMenu, PopupMenuItem } from '@/ui/controls/PopupMenu';
-import { MemoizedTopicCard, TopicListPlaceholder, TopicListSeparator } from '@/ui/topic/TopicCard';
+import { TopicListCard, TopicListPlaceholder, TopicListSeparator } from '@/ui/topic/TopicCard';
 import { FEED_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import { sourceLabel } from '@/domain/forum/presentation';
 import { isFeedFilterSource } from '@/domain/forum/sourceCatalog';
 import { NavigationBackdropTarget, NavigationGlass } from '@/ui/navigation/NavigationGlass';
 import { LoadingCover } from '@/ui/controls/ContentLoadingPlaceholder';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
+import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 
 const AUTO_LOAD_SCROLL_STEP = 80;
 const FeedPager = memo(TabView);
+const FeedListPlaceholder = memo(TopicListPlaceholder);
+const FeedRouteFocused = createContext(true);
 
 export const FeedScreen = memo(function FeedScreen({
   active = true,
@@ -82,6 +87,7 @@ export const FeedScreen = memo(function FeedScreen({
   feedSource,
   isRouteFocused,
   enabledFeedSources,
+  failedFeedSources,
   loadMoreFailureSignal,
   loadMoreErrorMessage,
   loadingMore,
@@ -114,10 +120,11 @@ export const FeedScreen = memo(function FeedScreen({
   feedSource: FeedSource;
   isRouteFocused?: () => boolean;
   enabledFeedSources: readonly Source[];
+  failedFeedSources?: readonly Source[];
   loadMoreFailureSignal: number;
   loadMoreErrorMessage?: string;
   loadingMore: boolean;
-  topicStateIndex: TopicListItemStateIndex;
+  topicStateIndex: TopicListItemStateSource;
   readingFilter: ReadingFilter;
   refreshing: boolean;
   scrollRef?: RefObject<FlashListRef<Topic> | null>;
@@ -135,6 +142,19 @@ export const FeedScreen = memo(function FeedScreen({
   const { styles, theme } = useReaderThemeStyles(createFeedStyles);
   const bottomBarHeight = useContext(BottomTabBarHeightContext) ?? 0;
   const screenActive = active;
+  const [feedBackdrop, setFeedBackdrop] = useState<{ source: FeedSource; view: View } | null>(null);
+  const backdropView = feedBackdrop?.source === feedSource ? feedBackdrop.view : null;
+  const setBackdropView = useCallback(
+    (update: SetStateAction<View | null>) => {
+      setFeedBackdrop((current) => {
+        const previous = current?.source === feedSource ? current.view : null;
+        const view = typeof update === 'function' ? update(previous) : update;
+        if (view === previous) return current;
+        return view ? { source: feedSource, view } : null;
+      });
+    },
+    [feedSource]
+  );
   const [sourceHeaderHeight, setSourceHeaderHeight] = useState(
     styles.feedFixedHeader.paddingTop + styles.feedSourceTab.minHeight
   );
@@ -229,10 +249,7 @@ export const FeedScreen = memo(function FeedScreen({
   if (filterMenuOpen && (!screenActive || !showFeedFilter)) setFilterMenuOpen(false);
   const activeFeedFilterMenuGroups = showFeedFilter ? feedFilterMenuGroupsFor(feedSource) : [];
   const feedTabOptions = useMemo(() => ({ labelStyle: styles.feedSourceLabel }), [styles.feedSourceLabel]);
-  const canChangeFeedSelection = useCallback(
-    () => screenActive && isRouteFocused?.() !== false,
-    [isRouteFocused, screenActive]
-  );
+  const canChangeFeedSelection = useLatestCallback(() => screenActive && isRouteFocused?.() !== false);
   const requestFeedLoadMore = useCallback(
     (source: 'button' | 'scroll' = 'button', offsetY = 0) => {
       if (!feedHasMore || busy || refreshing || loadingMore || (source === 'scroll' && feedManualContinuation)) {
@@ -249,16 +266,13 @@ export const FeedScreen = memo(function FeedScreen({
     [busy, feedHasMore, feedManualContinuation, feedPage, loadingMore, onLoadMore, pageRequests, refreshing]
   );
 
-  const handleScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const offsetY = Math.max(0, event.nativeEvent.contentOffset.y);
-      updateCreateActionForScroll(event);
-      if (shouldLoadMoreFeedFromScroll(event.nativeEvent)) {
-        requestFeedLoadMore('scroll', offsetY);
-      }
-    },
-    [requestFeedLoadMore, updateCreateActionForScroll]
-  );
+  const handleScroll = useLatestCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const offsetY = Math.max(0, event.nativeEvent.contentOffset.y);
+    updateCreateActionForScroll(event);
+    if (shouldLoadMoreFeedFromScroll(event.nativeEvent)) {
+      requestFeedLoadMore('scroll', offsetY);
+    }
+  });
 
   const handleScrollBeginDrag = useCallback(() => {
     pageRequests.dragged();
@@ -353,8 +367,8 @@ export const FeedScreen = memo(function FeedScreen({
   );
   const renderTopicItem = useCallback<ListRenderItem<Topic>>(
     ({ index, item: topic }) => (
-      <MemoizedTopicCard
-        readerState={getTopicListItemStateFromIndex(topicStateIndex, topic)}
+      <TopicListCard
+        topicStateIndex={topicStateIndex}
         showPinned
         showSource={feedSource === 'all'}
         testID={index === 0 ? 'feed-topic-first' : undefined}
@@ -409,23 +423,29 @@ export const FeedScreen = memo(function FeedScreen({
         testID="feed-loading-scene"
         style={[styles.content, { paddingTop: sourceHeaderHeight + secondaryHeaderHeight }]}
       >
-        <TopicListPlaceholder
-          label="加载中"
-          animating={screenActive && route.key === feedSource}
-          fillHeight={pagerHeight - sourceHeaderHeight - secondaryHeaderHeight}
-        />
+        <FeedRouteFocused.Consumer>
+          {(focused) => (
+            <FeedListPlaceholder
+              label="加载中"
+              animating={focused && route.key === feedSource}
+              fillHeight={pagerHeight - sourceHeaderHeight - secondaryHeaderHeight}
+            />
+          )}
+        </FeedRouteFocused.Consumer>
       </View>
     ),
-    [styles, sourceHeaderHeight, secondaryHeaderHeight, feedSource, screenActive, pagerHeight]
+    [styles, sourceHeaderHeight, secondaryHeaderHeight, feedSource, pagerHeight]
   );
   const renderFeedContent = useCallback(
     ({ route }: { route: { key: string } }) => {
       const activeSource = route.key === feedSource;
+      const loadingScene = renderFeedLoadingScene({ route });
       return (
         <View style={styles.content}>
           {activeSource && showList ? (
             <FlashList
               renderScrollComponent={ScrollView}
+              nativeID="wz-retained-feed-scroll"
               testID={
                 !busy && feedOutcomeKind
                   ? `feed-outcome-${feedOutcomeKind}-${feedSource}-${feedFilter ?? 'default'}`
@@ -465,6 +485,23 @@ export const FeedScreen = memo(function FeedScreen({
               onScrollBeginDrag={handleScrollBeginDrag}
               scrollEventThrottle={64}
               {...FEED_LIST_PERFORMANCE_PROPS}
+              ListHeaderComponent={
+                feedSource === 'all' && failedFeedSources?.length ? (
+                  <View style={styles.feedListFooter}>
+                    {failedFeedSources.map((source) => (
+                      <AppButton
+                        key={source}
+                        compact
+                        variant="ghost"
+                        label={`前往 ${sourceLabel(source)} 重试`}
+                        onPress={() => {
+                          if (canChangeFeedSelection()) changeFeedSourceValue(source);
+                        }}
+                      />
+                    ))}
+                  </View>
+                ) : null
+              }
               ListEmptyComponent={
                 <View testID="feed-empty-state" onLayout={handleInitialListLoad}>
                   {allSourcesDisabled ? (
@@ -511,7 +548,9 @@ export const FeedScreen = memo(function FeedScreen({
                       已经到底了
                     </Text>
                   ) : feedSource === 'all' ? (
-                    <LoadingState compact text="加载其他来源" animating={screenActive} />
+                    <FeedRouteFocused.Consumer>
+                      {(focused) => <LoadingState compact text="加载其他来源" animating={focused} />}
+                    </FeedRouteFocused.Consumer>
                   ) : null
                 ) : null
               }
@@ -519,13 +558,17 @@ export const FeedScreen = memo(function FeedScreen({
               renderItem={renderTopicItem}
             />
           ) : null}
-          <LoadingCover
-            visible={!activeSource || showLoadingCover}
-            active={screenActive && activeSource}
-            style={styles.content}
-          >
-            {renderFeedLoadingScene({ route })}
-          </LoadingCover>
+          <FeedRouteFocused.Consumer>
+            {(focused) => (
+              <LoadingCover
+                visible={!activeSource || showLoadingCover}
+                active={focused && activeSource}
+                style={styles.content}
+              >
+                {loadingScene}
+              </LoadingCover>
+            )}
+          </FeedRouteFocused.Consumer>
         </View>
       );
     },
@@ -533,6 +576,9 @@ export const FeedScreen = memo(function FeedScreen({
       busy,
       bottomBarHeight,
       allSourcesDisabled,
+      canChangeFeedSelection,
+      changeFeedSourceValue,
+      failedFeedSources,
       feedEmptyText,
       feedFilter,
       feedHasMore,
@@ -553,7 +599,6 @@ export const FeedScreen = memo(function FeedScreen({
       onManageContentSources,
       onRefresh,
       refreshing,
-      screenActive,
       renderFeedLoadingScene,
       renderTopicItem,
       requestFeedLoadMore,
@@ -566,12 +611,19 @@ export const FeedScreen = memo(function FeedScreen({
   );
 
   const renderFeedScene = useCallback(
-    ({ route }: { route: { key: string } }) => (
-      <NavigationBackdropTarget active={screenActive && route.key === feedSource}>
-        {renderFeedContent({ route })}
-      </NavigationBackdropTarget>
-    ),
-    [feedSource, renderFeedContent, screenActive]
+    ({ route }: { route: { key: string } }) => {
+      const content = renderFeedContent({ route });
+      return (
+        <FeedRouteFocused.Consumer>
+          {(focused) => (
+            <NavigationBackdropTarget active={focused && route.key === feedSource} setLocalTarget={setBackdropView}>
+              {content}
+            </NavigationBackdropTarget>
+          )}
+        </FeedRouteFocused.Consumer>
+      );
+    },
+    [feedSource, renderFeedContent, setBackdropView]
   );
 
   const renderCategoryRail = useCallback(
@@ -716,20 +768,22 @@ export const FeedScreen = memo(function FeedScreen({
   return (
     <View style={styles.content} onLayout={onPageLayout}>
       {feedFilterMenu}
-      <FeedPager
-        animationEnabled={false}
-        style={styles.feedPager}
-        initialLayout={feedInitialLayout}
-        lazy
-        lazyPreloadDistance={1}
-        renderLazyPlaceholder={renderFeedLoadingScene}
-        navigationState={feedNavigationState}
-        commonOptions={feedTabOptions}
-        renderScene={renderFeedScene}
-        renderTabBar={renderFeedTabBar}
-        onSwipeStart={closeFeedFilterMenu}
-        onIndexChange={changeFeedSourceFromPager}
-      />
+      <FeedRouteFocused.Provider value={screenActive}>
+        <FeedPager
+          animationEnabled={false}
+          style={styles.feedPager}
+          initialLayout={feedInitialLayout}
+          lazy
+          lazyPreloadDistance={1}
+          renderLazyPlaceholder={renderFeedLoadingScene}
+          navigationState={feedNavigationState}
+          commonOptions={feedTabOptions}
+          renderScene={renderFeedScene}
+          renderTabBar={renderFeedTabBar}
+          onSwipeStart={closeFeedFilterMenu}
+          onIndexChange={changeFeedSourceFromPager}
+        />
+      </FeedRouteFocused.Provider>
       {onCreateTopic && feedSource !== 'v2ex' ? (
         <Animated.View
           testID="feed-create-topic-action"
@@ -744,7 +798,7 @@ export const FeedScreen = memo(function FeedScreen({
           importantForAccessibility={createActionHidden ? 'no-hide-descendants' : 'auto'}
         >
           <FloatingIconButton
-            backdrop={<NavigationGlass accent />}
+            backdrop={<NavigationGlass accent backdropView={backdropView} cropToViewport pauseWhenHidden />}
             icon={SquarePen}
             label="发帖"
             disabled={createActionHidden}

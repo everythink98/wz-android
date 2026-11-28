@@ -35,19 +35,30 @@ class ApkInstallerModule internal constructor(
   override fun getName(): String = "ApkInstallerModule"
 
   @ReactMethod
-  fun inspectApk(uriString: String, promise: Promise) {
+  fun inspectApk(uriString: String, promise: Promise) = inspect(uriString, null, promise)
+
+  @ReactMethod
+  fun inspectCompletedApk(uriString: String, expectedSha256: String, promise: Promise) =
+    inspect(uriString, expectedSha256, promise)
+
+  private fun inspect(uriString: String, expectedSha256: String?, promise: Promise) {
     try {
-      inspectionExecutor.execute { inspectApkOnWorker(uriString, promise) }
+      inspectionExecutor.execute { inspectApkOnWorker(uriString, expectedSha256, promise) }
     } catch (error: Exception) {
       promise.reject("apk_inspect_failed", error.message ?: "无法校验 APK。", error)
     }
   }
 
-  private fun inspectApkOnWorker(uriString: String, promise: Promise) {
+  private fun inspectApkOnWorker(uriString: String, expectedSha256: String?, promise: Promise) {
     try {
       val file = apkFileFromUri(uriString)
       if (!file.exists()) {
         promise.reject("apk_missing", "APK 文件不存在。")
+        return
+      }
+      val transferDigest = expectedSha256?.let { fileSha256(file) }
+      if (transferDigest != null && transferDigest != expectedSha256) {
+        promise.reject("apk_sha_mismatch", "APK 文件校验失败。")
         return
       }
       val packageInfo = apkPackageInfo(file)
@@ -61,7 +72,7 @@ class ApkInstallerModule internal constructor(
         return
       }
       val result = Arguments.createMap()
-      result.putString("sha256", fileSha256(file))
+      result.putString("sha256", transferDigest ?: fileSha256(file))
       result.putString("packageName", packageInfo.packageName)
       result.putString("versionName", packageInfo.versionName ?: "")
       result.putDouble("versionCode", apkVersionCode(packageInfo).toDouble())

@@ -102,6 +102,22 @@ class ComposerKeyboardHostTest {
   private fun finishAnimation() { shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(400)) }
   private fun drawHiddenLayout() { host.viewTreeObserver.dispatchOnPreDraw(); host.viewTreeObserver.dispatchOnPreDraw() }
 
+  @Test fun reportsOnlyCompletedConsumedBackPairsWhenRequested() {
+    up(down(), KeyEvent.FLAG_CANCELED)
+    assertEquals(0, host.imeBackEvents)
+    up(down())
+    assertEquals(0, host.imeBackEvents)
+
+    ComposerKeyboardHostManager().updateProperties(host, ReactStylesDiffMap(JavaOnlyMap.of("reportImeBack", true)))
+    val duringHide = down()
+    assertEquals(0, host.imeBackEvents)
+    up(duringHide)
+    assertEquals(1, host.imeBackEvents)
+    assertEquals(1, host.ime.requests.size)
+    up(down(), KeyEvent.FLAG_CANCELED)
+    assertEquals(1, host.imeBackEvents)
+  }
+
   @Test fun autoRequestWhileDisabledSurvivesEnableAndQueuedAttemptsConsumeOnce() {
     host.ime.visible = false
     host.setHostEnabled(false)
@@ -579,7 +595,9 @@ class ComposerKeyboardHostTest {
         .setSystemWindowInsets(androidx.core.graphics.Insets.of(0, 0, 0, if (shadowOf(imm).isSoftInputVisible) 336 else 0))
         .setStableInsets(androidx.core.graphics.Insets.NONE).build().toWindowInsets())
       override fun emitKeyboardHidden(requestId: Double, success: Boolean) { events += requestId to success }
-      override fun emitImeInsets(bottom: Double) { insetsEvents += bottom }
+      override fun dispatchImeInsets(bottom: Double, keyboardBottom: Double, focusEpoch: Int, focused: Boolean) {
+        insetsEvents += bottom
+      }
     }
     val editor = EditText(themed).apply { isFocusableInTouchMode = true }
     legacyHost.addView(editor)
@@ -707,6 +725,7 @@ class ComposerKeyboardHostTest {
     val events = mutableListOf<Pair<Double, Boolean>>()
     val insetsEvents = mutableListOf<Double>()
     val frameCommits = mutableListOf<Runnable>()
+    var imeBackEvents = 0
     var hardwareAccelerated = true
     var windowFocused = true
     override fun isHardwareAccelerated() = hardwareAccelerated
@@ -716,7 +735,10 @@ class ComposerKeyboardHostTest {
       .setVisible(WindowInsets.Type.ime(), ime.visible)
       .setInsets(WindowInsets.Type.ime(), Insets.of(0, 0, 0, ime.height)).build()
     override fun emitKeyboardHidden(requestId: Double, success: Boolean) { events += requestId to success }
-    override fun emitImeInsets(bottom: Double) { insetsEvents += bottom }
+    override fun dispatchImeInsets(bottom: Double, keyboardBottom: Double, focusEpoch: Int, focused: Boolean) {
+      insetsEvents += bottom
+    }
+    override fun emitImeBack() { imeBackEvents += 1 }
     override fun registerFrameCommit(observer: ViewTreeObserver, callback: Runnable) { frameCommits += callback }
   }
 

@@ -8,7 +8,7 @@ import { accountQueryKeys, appQueryClient, forumQueryKeys } from '@/platform/que
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { nodeSeekAttendanceQuery } from '@/sources/nodeseek/attendanceQuery';
 import { errorMessage } from '@/platform/network/errors';
-import { setLinuxDoCookieResponseBarrier } from '@/platform/network/managedCookies';
+import { setLinuxDoCookieResponseBarrier, setLinuxDoMediaRecheck } from '@/platform/network/managedCookies';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 import {
   accountSessionAccess,
@@ -38,7 +38,7 @@ import type {
   NotificationSessionAccess,
   RequestAccountRecheck
 } from '@/domain/session/sessionContracts';
-import type { ReadRecovery } from '@/platform/query/readRecovery';
+import type { LinuxDoVerificationRequest, ReadRecovery } from '@/platform/query/readRecovery';
 import type { ForumReadSession } from '@/domain/forum/readPlan';
 import type { Screen } from '@/ui/navigation/types';
 import type { AccountCenterCommand } from '@/domain/session/accountCenter';
@@ -51,7 +51,7 @@ import {
   type WritableSessionSnapshot,
   type WritableSessionTicket
 } from '@/domain/session/writableSessionGate';
-import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
+import { useCommittedRef, useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 import { RecoverableEmptyState } from '@/ui/controls/FeedbackStates';
 import { useAccountStatusController } from './useAccountStatusController';
 import { useLocalIdentityRestore } from './useLocalIdentityRestore';
@@ -171,6 +171,16 @@ function useNodeSeekRecoveryIntent() {
   };
 }
 
+export type LinuxDoRecoveryRoute = { key: string; tab: boolean; reading: boolean };
+type LinuxDoRecoveryNavigation = {
+  route?: LinuxDoRecoveryRoute;
+  getRoute: () => LinuxDoRecoveryRoute | undefined;
+  hasRoute: (key: string) => boolean;
+  tabBarHeight?: number;
+};
+
+let mediaRecheckSequence = 0;
+
 export function useAccountRuntime({
   appActive,
   beforeRequest,
@@ -182,6 +192,7 @@ export function useAccountRuntime({
   nodeSeekRecoveryThreshold,
   openUser,
   ready,
+  recoveryNavigation,
   contentSourcesReady = ready,
   screen,
   webViewBlockMessage
@@ -200,6 +211,7 @@ export function useAccountRuntime({
     initialTab?: Extract<AccountCenterCommand, { type: 'open-user' }>['initialTab']
   ) => Promise<unknown>;
   ready: boolean;
+  recoveryNavigation?: LinuxDoRecoveryNavigation;
   screen: Screen;
   webViewBlockMessage: string;
 }) {
@@ -295,7 +307,17 @@ export function useAccountRuntime({
   const showLoginPanel = visibleAuthSurface === 'nodeseek-login';
   const showYaohuoLoginPanel = visibleAuthSurface === 'yaohuo-login';
   const showLinuxDoPanel = visibleAuthSurface === 'linuxdo-login';
-  const linuxDoPanelVisible = showLinuxDoPanel || recoveryPanel.phase !== 'idle';
+  const linuxDoPanelOpen = showLinuxDoPanel || recoveryPanel.phase !== 'idle';
+  const recoveryRoute = recoveryNavigation?.route;
+  const renderedRecoveryRouteKey = useCommittedRef(recoveryRoute?.key);
+  const tabBarHeight = recoveryNavigation?.tabBarHeight;
+  const inlineRecovery = recoveryPanel.routeKey
+    ? {
+        presented: recoveryRoute?.key === recoveryPanel.routeKey && (!recoveryRoute.tab || tabBarHeight !== undefined),
+        bottom: recoveryRoute?.tab ? tabBarHeight : undefined
+      }
+    : undefined;
+  const linuxDoPanelVisible = linuxDoPanelOpen && (!inlineRecovery || inlineRecovery.presented);
   const showNodeImagePanel = visibleAuthSurface === 'nodeimage-auth';
   const showLinuxDoCreditPanel = visibleAuthSurface === 'linuxdo-credit';
   const loginUnmountWaiters = useRef({ nodeseek: new Set<() => void>(), yaohuo: new Set<() => void>() });
@@ -354,7 +376,11 @@ export function useAccountRuntime({
   const reconcileAccountStatusRef = useRef<
     (
       source: SessionSite,
-      options?: { surfaceGeneration?: number; parentTraceId?: string }
+      options?: {
+        surfaceGeneration?: number;
+        parentTraceId?: string;
+        prepareReadRecheck?: () => { ready: Promise<void>; release: () => Promise<void> };
+      }
     ) => Promise<AccountReconcileResult>
   >(async () => ({ status: 'stale' }));
   const applyAccountSessionEventRef = useRef<(event: ScopedSiteSessionEvent) => boolean>(() => false);
@@ -483,7 +509,9 @@ export function useAccountRuntime({
   const beginAuthSurfaceTicket = useCallback(
     (surface: AuthSurface, source: SessionSite, checkIdentity = true, visible = true) => {
       const account = readSessionRuntimeSnapshot(source);
-      const wasVisible = isAuthSurfaceVisible(authSurfaceRegistryRef.current, surface);
+      const alreadyOpen =
+        isAuthSurfaceVisible(authSurfaceRegistryRef.current, surface) &&
+        authSurfaceRegistryRef.current.active[surface]?.phase === 'open';
       const ticket = beginAuthSurface(
         authSurfaceRegistryRef.current,
         {
@@ -496,7 +524,7 @@ export function useAccountRuntime({
       );
       const owner = authSurfaceLifetimeRef.current.signal;
       const preparation = createAuthSurfacePreparation(
-        wasVisible && authSurfacePreparationsRef.current[source]?.ready === true,
+        alreadyOpen && authSurfacePreparationsRef.current[source]?.ready === true,
         markAccountSessionHandoffPending(source)
       );
       authSurfacePreparationsRef.current[source] = preparation;
@@ -572,6 +600,15 @@ export function useAccountRuntime({
   const handleSiteSessionEvent = useCallback((event: ScopedSiteSessionEvent) => {
     applyAccountSessionEventRef.current(event);
   }, []);
+  const linuxDoReadRecheck = useRef<{
+    epoch: number;
+    identityKey: string | undefined;
+    finished: ReturnType<typeof Promise.withResolvers<void>>;
+  } | null>(null);
+  const pendingLinuxDoReadRecheck = useCallback((epoch: number, identityKey: string | undefined) => {
+    const pending = linuxDoReadRecheck.current;
+    return pending?.epoch === epoch && pending.identityKey === identityKey ? pending.finished.promise : undefined;
+  }, []);
   const requestAccountRecheck = useCallback<RequestAccountRecheck>(
     async (source, requestSessionEpoch, parentTraceId) => {
       const current = readSessionRuntimeSnapshot(source);
@@ -585,7 +622,35 @@ export function useAccountRuntime({
       )
         return false;
       try {
-        const result = await reconcileAccountStatusRef.current(source, { parentTraceId });
+        const result = await reconcileAccountStatusRef.current(source, {
+          parentTraceId,
+          ...(source === 'linuxdo'
+            ? {
+                prepareReadRecheck: () => {
+                  const snapshot = readSessionRuntimeSnapshot(source);
+                  if (
+                    snapshot.sessionEpoch !== requestSessionEpoch ||
+                    snapshot.identityKey !== current.identityKey ||
+                    snapshot.authSurfaceOpen ||
+                    snapshot.sourceEnabled === false
+                  )
+                    throw new CancelledError();
+                  const owner = requestSessionEpoch + ':' + ++mediaRecheckSequence;
+                  const finished = Promise.withResolvers<void>();
+                  const recheck = { epoch: requestSessionEpoch, identityKey: current.identityKey, finished };
+                  linuxDoReadRecheck.current = recheck;
+                  return {
+                    ready: setLinuxDoMediaRecheck(owner, true),
+                    release: async () => {
+                      await setLinuxDoMediaRecheck(owner, false).catch(() => undefined);
+                      if (linuxDoReadRecheck.current === recheck) linuxDoReadRecheck.current = null;
+                      finished.resolve();
+                    }
+                  };
+                }
+              }
+            : {})
+        });
         const confirmed = readSessionRuntimeSnapshot(source);
         return (
           result.status === 'same' &&
@@ -644,14 +709,19 @@ export function useAccountRuntime({
     completeLinuxDoBrowserFetch: session.completeLinuxDoBrowserFetch,
     completeNodeSeekBrowserFetch: session.completeNodeSeekBrowserFetch
   });
-  const linuxDoReadingSnapshot = useCallback(() => readSessionRuntimeSnapshot('linuxdo'), [readSessionRuntimeSnapshot]);
+  const linuxDoReadingSnapshot = useCallback(() => {
+    const snapshot = readSessionRuntimeSnapshot('linuxdo');
+    return pendingLinuxDoReadRecheck(snapshot.sessionEpoch, snapshot.identityKey)
+      ? { ...snapshot, authSurfaceOpen: true }
+      : snapshot;
+  }, [pendingLinuxDoReadRecheck, readSessionRuntimeSnapshot]);
   const linuxDoReadingExpired = useCallback(
     (epoch: number) => handleSessionExpired('linuxdo', epoch),
     [handleSessionExpired]
   );
   const reading = useLinuxDoReadingRuntime({
     appActive,
-    verificationVisible: linuxDoPanelVisible,
+    verificationVisible: linuxDoPanelOpen,
     fetcher: session.forumFetchWithWebViewFallback,
     snapshot: linuxDoReadingSnapshot,
     userAgent: getLinuxDoUserAgent,
@@ -669,6 +739,7 @@ export function useAccountRuntime({
     getNodeSeekUserAgent,
     onSessionExpired: handleSessionExpired,
     requestAccountRecheck,
+    pendingLinuxDoReadRecheck,
     readSessionRuntimeSnapshot: readForegroundSessionSnapshot
   });
   const commitAccountStatusChange = session.commitAccountStatusChange;
@@ -1021,6 +1092,9 @@ export function useAccountRuntime({
   useLayoutEffect(() => {
     linuxDoCookies.observeMount(mountLinuxDoWebView || mountedLinuxDoCreditWebView);
   }, [linuxDoCookies, mountLinuxDoWebView, mountedLinuxDoCreditWebView]);
+  const getRecoveryRoute = recoveryNavigation?.getRoute;
+  const hasRecoveryRoute = recoveryNavigation?.hasRoute;
+  const isRecoveryRouteFocused = useCallback((key: string) => getRecoveryRoute?.()?.key === key, [getRecoveryRoute]);
   const verification = useVerificationController({
     fetcher,
     getLinuxDoSurfaceGeneration,
@@ -1038,6 +1112,7 @@ export function useAccountRuntime({
     linuxDoWebViewRef,
     linuxDoWebViewSessionRef,
     isLinuxDoSurfaceVisible: isLinuxDoPanelVisible,
+    isRecoveryRouteFocused,
     notify,
     onQueuedLinuxDoLoginCanceled: () => handleClearCredentialLoginIntent('linuxdo'),
     onBeforeLinuxDoSurfaceOpened: () => prepareAuthSurfaceOpenRef.current('linuxdo-login'),
@@ -1111,10 +1186,55 @@ export function useAccountRuntime({
     updateLinuxDoSession: session.updateLinuxDoSession,
     updateNodeSeekSession: session.updateNodeSeekSession
   });
-  useCommitRefValue(readingVerificationRef, (recovery: LinuxDoReadingRecovery) => {
-    void verification.showLinuxDoVerification('阅读记录同步需要完成 Cloudflare 验证', recovery);
-  });
+  const openLinuxDoVerification = verification.showLinuxDoVerification;
+  const showLinuxDoVerification = useCallback(
+    (message?: string, request?: LinuxDoVerificationRequest) => {
+      const route = request ? getRecoveryRoute?.() : undefined;
+      // During a navigation commit the previous page may still own its read callback.
+      if (route && renderedRecoveryRouteKey.current && renderedRecoveryRouteKey.current !== route.key)
+        return Promise.resolve(false);
+      return openLinuxDoVerification(message, request, route && !isAccountCenterFocused?.() ? route.key : undefined);
+    },
+    [getRecoveryRoute, isAccountCenterFocused, openLinuxDoVerification, renderedRecoveryRouteKey]
+  );
+
+  const deferredReadingRecovery = useRef<LinuxDoReadingRecovery | null>(null);
+  const showReadingVerification = useCallback(
+    (recovery: LinuxDoReadingRecovery) => {
+      if (!recovery.isCurrent()) return;
+      if (recovery.isExpired?.()) {
+        recovery.cancel();
+        return;
+      }
+      const route = getRecoveryRoute?.();
+      if (getRecoveryRoute && !route?.reading) {
+        deferredReadingRecovery.current = recovery;
+        return;
+      }
+      deferredReadingRecovery.current = null;
+      void openLinuxDoVerification('阅读记录同步需要完成 Cloudflare 验证', recovery, route?.key);
+    },
+    [getRecoveryRoute, openLinuxDoVerification]
+  );
+  useCommitRefValue(readingVerificationRef, showReadingVerification);
+  useEffect(() => {
+    const pending = deferredReadingRecovery.current;
+    if (pending && appActive && recoveryRoute?.reading) {
+      deferredReadingRecovery.current = null;
+      showReadingVerification(pending);
+    }
+  }, [appActive, recoveryRoute, showReadingVerification]);
+
+  const tryLinuxDoPostChallengeCheck = verification.tryLinuxDoPostChallengeCheck;
+  useEffect(() => {
+    if (inlineRecovery?.presented) tryLinuxDoPostChallengeCheck();
+  }, [inlineRecovery?.presented, recoveryPanel.routeKey, tryLinuxDoPostChallengeCheck]);
   const closeLinuxDoPanel = verification.closeLinuxDoPanel;
+  useEffect(() => {
+    const origin = recoveryPanel.routeKey;
+    if (origin && recoveryRoute?.key !== origin && hasRecoveryRoute?.(origin) === false)
+      closeLinuxDoPanel(true, 'navigation-away');
+  }, [closeLinuxDoPanel, hasRecoveryRoute, recoveryPanel.routeKey, recoveryRoute]);
   const recoveryScope = getLinuxDoRecoveryScope();
   const previousRecoveryScopeRef = useRef(recoveryScope);
   useEffect(() => {
@@ -1426,6 +1546,7 @@ export function useAccountRuntime({
   ]);
   const closeTopmostSurface = useCallback(() => {
     if (recoveryPanel.phase !== 'idle') {
+      if (!linuxDoPanelVisible) return null;
       closeLinuxDoPanel(true, 'hardware-back');
       return 'linuxdo-panel-closed';
     }
@@ -1436,7 +1557,7 @@ export function useAccountRuntime({
     if (surface === 'nodeimage-auth') return 'image-auth-panel-closed';
     if (surface === 'yaohuo-login') return 'yaohuo-panel-closed';
     return 'linuxdo-panel-closed';
-  }, [closeAuthSurface, closeLinuxDoPanel, recoveryPanel.phase]);
+  }, [closeAuthSurface, closeLinuxDoPanel, linuxDoPanelVisible, recoveryPanel.phase]);
 
   const readWritableSessionSnapshot = useCallback(
     (source: SessionSite): WritableSessionSnapshot => readSessionRuntimeSnapshot(source),
@@ -1588,8 +1709,9 @@ export function useAccountRuntime({
       nodeSeekWebViewUserAgent,
       setLoadingLoginPage,
       setLoadingYaohuoLoginPage,
-      showLinuxDoPanel: linuxDoPanelVisible,
+      showLinuxDoPanel: linuxDoPanelOpen,
       recoveryPanel,
+      inlineRecovery,
       showLoginPanel,
       showYaohuoLoginPanel,
       webViewRef,
@@ -1657,7 +1779,7 @@ export function useAccountRuntime({
       linuxDoVerificationVisible: linuxDoPanelVisible,
       showYaohuoLogin,
       requestNodeSeekVerification,
-      showLinuxDoVerification: verification.showLinuxDoVerification,
+      showLinuxDoVerification,
       surfaces: {
         linuxdo: linuxDoPanelVisible || showLinuxDoCreditPanel,
         linuxdoCredit: showLinuxDoCreditPanel,

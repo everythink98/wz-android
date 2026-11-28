@@ -17,6 +17,7 @@ import type { useVerificationController } from './useVerificationController';
 
 type AccountHostsView = {
   recoveryPanel: import('./useVerificationController').LinuxDoRecoveryPanel;
+  inlineRecovery?: import('@/ui/navigation/LoginWebViewModal').InlineLoginWebView;
   checking: boolean;
   checkNodeSeekLoginAndRetry: () => unknown;
   checkYaohuoLoginAndClose: () => unknown;
@@ -116,6 +117,7 @@ export function AccountHosts({
         onLinuxDoDocumentNavigation={verification.beginLinuxDoDocumentNavigation}
         onLinuxDoVerificationPageEvent={verification.recordLinuxDoVerificationPageEvent}
         recoveryPanel={view.recoveryPanel}
+        inlineRecovery={view.inlineRecovery}
         retryLinuxDoRecovery={verification.retryLinuxDoRecovery}
         checking={view.checking}
         credentialFillAttempt={

@@ -288,6 +288,10 @@ export function useFeedController({
     [handledReadErrors, queryClient]
   );
   const handledPartialErrorsRef = useRef<unknown>(undefined);
+  const linuxDoBlock = useRef({ group: {}, at: 0 });
+  useLayoutEffect(() => {
+    linuxDoBlock.current = { group: {}, at: 0 };
+  }, [enabledSourcesKey, sessionEpochs.linuxdo]);
   const yaohuoLoginPromptedRef = useRef(false);
   const feedReadPlan =
     feedSource === 'all'
@@ -526,7 +530,21 @@ export function useFeedController({
   }, [feedActive, feedLayoutKey, feedQueryHash, feedSourceRequestEnabled, publishRefresh, refreshIntent]);
   const mergedFeed = useMemo(() => mergeFeedPages(pages, feedSource), [feedSource, pages]);
   const lastPage = pages.at(-1);
-  const nextPage = feedSourceRequestEnabled && feedQuery.data && lastPage ? nextFeedPage(lastPage) : undefined;
+  const failedFeedSources = useMemo(
+    () =>
+      feedSource === 'all' && lastPage
+        ? enabledFeedSources.filter((source) => {
+            const error = lastPage.errors[source];
+            return error?.kind === 'ordinary' && error.retryable !== false;
+          })
+        : undefined,
+    [enabledFeedSources, feedSource, lastPage]
+  );
+  const hasFeedData = feedQuery.data !== undefined;
+  const nextPage = useMemo(
+    () => (feedSourceRequestEnabled && hasFeedData && lastPage ? nextFeedPage(lastPage) : undefined),
+    [feedSourceRequestEnabled, hasFeedData, lastPage]
+  );
   const loadMoreError = feedSourceRequestEnabled && feedQuery.isFetchNextPageError;
   useEffect(() => {
     if (feedSource === 'yaohuo' && feedQuery.isSuccess) {
@@ -595,6 +613,41 @@ export function useFeedController({
       return sourceReadRecoveryOutcome('linuxdo', error);
     },
     [claimReadError, currentFeedRead, feedQuery.fetchNextPage, feedQueryKey, refreshFeedFirstPage]
+  );
+
+  useEffect(() => {
+    if (
+      linuxDoBlock.current.at &&
+      feedActive &&
+      (feedSource === 'linuxdo' || (feedSource === 'all' && enabledFeedSources.includes('linuxdo'))) &&
+      feedQuery.isSuccess &&
+      feedQuery.dataUpdatedAt > linuxDoBlock.current.at &&
+      feedQuery.data.pages.every((page) => !page.errors?.linuxdo)
+    ) {
+      linuxDoBlock.current.group = {};
+      linuxDoBlock.current.at = 0;
+    }
+  }, [
+    enabledFeedSources,
+    feedActive,
+    feedSource,
+    feedQuery.data,
+    feedQuery.dataUpdatedAt,
+    feedQuery.isSuccess,
+    linuxDoBlock
+  ]);
+  const requestLinuxDoFeedRecovery = useCallback(
+    (message: string, continuation: boolean, at: number) => {
+      linuxDoBlock.current.at = Math.max(linuxDoBlock.current.at, at);
+      const recovery: ReadRecovery = {
+        queryKey: feedQueryKey,
+        dismissalGroup: linuxDoBlock.current.group,
+        isCurrent: () => currentFeedRead() !== null,
+        resume: (signal) => resumeLinuxDoFeed(continuation, signal)
+      };
+      void showLinuxDoVerification(message, recovery);
+    },
+    [currentFeedRead, feedQueryKey, linuxDoBlock, resumeLinuxDoFeed, showLinuxDoVerification]
   );
 
   const requestNodeSeekReadRecovery = useCallback(
@@ -690,11 +743,11 @@ export function useFeedController({
     }
     const linuxDoMessage = linuxDoVerificationNavigationMessage(feedSource, errors);
     if (linuxDoMessage || (feedSource === 'linuxdo' && sourceError.kind === 'verification-required')) {
-      const recovery: ReadRecovery = {
-        queryKey: feedQueryKey,
-        resume: (signal) => resumeLinuxDoFeed(loadMoreError, signal)
-      };
-      void showLinuxDoVerification(linuxDoMessage ? `${loadMorePrefix}${linuxDoMessage}` : message, recovery);
+      requestLinuxDoFeedRecovery(
+        linuxDoMessage ? `${loadMorePrefix}${linuxDoMessage}` : message,
+        loadMoreError,
+        feedQuery.errorUpdatedAt
+      );
       return;
     }
     if (feedSource === 'yaohuo' && yaohuoErrorRequiresLoginPanel(sourceError)) {
@@ -717,8 +770,7 @@ export function useFeedController({
     feedSourceRequestEnabled,
     loadMoreError,
     notify,
-    resumeLinuxDoFeed,
-    showLinuxDoVerification,
+    requestLinuxDoFeedRecovery,
     queryClient,
     requestNodeSeekReadRecovery,
     showYaohuoLogin
@@ -738,10 +790,7 @@ export function useFeedController({
     handledPartialErrorsRef.current = errors;
     const linuxDoMessage = linuxDoVerificationNavigationMessage(feedSource, errors);
     if (linuxDoMessage) {
-      void showLinuxDoVerification(linuxDoMessage, {
-        queryKey: feedQueryKey,
-        resume: (signal) => resumeLinuxDoFeed(false, signal)
-      });
+      requestLinuxDoFeedRecovery(linuxDoMessage, false, feedQuery.dataUpdatedAt);
     } else {
       notify(formatSourceErrorMessages(errors, sourceLabel));
     }
@@ -750,11 +799,9 @@ export function useFeedController({
     feedQuery.dataUpdatedAt,
     feedSource,
     feedSourceRequestEnabled,
-    feedQueryKey,
     feedQuery.data,
     notify,
-    resumeLinuxDoFeed,
-    showLinuxDoVerification
+    requestLinuxDoFeedRecovery
   ]);
 
   const loadFeed = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
@@ -774,6 +821,10 @@ export function useFeedController({
     const owner = currentFeedRead();
     if (!owner) return;
     if (feedSource === 'yaohuo') yaohuoLoginPromptedRef.current = false;
+    if (feedSource === 'all' || feedSource === 'linuxdo') {
+      linuxDoBlock.current.group = {};
+      linuxDoBlock.current.at = 0;
+    }
     const refresh = refreshIntent.begin();
     publishRefresh();
     try {
@@ -784,7 +835,16 @@ export function useFeedController({
       refreshIntent.finished(refresh);
       publishRefresh();
     }
-  }, [currentFeedRead, refreshFeedFirstPage, feedQueryKey, feedSource, queryClient, refreshIntent, publishRefresh]);
+  }, [
+    currentFeedRead,
+    refreshFeedFirstPage,
+    feedQueryKey,
+    feedSource,
+    linuxDoBlock,
+    queryClient,
+    refreshIntent,
+    publishRefresh
+  ]);
 
   const changeFeedSource = useCallback(
     (source: FeedSource) => {
@@ -848,6 +908,7 @@ export function useFeedController({
       shownFeedItems.length === 0,
     feedCategories,
     enabledFeedSources,
+    failedFeedSources,
     feedFilter,
     feedFilters,
     feedOutcomeKind: settledFeedOutcomeKind,

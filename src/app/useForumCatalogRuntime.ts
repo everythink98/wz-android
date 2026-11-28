@@ -7,7 +7,7 @@ import { forumQueryKeys } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import type { ReadGateway } from '@/sources/readGateway';
 
-type ForumCatalogRuntimeOptions = {
+export type ForumCatalogRuntimeOptions = {
   active: boolean;
   deferSecondary?: boolean;
   enabledFeedSources: readonly Source[];

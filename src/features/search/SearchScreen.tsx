@@ -31,7 +31,7 @@ import {
 } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem, type ViewToken } from '@shopify/flash-list';
 import { ChevronRight, ExternalLink, History, Search, Sparkles, X } from 'lucide-react-native';
-import type { FeedSource, Source, Topic } from '@/domain/forum/models';
+import type { FeedSource, SearchTopic, Source, Topic } from '@/domain/forum/models';
 import { topicKey } from '@/domain/reader/readerData';
 import { sourceLabel } from '@/domain/forum/presentation';
 import {
@@ -43,12 +43,12 @@ import {
 } from './listItems';
 import type { LinuxDoAiSearchState } from './aiSearch';
 import { type SourceSearchFilter } from '@/domain/forum/searchFilters';
-import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
+import type { TopicListItemStateSource } from '@/domain/forum/topicListItemState';
 import { readerRadii, type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { AuthNoticeBox, EmptyText, LoadingState, RecoverableEmptyState } from '@/ui/controls/FeedbackStates';
 import { PillRail } from '@/ui/controls/SelectionControls';
-import { MemoizedTopicCard, TopicListPlaceholder, TopicListSeparator } from '@/ui/topic/TopicCard';
+import { TopicListCard, TopicListPlaceholder, TopicListSeparator } from '@/ui/topic/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 
@@ -242,7 +242,7 @@ export const SearchScreen = memo(function SearchScreen({
   query: string;
   readScope: string;
   recentSearches: string[];
-  topicStateIndex: TopicListItemStateIndex;
+  topicStateIndex: TopicListItemStateSource;
   searchGroups: SearchGroup[];
   expectedSearchSources: readonly Source[];
   externalSearchSources?: readonly Source[];
@@ -341,11 +341,12 @@ export const SearchScreen = memo(function SearchScreen({
     [onSearchFilterApply, resetPaginationFeedback, scrollSearchToTop]
   );
   const renderTopicCard = useCallback(
-    (item: Topic, testID?: string) => (
+    (item: SearchTopic, testID?: string) => (
       <View style={styles.searchTopicRow}>
-        <MemoizedTopicCard
+        <TopicListCard
           highlightQuery={query}
-          readerState={getTopicListItemStateFromIndex(topicStateIndex, item)}
+          matchedReplyAuthor={item.matchedReplyAuthor}
+          topicStateIndex={topicStateIndex}
           showSource={visibleSearchSource === 'all'}
           testID={testID}
           topic={item}
@@ -404,7 +405,8 @@ export const SearchScreen = memo(function SearchScreen({
   const hasSearchTerm = searchTerm.length > 0;
   const hasSubmittedQuery = hasSearchTerm && submittedQuery === searchTerm;
   const showSearchGroups = hasSubmittedQuery && visibleSearchGroups.length > 0;
-  const showIdleRecentSearches = !allSourcesDisabled && !hasInputValue && recentSearches.length > 0;
+  const [historyVisible, setHistoryVisible] = useState(Platform.OS !== 'android');
+  const showIdleRecentSearches = historyVisible && !allSourcesDisabled && !hasInputValue && recentSearches.length > 0;
   const listItems = useMemo(() => {
     if (showIdleRecentSearches) {
       return [
@@ -640,7 +642,13 @@ export const SearchScreen = memo(function SearchScreen({
         const overview = visibleSearchSource === 'all';
         return (
           <View style={overview ? styles.searchFilterEntry : styles.sectionHeader}>
-            {overview ? <Text style={[styles.searchFilterEntryText, styles.flex]}>{item.group.label}</Text> : null}
+            {overview ? (
+              <Text
+                style={[styles.searchFilterEntryText, styles.flex, { fontSize: styles.searchGroupTitleText.fontSize }]}
+              >
+                {item.group.label}
+              </Text>
+            ) : null}
             <AppButton
               compact
               icon={ExternalLink}
@@ -853,10 +861,15 @@ export const SearchScreen = memo(function SearchScreen({
   );
 
   const onPageLayout = useStartupPageLayout();
+  const onSearchLayout = useCallback(() => {
+    onPageLayout();
+    setHistoryVisible(true);
+  }, [onPageLayout]);
   return (
-    <View style={styles.content} onLayout={onPageLayout}>
+    <View style={styles.content} testID="search-screen" onLayout={onSearchLayout}>
       <FlashList
         ref={listRef}
+        nativeID="wz-retained-search-scroll"
         accessibilityLabel={hasSubmittedQuery && !searchBusy ? completedSearchAccessibilityLabel : '搜索结果'}
         accessibilityLiveRegion={hasSubmittedQuery ? 'polite' : 'none'}
         accessibilityState={{ busy: hasSubmittedQuery && (searchBusy || !searchSettled) }}

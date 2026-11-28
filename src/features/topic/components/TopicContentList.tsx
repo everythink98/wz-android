@@ -4,7 +4,7 @@ import { useTopicLocationCommand, useTopicFloorPositioning } from '../useTopicLi
 import { useTopicReplyEdgeLoad } from '../useTopicReplyEdgeLoad';
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import { topicLocationForReply } from '@/domain/forum/topicLocation';
-import { ContentLoadingPlaceholder, LoadingCover, SkeletonBlock } from '@/ui/controls/ContentLoadingPlaceholder';
+import { ContentLoadingPlaceholder, SkeletonBlock } from '@/ui/controls/ContentLoadingPlaceholder';
 import { createTopicStyles, createTopicTableStyles, type TopicStyles } from '../styles';
 import {
   createContext,
@@ -33,6 +33,7 @@ import {
   PixelRatio,
   Pressable,
   ScrollView,
+  StyleSheet,
   Text,
   ToastAndroid,
   useWindowDimensions,
@@ -2770,21 +2771,23 @@ export const TopicContentList = memo(function TopicContentList({
                     renderItem={renderReplyItem}
                   />
                 ) : null}
-                <LoadingCover active={active} visible={showEntryCover} style={styles.topicContent}>
-                  <ScrollView overScrollMode="never" contentContainerStyle={styles.topicContentInner}>
-                    {listHeader}
-                    <View style={[styles.readingEntryStatus, topicColumnStyle]}>
-                      {headerError || (
-                        <TopicEntryProgress
-                          label={entryLoadingLabel}
-                          active={active}
-                          hasReplies={Boolean(selectedTopic.replyCount)}
-                          styles={styles}
-                        />
-                      )}
-                    </View>
-                  </ScrollView>
-                </LoadingCover>
+                {showEntryCover ? (
+                  <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, styles.topicContent]}>
+                    <ScrollView overScrollMode="never" contentContainerStyle={styles.topicContentInner}>
+                      {listHeader}
+                      <View style={[styles.readingEntryStatus, topicColumnStyle]}>
+                        {headerError || (
+                          <TopicEntryProgress
+                            label={entryLoadingLabel}
+                            active={active}
+                            hasReplies={Boolean(selectedTopic.replyCount)}
+                            styles={styles}
+                          />
+                        )}
+                      </View>
+                    </ScrollView>
+                  </View>
+                ) : null}
               </TopicSelectionRenderHtmlConfig>
             </TopicSelectionSurface>
           </TopicListMediaProvider>

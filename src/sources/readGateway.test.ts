@@ -1295,6 +1295,29 @@ describe('read authentication failures through the production gateway', () => {
     expect(onSessionExpired).not.toHaveBeenCalled();
     expect(requestAccountRecheck).toHaveBeenCalledOnce();
   });
+
+  it('lets a live category reader dispatch after the first waiter cancels in the native send queue', async () => {
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const sent = vi.fn();
+    const { gateway } = accountFailureFixture(async (_input, init) => {
+      entered.resolve();
+      await release.promise;
+      prepareRequestToSend(init);
+      sent();
+      return Response.json({ categories: [{ id: 5, name: '可用分类' }] });
+    });
+    const abort = new AbortController();
+    const first = gateway.getCategories({ source: 'linuxdo', signal: abort.signal }).catch((error: unknown) => error);
+    await entered.promise;
+    const second = gateway.getCategories({ source: 'linuxdo' });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    abort.abort();
+    release.resolve();
+    await first;
+    await expect(second).resolves.toMatchObject({ items: [{ name: '可用分类' }] });
+    expect(sent).toHaveBeenCalledTimes(1);
+  });
   it.each([403, 404])(
     'rechecks confirmed linux.do identity when topic HTTP %s explicitly requires login',
     async (status) => {

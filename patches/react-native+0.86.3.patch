@@ -2031,15 +2031,73 @@ new file mode 100644
 +  }
 +}
 diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/ReactScrollView.java b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/ReactScrollView.java
+index d263aab..4f0815a 100644
 --- a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/ReactScrollView.java
 +++ b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/ReactScrollView.java
-@@ -395,6 +395,7 @@ public class ReactScrollView extends ScrollView
+@@ -108,6 +108,9 @@ public class ReactScrollView extends ScrollView
+   private boolean mDragging;
+   private boolean mPagingEnabled;
+   private @Nullable Runnable mPostTouchRunnable;
++  private boolean mHasBeenAggregatedVisible;
++  private boolean mWasAggregatedVisible;
++  private boolean mSuppressingRevealScrollbar;
+   private boolean mRemoveClippedSubviews;
+   private boolean mScrollEnabled;
+   private boolean mSendMomentumEvents;
+@@ -203,6 +206,8 @@ public class ReactScrollView extends ScrollView
+   /* package */ void recycleView() {
+     // Set default field values
+     initView();
++    mHasBeenAggregatedVisible = false;
++    mWasAggregatedVisible = false;
+ 
+     // If the view is still attached to a parent, we need to remove it from the parent
+     // before we can recycle it.
+@@ -395,6 +400,7 @@ public class ReactScrollView extends ScrollView
        mMaintainVisibleContentPositionHelper = new MaintainVisibleScrollPositionHelper(this, false);
        mMaintainVisibleContentPositionHelper.start();
      } else if (config == null && mMaintainVisibleContentPositionHelper != null) {
 +      mMaintainVisibleContentPositionHelper.setConfig(null);
        mMaintainVisibleContentPositionHelper.stop();
        mMaintainVisibleContentPositionHelper = null;
+     }
+@@ -465,6 +471,29 @@ public class ReactScrollView extends ScrollView
+     }
+   }
+ 
++  @Override
++  public void onVisibilityAggregated(boolean visible) {
++    final boolean retainedReveal = visible && !mWasAggregatedVisible && mHasBeenAggregatedVisible;
++    mHasBeenAggregatedVisible |= visible;
++    mWasAggregatedVisible = visible;
++    // The Feed and Search lists stay attached when switching bottom tabs.
++    if (retainedReveal) {
++      final Object nativeId = getTag(R.id.view_tag_native_id);
++      mSuppressingRevealScrollbar =
++          "wz-retained-feed-scroll".equals(nativeId) || "wz-retained-search-scroll".equals(nativeId);
++    }
++    try {
++      super.onVisibilityAggregated(visible);
++    } finally {
++      mSuppressingRevealScrollbar = false;
++    }
++  }
++
++  @Override
++  protected boolean awakenScrollBars(int startDelay, boolean invalidate) {
++    return !mSuppressingRevealScrollbar && super.awakenScrollBars(startDelay, invalidate);
++  }
++
+   @Override
+   protected void onAttachedToWindow() {
+     super.onAttachedToWindow();
+@@ -479,6 +508,7 @@ public class ReactScrollView extends ScrollView
+   @Override
+   protected void onDetachedFromWindow() {
+     super.onDetachedFromWindow();
++    mWasAggregatedVisible = false;
+     if (mMaintainVisibleContentPositionHelper != null) {
+       mMaintainVisibleContentPositionHelper.stop();
      }
 diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/ReactHorizontalScrollView.java b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/ReactHorizontalScrollView.java
 --- a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/ReactHorizontalScrollView.java

@@ -77,7 +77,7 @@ export function SiteLoginHost({
         : YAOHUO_URL + '/waplogin.aspx?siteid=1000';
   const [loadedDocument, setLoadedDocument] = useState<LoadedLoginDocument | null>(null);
   const currentDocument = useRef<LoadedLoginDocument | null>(null);
-  const mainFrame = useRef<{ key: number; url: string } | null>(null);
+  const mainFrame = useRef<{ key: number; url: string; started: boolean; failed: boolean } | null>(null);
   const page = useLoginWebViewLifecycle({
     checking,
     recoveryPending,
@@ -103,17 +103,13 @@ export function SiteLoginHost({
     onRetired: onLoginFormDocumentRetired
   });
 
-  const retireDocument = useCallback(
-    (url = '') => {
-      mainFrame.current = { key: page.key, url };
-      const retired = currentDocument.current;
-      if (!retired) return;
-      currentDocument.current = null;
-      setLoadedDocument(null);
-      retire();
-    },
-    [page.key, retire]
-  );
+  const retireDocument = useCallback(() => {
+    const retired = currentDocument.current;
+    if (!retired) return;
+    currentDocument.current = null;
+    setLoadedDocument(null);
+    retire();
+  }, [retire]);
   useEffect(() => {
     const document = currentDocument.current;
     if (document && (!visible || webViewBlockMessage || document.key !== page.key)) retireDocument();
@@ -126,6 +122,7 @@ export function SiteLoginHost({
 
   const refresh = () => {
     if (!page.isCurrent() || checking) return;
+    mainFrame.current = null;
     retireDocument();
     page.refresh();
   };
@@ -196,7 +193,7 @@ export function SiteLoginHost({
               const frame = mainFrame.current;
               if (frame?.key === page.key && frame.url && url && frame.url.split('#', 1)[0] !== url.split('#', 1)[0])
                 return;
-              const failed = 'code' in event.nativeEvent;
+              const failed = (frame?.key === page.key && frame.failed) || 'code' in event.nativeEvent;
               page.loadEnd(failed);
               const current = currentDocument.current;
               if (failed || !url || (current?.key === page.key && current.url === url)) return;
@@ -204,14 +201,16 @@ export function SiteLoginHost({
               currentDocument.current = document;
               setLoadedDocument(document);
             }}
-            onMainFrameLoadStart={(event) => {
-              if (page.isCurrent()) retireDocument(event.nativeEvent.url);
-            }}
-            onLoadStart={(event) => {
+            onMainFrameLoadStart={({ nativeEvent }) => {
               if (!page.isCurrent()) return;
-              const loading = event?.nativeEvent.loading !== false;
-              if (loading) retireDocument(event?.nativeEvent.url);
-              page.start(event?.nativeEvent.url, loading);
+              const url = nativeEvent.url.split('#', 1)[0];
+              const frame = mainFrame.current;
+              const earlyError =
+                frame?.key === page.key && !frame.started && frame.failed && (!frame.url || frame.url === url);
+              mainFrame.current = { key: page.key, url, started: true, failed: earlyError };
+              if (earlyError) return;
+              retireDocument();
+              page.start(url);
             }}
             onMessage={(event) => {
               if (!page.isCurrent()) return;
@@ -221,6 +220,15 @@ export function SiteLoginHost({
             }}
             onError={(event) => {
               if (!page.isCurrent()) return;
+              const url = event.nativeEvent.url?.split('#', 1)[0];
+              const frame = mainFrame.current?.key === page.key ? mainFrame.current : null;
+              if (frame?.url && url && frame.url !== url) return;
+              mainFrame.current = {
+                key: page.key,
+                url: url || frame?.url || '',
+                started: !!frame?.started,
+                failed: true
+              };
               page.fail(event.nativeEvent.description);
               retireDocument();
             }}

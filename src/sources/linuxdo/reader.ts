@@ -7,6 +7,7 @@ import {
 import {
   fetchWithTimeout,
   REQUEST_CANCELED_MESSAGE,
+  RequestCanceledError,
   withAbortableTimeout,
   type Fetcher
 } from '@/platform/network/request';
@@ -447,7 +448,7 @@ type LinuxDoCategoryCache =
       scope: string;
       state:
         | { kind: 'empty' }
-        | { kind: 'pending'; request: Promise<Record<string, unknown>> }
+        | { kind: 'pending'; request: Promise<Record<string, unknown>>; readerSignal?: AbortSignal }
         | { kind: 'ready'; data: Record<string, unknown>; map: LinuxDoCategoryMap };
     };
 let categoryCache: LinuxDoCategoryCache = { scope: null };
@@ -560,13 +561,27 @@ function activateCategoryCacheScope(options: LinuxDoOptions) {
   return categoryCache;
 }
 
-function fetchCategoryData(options: LinuxDoOptions) {
+function fetchCategoryData(options: LinuxDoOptions): Promise<Record<string, unknown>> {
   const owner = activateCategoryCacheScope(options);
   if (owner.scope === null) {
     return fetchLinuxDoJson<Record<string, unknown>>('/site.json', undefined, options);
   }
   if (owner.state.kind === 'ready') return Promise.resolve(owner.state.data);
-  if (owner.state.kind === 'pending') return owner.state.request;
+  if (owner.state.kind === 'pending') {
+    const { request, readerSignal } = owner.state;
+    return request.catch((error: unknown) => {
+      // A queued transport still checks its initiating reader before it sends.
+      if (
+        error instanceof RequestCanceledError &&
+        readerSignal?.aborted &&
+        !options.signal?.aborted &&
+        categoryCache === owner
+      ) {
+        return fetchCategoryData(options);
+      }
+      throw error;
+    });
+  }
   const request = withAbortableTimeout(
     (signal) => fetchLinuxDoJson<Record<string, unknown>>('/site.json', undefined, { ...options, signal }),
     // The shared catalog owns its deadline; canceling one reader must not cancel the others.
@@ -583,7 +598,7 @@ function fetchCategoryData(options: LinuxDoOptions) {
         owner.state = { kind: 'empty' };
       }
     });
-  owner.state = { kind: 'pending', request };
+  owner.state = { kind: 'pending', request, readerSignal: options.signal };
   return request;
 }
 
@@ -705,7 +720,9 @@ export async function getLinuxDoEmojiUrls(options: LinuxDoOptions = {}) {
   if (emojiUrlCache.kind === 'ready') {
     return emojiUrlCache.urls;
   }
-  const data = await fetchLinuxDoJson<Record<string, unknown>>('/emojis.json', undefined, options);
+  const data = await fetchLinuxDoJson<Record<string, unknown>>('/emojis.json', undefined, options, {
+    requireObject: true
+  });
   const urls = discourseEmojiUrlMapFromData(data, BASE_URL);
   emojiUrlCache = { kind: 'ready', urls };
   return urls;
@@ -807,7 +824,7 @@ export async function fetchLinuxDoJson<T>(
   path: string,
   params: Record<string, string | number | (string | number)[]> | undefined,
   options: LinuxDoOptions = {},
-  requestOptions: { referer?: string; csrfToken?: string } = {}
+  requestOptions: { referer?: string; csrfToken?: string; requireObject?: boolean } = {}
 ) {
   const url = new URL(path, BASE_URL);
   for (const [key, value] of Object.entries(params || {})) {
@@ -842,7 +859,7 @@ export async function fetchLinuxDoJson<T>(
     if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
       throw new LinuxDoCloudflareError(response);
     }
-    let data: unknown = {};
+    let data: unknown = requestOptions.requireObject ? undefined : {};
     if (text) {
       try {
         data = JSON.parse(text);
@@ -860,6 +877,7 @@ export async function fetchLinuxDoJson<T>(
       const message = linuxDoErrorText(data, `HTTP ${response.status}`);
       throw linuxDoRequestError(message, response.status, data);
     }
+    if (requestOptions.requireObject && !isRecord(data)) throw new Error('linux.do 返回内容格式不正确');
     return data as T;
   });
 }
@@ -1011,9 +1029,8 @@ function hasValidLinuxDoPinContinuation(rawUrl: unknown, currentFilterPage: numb
   }
 }
 
-async function latestLinuxDoPins(options: LinuxDoOptions, categoryMap: LinuxDoCategoryMap, category?: string) {
+async function readLinuxDoPinPages(options: LinuxDoOptions, categoryMap: LinuxDoCategoryMap, category?: string) {
   const signedIn = options.linuxDoAccess?.authenticated === true;
-  const readingScope = linuxDoResponseReadingScope(options.linuxDoAccess);
   let slug = category;
   if (signedIn && category && /^\d+$/.test(category)) {
     const path: string[] = [];
@@ -1029,7 +1046,7 @@ async function latestLinuxDoPins(options: LinuxDoOptions, categoryMap: LinuxDoCa
     slug = path.join(':');
   }
   const query = slug ? `in:pinned =category:${slug}` : 'in:pinned';
-  let pins: Topic[] = [];
+  const pages: Record<string, unknown>[] = [];
   await withAbortableTimeout(
     async (signal) => {
       const seen = new Set<string>();
@@ -1041,12 +1058,8 @@ async function latestLinuxDoPins(options: LinuxDoOptions, categoryMap: LinuxDoCa
           { ...options, signal }
         );
         if (signal.aborted) return;
+        pages.push(data);
         const rows = linuxDoFeedRows(data);
-        const scoped = rows.filter((row) => isRecord(row) && isLinuxDoFeedPin(row, category, signedIn));
-        const normalizedPins = deduplicateSameResponseLinuxDoRows(
-          normalizeLinuxDoFeedRows(scoped, data, categoryMap, category, signedIn, readingScope)
-        );
-        pins = mergeTopicsWithLinuxDoMetadata(pins, normalizedPins);
         if (
           !signedIn ||
           !isRecord(data.topic_list) ||
@@ -1063,7 +1076,78 @@ async function latestLinuxDoPins(options: LinuxDoOptions, categoryMap: LinuxDoCa
     },
     { signal: options.signal, timeoutMs: LATEST_PINS_TIMEOUT_MS }
   ).catch(() => undefined);
-  return pins;
+  return pages;
+}
+
+async function readLinuxDoFeedWindow({
+  options,
+  upstreamPage,
+  filter,
+  knownCategories,
+  pinRead
+}: {
+  options: LinuxDoOptions & { category?: string };
+  upstreamPage: number;
+  filter: DiscourseFeedFilter;
+  knownCategories: LinuxDoCategoryMap;
+  pinRead: 'none' | 'after-latest' | 'parallel';
+}) {
+  const { category, signal } = options;
+  const signedIn = options.linuxDoAccess?.authenticated === true;
+  const readingScope = linuxDoResponseReadingScope(options.linuxDoAccess);
+  const pendingLatest = fetchLinuxDoJson<Record<string, unknown>>(
+    linuxDoFeedPath(filter),
+    linuxDoFeedParams(upstreamPage, category, filter),
+    options
+  );
+  const pinController = pinRead === 'parallel' ? new AbortController() : undefined;
+  const cancelPinRead = () => pinController?.abort();
+  if (pinController) signal?.addEventListener('abort', cancelPinRead, { once: true });
+  const pendingPins = pinController
+    ? readLinuxDoPinPages({ ...options, signal: pinController.signal }, knownCategories)
+    : undefined;
+
+  try {
+    const data = await pendingLatest;
+    const topics = linuxDoFeedRows(data);
+    const categoryMap = await categoryMapForTopics(data, topics, knownCategories, options);
+    const normalized = normalizeLinuxDoFeedRows(
+      topics,
+      data,
+      categoryMap,
+      category,
+      filter === 'latest' && signedIn,
+      readingScope
+    );
+    const pageUnique = deduplicateSameResponseLinuxDoRows(normalized);
+    let indexed: Topic[] = [];
+    if (pinRead !== 'none' && pageUnique.length && !signal?.aborted) {
+      const pages = await (pendingPins ?? readLinuxDoPinPages(options, categoryMap, category));
+      for (const page of pages) {
+        for (const [id, entry] of categoryMapFromData(page)) {
+          if (!categoryMap.has(id)) categoryMap.set(id, entry);
+        }
+        const scoped = linuxDoFeedRows(page).filter(
+          (row) => isRecord(row) && isLinuxDoFeedPin(row, category, signedIn)
+        );
+        const normalized = normalizeLinuxDoFeedRows(scoped, page, categoryMap, category, signedIn, readingScope);
+        indexed = mergeTopicsWithLinuxDoMetadata(indexed, deduplicateSameResponseLinuxDoRows(normalized));
+      }
+    }
+    return {
+      data,
+      topics,
+      categoryMap,
+      pageUnique,
+      indexed,
+      droppedCount: Math.max(0, topics.length - normalized.length)
+    };
+  } finally {
+    if (pinController) {
+      cancelPinRead();
+      signal?.removeEventListener('abort', cancelPinRead);
+    }
+  }
 }
 
 function legacyLinuxDoFeedPosition(page: number, limit: number): LinuxDoFeedCursorPosition {
@@ -1306,7 +1390,6 @@ export async function getLinuxDoFeed(
   const limit = options.limit || 30;
   const linuxDoFilter = options.linuxDoFilter || 'latest';
   const authenticated = options.linuxDoAccess?.authenticated === true;
-  const readingScope = linuxDoResponseReadingScope(options.linuxDoAccess);
   const cursorBinding = linuxDoFeedCursorBinding(options.linuxDoAccess, linuxDoFilter, options.category);
   const startCursor = decodeLinuxDoFeedCursor(options.cursor, page, limit, cursorBinding);
   const seenIds = new Set(startCursor.seenIds);
@@ -1392,31 +1475,28 @@ export async function getLinuxDoFeed(
   while (scan.kind === 'reading') {
     if (options.signal?.aborted) throw new Error(REQUEST_CANCELED_MESSAGE);
     const currentUpstreamPage = scan.page - 1;
-    const data = await fetchLinuxDoJson<Record<string, unknown>>(
-      linuxDoFeedPath(linuxDoFilter),
-      linuxDoFeedParams(scan.page, options.category, linuxDoFilter),
-      options
-    );
-    const topics = linuxDoFeedRows(data);
     const firstLatest =
-      (page === 1 || startCursor.restarted) &&
-      !startCursor.fromCursor &&
-      scan.page === 1 &&
-      linuxDoFilter === 'latest' &&
-      !options.signal?.aborted;
-    const showSitePins = linuxDoFilter === 'latest' && authenticated;
-    const categoryMap = await categoryMapForTopics(data, topics, scan.categories, options);
-    const normalized = normalizeLinuxDoFeedRows(
-      topics,
+      (page === 1 || startCursor.restarted) && !startCursor.fromCursor && scan.page === 1 && linuxDoFilter === 'latest';
+    const pinRead = firstLatest
+      ? authenticated && page === 1 && !options.category
+        ? 'parallel'
+        : 'after-latest'
+      : 'none';
+    const {
       data,
+      topics,
       categoryMap,
-      options.category,
-      showSitePins,
-      readingScope
-    );
-    const pageUnique = deduplicateSameResponseLinuxDoRows(normalized);
+      pageUnique,
+      indexed,
+      droppedCount: droppedInWindow
+    } = await readLinuxDoFeedWindow({
+      options,
+      upstreamPage: scan.page,
+      filter: linuxDoFilter,
+      knownCategories: scan.categories,
+      pinRead
+    });
     if (firstLatest && pageUnique.length && !options.signal?.aborted) {
-      const indexed = await latestLinuxDoPins(options, categoryMap, options.category);
       const latestById = new Map(pageUnique.map((topic) => [topic.id, topic]));
       pins = indexed.map((pin) => {
         const latest = latestById.get(pin.id);
@@ -1427,7 +1507,7 @@ export async function getLinuxDoFeed(
         recordTopicMetadata(pin);
       }
     }
-    const droppedCount = scan.droppedCount + Math.max(0, topics.length - normalized.length);
+    const droppedCount = scan.droppedCount + droppedInWindow;
 
     // Judgment 1: whether upstream provides a verifiable same-site advancing next page.
     const rawMoreTopicsUrl = isRecord(data.topic_list) ? data.topic_list.more_topics_url : undefined;

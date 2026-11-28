@@ -3,6 +3,8 @@ import { composerHostMessages } from '../composerHostMessages';
 import { describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
 import { Image, ScrollView, StyleSheet } from 'react-native';
+import { NavigationContext, NavigationRouteContext } from '@react-navigation/native';
+import { StartupPageLayoutProvider } from '@/ui/navigation/startupPageLayout';
 import { createSiteSessionStates } from '@/domain/session/siteSessionState';
 import type { NotificationSource } from '@/domain/forum/sourceCatalog';
 import { formatDateTime } from '@/domain/forum/presentation';
@@ -752,6 +754,54 @@ describe('notification screens', () => {
     }
   });
 
+  it('opens the selected Yaohuo bubble once without scrolling to the end of its conversation', async () => {
+    const scrollTo = jest.spyOn(ScrollView.prototype, 'scrollTo').mockImplementation(() => undefined);
+    const scrollToEnd = jest.spyOn(ScrollView.prototype, 'scrollToEnd').mockImplementation(() => undefined);
+    const messages = [
+      { id: 'chat:40', author: '我', contentText: '更早的消息', createdAt: null },
+      { id: 'chat:41', author: '张三', contentText: '点中的消息', createdAt: null },
+      { id: 'chat:42', author: '张三', contentText: '更晚的消息', createdAt: null }
+    ];
+    const detail = {
+      notification: { ...notification, source: 'yaohuo' as const, kind: 'private-message' as const },
+      title: '妖火私信',
+      messages,
+      messageAnchorId: 'chat:41'
+    };
+    try {
+      const view = await render(
+        <NotificationDetailScreen
+          contentWidth={360}
+          detail={detail}
+          loading={false}
+          onOpenTopic={jest.fn()}
+          onRetry={jest.fn()}
+        />
+      );
+      const scroll = view.getByTestId('notification-detail-scroll');
+      const anchor = view.getByTestId('notification-message-chat:41');
+      await fireEvent(scroll, 'contentSizeChange', 360, 1400);
+      await fireEvent(anchor, 'layout', { nativeEvent: { layout: { x: 0, y: 500, width: 360, height: 48 } } });
+      await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ y: 488, animated: false }));
+      await fireEvent(anchor, 'layout', { nativeEvent: { layout: { x: 0, y: 530, width: 360, height: 48 } } });
+      await fireEvent(scroll, 'contentSizeChange', 360, 1450);
+      await act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+      const verticalScrolls = scrollTo.mock.calls.filter(
+        ([position]) => typeof position === 'object' && 'y' in position
+      );
+      expect(verticalScrolls).toEqual([[{ y: 488, animated: false }]]);
+      expect(scrollToEnd).not.toHaveBeenCalled();
+      expect(view.getAllByText(/(?:更早|点中|更晚)的消息/).map((node) => node.props.children)).toEqual([
+        '更早的消息',
+        '点中的消息',
+        '更晚的消息'
+      ]);
+    } finally {
+      scrollTo.mockRestore();
+      scrollToEnd.mockRestore();
+    }
+  });
+
   it('lets repeated manual scrolling interrupt pending bottom-follow across new messages and return-to-latest actions', async () => {
     const frames: FrameRequestCallback[] = [];
     const animation = jest.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((callback) => {
@@ -960,6 +1010,24 @@ describe('notification screens', () => {
     expect(view.getByText('本机读取失败')).toBeTruthy();
     await fireEvent.press(view.getByRole('button', { name: '重试通知初始化' }));
     expect(props.onRetryInitialization).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports the active message page layout while notification storage recovers', async () => {
+    const report = jest.fn();
+    const navigation = { isFocused: () => true } as React.ComponentProps<typeof NavigationContext.Provider>['value'];
+    const screen = await render(
+      <NavigationContext.Provider value={navigation}>
+        <NavigationRouteContext.Provider value={{ key: 'notifications-current', name: 'notifications' }}>
+          <StartupPageLayoutProvider value={report}>
+            <NotificationsScreen {...listProps()} storageReady={false} />
+          </StartupPageLayoutProvider>
+        </NavigationRouteContext.Provider>
+      </NavigationContext.Provider>
+    );
+    await fireEvent(screen.getByRole('status'), 'layout', {
+      nativeEvent: { layout: { x: 0, y: 0, width: 360, height: 600 } }
+    });
+    expect(report).toHaveBeenCalledWith('notifications-current');
   });
 
   it('keeps account confirmation distinct from login actions', async () => {

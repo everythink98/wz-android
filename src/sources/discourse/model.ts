@@ -335,60 +335,81 @@ export function discourseCategories(
   });
 }
 
-export function discoursePolls(post: unknown, options: { includeType?: boolean } = {}): TopicPoll[] | undefined {
-  if (!isRecord(post) || !Array.isArray(post.polls)) {
+function discoursePoll(
+  poll: Record<string, unknown>,
+  {
+    postId,
+    selectedIds,
+    includeType = false
+  }: { postId?: string; selectedIds: ReadonlySet<string>; includeType?: boolean }
+): TopicPoll | undefined {
+  const name = String(poll.name || '').trim();
+  const options = (Array.isArray(poll.options) ? poll.options : [])
+    .filter(isRecord)
+    .flatMap((option): TopicPollOption[] => {
+      const id = String(option.id || '').trim();
+      const label =
+        typeof option.html === 'string' && option.html.trim()
+          ? textContentFromHtml(option.html).trim()
+          : String(option.label || '')
+              .replace(/\s+/g, ' ')
+              .trim();
+      if (!id || !label) return [];
+      const count = nonNegativeNumber(option.votes);
+      return [{ id, label, ...(count !== undefined ? { count } : {}), selected: selectedIds.has(id) }];
+    });
+  if (!options.length) return undefined;
+  const type = String(poll.type || '').trim();
+  const readonly = type === 'ranked_choice' || type === 'number';
+  const participantCount = nonNegativeNumber(poll.voters);
+  const min = positiveNumber(poll.min);
+  const max = positiveNumber(poll.max);
+  return {
+    id: String(poll.id || name || '').trim() || undefined,
+    name: name || undefined,
+    postId,
+    ...((includeType && type) || readonly ? { type } : {}),
+    title: textContentFromHtml(String(poll.title || '')).trim() || undefined,
+    multiple: type === 'multiple',
+    voted: selectedIds.size > 0,
+    closed:
+      String(poll.status || '')
+        .trim()
+        .toLowerCase() === 'closed' || Boolean(poll.close && Date.parse(String(poll.close)) <= Date.now()),
+    public: typeof poll.public === 'boolean' ? poll.public : undefined,
+    ...(readonly ? { readonly: true } : {}),
+    ...(participantCount !== undefined ? { participantCount } : {}),
+    ...(min !== undefined ? { min } : {}),
+    ...(max !== undefined ? { max } : {}),
+    options
+  };
+}
+
+export function discourseVoteReceipt(payload: unknown, target: { postId: string; pollName: string }) {
+  if (!isRecord(payload) || !isRecord(payload.poll) || payload.poll.name !== target.pollName) {
     return undefined;
   }
+  const selectedIds = new Set(stringArray(payload.vote));
+  if (!selectedIds.size) return undefined;
+  const poll = discoursePoll(payload.poll, { postId: target.postId, selectedIds });
+  return poll?.options.filter((option) => option.selected).length === selectedIds.size ? poll : undefined;
+}
+
+export function discoursePolls(
+  post: unknown,
+  { includeType }: { includeType?: boolean } = {}
+): TopicPoll[] | undefined {
+  if (!isRecord(post) || !Array.isArray(post.polls)) return undefined;
   const votesByPoll = isRecord(post.polls_votes) ? post.polls_votes : {};
   const postId = positiveNumber(post.id);
-  const polls = post.polls.filter(isRecord).flatMap((poll): TopicPoll[] => {
+  const polls = post.polls.filter(isRecord).flatMap((poll) => {
     const name = String(poll.name || '').trim();
-    const selectedIds = new Set(stringArray(name ? votesByPoll[name] : undefined));
-    const pollOptions = (Array.isArray(poll.options) ? poll.options : [])
-      .filter(isRecord)
-      .flatMap((option): TopicPollOption[] => {
-        const id = String(option.id || '').trim();
-        const label =
-          typeof option.html === 'string' && option.html.trim()
-            ? textContentFromHtml(option.html).trim()
-            : String(option.label || '')
-                .replace(/\s+/g, ' ')
-                .trim();
-        if (!id || !label) {
-          return [];
-        }
-        const count = nonNegativeNumber(option.votes);
-        return [{ id, label, ...(count !== undefined ? { count } : {}), selected: selectedIds.has(id) }];
-      });
-    if (!pollOptions.length) {
-      return [];
-    }
-    const type = String(poll.type || '').trim();
-    const readonly = type === 'ranked_choice' || type === 'number';
-    const participantCount = nonNegativeNumber(poll.voters);
-    const min = positiveNumber(poll.min);
-    const max = positiveNumber(poll.max);
-    return [
-      {
-        id: String(poll.id || name || '').trim() || undefined,
-        name: name || undefined,
-        postId: postId ? String(postId) : undefined,
-        ...((options.includeType && type) || readonly ? { type } : {}),
-        title: textContentFromHtml(String(poll.title || '')).trim() || undefined,
-        multiple: type === 'multiple',
-        voted: selectedIds.size > 0,
-        closed:
-          String(poll.status || '')
-            .trim()
-            .toLowerCase() === 'closed' || Boolean(poll.close && Date.parse(String(poll.close)) <= Date.now()),
-        public: typeof poll.public === 'boolean' ? poll.public : undefined,
-        ...(readonly ? { readonly: true } : {}),
-        ...(participantCount !== undefined ? { participantCount } : {}),
-        ...(min !== undefined ? { min } : {}),
-        ...(max !== undefined ? { max } : {}),
-        options: pollOptions
-      }
-    ];
+    const parsed = discoursePoll(poll, {
+      postId: postId ? String(postId) : undefined,
+      selectedIds: new Set(stringArray(name ? votesByPoll[name] : undefined)),
+      includeType
+    });
+    return parsed ? [parsed] : [];
   });
   return polls.length ? polls : undefined;
 }

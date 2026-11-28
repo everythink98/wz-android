@@ -1,11 +1,11 @@
 import { nextPagePosition } from '@/domain/forum/pagination';
-import type { Source, SourceErrorKind, Topic } from '@/domain/forum/models';
+import type { SearchTopic, Source, SourceErrorKind } from '@/domain/forum/models';
 import type { AuthNotice } from '@/domain/session/siteSessionPrompts';
 
 export type SearchGroup = {
   source: Source;
   label: string;
-  items: Topic[];
+  items: SearchTopic[];
   externalSearchUrl?: string;
   error?: string;
   errorKind?: SourceErrorKind | 'invalid-query';
@@ -39,7 +39,7 @@ export type SearchListItem =
   | { type: 'groupEmpty'; group: SearchGroup }
   | { type: 'groupLoadMore'; group: SearchGroup; page: number }
   | { type: 'groupPageStatus'; group: SearchGroup; page: number }
-  | { type: 'topic'; topic: Topic; groupSource?: Source };
+  | { type: 'topic'; topic: SearchTopic; groupSource?: Source };
 
 function shouldRenderAuthNotice(group: SearchGroup) {
   return Boolean(group.authNotice && group.authNotice.tone !== 'neutral');

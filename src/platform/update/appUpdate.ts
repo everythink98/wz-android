@@ -56,6 +56,7 @@ type ApkInspection = {
 
 export type ApkInstaller = {
   inspectApk?: (uri: string) => Promise<ApkInspection>;
+  inspectCompletedApk?: (uri: string, expectedSha256: string) => Promise<ApkInspection>;
   installApk?: (uri: string) => Promise<boolean>;
 };
 
@@ -263,7 +264,7 @@ function assertDownloadedApkMatchesUpdate(update: AppUpdateInfo, inspection: Apk
     throw new ApkVerificationError('APK 版本不匹配。');
   }
   if (sha256 !== update.sha256) {
-    throw new ApkVerificationError('APK 文件校验失败。');
+    throw new ApkDigestMismatchError('APK 文件校验失败。');
   }
   if (signerSha256 !== update.signerSha256) {
     throw new ApkVerificationError('APK 签名校验失败。');
@@ -271,6 +272,14 @@ function assertDownloadedApkMatchesUpdate(update: AppUpdateInfo, inspection: Apk
 }
 
 export class ApkVerificationError extends Error {}
+class ApkDigestMismatchError extends ApkVerificationError {}
+
+export function isApkDigestMismatch(error: unknown) {
+  return (
+    error instanceof ApkDigestMismatchError ||
+    (error !== null && typeof error === 'object' && 'code' in error && error.code === 'apk_sha_mismatch')
+  );
+}
 
 export function isInvalidApk(error: unknown) {
   return (
@@ -278,7 +287,7 @@ export function isInvalidApk(error: unknown) {
     (error !== null &&
       typeof error === 'object' &&
       'code' in error &&
-      ['apk_missing', 'apk_invalid', 'apk_signature_missing'].includes(String(error.code)))
+      ['apk_missing', 'apk_invalid', 'apk_signature_missing', 'apk_sha_mismatch'].includes(String(error.code)))
   );
 }
 
@@ -303,9 +312,17 @@ export function parseSavedAppUpdate(value: unknown): AppUpdateInfo {
   };
 }
 
-export async function verifyDownloadedApk(installer: ApkInstaller | undefined, uri: string, update: AppUpdateInfo) {
+export async function verifyDownloadedApk(
+  installer: ApkInstaller | undefined,
+  uri: string,
+  update: AppUpdateInfo,
+  completedTransfer = false
+) {
   if (!installer?.inspectApk) throw new Error('当前安装包不支持校验更新，请更新应用后重试。');
-  const inspection = await installer.inspectApk(uri);
+  const inspection =
+    completedTransfer && installer.inspectCompletedApk
+      ? await installer.inspectCompletedApk(uri, update.sha256)
+      : await installer.inspectApk(uri);
   assertDownloadedApkMatchesUpdate(update, inspection);
 }
 

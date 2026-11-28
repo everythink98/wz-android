@@ -106,36 +106,194 @@ index 0000000..6e55d54
 +  }
 +}
 diff --git a/node_modules/expo-blur/android/src/main/java/expo/modules/blur/ExpoBlurView.kt b/node_modules/expo-blur/android/src/main/java/expo/modules/blur/ExpoBlurView.kt
-index 71344c8..663ba6e 100644
+index 71344c8d..0a0d4fb9 100644
 --- a/node_modules/expo-blur/android/src/main/java/expo/modules/blur/ExpoBlurView.kt
 +++ b/node_modules/expo-blur/android/src/main/java/expo/modules/blur/ExpoBlurView.kt
-@@ -147,7 +147,11 @@
+@@ -4,7 +4,7 @@ import android.annotation.SuppressLint
+ import android.content.Context
+ import android.graphics.Color
+ import android.os.Build
+-import eightbitlab.com.blurview.BlurView
++import eightbitlab.com.blurview.ViewportBlurView
+ import expo.modules.blur.enums.BlurMethod
+ import expo.modules.blur.enums.TintStyle
+ import expo.modules.kotlin.AppContext
+@@ -30,12 +30,38 @@ class ExpoBlurView(context: Context, appContext: AppContext) : ExpoView(context,
+   private var blurConfiguration = BlurViewConfiguration.NONE
+   private var blurTargetId: Int? = null
+   private var blurTarget: ExpoBlurTargetView? = null
++  private var pauseWhileHidden = false
++  private var blurUpdatesEnabled = false
++  private var aggregatedVisible = false
++
++  private val blurView = object : ViewportBlurView(context) {
++    override fun onAttachedToWindow() {
++      super.onAttachedToWindow()
++      aggregatedVisible = isShown && windowVisibility == VISIBLE
++      if (pauseWhileHidden) setBlurAutoUpdate(blurUpdatesEnabled && aggregatedVisible)
++    }
+ 
+-  private val blurView = BlurView(context).also {
++    override fun onVisibilityAggregated(isVisible: Boolean) {
++      super.onVisibilityAggregated(isVisible)
++      aggregatedVisible = isVisible
++      if (pauseWhileHidden) setBlurAutoUpdate(blurUpdatesEnabled && isVisible)
++    }
++  }.also {
+     it.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
+     addView(it)
+   }
+ 
++  fun stopBlurUpdates() {
++    blurUpdatesEnabled = false
++    blurView.setBlurAutoUpdate(false)
++  }
++
++  fun setPauseWhenHidden(pause: Boolean) {
++    if (pauseWhileHidden == pause) return
++    pauseWhileHidden = pause
++    applyBlurAutoUpdate()
++  }
++
+   fun setBlurTargetId(blurTargetId: Int?) {
+     if (blurTargetId == this.blurTargetId) {
+       return
+@@ -66,50 +92,16 @@ class ExpoBlurView(context: Context, appContext: AppContext) : ExpoView(context,
+         applyBlurViewRadiusCompat(true, radius)
+       }
+ 
+-      BlurMethod.DIMEZIS_BLUR_VIEW_SDK_31_PLUS -> {
++      BlurMethod.DIMEZIS_VIEWPORT, BlurMethod.DIMEZIS_BLUR_VIEW_SDK_31_PLUS -> {
+         applyBlurViewRadiusCompat(Build.VERSION.SDK_INT >= 31, radius)
+       }
+     }
+   }
+ 
+   fun setBlurMethod(method: BlurMethod) {
++    if (blurMethod == method) return
+     blurMethod = method
+-    // re-configure if the method was changed from none -> dimezis at runtime
+-    if (method != BlurMethod.NONE && blurConfiguration != BlurViewConfiguration.DIMEZIS) {
+-      configureBlurView()
+-      applyTint()
+-      setBlurRadius(blurRadius)
+-    }
+-
+-    val safeMethod = if (blurTarget != null) {
+-      method
+-    } else {
+-      BlurMethod.NONE
+-    }
+-
+-    if (blurConfiguration == BlurViewConfiguration.UNCONFIGURED) return
+-
+-    when (safeMethod) {
+-      BlurMethod.NONE -> {
+-        blurView.setBlurEnabled(false)
+-      }
+-
+-      BlurMethod.DIMEZIS_BLUR_VIEW -> {
+-        blurView.setBlurEnabled(true)
+-        setBackgroundColor(Color.TRANSPARENT)
+-      }
+-
+-      BlurMethod.DIMEZIS_BLUR_VIEW_SDK_31_PLUS -> {
+-        val isNewSdk = Build.VERSION.SDK_INT >= 31
+-        blurView.setBlurEnabled(isNewSdk)
+-
+-        if (isNewSdk) {
+-          this.setBackgroundColor(Color.TRANSPARENT)
+-        }
+-      }
+-    }
+-    // Update of the blur to the current blurRadius value
+-    setBlurRadius(blurRadius)
++    configureBlurView()
+   }
+ 
+   fun applyBlurReduction(reductionFactor: Float) {
+@@ -129,7 +121,7 @@ class ExpoBlurView(context: Context, appContext: AppContext) : ExpoView(context,
+         applyBlurViewOverlayColorCompat(true)
+       }
+ 
+-      BlurMethod.DIMEZIS_BLUR_VIEW_SDK_31_PLUS -> {
++      BlurMethod.DIMEZIS_VIEWPORT, BlurMethod.DIMEZIS_BLUR_VIEW_SDK_31_PLUS -> {
+         applyBlurViewOverlayColorCompat(Build.VERSION.SDK_INT >= 31)
+       }
+     }
+@@ -147,9 +139,15 @@ class ExpoBlurView(context: Context, appContext: AppContext) : ExpoView(context,
    }
  
    private fun configureBlurView() {
 -    if (blurTarget == null || blurMethod == BlurMethod.NONE) {
 +    // setupWith destroys the old controller without removing its pre-draw listener.
-+    blurView.setBlurAutoUpdate(false)
++    stopBlurUpdates()
 +    if (blurTarget == null || blurMethod == BlurMethod.NONE ||
-+      (blurMethod == BlurMethod.DIMEZIS_BLUR_VIEW_SDK_31_PLUS && Build.VERSION.SDK_INT < 31)
++      (Build.VERSION.SDK_INT < 31 &&
++        (blurMethod == BlurMethod.DIMEZIS_BLUR_VIEW_SDK_31_PLUS || blurMethod == BlurMethod.DIMEZIS_VIEWPORT))
 +    ) {
        blurView.setBlurEnabled(false)
        blurConfiguration = BlurViewConfiguration.NONE
++      setBackgroundColor(tint.toBlurEffect(blurRadius))
        return
-@@ -162,6 +166,7 @@
-     blurView.setupWith(dimezisBlurTarget)
-       .setFrameClearDrawable(decorView.background)
-       .setBlurRadius(blurRadius / blurReduction)
-+    blurView.setBlurAutoUpdate(true)
+     }
  
+@@ -159,11 +157,17 @@ class ExpoBlurView(context: Context, appContext: AppContext) : ExpoView(context,
+     val dimezisBlurTarget = blurTarget?.blurTargetView
+       ?: throw BlurViewConfigurationException("The BlurView targeting blur target with id: $blurTargetId couldn't find the target")
+ 
+-    blurView.setupWith(dimezisBlurTarget)
+-      .setFrameClearDrawable(decorView.background)
+-      .setBlurRadius(blurRadius / blurReduction)
+-
++    val controller =
++      if (Build.VERSION.SDK_INT >= 31 && blurMethod == BlurMethod.DIMEZIS_VIEWPORT) {
++        blurView.setupViewport(dimezisBlurTarget)
++      } else {
++        blurView.setupWith(dimezisBlurTarget)
++      }
++    controller.setFrameClearDrawable(decorView.background)
      blurConfiguration = BlurViewConfiguration.DIMEZIS
++    setBackgroundColor(Color.TRANSPARENT)
++    applyBlurViewOverlayColorCompat(true)
++    applyBlurViewRadiusCompat(true, blurRadius)
    }
+ 
+   /**
+@@ -179,9 +183,13 @@ class ExpoBlurView(context: Context, appContext: AppContext) : ExpoView(context,
+     if (useBlur && blurTarget != null) {
+       // When setting a blur directly to 0 a "nativePtr is null" exception is thrown
+       // https://issuetracker.google.com/issues/241546169
+-      blurView.setBlurEnabled(radius != 0f)
+-      if (radius > 0f) {
+-        blurView.setBlurRadius(radius / blurReduction)
++      val effectiveRadius = radius / blurReduction
++      val enabled = effectiveRadius.isFinite() && effectiveRadius > 0f
++      blurView.setBlurEnabled(enabled)
++      blurUpdatesEnabled = enabled
++      applyBlurAutoUpdate()
++      if (enabled) {
++        blurView.setBlurRadius(effectiveRadius)
+         blurView.invalidate()
+       }
+     } else {
+@@ -189,6 +197,10 @@ class ExpoBlurView(context: Context, appContext: AppContext) : ExpoView(context,
+     }
+   }
+ 
++  private fun applyBlurAutoUpdate() {
++    blurView.setBlurAutoUpdate(blurUpdatesEnabled && (!pauseWhileHidden || aggregatedVisible))
++  }
++
+   private fun applyBlurViewOverlayColorCompat(useBlurView: Boolean) {
+     if (useBlurView && blurTarget != null) {
+       blurView.setOverlayColor(tint.toBlurEffect(blurRadius))
 diff --git a/node_modules/expo-blur/android/src/test/java/expo/modules/blur/ExpoBlurViewTest.kt b/node_modules/expo-blur/android/src/test/java/expo/modules/blur/ExpoBlurViewTest.kt
 new file mode 100644
-index 0000000..59f68f6
+index 00000000..51453160
 --- /dev/null
 +++ b/node_modules/expo-blur/android/src/test/java/expo/modules/blur/ExpoBlurViewTest.kt
-@@ -0,0 +1,176 @@
+@@ -0,0 +1,238 @@
 +package expo.modules.blur
 +
 +import android.app.Activity
@@ -211,6 +369,20 @@ index 0000000..59f68f6
 +  }
 +
 +  @Test
++  fun rebindClearsFallbackTintAndSkipsZeroRadiusSampling() = withFixture { view, host, targets ->
++    view.setBlurMethod(BlurMethod.DIMEZIS_BLUR_VIEW_SDK_31_PLUS)
++    view.setBlurRadius(40f)
++    view.setBlurTargetId(1)
++    assertEquals(android.graphics.Color.TRANSPARENT, (view.background as? android.graphics.drawable.ColorDrawable)?.color)
++    view.setBlurTargetId(null)
++    view.setBlurRadius(0f)
++    view.setBlurTargetId(2)
++    assertEquals(listOf(0, 0, 0), locationReads(host, targets))
++    view.setBlurRadius(40f)
++    assertEquals(listOf(0, 1, 0), locationReads(host, targets))
++  }
++
++  @Test
 +  fun switchingTargetsStopsReadingThePreviousTargetOnPreDraw() = withFixture { view, host, targets ->
 +    view.setBlurMethod(BlurMethod.DIMEZIS_BLUR_VIEW_SDK_31_PLUS)
 +    for (id in 1..3) view.setBlurTargetId(id)
@@ -257,6 +429,25 @@ index 0000000..59f68f6
 +  }
 +
 +  @Test
++  fun visibilityOptInPausesAutomaticSamplingAndResumesTheSameTarget() = withFixture { view, host, targets ->
++    view.setBlurMethod(BlurMethod.DIMEZIS_BLUR_VIEW_SDK_31_PLUS)
++    view.setBlurTargetId(1)
++    val renderer = view.getChildAt(0)
++    renderer.onVisibilityAggregated(false)
++    assertEquals(listOf(1, 0, 0), locationReads(host, targets))
++
++    view.setPauseWhenHidden(true)
++    assertEquals(listOf(0, 0, 0), locationReads(host, targets))
++    view.setBlurRadius(34f)
++    assertEquals(listOf(0, 0, 0), locationReads(host, targets))
++
++    renderer.onVisibilityAggregated(true)
++    assertEquals(listOf(1, 0, 0), locationReads(host, targets))
++    renderer.onVisibilityAggregated(false)
++    assertEquals(listOf(0, 0, 0), locationReads(host, targets))
++  }
++
++  @Test
 +  @Config(sdk = [29, 35], manifest = Config.NONE)
 +  fun aNoneMethodDoesNotInstallTargetListeners() = withFixture { view, host, targets ->
 +    view.setBlurTargetId(1)
@@ -297,6 +488,35 @@ index 0000000..59f68f6
 +  }
 +
 +  @Test
++  fun disjointViewportDrawsTintWithoutDrawingTheFullTarget() = withFixture { view, host, targets ->
++    view.setBlurMethod(BlurMethod.DIMEZIS_VIEWPORT)
++    view.setBlurTargetId(1)
++    view.setBlurRadius(8f)
++    val exact = View.MeasureSpec.makeMeasureSpec(1000, View.MeasureSpec.EXACTLY)
++    host.measure(exact, exact)
++    host.layout(0, 0, 1000, 1000)
++    view.offsetLeftAndRight(500)
++    val target = targets.first()
++    target.layout(0, 0, 80, 80)
++    val node = mock(RenderNode::class.java)
++    `when`(node.hasDisplayList()).thenReturn(true)
++    BlurTarget::class.java.getDeclaredField("renderNode").apply {
++      isAccessible = true
++      set(target, node)
++    }
++    val inner = view.getChildAt(0) as BlurView
++    inner.layout(0, 0, 40, 40)
++    val tint = android.graphics.Color.RED
++    inner.setOverlayColor(tint)
++    val canvas = mock(Canvas::class.java)
++    `when`(canvas.isHardwareAccelerated).thenReturn(true)
++
++    inner.draw(canvas)
++    verify(canvas, times(0)).drawRenderNode(any(RenderNode::class.java))
++    verify(canvas).drawColor(tint)
++  }
++
++  @Test
 +  fun targetChangesKeepTheActualHardwareDrawPath() = withFixture { view, _, _ ->
 +    view.setBlurMethod(BlurMethod.DIMEZIS_BLUR_VIEW_SDK_31_PLUS)
 +    view.setBlurTargetId(1)
@@ -312,3 +532,242 @@ index 0000000..59f68f6
 +    verify(canvas, times(2)).drawRenderNode(any(RenderNode::class.java))
 +  }
 +}
+diff --git a/node_modules/expo-blur/android/src/main/java/expo/modules/blur/BlurModule.kt b/node_modules/expo-blur/android/src/main/java/expo/modules/blur/BlurModule.kt
+index 837b7fe..f8f09fc 100644
+--- a/node_modules/expo-blur/android/src/main/java/expo/modules/blur/BlurModule.kt
++++ b/node_modules/expo-blur/android/src/main/java/expo/modules/blur/BlurModule.kt
+@@ -16,6 +16,10 @@ class BlurModule : Module() {
+         view.setBlurTargetId(blurTargetId)
+       }
+ 
++      Prop("pauseWhenHidden") { view, pause: Boolean? ->
++        view.setPauseWhenHidden(pause == true)
++      }
++
+       Prop("intensity") { view: ExpoBlurView, intensity: Float ->
+         view.setBlurRadius(intensity)
+       }
+@@ -35,6 +39,10 @@ class BlurModule : Module() {
+       OnViewDidUpdateProps { view: ExpoBlurView ->
+         view.applyTint()
+       }
++
++      OnViewDestroys { view: ExpoBlurView ->
++        view.stopBlurUpdates()
++      }
+     }
+ 
+     View(ExpoBlurTargetView::class) {
+diff --git a/node_modules/expo-blur/build/BlurView.js b/node_modules/expo-blur/build/BlurView.js
+index 427247c4..ac4306b4 100644
+--- a/node_modules/expo-blur/build/BlurView.js
++++ b/node_modules/expo-blur/build/BlurView.js
+@@ -36,7 +36,7 @@ export default class BlurView extends React.Component {
+     _maybeWarnAboutBlurMethod() {
+         const blurMethod = this._getBlurMethod();
+         if (Platform.OS === 'android' &&
+-            (blurMethod === 'dimezisBlurView' || blurMethod === 'dimezisBlurViewSdk31Plus') &&
++            blurMethod !== 'none' &&
+             !this.props.blurTarget) {
+             // The fallback happens on the native side
+             console.warn(`You have selected the "${blurMethod}" blur method, but the \`blurTarget\` prop has not been configured. The blur view will fallback to "none" blur method to avoid errors. You can learn more about the new BlurView API at: https://docs.expo.dev/versions/latest/sdk/blur-view/`);
+@@ -54,11 +54,11 @@ export default class BlurView extends React.Component {
+         return providedMethod ?? 'none';
+     }
+     render() {
+-        const { tint = 'default', intensity = 50, blurReductionFactor = 4, style, children, ...props } = this.props;
+-        return (_jsxs(View, { ...props, style: [styles.container, style], children: [_jsx(NativeBlurView, { blurTargetId: this.state.blurTargetId, ref: this.blurViewRef, tint: tint, intensity: intensity, blurReductionFactor: blurReductionFactor, blurMethod: this._getBlurMethod(), style: StyleSheet.absoluteFill }), children] }));
++        const { tint = 'default', intensity = 50, blurReductionFactor = 4, pauseWhenHidden, style, children, ...props } = this.props;
++        return (_jsxs(View, { ...props, style: [styles.container, style], children: [_jsx(NativeBlurView, { blurTargetId: this.state.blurTargetId, ref: this.blurViewRef, tint: tint, intensity: intensity, blurReductionFactor: blurReductionFactor, blurMethod: this._getBlurMethod(), ...(Platform.OS === 'android' && pauseWhenHidden !== undefined ? { pauseWhenHidden } : {}), style: StyleSheet.absoluteFill }), children] }));
+     }
+ }
+ const styles = StyleSheet.create({
+     container: { backgroundColor: 'transparent' },
+ });
+-//# sourceMappingURL=BlurView.js.map
+\ No newline at end of file
++//# sourceMappingURL=BlurView.js.map
+diff --git a/node_modules/expo-blur/build/BlurView.types.d.ts b/node_modules/expo-blur/build/BlurView.types.d.ts
+index 0b48f682..f2b0f8fd 100644
+--- a/node_modules/expo-blur/build/BlurView.types.d.ts
++++ b/node_modules/expo-blur/build/BlurView.types.d.ts
+@@ -11,7 +11,7 @@ import type { ViewProps, View } from 'react-native';
+  *
+  * @platform android
+  */
+-export type BlurMethod = 'none' | 'dimezisBlurView' | 'dimezisBlurViewSdk31Plus';
++export type BlurMethod = 'none' | 'dimezisBlurView' | 'dimezisBlurViewSdk31Plus' | 'dimezisViewport';
+ /**
+  * @hidden
+  * @deprecated Use `BlurMethod` instead
+@@ -25,6 +25,8 @@ export type BlurViewProps = {
+      * @platform android
+      */
+     blurTarget?: RefObject<View | null>;
++    /** Pause automatic backdrop updates when the native view is hidden on Android. */
++    pauseWhenHidden?: boolean;
+     /**
+      * A tint mode which will be applied to the view.
+      * @default 'default'
+diff --git a/node_modules/expo-blur/src/BlurView.tsx b/node_modules/expo-blur/src/BlurView.tsx
+index b37ba336..3984220e 100644
+--- a/node_modules/expo-blur/src/BlurView.tsx
++++ b/node_modules/expo-blur/src/BlurView.tsx
+@@ -52,7 +52,7 @@ export default class BlurView extends React.Component<BlurViewProps, BlurViewSta
+     const blurMethod = this._getBlurMethod();
+     if (
+       Platform.OS === 'android' &&
+-      (blurMethod === 'dimezisBlurView' || blurMethod === 'dimezisBlurViewSdk31Plus') &&
++      blurMethod !== 'none' &&
+       !this.props.blurTarget
+     ) {
+       // The fallback happens on the native side
+@@ -80,6 +80,7 @@ export default class BlurView extends React.Component<BlurViewProps, BlurViewSta
+       tint = 'default',
+       intensity = 50,
+       blurReductionFactor = 4,
++      pauseWhenHidden,
+       style,
+       children,
+       ...props
+@@ -93,6 +94,7 @@ export default class BlurView extends React.Component<BlurViewProps, BlurViewSta
+           intensity={intensity}
+           blurReductionFactor={blurReductionFactor}
+           blurMethod={this._getBlurMethod()}
++          {...(Platform.OS === 'android' && pauseWhenHidden !== undefined ? { pauseWhenHidden } : {})}
+           style={StyleSheet.absoluteFill}
+         />
+         {children}
+diff --git a/node_modules/expo-blur/src/BlurView.types.ts b/node_modules/expo-blur/src/BlurView.types.ts
+index b80d44aa..ed0dc377 100644
+--- a/node_modules/expo-blur/src/BlurView.types.ts
++++ b/node_modules/expo-blur/src/BlurView.types.ts
+@@ -12,7 +12,7 @@ import type { ViewProps, View } from 'react-native';
+  *
+  * @platform android
+  */
+-export type BlurMethod = 'none' | 'dimezisBlurView' | 'dimezisBlurViewSdk31Plus';
++export type BlurMethod = 'none' | 'dimezisBlurView' | 'dimezisBlurViewSdk31Plus' | 'dimezisViewport';
+ 
+ /**
+  * @hidden
+@@ -28,6 +28,8 @@ export type BlurViewProps = {
+    * @platform android
+    */
+   blurTarget?: RefObject<View | null>;
++  /** Pause automatic backdrop updates when the native view is hidden on Android. */
++  pauseWhenHidden?: boolean;
+   /**
+    * A tint mode which will be applied to the view.
+    * @default 'default'
+diff --git a/node_modules/expo-blur/android/src/main/java/eightbitlab/com/blurview/ViewportBlurView.kt b/node_modules/expo-blur/android/src/main/java/eightbitlab/com/blurview/ViewportBlurView.kt
+new file mode 100644
+index 00000000..6e7902a7
+--- /dev/null
++++ b/node_modules/expo-blur/android/src/main/java/eightbitlab/com/blurview/ViewportBlurView.kt
+@@ -0,0 +1,93 @@
++package eightbitlab.com.blurview
++
++import android.content.Context
++import android.graphics.Canvas
++import android.graphics.Color
++import android.graphics.RenderEffect
++import android.graphics.RenderNode
++import android.graphics.Shader
++import android.graphics.drawable.Drawable
++import androidx.annotation.RequiresApi
++import kotlin.math.ceil
++
++open class ViewportBlurView(context: Context) : BlurView(context) {
++  @RequiresApi(31)
++  fun setupViewport(target: BlurTarget): BlurViewFacade {
++    blurController.destroy()
++    return ViewportBlurController(this, target).also { blurController = it }
++  }
++}
++
++@RequiresApi(31)
++private class ViewportBlurController(
++  private val view: BlurView,
++  private val target: BlurTarget,
++) : RenderNodeBlurController(view, target, Color.TRANSPARENT, BlurController.DEFAULT_SCALE_FACTOR, true) {
++  private val viewport = RenderNode("Blur viewport")
++  private val targetLocation = IntArray(2)
++  private val viewLocation = IntArray(2)
++  private var clearDrawable: Drawable? = null
++  private var tint = Color.TRANSPARENT
++  private var outset = 0
++  private var enabled = true
++
++  override fun setFrameClearDrawable(drawable: Drawable?): BlurViewFacade {
++    clearDrawable = drawable
++    return super.setFrameClearDrawable(drawable)
++  }
++
++  override fun setOverlayColor(color: Int): BlurViewFacade {
++    tint = color
++    return super.setOverlayColor(color)
++  }
++
++  override fun setBlurEnabled(enabled: Boolean): BlurViewFacade {
++    this.enabled = enabled
++    return super.setBlurEnabled(enabled)
++  }
++
++  override fun setBlurRadius(radius: Float): BlurViewFacade {
++    val pixels = radius * BlurController.DEFAULT_SCALE_FACTOR
++    // Keep the filter's kernel around the visible region and clamp at the real target edges.
++    outset = ceil(pixels * 3).toInt()
++    viewport.setRenderEffect(RenderEffect.createBlurEffect(pixels, pixels, Shader.TileMode.CLAMP))
++    return super.setBlurRadius(radius)
++  }
++
++  override fun draw(canvas: Canvas): Boolean {
++    if (!enabled) return true
++    if (!canvas.isHardwareAccelerated) return super.draw(canvas)
++    val source = target.renderNode
++    if (!source.hasDisplayList() || target.width == 0 || target.height == 0 || view.width == 0 || view.height == 0)
++      return super.draw(canvas)
++
++    target.getLocationOnScreen(targetLocation)
++    view.getLocationOnScreen(viewLocation)
++    val x = viewLocation[0] - targetLocation[0]
++    val y = viewLocation[1] - targetLocation[1]
++    val left = maxOf(x - outset, 0)
++    val top = maxOf(y - outset, 0)
++    val right = minOf(x + view.width + outset, target.width)
++    val bottom = minOf(y + view.height + outset, target.height)
++    val save = canvas.save()
++    canvas.clipRect(0, 0, view.width, view.height)
++    if (right > left && bottom > top) {
++      viewport.setPosition(left - x, top - y, right - x, bottom - y)
++      val recording = viewport.beginRecording()
++      recording.translate(-left.toFloat(), -top.toFloat())
++      clearDrawable?.draw(recording)
++      recording.drawRenderNode(source)
++      viewport.endRecording()
++      canvas.drawRenderNode(viewport)
++    }
++    Noise.apply(canvas, view.context, view.width, view.height)
++    if (tint != Color.TRANSPARENT) canvas.drawColor(tint)
++    canvas.restoreToCount(save)
++    return true
++  }
++
++  override fun destroy() {
++    viewport.discardDisplayList()
++    super.destroy()
++  }
++}
+diff --git a/node_modules/expo-blur/android/src/main/java/expo/modules/blur/enums/BlurMethod.kt b/node_modules/expo-blur/android/src/main/java/expo/modules/blur/enums/BlurMethod.kt
+index d6d39820..ebe70fce 100644
+--- a/node_modules/expo-blur/android/src/main/java/expo/modules/blur/enums/BlurMethod.kt
++++ b/node_modules/expo-blur/android/src/main/java/expo/modules/blur/enums/BlurMethod.kt
+@@ -5,5 +5,6 @@ import expo.modules.kotlin.types.Enumerable
+ enum class BlurMethod(val value: String) : Enumerable {
+   NONE("none"),
+   DIMEZIS_BLUR_VIEW("dimezisBlurView"),
+-  DIMEZIS_BLUR_VIEW_SDK_31_PLUS("dimezisBlurViewSdk31Plus")
++  DIMEZIS_BLUR_VIEW_SDK_31_PLUS("dimezisBlurViewSdk31Plus"),
++  DIMEZIS_VIEWPORT("dimezisViewport")
+ }

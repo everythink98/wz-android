@@ -97,6 +97,19 @@ describe('NodeSeek topic creation', () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps publication uncertain and explains manual verification after a posted challenge', async () => {
+    const fetcher = vi.fn(
+      async () =>
+        new Response('verification', {
+          status: 403,
+          headers: { 'cf-mitigated': 'challenge' }
+        })
+    );
+    const result = await createNodeSeekTopic({ input: input(), fetcher, userAgent: 'test' });
+    expect(result).toMatchObject({ status: 'unknown', message: expect.stringMatching(/原站.*验证.*核对/) });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it('does not hide transport errors or infer success from HTML', async () => {
     const error = new Error('connection lost');
     await expect(

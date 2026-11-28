@@ -35,7 +35,6 @@ import {
   type ReplyPageParam,
   type ReplyWindowEdge
 } from './model/replyPagination';
-import { topicWithAuthorFallback } from '@/domain/forum/userNavigation';
 import {
   applyEditedReplyContent,
   matchesReplyRefreshTarget,
@@ -88,6 +87,7 @@ import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { prepareReplyContent } from '@/domain/forum/topicContentSplit';
 import { useTopicReadingEntry } from './useTopicReadingEntry';
 import { createTopicEntryVisit } from './model/topicEntryVisit';
+import { createTopicEntryRead, type TopicEntryPrefetch } from './model/topicEntryQuery';
 import { isTopicAccessNotice } from './model/topicOpeningPresentation';
 import {
   useTopicReplyWindow,
@@ -179,7 +179,9 @@ export function useTopicController({
   location,
   locationRequestId,
   topic,
-  topicSession
+  topicSession,
+  entryPrefetch,
+  routeKey
 }: {
   focused: boolean;
   isSoleTopicRoute?: () => boolean;
@@ -200,6 +202,8 @@ export function useTopicController({
   locationRequestId?: number;
   topic: Topic;
   topicSession: TopicSessionController;
+  entryPrefetch?: TopicEntryPrefetch;
+  routeKey?: string;
 }) {
   const queryClient = useQueryClient();
   const {
@@ -272,13 +276,15 @@ export function useTopicController({
     centeredWindowOrders.scope === replyWindowScope && centeredWindowOrders.orders.includes(replyOrder)
       ? scopedRepliesQueryKey
       : sharedRepliesQueryKey;
-  const entryKey = JSON.stringify(topicQueryKey);
+  const entryKey = hashKey(topicQueryKey);
+  const admittedVisit = routeKey ? entryPrefetch?.getVisit(routeKey, entryKey) : undefined;
   const [wholeTopicRevision, setWholeTopicRevision] = useState(0);
   const [entryVisitRef] = useState(() => ({
-    current: createTopicEntryVisit(entryKey, Boolean(queryClient.getQueryData(topicQueryKey)))
+    current: admittedVisit ?? createTopicEntryVisit(entryKey, Boolean(queryClient.getQueryData(topicQueryKey)))
   }));
   if (entryVisitRef.current.key !== entryKey)
-    entryVisitRef.current = createTopicEntryVisit(entryKey, Boolean(queryClient.getQueryData(topicQueryKey)));
+    entryVisitRef.current =
+      admittedVisit ?? createTopicEntryVisit(entryKey, Boolean(queryClient.getQueryData(topicQueryKey)));
   const entryVisit = entryVisitRef.current;
   const ordinaryLinuxDoTopic =
     selectedSource === 'linuxdo' &&
@@ -409,57 +415,17 @@ export function useTopicController({
     [activeNodeSeekIntentKey, activeRepliesQueryIdentityRef, queryClient, replyWindows]
   );
 
-  const readTopic = useCallback(
-    async ({ signal }: QueryFunctionContext) => {
-      const topic = selectedTopic;
-      const observePolicy =
-        topic.source === 'linuxdo' &&
-        policyAccount &&
-        topicReadPlan.cacheScope === `authenticated:${policyAccount.sessionEpoch}`
-          ? captureDiscoursePolicyRead(queryClient, policyAccount, topic.id)
-          : undefined;
-      const trackVisit = ordinaryLinuxDoTopic && entryVisit.claimVisit(signal);
-      const trace = beginDiagnosticTrace('topic', 'open', {
-        source: topic.source,
-        topicRef: diagnosticRef('topic', `${topic.source}:${topic.id}`)
-      });
-      try {
-        const loaded = await readGateway.getTopic(
-          {
-            source: topic.source,
-            id: topic.id,
-            topic,
-            trackVisit,
-            signal,
-            timeoutMs: topic.source === 'nodeseek' || topic.source === 'linuxdo' ? 30000 : undefined
-          },
-          { plan: topicReadPlan, trace }
-        );
-        if (sourceDiagnosticSummary(loaded)?.isParseEmpty) {
-          throw new Error('主题内容解析为空，无法显示，请重试。');
-        }
-        const detail = topicWithAuthorFallback(loaded, topic) || loaded;
-        markDiagnosticStage(trace, 'apply', {
-          itemCount: detail.replies?.length || 0,
-          hasContent: Boolean(detail.contentHtml?.trim())
-        });
-        finishDiagnosticTrace(trace, 'success', {
-          itemCount: detail.replies?.length || 0,
-          hasContent: Boolean(detail.contentHtml?.trim())
-        });
-        entryVisit.settleRequest(signal);
-        return !signal.aborted && observePolicy
-          ? { ...observePolicy(detail), replies: detail.replies.map(observePolicy) }
-          : detail;
-      } catch (error) {
-        if (!isCanceledRequest(error)) entryVisit.settleRequest(signal);
-        finishDiagnosticTrace(trace, signal.aborted ? 'canceled' : 'failure', {
-          source: topic.source,
-          reason: signal.aborted ? 'canceled' : normalizeDiagnosticReason(error)
-        });
-        throw error;
-      }
-    },
+  const readTopic = useMemo(
+    () =>
+      createTopicEntryRead({
+        entryVisit,
+        ordinaryLinuxDoTopic,
+        policyAccount,
+        queryClient,
+        readGateway,
+        topic: selectedTopic,
+        topicReadPlan
+      }),
     [entryVisit, ordinaryLinuxDoTopic, policyAccount, queryClient, readGateway, selectedTopic, topicReadPlan]
   );
   const detailCacheStatus = queryClient.getQueryState(topicQueryKey)?.status ?? 'pending';
@@ -467,6 +433,7 @@ export function useTopicController({
     queryKey: topicQueryKey,
     enabled: enabled && (!ordinaryLinuxDoTopic || !entryVisit.settled || detailCacheStatus === 'pending'),
     subscribed: focused,
+    retryOnMount: admittedVisit ? false : undefined,
     queryFn: readTopic
   });
   const reloadTopic = useCallback(

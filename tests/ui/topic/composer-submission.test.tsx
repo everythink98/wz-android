@@ -241,6 +241,36 @@ describe('composer submission through the production controller and sheet', () =
       await waitFor(() => expect(composerProofState(view)).toEqual({ visible: false, content: '', busy: false }));
     }
   );
+  it.each(['linuxdo', 'nodeseek'] as const)(
+    'closes a confirmed %s floor reply when the editor revision advanced without changing the draft',
+    async (source) => {
+      const { view, transport } = await open(source, 'success', true, 'floor');
+      const refresh = jest.spyOn(transport, 'refresh');
+      await submit(view, COMPOSER_DRAFT, '发送回复', 76);
+      await waitFor(() => expect(transport.requests).toHaveLength(1));
+      editWithoutSnapshot(view, COMPOSER_DRAFT);
+      await bridge(view, 'STATE_CHANGED', {
+        revision: 77,
+        mode: 'rich',
+        isEmpty: false,
+        canUndo: true,
+        canRedo: false
+      });
+      await act(async () => transport.release());
+      await waitFor(() => expect(view.getByTestId('composer-proof-notice').props.children).toBe('回复已提交'));
+      expect(composerProofState(view)).toEqual({ visible: false, content: '', busy: false });
+      expect(transport.requests).toHaveLength(1);
+      expect(transport.confirmations).toBe(1);
+      expect(refresh).toHaveBeenCalledTimes(1);
+      expect(refresh).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'created',
+          ...(source === 'linuxdo' ? { createdTarget: { commentId: 101, floor: 2 } } : {})
+        }),
+        expect.any(Object)
+      );
+    }
+  );
   it.each(['refresh', 'draft'] as const)(
     'refreshes a confirmed linux.do floor reply while checking the draft and stays busy when %s finishes first',
     async (first) => {
@@ -335,7 +365,13 @@ describe('composer submission through the production controller and sheet', () =
   )('settles the $source $entry entry through its real controller', async ({ source, entry }) => {
     const { view, transport } = await open(source, 'success', false, entry);
     await submit(view, COMPOSER_DRAFT, entry === 'edit' ? '保存编辑' : '发送回复');
-    await waitFor(() => expect(composerProofState(view)).toEqual({ visible: false, content: '', busy: false }));
+    await waitFor(() =>
+      expect(composerProofState(view)).toEqual({
+        visible: false,
+        content: entry === 'edit' ? COMPOSER_DRAFT : '',
+        busy: false
+      })
+    );
     expect(transport.requests).toHaveLength(1);
   });
   it('settles the native Yaohuo editor after the real HTML parser confirms the response', async () => {

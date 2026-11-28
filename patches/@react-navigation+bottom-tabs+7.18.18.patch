@@ -1,0 +1,46 @@
+diff --git a/node_modules/@react-navigation/bottom-tabs/lib/module/views/BottomTabView.js b/node_modules/@react-navigation/bottom-tabs/lib/module/views/BottomTabView.js
+--- a/node_modules/@react-navigation/bottom-tabs/lib/module/views/BottomTabView.js
++++ b/node_modules/@react-navigation/bottom-tabs/lib/module/views/BottomTabView.js
+@@ -180,6 +180,7 @@
+   const {
+     tabBarPosition = 'bottom'
+   } = descriptors[focusedRouteKey].options;
++  const retainLayerOrder = Platform.OS === 'android' && !detachInactiveScreens && hasTwoStates;
+   const tabBarElement = /*#__PURE__*/_jsx(BottomTabBarHeightCallbackContext.Provider, {
+     value: setTabBarHeight,
+     children: renderTabBar()
+@@ -233,7 +234,7 @@
+         : animationEnabled && isAnimatingRoute ? STATE_TRANSITIONING_OR_BELOW_TOP // screen visible during transition
+         : STATE_INACTIVE;
+         return /*#__PURE__*/_jsx(MaybeScreen, {
+-          style: [StyleSheet.absoluteFill, {
++          style: retainLayerOrder ? StyleSheet.absoluteFill : [StyleSheet.absoluteFill, {
+             zIndex: isFocused ? 0 : -1
+           }],
+           active: activityState,
+diff --git a/node_modules/@react-navigation/bottom-tabs/src/views/BottomTabView.tsx b/node_modules/@react-navigation/bottom-tabs/src/views/BottomTabView.tsx
+--- a/node_modules/@react-navigation/bottom-tabs/src/views/BottomTabView.tsx
++++ b/node_modules/@react-navigation/bottom-tabs/src/views/BottomTabView.tsx
+@@ -256,6 +256,9 @@
+ 
+   const { tabBarPosition = 'bottom' } = descriptors[focusedRouteKey].options;
+ 
++  // Without transitions, activityState already hides the other retained screens.
++  const retainLayerOrder =
++    Platform.OS === 'android' && !detachInactiveScreens && hasTwoStates;
+   const tabBarElement = (
+     <BottomTabBarHeightCallbackContext.Provider
+       key="tabbar"
+@@ -341,7 +344,11 @@
+           return (
+             <MaybeScreen
+               key={route.key}
+-              style={[StyleSheet.absoluteFill, { zIndex: isFocused ? 0 : -1 }]}
++              style={
++                retainLayerOrder
++                  ? StyleSheet.absoluteFill
++                  : [StyleSheet.absoluteFill, { zIndex: isFocused ? 0 : -1 }]
++              }
+               active={activityState}
+               enabled={detachInactiveScreens}
+               freezeOnBlur={freezeOnBlur}

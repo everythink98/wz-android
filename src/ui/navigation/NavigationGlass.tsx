@@ -11,7 +11,7 @@ import {
   type RefObject,
   type SetStateAction
 } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 import { NavigationContext } from '@react-navigation/native';
 import { BlurTargetView, BlurView } from 'expo-blur';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
@@ -31,11 +31,13 @@ export function NavigationBackdropProvider({ children }: { children: ReactNode }
 export function NavigationBackdropTarget({
   active,
   children,
+  setLocalTarget,
   testID,
   topInset = 0
 }: {
   active: boolean;
   children: ReactNode;
+  setLocalTarget?: Dispatch<SetStateAction<View | null>>;
   testID?: string;
   topInset?: number;
 }) {
@@ -45,20 +47,27 @@ export function NavigationBackdropTarget({
   const { theme } = useReaderThemeStyles(createStyles);
   // Suspense disconnects layout effects while a frozen route still owns its native blur target.
   useEffect(() => {
-    if (!setTarget) return;
+    if (!setTarget && !setLocalTarget) return;
     const view = target.current;
-    return () => setTarget((current) => (current === view ? null : current));
-  }, [setTarget]);
+    const clearIfCurrent = (current: View | null) => (current === view ? null : current);
+    return () => {
+      setTarget?.(clearIfCurrent);
+      setLocalTarget?.(clearIfCurrent);
+    };
+  }, [setLocalTarget, setTarget]);
   useLayoutEffect(() => {
-    if (!active || !setTarget) return;
+    if (!active || (!setTarget && !setLocalTarget)) return;
     const view = target.current;
-    const activate = () => setTarget(view);
+    const activate = () => {
+      setTarget?.(view);
+      setLocalTarget?.(view);
+    };
     if (!navigation || navigation.isFocused()) activate();
     // Frozen tabs still emit focus events without rendering their children.
     const removeFocus = navigation?.addListener('focus', activate);
     // Blur precedes native transitions; a mounted page must keep its drawn backdrop.
     return () => removeFocus?.();
-  }, [active, navigation, setTarget]);
+  }, [active, navigation, setLocalTarget, setTarget]);
   return (
     <BlurTargetView
       ref={target}
@@ -80,14 +89,22 @@ const targetStyle = { flex: 1 };
 
 export function NavigationGlass({
   accent = false,
+  backdropView,
+  cropToViewport = false,
+  pauseWhenHidden,
   sampleBackdrop = true,
   variant = 'navigation'
 }: {
   accent?: boolean;
+  backdropView?: View | null;
+  cropToViewport?: boolean;
+  pauseWhenHidden?: boolean;
   sampleBackdrop?: boolean;
   variant?: 'navigation' | 'toolbar' | 'surface' | 'media' | 'control';
 }) {
   const backdrop = useContext(NavigationBackdropContext);
+  const localBlurTarget = useMemo(() => ({ current: backdropView ?? null }), [backdropView]);
+  const blurTarget = backdropView === undefined ? backdrop?.target : localBlurTarget;
   const { styles, theme } = useReaderThemeStyles(createStyles);
   const testID = variant === 'navigation' ? 'navigation-glass' : `navigation-glass-${variant}`;
   const fill = (
@@ -102,7 +119,7 @@ export function NavigationGlass({
       ]}
     />
   );
-  if (!sampleBackdrop || !backdrop?.target.current) {
+  if (!sampleBackdrop || !blurTarget?.current) {
     return (
       <View
         testID={testID}
@@ -119,8 +136,9 @@ export function NavigationGlass({
       testID={testID}
       pointerEvents="none"
       accessible={false}
-      blurTarget={backdrop?.target}
-      blurMethod="dimezisBlurViewSdk31Plus"
+      blurTarget={blurTarget}
+      pauseWhenHidden={Platform.OS === 'android' ? pauseWhenHidden : undefined}
+      blurMethod={cropToViewport ? 'dimezisViewport' : 'dimezisBlurViewSdk31Plus'}
       intensity={40}
       tint={variant === 'media' || theme.dark ? 'dark' : 'light'}
       style={StyleSheet.absoluteFill}

@@ -9,7 +9,6 @@ import {
   type InfiniteData,
   type UseQueryResult
 } from '@tanstack/react-query';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   isDiscourseSource,
   isSessionSource,
@@ -23,12 +22,13 @@ import {
   type SearchFilterState,
   type SourceSearchFilter
 } from '@/domain/forum/searchFilters';
+import { normalizeSearchHistory, normalizeSearchHistoryEntry, sameSearchHistory } from './history';
 import {
-  normalizeSearchHistory,
-  normalizeSearchHistoryEntry,
-  sameSearchHistory,
-  searchHistoryFromRaw
-} from './history';
+  consumeSearchHistoryPreload,
+  peekPreloadedSearchHistory,
+  readStoredSearchHistory,
+  writeStoredSearchHistory
+} from './searchHistoryStorage';
 import type { ReadGateway } from '@/sources/readGateway';
 import type { ForumReadPlan } from '@/domain/forum/readPlan';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
@@ -67,8 +67,6 @@ import {
 } from '@/platform/query/useFirstPageInfiniteQuery';
 import { RequestCanceledError } from '@/platform/network/request';
 import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
-
-const SEARCH_HISTORY_STORAGE_KEY = 'reader-search-history';
 
 type RecentSearchHistoryOwner = {
   read: 'waiting' | 'retryable' | 'hydrated';
@@ -213,9 +211,10 @@ export function useSearchController({
   const queryClient = useQueryClient();
   const searchActive = active;
   const aggregateSources = enabledSearchSources;
+  const [initialHistory] = useState(peekPreloadedSearchHistory);
   const recentSearchHistoryRef = useRef<RecentSearchHistoryOwner>({
-    read: 'waiting',
-    stored: [],
+    read: initialHistory ? 'hydrated' : 'waiting',
+    stored: initialHistory ?? [],
     writer: createKeyedSerialRunner<null>('after-reaction'),
     removedKeys: new Set<string>()
   });
@@ -229,8 +228,10 @@ export function useSearchController({
   const [{ entries: recentSearches, writeFailed }, setRecentSearchHistory] = useState<{
     entries: string[];
     writeFailed: boolean;
-  }>({ entries: [], writeFailed: false });
-  const [recentSearchWritePermission, setRecentSearchWritePermission] = useState<'protected' | 'writable'>('protected');
+  }>({ entries: initialHistory ?? [], writeFailed: false });
+  const [recentSearchWritePermission, setRecentSearchWritePermission] = useState<'protected' | 'writable'>(
+    initialHistory ? 'writable' : 'protected'
+  );
   const [recentSearchHistoryReadAttempt, setRecentSearchHistoryReadAttempt] = useState(0);
   useEffect(() => {
     if (!searchActive || !writeFailed) return;
@@ -251,12 +252,15 @@ export function useSearchController({
     setLinuxDoAiEnabled(false);
   }, [searchSourceIncluded, submittedSearchSourceIncluded]);
   useEffect(() => {
+    if (initialHistory) {
+      consumeSearchHistoryPreload();
+      return;
+    }
     let observation: 'live' | 'retired' = 'live';
     if (recentSearchHistoryRef.current.read !== 'hydrated') recentSearchHistoryRef.current.read = 'waiting';
-    AsyncStorage.getItem(SEARCH_HISTORY_STORAGE_KEY)
-      .then((raw) => {
+    readStoredSearchHistory()
+      .then((storedHistory) => {
         if (observation === 'retired') return;
-        const storedHistory = searchHistoryFromRaw(raw);
         const removedKeys = new Set(recentSearchHistoryRef.current.removedKeys);
         recentSearchHistoryRef.current.read = 'hydrated';
         recentSearchHistoryRef.current.removedKeys.clear();
@@ -275,7 +279,7 @@ export function useSearchController({
     return () => {
       observation = 'retired';
     };
-  }, [recentSearchHistoryReadAttempt]);
+  }, [initialHistory, recentSearchHistoryReadAttempt]);
 
   useEffect(() => {
     if (recentSearchWritePermission !== 'writable') return;
@@ -285,7 +289,7 @@ export function useSearchController({
     owner.pending = next;
     void owner.writer
       .run(null, async () => {
-        await AsyncStorage.setItem(SEARCH_HISTORY_STORAGE_KEY, JSON.stringify(next));
+        await writeStoredSearchHistory(next);
         owner.stored = next;
         if (owner.pending === next) owner.pending = undefined;
       })
@@ -1100,12 +1104,10 @@ export function useSearchController({
     ]
   );
 
-  useEffect(() => {
-    if (submittedSearch && searchQuery.trim() !== submittedSearch.query) {
-      setSubmittedSearch(null);
-      setLinuxDoAiEnabled(false);
-    }
-  }, [searchQuery, submittedSearch]);
+  const editSearchQuery = useCallback((query: string) => {
+    setSearchQuery(query);
+    setSubmittedSearch((current) => (current?.query === query.trim() ? current : null));
+  }, []);
 
   useEffect(() => {
     if (!sessionViewModels.linuxdo.isLoggedIn) setLinuxDoAiEnabled(false);
@@ -1254,7 +1256,7 @@ export function useSearchController({
     searchReadScope,
     searchSource,
     submittedSearchQuery: submittedSearch?.query || '',
-    setSearchQuery,
+    setSearchQuery: editSearchQuery,
     setSearchSource,
     toggleLinuxDoAiSearch
   };

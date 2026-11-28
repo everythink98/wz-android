@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Bell, Home, UserRound, Search, type LucideIcon } from 'lucide-react-native';
 import type { MainTabParamList } from './appRouteTypes';
@@ -39,6 +40,27 @@ export function TabBarLabel({ focused, label }: { focused: boolean; label: strin
     </Text>
   );
 }
+
+export const TabBarItemContent = memo(function TabBarItemContent({
+  focused,
+  item,
+  showBadge
+}: {
+  focused: boolean;
+  item: (typeof tabNavItems)[number];
+  showBadge: boolean;
+}) {
+  return (
+    <>
+      <View style={tabIconFrame}>
+        <TabBarIcon focused={focused} icon={item.icon} showBadge={showBadge} />
+      </View>
+      <TabBarLabel focused={focused} label={item.label} />
+    </>
+  );
+});
+
+const tabIconFrame = { width: 31, height: 28, alignItems: 'center', justifyContent: 'center' } as const;
 
 function createNavBarStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   return StyleSheet.create({

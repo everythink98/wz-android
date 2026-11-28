@@ -16,7 +16,7 @@ import type { LibraryTab } from '@/domain/forum/feed';
 import { normalizeUserReference } from '@/domain/forum/userNavigation';
 
 import type { FollowedUserRecord, TopicRecord } from '@/domain/reader/readerData';
-import { dispatchFocusedRoute, manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
+import { dispatchFocusedRoute, dispatchTopicRoute, manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import type { LibraryListItem } from './libraryScreenItems';
 import { LibraryScreen } from './LibraryScreen';
@@ -186,7 +186,7 @@ export function LibraryRoute() {
     else void pages.refetch({ cancelRefetch: false });
   });
   const openTopic = useCallback(
-    (topic: Topic) => dispatchFocusedRoute(navigation, StackActions.push('Topic', { topic })),
+    (topic: Topic) => dispatchTopicRoute(() => dispatchFocusedRoute(navigation, StackActions.push('Topic', { topic }))),
     [navigation]
   );
   const openUser = useCallback(

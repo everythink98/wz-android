@@ -5,18 +5,20 @@ import { ForumSessionEpochProvider } from '@/platform/media/mediaSessionEpoch';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 import { StartupPageLayoutProvider } from '@/ui/navigation/startupPageLayout';
 import { AppRoutes } from './AppRoutes';
-import { useAppRuntime } from './useAppRuntime';
+import { ForumCatalogRoutes, useAppRuntime } from './useAppRuntime';
 import { useAppStartupRuntime } from './useAppStartupRuntime';
 import { useCallback, type ComponentProps, type ReactNode } from 'react';
-import { PortalProvider } from '@gorhom/portal';
+import { PortalHost, PortalProvider } from '@gorhom/portal';
 
 export function AppFrame({
   children,
+  accountHost,
   styles,
   dark,
   onUserInteraction
 }: {
   children: ReactNode;
+  accountHost?: ReactNode;
   styles: ReturnType<typeof useAppRuntime>['appStyles'];
   dark: boolean;
   onUserInteraction?: () => void;
@@ -26,10 +28,12 @@ export function AppFrame({
       <SafeAreaProvider>
         <KeyboardAvoidingView style={styles.screen}>
           <SafeAreaView edges={['left', 'right']} style={styles.screen}>
-            <PortalProvider>
+            <PortalProvider shouldAddRootHost={false}>
               <StatusBar barStyle={dark ? 'light-content' : 'dark-content'} />
               <View pointerEvents="none" style={styles.statusBarScrim} />
               {children}
+              <PortalHost name="root" />
+              {accountHost}
             </PortalProvider>
           </SafeAreaView>
         </KeyboardAvoidingView>
@@ -50,19 +54,30 @@ export function AppComposition() {
     },
     [onRouteChange, publishScreen]
   );
+  const renderRoutes = useCallback(
+    (routes: ComponentProps<typeof AppRoutes>) => (
+      <StartupPageLayoutProvider value={startup.onLayout}>
+        <AppRoutes {...routes} onReady={startup.onReady} onScreenChange={onScreenChange} />
+      </StartupPageLayoutProvider>
+    ),
+    [startup.onLayout, startup.onReady, onScreenChange]
+  );
   return (
     <ReaderStyleProvider value={runtime.readerStyleContext}>
       <ForumSessionEpochProvider
         sessionEpochs={runtime.sessionEpochs}
         transportIdentity={runtime.mediaTransportIdentity}
       >
-        <AppFrame styles={runtime.appStyles} dark={runtime.theme.dark} onUserInteraction={runtime.onUserInteraction}>
-          {runtime.accountHost}
-          {runtime.routes ? (
-            <StartupPageLayoutProvider value={startup.onLayout}>
-              <AppRoutes {...runtime.routes} onReady={startup.onReady} onScreenChange={onScreenChange} />
-            </StartupPageLayoutProvider>
-          ) : runtime.startupRecovery ? (
+        <AppFrame
+          styles={runtime.appStyles}
+          dark={runtime.theme.dark}
+          onUserInteraction={runtime.onUserInteraction}
+          accountHost={runtime.accountHost}
+        >
+          <ForumCatalogRoutes options={runtime.forumCatalog} routes={runtime.routes}>
+            {renderRoutes}
+          </ForumCatalogRoutes>
+          {runtime.routes ? null : runtime.startupRecovery ? (
             <View
               testID="startup-recovery"
               accessibilityLiveRegion="assertive"

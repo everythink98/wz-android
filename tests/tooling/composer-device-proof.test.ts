@@ -18,6 +18,8 @@ import {
   composerImeInput,
   injectComposerImeInput,
   captureComposerImeDom,
+  captureComposerImageHit,
+  assertChineseImeCommit,
   captureComposerSnapshotReply,
   captureComposerExpressionTarget,
   captureTopicFormatPanel,
@@ -85,6 +87,12 @@ describe('composer device evidence', () => {
           panelVisible: condition !== 'hidden',
           ready: false
         });
+        if (condition === 'covered')
+          expect(captureTopicFormatPanel(document)).toMatchObject({
+            target: { id: 'cover', tag: 'div' },
+            hit: false,
+            centerInViewport: true
+          });
         // A still-open panel must not satisfy the title-return oracle just because its button is unavailable.
         if (condition === 'title-focus') {
           panel.remove();
@@ -95,6 +103,48 @@ describe('composer device evidence', () => {
       }
     }
   );
+
+  it('requires a decoded, unoccluded editor image and observes node selection independently', () => {
+    const dom = new JSDOM(
+      '<div class="ProseMirror"><div class="composer-image ProseMirror-selectednode"><img alt="wz-proof-image"></div></div><aside></aside>'
+    );
+    try {
+      const document = dom.window.document;
+      const image = document.querySelector('img')!;
+      const cover = document.querySelector('aside');
+      let target: Element | null = cover;
+      image.getBoundingClientRect = () => new dom.window.DOMRect(4, 8, 128, 96);
+      Object.defineProperties(image, {
+        complete: { value: true },
+        naturalWidth: { value: 128 },
+        naturalHeight: { value: 96 }
+      });
+      Object.defineProperty(document, 'elementFromPoint', { value: () => target });
+      expect(captureComposerImageHit(document)).toMatchObject({ ready: false, hit: 'aside', selected: true });
+      target = image;
+      expect(captureComposerImageHit(document)).toMatchObject({ ready: true, hit: 'img', center: { x: 68, y: 56 } });
+    } finally {
+      dom.window.close();
+    }
+  });
+
+  it('distinguishes actual Chinese composition from ASCII, paste and synthetic composition', () => {
+    for (const events of [
+      null,
+      {},
+      { chineseInput: '你' },
+      { trustedCompositionStarts: 1, chineseInput: '泥' },
+      { trustedCompositionStarts: 1, compositionEnd: { text: '你', trusted: false } }
+    ])
+      expect(() => assertChineseImeCommit('body', 'body你', '你', events)).toThrow();
+    const composition = {
+      trustedCompositionStarts: 1,
+      chineseInput: '你',
+      compositionEnd: { text: '你', trusted: false }
+    };
+    expect(() => assertChineseImeCommit('body', 'body你你', '你', composition)).toThrow();
+    expect(() => assertChineseImeCommit('body', 'bo你dy', '你', composition)).not.toThrow();
+  });
 
   it('requires the intended expression image itself to be loaded before consecutive selections', () => {
     const dom = new JSDOM(`<div data-expression-cache><div class="expression-grid">

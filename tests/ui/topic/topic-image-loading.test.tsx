@@ -126,7 +126,9 @@ function createMockManualVideoPlayer(_source: unknown) {
     get playing() {
       return playing;
     },
-    bufferedPosition: mockVideoBufferedPosition,
+    get bufferedPosition() {
+      return mockVideoBufferedPosition;
+    },
     videoTrack: mockVideoTrack,
     release: jest.fn(() => {
       released = true;
@@ -1218,20 +1220,43 @@ describe('topic block image loading', () => {
     );
     expect(progress).not.toHaveBeenCalled();
 
-    mockVideoBufferedPosition = 1;
-    await screen.rerender(tree());
+    const player = mockReplaceMediaSource.mock.contexts.at(-1)!;
+    const currentTime = jest.spyOn(player, 'currentTime', 'get');
+    const buffered = jest.spyOn(player, 'bufferedPosition', 'get');
+    mockVideoView.mockClear();
+    const tick = (bufferedPosition: number) =>
+      act(() => {
+        mockVideoBufferedPosition = bufferedPosition;
+        player.emit('timeUpdate', { currentTime: 0, bufferedPosition });
+      });
+    await tick(1);
     expect(progress).toHaveBeenCalledTimes(1);
     expect(progress).toHaveBeenLastCalledWith(1);
 
-    await screen.rerender(tree());
-    mockVideoBufferedPosition = 0.5;
-    await screen.rerender(tree());
+    await tick(1);
+    await tick(0.5);
     expect(progress).toHaveBeenCalledTimes(1);
 
-    mockVideoBufferedPosition = 2;
-    await screen.rerender(tree());
+    await tick(2);
     expect(progress).toHaveBeenCalledTimes(2);
     expect(progress).toHaveBeenLastCalledWith(2);
+    expect(mockVideoView).not.toHaveBeenCalled();
+    await screen.rerender(tree());
+    expect(currentTime).not.toHaveBeenCalled();
+    expect(buffered).not.toHaveBeenCalled();
+  });
+
+  it('does not dispatch equal button options through the installed React Native prop differ', () => {
+    const { diff } = jest.requireActual<{
+      diff: (previous: object, next: object, attributes: object) => object | null;
+    }>('react-native/Libraries/ReactNative/ReactFabricPublicInstance/ReactNativeAttributePayload');
+    // Expo's native view adapter supplies a process callback without a diff override.
+    const attributes = { buttonOptions: { process: (value: unknown) => value } };
+    const previous = { buttonOptions: { showSettings: true, showBottomBar: true } };
+    const next = { buttonOptions: { ...previous.buttonOptions } };
+    expect(diff(previous, next, attributes)).toBeNull();
+    next.buttonOptions.showBottomBar = false;
+    expect(diff(previous, next, attributes)).toEqual(next);
   });
 
   it('keeps a continuously buffering native video alive beyond sixty seconds', async () => {
@@ -1270,8 +1295,11 @@ describe('topic block image loading', () => {
         await act(async () => {
           jest.advanceTimersByTime(20_000);
         });
-        mockVideoBufferedPosition = bufferedPosition;
-        await screen.rerender(tree());
+        const player = mockReplaceMediaSource.mock.contexts.at(-1)!;
+        await act(() => {
+          mockVideoBufferedPosition = bufferedPosition;
+          player.emit('timeUpdate', { currentTime: 0, bufferedPosition });
+        });
       }
 
       await screen.unmount();
@@ -3994,8 +4022,9 @@ describe('topic block image loading', () => {
       revokeLease();
     });
 
-    expect(StyleSheet.flatten(screen.getByTestId('topic-image-idle').props.style)).toMatchObject({
-      alignSelf: 'flex-start',
+    const idle = screen.getByTestId('topic-image-idle');
+    expect(StyleSheet.flatten(idle.parent?.props.style)).toMatchObject({ justifyContent: 'flex-start' });
+    expect(StyleSheet.flatten(idle.props.style)).toMatchObject({
       height: 1_600,
       width: 320
     });
@@ -4241,8 +4270,9 @@ describe('topic block image loading', () => {
           source: { height: 400, mediaType: 'image/png', url: timeoutImageUrl, width: 1_600 }
         })
       );
-      expect(StyleSheet.flatten(screen.getByLabelText('图片加载失败，点按重试').props.style)).toMatchObject({
-        alignSelf: 'flex-start',
+      const retry = screen.getByLabelText('图片加载失败，点按重试');
+      expect(StyleSheet.flatten(retry.parent?.props.style)).toMatchObject({ justifyContent: 'flex-start' });
+      expect(StyleSheet.flatten(retry.props.style)).toMatchObject({
         height: 240,
         width: 320
       });
@@ -4586,11 +4616,11 @@ describe('topic block image loading', () => {
 
     expect(mockExpoImageProps).not.toHaveBeenCalled();
     expect(view.queryByTestId('topic-inline-image')).toBeNull();
-    expect(StyleSheet.flatten(view.getByTestId('topic-image-idle').props.style)).toMatchObject({
+    const idle = view.getByTestId('topic-image-idle');
+    expect(StyleSheet.flatten(idle.parent?.props.style)).toMatchObject({ marginBottom: 8, marginTop: 6 });
+    expect(StyleSheet.flatten(idle.props.style)).toMatchObject({
       borderRadius: readerRadii.content,
       height: 240,
-      marginBottom: 8,
-      marginTop: 6,
       width: 320
     });
 
@@ -4748,11 +4778,10 @@ describe('topic block image loading', () => {
       const automaticRetry = latestImageProps(failedUrl);
       await act(() => automaticRetry.onError?.({ error: 'automatic retry failed' }));
       const errorFrame = await waitFor(() => view.getByLabelText('图片加载失败，点按重试'));
+      expect(StyleSheet.flatten(errorFrame.parent?.props.style)).toMatchObject({ marginBottom: 8, marginTop: 6 });
       expect(StyleSheet.flatten(errorFrame.props.style)).toMatchObject({
         borderRadius: readerRadii.content,
         height: 240,
-        marginBottom: 8,
-        marginTop: 6,
         width: 320
       });
       await fireEvent.press(errorFrame);

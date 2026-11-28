@@ -34,5 +34,6 @@ class ForumPlatformPackage : BaseReactPackage() {
       ComposerKeyboardHostManager(),
       SearchHistoryIconViewManager(),
       SearchHistoryFrameViewManager(),
+      RetainedTabSceneManager(),
     )
 }

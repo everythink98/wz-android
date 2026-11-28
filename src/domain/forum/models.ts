@@ -393,8 +393,12 @@ export interface CategoriesResponse {
   errors: SourceErrors;
 }
 
+export interface SearchTopic extends Topic {
+  matchedReplyAuthor?: Pick<Topic, 'author' | 'authorAvatar'>;
+}
+
 export interface SearchResponse {
-  items: Topic[];
+  items: SearchTopic[];
   errors: SourceErrors;
   hasMore?: boolean;
   nextPage?: number | null;

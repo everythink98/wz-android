@@ -79,6 +79,17 @@ const profileB: NetworkProxyProfile = {
 };
 
 describe('network proxy controller', () => {
+  it('reapplies the selected profile after startup application fails without saving it again', async () => {
+    mockLoadNetworkProxyState.mockResolvedValue({ enabled: true, activeId: profileA.id, profiles: [profileA] });
+    mockApplyNetworkProxy.mockRejectedValueOnce(new Error('temporarily unavailable'));
+    const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn() }));
+    await waitFor(() => expect(hook.result.current.applyStatus).toBe('failed'));
+    await act(() => hook.result.current.selectProxyProfile(profileA.id));
+    expect(hook.result.current.applyStatus).toBe('applied');
+    expect(mockApplyNetworkProxy).toHaveBeenCalledTimes(2);
+    expect(mockSaveNetworkProxyState).not.toHaveBeenCalled();
+  });
+
   it.each(['account', 'source'] as const)(
     'stops a private reply when %s access closes during proxy preparation',
     async (blockedBy) => {

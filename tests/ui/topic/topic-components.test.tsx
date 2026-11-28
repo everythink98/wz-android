@@ -3,7 +3,7 @@ import { renderHook } from '@testing-library/react-native';
 import { act, fireEvent, render, waitFor, within } from '../render';
 import React, { type ComponentProps } from 'react';
 import { createRoot } from 'test-renderer';
-import { Pressable, StyleSheet, Text, ToastAndroid } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, ToastAndroid } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { RenderHTMLConfigProvider } from 'react-native-render-html';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
@@ -183,6 +183,7 @@ jest.mock('lucide-react-native', () => {
     Copy: Icon,
     Drumstick: Icon,
     Flame: Icon,
+    Heart: Icon,
     Lightbulb: Icon,
     List: Icon,
     MessageCircle: Icon,
@@ -191,6 +192,7 @@ jest.mock('lucide-react-native', () => {
     Pencil: Icon,
     Quote: Icon,
     Redo2: Icon,
+    Smile: Icon,
     Square: Icon,
     SquarePen: Icon,
     ThumbsDown: Icon,
@@ -2334,59 +2336,85 @@ describe('Topic real child components', () => {
     expect(onOpenExternalUrl).toHaveBeenCalledWith('https://example.com/path');
   });
 
-  it('captures the last reply snapshot before a route-level close', async () => {
-    const closeRequestRef = React.createRef<() => void>();
-    const onReplyComposerOpenChange = jest.fn();
-    const onReplySnapshot = jest.fn();
-    const view = await render(
-      <ReplyComposerSheet
-        actionBusy={false}
-        closeRequestRef={closeRequestRef}
-        intent={{ kind: 'new' }}
-        onReplyComposerOpenChange={onReplyComposerOpenChange}
-        onReplyContentChange={jest.fn()}
-        onReplyFaceChange={jest.fn()}
-        onReplySnapshot={onReplySnapshot}
-        onSubmitReply={jest.fn()}
-        replyContent="旧草稿"
-        replyFace=""
-        source="nodeseek"
-        styles={styles}
-        theme={theme}
-        visible
-      />
-    );
-    const webView = view.getByTestId('structured-composer-webview');
-    await fireEvent(webView, 'loadEnd');
-    await fireEvent(webView, 'message', {
-      nativeEvent: { data: JSON.stringify({ type: 'READY', payload: { revision: 0 } }) }
-    });
-    await act(() => {
-      closeRequestRef.current?.();
-      closeRequestRef.current?.();
-    });
-    expect(onReplyComposerOpenChange).not.toHaveBeenCalled();
-    const requests = webView.props.postMessageMock.mock.calls
-      .map(([raw]: [string]) => JSON.parse(raw))
-      .filter((entry: { type: string }) => entry.type === 'REQUEST_SNAPSHOT');
-    expect(requests).toHaveLength(1);
-    const snapshot = {
-      revision: 1,
-      markdown: '返回前最新正文',
-      mode: 'rich',
-      isEmpty: false,
-      validationIssues: [],
-      pendingNodeSeekPolls: []
-    };
-    await fireEvent(webView, 'message', {
-      nativeEvent: {
-        data: JSON.stringify({ type: 'SNAPSHOT', payload: { requestId: requests[0].payload.requestId, snapshot } })
+  it.each(['route', 'ime'] as const)(
+    'saves the last reply snapshot before honoring a %s Back during close',
+    async (back) => {
+      const platform = jest.replaceProperty(Platform, 'OS', 'android');
+      const closeRequestRef = React.createRef<() => void>();
+      const onBackAfterClose = jest.fn();
+      const onReplyComposerOpenChange = jest.fn();
+      const onReplySnapshot = jest.fn();
+      const intent = { kind: 'new' } as const;
+      const sheet = (visible: boolean) => (
+        <ReplyComposerSheet
+          actionBusy={false}
+          closeRequestRef={closeRequestRef}
+          intent={intent}
+          onBackAfterClose={onBackAfterClose}
+          onReplyComposerOpenChange={onReplyComposerOpenChange}
+          onReplyContentChange={jest.fn()}
+          onReplyFaceChange={jest.fn()}
+          onReplySnapshot={onReplySnapshot}
+          onSubmitReply={jest.fn()}
+          replyContent="旧草稿"
+          replyFace=""
+          source="nodeseek"
+          styles={styles}
+          theme={theme}
+          visible={visible}
+        />
+      );
+      try {
+        const view = await render(sheet(true));
+        const webView = view.getByTestId('structured-composer-webview');
+        const panel = view.getByTestId('composer-bottom-sheet');
+        await fireEvent(webView, 'loadEnd');
+        await fireEvent(webView, 'message', {
+          nativeEvent: { data: JSON.stringify({ type: 'READY', payload: { revision: 0 } }) }
+        });
+        await fireEvent(panel, 'imeBack');
+        expect(onReplyComposerOpenChange).not.toHaveBeenCalled();
+
+        if (back === 'route') {
+          await act(() => {
+            closeRequestRef.current?.();
+            closeRequestRef.current?.();
+          });
+        } else {
+          await fireEvent.press(view.getByLabelText('收起回复'));
+          await fireEvent(panel, 'imeBack');
+          await fireEvent(panel, 'imeBack');
+        }
+        expect(onReplyComposerOpenChange).not.toHaveBeenCalled();
+        expect(onBackAfterClose).not.toHaveBeenCalled();
+        const requests = webView.props.postMessageMock.mock.calls
+          .map(([raw]: [string]) => JSON.parse(raw))
+          .filter((entry: { type: string }) => entry.type === 'REQUEST_SNAPSHOT');
+        expect(requests).toHaveLength(1);
+        const snapshot = {
+          revision: 1,
+          markdown: '返回前最新正文',
+          mode: 'rich',
+          isEmpty: false,
+          validationIssues: [],
+          pendingNodeSeekPolls: []
+        };
+        await fireEvent(webView, 'message', {
+          nativeEvent: {
+            data: JSON.stringify({ type: 'SNAPSHOT', payload: { requestId: requests[0].payload.requestId, snapshot } })
+          }
+        });
+        expect(onReplySnapshot).toHaveBeenCalledWith(snapshot);
+        expect(onReplyComposerOpenChange).toHaveBeenCalledTimes(1);
+        expect(onReplyComposerOpenChange).toHaveBeenCalledWith(false);
+        expect(onBackAfterClose).not.toHaveBeenCalled();
+        await view.rerender(sheet(false));
+        await waitFor(() => expect(onBackAfterClose).toHaveBeenCalledTimes(1));
+      } finally {
+        platform.restore();
       }
-    });
-    expect(onReplySnapshot).toHaveBeenCalledWith(snapshot);
-    expect(onReplyComposerOpenChange).toHaveBeenCalledTimes(1);
-    expect(onReplyComposerOpenChange).toHaveBeenCalledWith(false);
-  });
+    }
+  );
 
   it('keeps composer visibility and the close button connected to the parent state', async () => {
     const onReplyComposerOpenChange = jest.fn();

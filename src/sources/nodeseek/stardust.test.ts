@@ -1,10 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeNodeSeekStardustStatus } from './stardust';
+import { fetchNodeSeekStardustStatus, normalizeNodeSeekStardustStatus } from './stardust';
 import { normalizeNodeSeekStardustMarkers } from './stardustMarkup';
 import { prepareNodeSeekForumContent } from './topicParser';
 import { parseForumContentHtml, parseHtml } from '@/domain/forum/html';
 
 describe('NodeSeek composer write protocols', () => {
+  it('reports an HTTP failure when the status endpoint returns a plain error page', async () => {
+    await expect(
+      fetchNodeSeekStardustStatus({
+        receive: { receiverMemberId: '1', amount: 5, refId: 1001, description: 'test', oneTime: false },
+        userAgent: 'test-agent',
+        fetcher: async () => new Response('unavailable', { status: 502 })
+      })
+    ).rejects.toMatchObject({ status: 502, message: expect.stringContaining('HTTP 502') });
+  });
+
   it('keeps repeated escapes and entities split across anchor elements inert', () => {
     const suffix = 'sapp://stardust-receive?member_id=42&ref_id=7&description=Pay&diff=5&onetime=false';
     const root = parseForumContentHtml(

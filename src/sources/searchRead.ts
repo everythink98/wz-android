@@ -17,12 +17,12 @@ import {
   isDiscourseSearchFilter,
   type SourceSearchFilter
 } from '@/domain/forum/searchFilters';
-import type { Category, SearchResponse, Source, Topic } from '@/domain/forum/models';
+import type { Category, SearchResponse, SearchTopic, Source } from '@/domain/forum/models';
 import type { Fetcher } from '@/platform/network/request';
 import { copySourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { dispatchSourceRead } from './readAggregation';
 
-function filterExcludedSearchItems(items: Topic[], expression: SearchExpression) {
+function filterExcludedSearchItems(items: SearchTopic[], expression: SearchExpression) {
   if (!expression.exclude.length) {
     return items;
   }

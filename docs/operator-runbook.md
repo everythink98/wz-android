@@ -762,7 +762,23 @@ Runner 不构建或安装；它核对已安装 APK SHA、UID、首次安装时�
 
 ### Release 性能回归
 
-正式门槛只使用与当前 revision、APK SHA、PID 和主登录态 AVD 匹配的 Release `FrameTimeline/gfxinfo` 与 `meminfo`。Perfetto、heapprofd 或 Hermes sampling 只用于独立归因，采样轮次不能混入通过数据。每个页面把首次挂载与预热路径分开统计；PSS 一律以同一 PID 的 Feed 静置基线计算增量。
+正式门槛使用与当前 revision、APK SHA、PID 和主登录态 AVD 匹配的 Release `FrameTimeline/gfxinfo` 与 `meminfo`。返回呈现的普通批用轻量 Perfetto 同时记录输入与 FrameTimeline。加入调度、视图、渲染或堆采样的详细轨迹、Hermes sampling 以及录屏各自单独运行。每个页面把首次挂载与预热路径分开统计，PSS 以同一 PID 的 Feed 静置基线计算增量。2026-11-27 的基线、诊断对照和普通包结果见[全应用流畅度验收记录](performance/android-fluidity-acceptance.md)。
+
+比较两份 APK 时，保留各批宿主 CPU 采样、同时运行的构建或其他模拟器、进程起点与实际刷新周期。若早晚结果相差很大，可在相邻的安静时段换回旧包，再测候选包，保持帖子、手势、冷暖访问顺序和取样方式一致。分别报告候选是否达标、两版同条件下的差值。测自然驻留时用系统侧 `dumpsys meminfo --local -s` 连续观察，最后再做会请求 App GC 的常规 `dumpsys meminfo`。两种采样分别注明时点和增量。
+
+重图返回用 `python -B scripts/performance/android_fluidity.py returns <动作.json> --trace <帧轨迹> --processor <trace_processor>`。动作 JSON 记录已核对的 `apkSha256`、实际 `hz` 和每次 Back 的 `records[{commandMarkerNs,pid}]`，时间基准使用设备 BOOTTIME。每十次报告 Back-UP 至首个在 Back 之后开始绘制的 MainActivity 帧实际呈现的 P50/P95、历史实际帧开始间隔估算、目标应用 VSync 相邻的超期对、实际呈现最大间隔、显式 dropped 与未闭合帧。重复挂到同一显示时刻的缓冲区只算一次实际呈现。逐次核对 SurfaceFlinger 和 App 的目标时间间隔、预期预算及 `fixedHzVerifiedRounds`，观测出混合频率或有效间隔不足的批次不能用指定 Hz 判过。核对样本覆盖后，用三批 P95 ≤50 ms 且相邻超期为零验收。单独的可交互试验可在动作记录加入 `searchVisibleAfterTap`，以 Back 后一次点按确实出现 Search 输入框为据，只报告已测试的响应时点。
+
+`missedTargetPairDetails` 列出每对连续超期的目标、开工与实际显示时刻。`signedPresentationDeltaMs` 按目标先后相减，负数表示显示顺序相反，0 表示两个缓冲对应同一显示时刻。只有 `adjacentInPresentationOrder` 为真时，两次显示之间没有其他新画面。丢弃的缓冲区没有可用的显示时刻。
+
+要区分已提交画面与看得到首页的时刻，在独立试验使用 Android 15 的 `screenrecord`。保留同轮 Back-UP、Topic 与稳定 Feed 两张参考图，在两者明显不同的区域运行 `python -B scripts/performance/android_return_pixels.py --help` 所列命令。录像使用 Winscope v2 的设备时钟对齐，报告第一次可辨识 Feed 的采集帧和上一采集帧。录像和测试点击均与普通性能批次分开。返回统计优先用原生 Topic pop 动画起止，详细轨迹还可标记 RNS 首个进度到完成回调的区间。轻量轨迹缺少这些信号时，只报告真实覆盖和 Back 后固定时间窗。跨边界、后续点击与转场内超期分别计数。[AOSP 录像时钟格式](https://android.googlesource.com/platform/frameworks/av/+/refs/heads/master/cmds/screenrecord/screenrecord.cpp)
+
+对于每次手势有 `IntendedVsync/FrameCompleted/FrameDeadline` 的原始采集，运行 `android_fluidity.py scroll <动作.json>` 可复算上下行 P95/P99、35/50 ms 长帧、目标周期超期与三个 PSS 样本。`cycles` 逐进帖、逐次下上往返输出，可按同一圈次对照约定的动作量，额外往返单列。PSS 必须注明每次退帖前实际动作数。加同轮 `--trace` 和 `--processor` 可用真实 DOWN/UP 和主线程滚动回调区分手指按住、松手后继续滚动、最后一次移动后至少 100 ms 的观察静止区段。缺少事件的动作保留在 unknown。离线统计边界通过 `python -B tests/tooling/test_android_fluidity.py` 验证。
+
+`longAppFrames` 可定位到一次访问中的具体手势。它列出从目标 VSync 到完成耗时 ≥50 ms 的每一帧、该帧的系统预算，以及采集到的 UI、渲染线程、GPU 完成时间段。各段为两个标记之间的墙钟时间，命令提交到 GPU 完成也包含排队。`actionsWithFrameAtLeast50Ms` 对同一手势只计一次。同一目标帧出现在同方向的重叠窗口时只计首次。想判断画面是否一直停在同一位置，使用下文的实际呈现和像素回放。
+
+要量出用户能看到的位置停顿，在独立轮次录制同一帖子、起始位置和手势序列。进入目标帖并定位后，运行 `python -B scripts/performance/capture_android_scroll_pixels.py <清单.json> --serial <序列号> --apk-sha256 <已核对的SHA> --hz <实测Hz>` 执行四次向下、四次向上。每段同时保留带 Winscope v2 的 540×1200 录像、包含应用 input/view 的 Perfetto 和动作清单。清单包含 `apkSha256`、`pid`、`hz`、`clips[{video,trace,actions:[{commandMarkerNs,direction}]}]`，方向取 `up` 或 `down`。安装 NumPy、OpenCV 的分析环境运行 `python -B scripts/performance/android_scroll_pixels.py <清单.json> --processor <trace_processor> --ffmpeg <ffmpeg>`。默认比较中央正文的上下两个纹理区。相同方向移动之间画面位置连续不变至少 50 ms 才记为命中，每个手势最多算一次。表中保留手指按住、惯性或跨越松手的命中阶段。纹理不足、采集帧间隔过长等导致无法确认时列为 unknown，以全部动作数为分母报告每百手势的已确认下限和包含 unknown 的上限。普通帧指标、录屏和额外点击的轮次分别留存。
+
+`displayPacing` 从已匹配的 DOWN 到最后一次原生滚动回调，将 SurfaceFlinger 实际呈现 MainActivity 新画面的时刻排序、去重。两次呈现相隔 ≥50 ms 且期间仍有滚动回调时，记一次显示间隔命中。报告每百手势命中数、实际覆盖数、录屏各段的目标刷新周期，以及间隔两侧确有同向像素运动的手势。判定正文位置停顿还需中间画面一直停在原处的像素证据。
 
 Search 空态固定执行三批、每批 10 次 Feed → Search → Feed：每次转向前重置 `gfxinfo`，同时报告两个方向和整批的 p95、worst、missed deadline。门槛为每批 p95 `<=25ms`、worst `<=35ms`，且不得有相邻两条有效 App 帧记录均 missed deadline；若这两条记录的 `IntendedVsync` 跨多个显示周期，另报间隔，不描述成连续显示周期掉帧。另取原始分辨率截图与 Native tree：最近记录仍须保持单张圆角分组面板、hairline 分隔和互不重叠的 `48dp` 点击区，最多 20 条记录不得作为 Header 子树整体常驻。节点减少但 traversal/draw 仍稳定在 21–26 ms 时，只 profile Header 控件；不得叠加全局 memo、延时或预挂载 workaround。
 

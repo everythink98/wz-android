@@ -258,7 +258,7 @@ export function NetworkProxyScreen({
       toggleSelected(profile.id);
       return;
     }
-    if (profile.id !== proxyState.activeId) {
+    if (profile.id !== proxyState.activeId || applyStatus === 'failed') {
       void executeProxyTask(() => onSelectProfile(profile.id));
     }
   };

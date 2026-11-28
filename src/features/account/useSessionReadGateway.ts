@@ -17,6 +17,7 @@ export function useSessionReadGateway({
   getNodeSeekUserAgent,
   onSessionExpired,
   requestAccountRecheck,
+  pendingLinuxDoReadRecheck,
   readSessionRuntimeSnapshot
 }: {
   reading?: DiscourseReadingRuntime;
@@ -28,6 +29,7 @@ export function useSessionReadGateway({
   getNodeSeekUserAgent: () => string;
   onSessionExpired: (source: SessionSite, requestSessionEpoch: number) => void;
   requestAccountRecheck: RequestAccountRecheck;
+  pendingLinuxDoReadRecheck: (epoch: number, identityKey: string | undefined) => Promise<void> | undefined;
   readSessionRuntimeSnapshot: (source: SessionSite) => ForumReadSession;
 }) {
   return useMemo(
@@ -42,6 +44,7 @@ export function useSessionReadGateway({
         nodeSeekUserAgent: getNodeSeekUserAgent,
         onSessionExpired,
         requestAccountRecheck,
+        pendingLinuxDoReadRecheck,
         readSessionRuntimeSnapshot
       }),
     [
@@ -54,6 +57,7 @@ export function useSessionReadGateway({
       getNodeSeekUserAgent,
       onSessionExpired,
       requestAccountRecheck,
+      pendingLinuxDoReadRecheck,
       readSessionRuntimeSnapshot
     ]
   );

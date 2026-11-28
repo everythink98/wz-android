@@ -356,38 +356,90 @@ index f453e4a..4f4a349 100644
            )
          )
 diff --git a/node_modules/expo-image/android/src/main/java/expo/modules/image/okhttp/ExpoImageOkHttpClientGlideModule.kt b/node_modules/expo-image/android/src/main/java/expo/modules/image/okhttp/ExpoImageOkHttpClientGlideModule.kt
-index aded0c8..8a1a3c1 100644
+index aded0c8..99574f0 100644
 --- a/node_modules/expo-image/android/src/main/java/expo/modules/image/okhttp/ExpoImageOkHttpClientGlideModule.kt
 +++ b/node_modules/expo-image/android/src/main/java/expo/modules/image/okhttp/ExpoImageOkHttpClientGlideModule.kt
-@@ -12,6 +12,16 @@ import com.facebook.react.modules.network.OkHttpClientProvider
+@@ -12,54 +12,37 @@ import com.facebook.react.modules.network.OkHttpClientProvider
  import expo.modules.image.events.OkHttpProgressListener
  import java.io.InputStream
  
+-/**
+- * GlideUrl with custom cache key.
+- * It wraps the base implementation and overrides logic behind cache key and when two
+- * objects are equal. Typically, Glide uses the only cache key to compare objects.
+- * It won't suit our use case. We want to make custom cache key transparent and
+- * not use it to compare objects.
+- */
+-class GlideUrlWithCustomCacheKey(
 +fun isImageDiagnosticHeader(name: String): Boolean =
 +  name.equals("X-WZ-Image-Trace", true) || name.equals("X-WZ-Image-Ref", true) || name.equals("X-WZ-Image-Session", true)
 +
 +/** Per-consumer diagnostics do not participate in Glide's engine or cache identity. */
 +open class GlideUrlWithDiagnosticHeaders(
-+  uri: String?,
-+  headers: Headers?,
-+  val diagnosticHeaders: Map<String, String> = emptyMap()
-+) : GlideUrl(uri, headers)
-+
- /**
-  * GlideUrl with custom cache key.
-  * It wraps the base implementation and overrides logic behind cache key and when two
-@@ -28,8 +38,9 @@ class GlideUrlWithCustomCacheKey(
-    * to display a remote image. [LocalFileGlideModelLoader] reads the file at this path and lets
-    * Glide store its bytes under [cacheKey], so a later load using the same cache key hits the cache.
-    */
+   uri: String?,
+   headers: Headers?,
+-  private val cacheKey: String,
+-  /**
+-   * When set, this model is being used to seed the disk cache from a local file rather than
+-   * to display a remote image. [LocalFileGlideModelLoader] reads the file at this path and lets
+-   * Glide store its bytes under [cacheKey], so a later load using the same cache key hits the cache.
+-   */
 -  val localFilePath: String? = null
 -) : GlideUrl(uri, headers) {
+-  /**
+-   * Cached hash code value
+-   */
+-  private var hashCode = 0
++  val diagnosticHeaders: Map<String, String> = emptyMap()
++) : GlideUrl(uri, headers)
+ 
+-  /**
+-   * @return a super cache key from [GlideUrl]
+-   */
+-  private fun getBaseCacheKey(): String = super.getCacheKey()
++/** Identifies the concrete fetch while Glide's disk key stays independent of signed URL rotation. */
++private data class FetchIdentityHeaders(
++  val uri: String?,
++  val localFilePath: String?,
++  private val values: Map<String, String>
++) : Headers {
++  override fun getHeaders(): Map<String, String> = values
++}
+ 
++class GlideUrlWithCustomCacheKey(
++  uri: String?,
++  headers: Headers?,
++  private val cacheKey: String,
 +  val localFilePath: String? = null,
 +  diagnosticHeaders: Map<String, String> = emptyMap()
-+) : GlideUrlWithDiagnosticHeaders(uri, headers, diagnosticHeaders) {
-   /**
-    * Cached hash code value
-    */
++) : GlideUrlWithDiagnosticHeaders(
++  uri,
++  FetchIdentityHeaders(uri, localFilePath, (headers ?: Headers.DEFAULT).headers.toMap()),
++  diagnosticHeaders
++) {
+   override fun getCacheKey(): String = cacheKey
+-
+-  // Mostly copied from GlideUrl::equal
+-  override fun equals(other: Any?): Boolean {
+-    if (other is GlideUrlWithCustomCacheKey) {
+-      return getBaseCacheKey() == other.getBaseCacheKey() && headers.equals(other.headers)
+-    } else if (other is GlideUrl) {
+-      return getBaseCacheKey() == other.cacheKey && headers.equals(other.headers)
+-    }
+-    return false
+-  }
+-
+-  // Mostly copied from GlideUrl::hashCode
+-  override fun hashCode(): Int {
+-    if (hashCode == 0) {
+-      hashCode = getBaseCacheKey().hashCode()
+-      hashCode = 31 * hashCode + headers.hashCode()
+-    }
+-    return hashCode
+-  }
+ }
+ 
+ /**
 diff --git a/node_modules/expo-image/android/src/main/java/expo/modules/image/records/SourceMap.kt b/node_modules/expo-image/android/src/main/java/expo/modules/image/records/SourceMap.kt
 index 0071b4f..67b1fa4 100644
 --- a/node_modules/expo-image/android/src/main/java/expo/modules/image/records/SourceMap.kt
@@ -907,6 +959,13 @@ index 28a57e3..ef3d9fb 100644
      /**
       * The format in which the image data should be decoded.
       * It's not guaranteed that the platform will use the specified format.
+@@ -732,4 +734,4 @@ declare module 'expo-observe' {
+     }
+ }
+ export {};
+-//# sourceMappingURL=Image.types.d.ts.map
+\ No newline at end of file
++//# sourceMappingURL=Image.types.d.ts.map
 diff --git a/node_modules/expo-image/src/Image.types.ts b/node_modules/expo-image/src/Image.types.ts
 index 80a1e9d..95565b8 100644
 --- a/node_modules/expo-image/src/Image.types.ts

@@ -375,6 +375,10 @@ select:focus-visible {
   overflow: auto;
   overscroll-behavior: contain;
 }
+.topic-runtime:has(> .builder-backdrop:not([data-expanded], [data-expression])) > :is(.editor-pane, .source-pane) {
+  /* Give inline tools their space before the scrollable document takes the remainder. */
+  flex-basis: 0;
+}
 .editor-pane.active {
   display: block;
 }

@@ -58,6 +58,69 @@ beforeEach(() => {
   mockExport.mockResolvedValue('{}');
 });
 describe('reader command optimistic persistence', () => {
+  it('publishes a new visit once and still applies an eviction reported by storage', async () => {
+    const commits: ReaderState[] = [];
+    const notify = jest.fn();
+    const client = new QueryClient();
+    const hook = await renderHook(
+      () => {
+        const reader = useReaderRuntime({ notify });
+        useLayoutEffect(() => {
+          commits.push(reader.readerData);
+        }, [reader.readerData]);
+        return reader;
+      },
+      { wrapper: createQueryTestWrapper(client) }
+    );
+    await waitFor(() => expect(hook.result.current.readerDataLoaded).toBe(true));
+    const save = Promise.withResolvers<ReaderChange>();
+    mockCommit.mockReturnValueOnce(save.promise);
+    commits.length = 0;
+    await act(() => hook.result.current.commitReaderData({ type: 'visit', topic, at: topic.createdAt }));
+    expect(commits).toHaveLength(1);
+    await act(() =>
+      save.resolve({
+        membership: [{ collection: 'history', key: 'nodeseek:1', present: true }],
+        counts: { history: 1 },
+        changed: ['history']
+      })
+    );
+    expect(commits).toHaveLength(1);
+    expect(hook.result.current.readerDataRef.current).toBe(commits[0]);
+
+    mockCommit.mockResolvedValueOnce({
+      membership: [
+        { collection: 'history', key: 'nodeseek:2', present: true },
+        { collection: 'history', key: 'nodeseek:1', present: false }
+      ],
+      counts: { history: 1 },
+      changed: ['history']
+    });
+    await act(() =>
+      hook.result.current.commitReaderData({ type: 'visit', topic: { ...topic, id: '2' }, at: topic.createdAt })
+    );
+    expect(hook.result.current.readerData.history).toEqual({ 'nodeseek:2': true });
+    expect(hook.result.current.readerData.counts.history).toBe(1);
+  });
+  it('keeps a later pending visit projected across confirmation, then rolls only that visit back', async () => {
+    const first = Promise.withResolvers<ReaderChange>();
+    const second = Promise.withResolvers<ReaderChange>();
+    mockCommit.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const { hook } = await setup();
+    await act(() => {
+      hook.result.current.commitReaderData(favorite);
+      hook.result.current.commitReaderData({ type: 'visit', topic, at: topic.createdAt });
+    });
+    const projected = hook.result.current.readerData;
+    expect(projected.history).toEqual({ 'nodeseek:1': true });
+    await act(() => first.resolve(added));
+    expect(hook.result.current.readerData).toBe(projected);
+    await act(() => second.reject(new Error('write failed')));
+    expect(hook.result.current.readerData.favorites).toEqual({ 'nodeseek:1': true });
+    expect(hook.result.current.readerData.history).toEqual({});
+    expect(hook.result.current.readerData.counts).toEqual({ favorites: 1, history: 0, followedUsers: 0 });
+  });
+
   it('keeps durable command invalidation after the observing runtime unmounts', async () => {
     const pending = Promise.withResolvers<ReaderChange>();
     mockCommit.mockReturnValueOnce(pending.promise);

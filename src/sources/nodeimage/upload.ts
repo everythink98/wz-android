@@ -5,6 +5,7 @@ import {
   type NormalizedReplyImageAsset
 } from '@/sources/imageUpload';
 import { prepareUploadImage } from '@/platform/media/prepareUploadImage';
+import { isHttpOrHttpsUrl } from '@/platform/media/imageRequestSource';
 
 const NODEIMAGE_UPLOAD_URL = 'https://api.nodeimage.com/api/upload';
 type NodeImageUploadError = Error & { nodeImageApiKeyExpired?: boolean };
@@ -19,6 +20,7 @@ export function nodeImageUrlFromUploadResponse(data: unknown) {
   if (!url) {
     throw new Error('NodeImage 返回缺少图片地址');
   }
+  if (!isHttpOrHttpsUrl(url)) throw new Error('NodeImage 返回的图片地址无效');
   return url;
 }
 

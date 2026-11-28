@@ -1,7 +1,7 @@
 import { createContext, useContext, type ReactNode } from 'react';
 import type { NotificationSource } from '@/domain/forum/sourceCatalog';
 import type { AccountReconcileResult } from '@/domain/session/sessionContracts';
-import type { ReadRecovery } from '@/platform/query/readRecovery';
+import type { LinuxDoVerificationRequest } from '@/platform/query/readRecovery';
 import type { WritableSessionTicket } from '@/domain/session/writableSessionGate';
 import type { ReadGateway } from '@/sources/readGateway';
 import type { NotificationOperationOutcome, NotificationsRuntimeValue } from './useNotificationsRuntime';
@@ -22,7 +22,11 @@ export type NotificationRouteRuntimeValue = Omit<
   contentWidth: number;
   notify: (message: string) => void;
   reconcileAccountStatus: (source: NotificationSource) => Promise<AccountReconcileResult>;
-  openAccountSurface: (source: NotificationSource, message: string, recovery?: ReadRecovery) => Promise<void>;
+  openAccountSurface: (
+    source: NotificationSource,
+    message: string,
+    request?: LinuxDoVerificationRequest
+  ) => Promise<void>;
 };
 
 const NotificationRouteRuntimeContext = createContext<NotificationRouteRuntimeValue | null>(null);

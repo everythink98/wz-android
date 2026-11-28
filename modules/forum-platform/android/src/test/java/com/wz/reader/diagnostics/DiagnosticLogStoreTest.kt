@@ -24,6 +24,11 @@ class DiagnosticLogStoreTest {
     assertEquals("short\n" + latest, DiagnosticJournal.nativeCrashWithContext("short\n", latest))
   }
 
+  @Test fun retainsTheOriginalImageSaveConsumerInTheJournal() {
+    val fields = DiagnosticJournal.safeNetworkFields(mapOf("imageConsumer" to "save-image", "url" to "PRIVATE_URL"))
+    assertEquals(mapOf("imageConsumer" to "save-image"), fields)
+  }
+
   @Test fun retainsOnlyClosedSocketFailureCategoriesAndFiniteTimeouts() {
     val accepted = mapOf<String, Any>(
       "phase" to "request-config", "socketFailure" to "reset", "socketErrno" to "ECONNRESET",

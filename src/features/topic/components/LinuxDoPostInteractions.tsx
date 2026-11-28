@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -35,6 +36,8 @@ import { useReducedMotion } from 'react-native-reanimated';
 import type { DiscourseBoost, Reply, TopicDetail, UserReference } from '@/domain/forum/models';
 import { discourseBoostStats } from '@/domain/forum/discourseInteractions';
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
+import { isLinuxDoCloudflareError } from '@/sources/errors';
+import { errorMessage } from '@/platform/network/errors';
 import type { TopicActionsController } from '../actions/useTopicActionsController';
 import type { TopicActionDecision } from '../actions/topicActionDecision';
 import { PopupMenu } from '@/ui/controls/PopupMenu';
@@ -54,6 +57,7 @@ import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch'
 import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 import { DetailActionButton } from './TopicActionBar';
+import { useTopicInteractionBackReport } from '../useTopicRouteBeforeRemove';
 
 type Post = Reply | TopicDetail;
 type InteractionContext = Pick<
@@ -183,9 +187,19 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   });
 }
 
-function EmojiImage({ url, label, size = 22 }: { url: string; label: string; size?: number }) {
+function EmojiImage({
+  url,
+  label,
+  size = 22,
+  inlineTextSize
+}: {
+  url: string;
+  label: string;
+  size?: number;
+  inlineTextSize?: number;
+}) {
   const mediaContext = useForumMediaRequestContext('linuxdo');
-  return (
+  const image = (
     <ExpoImage
       accessibilityLabel={label}
       source={imageSourceFromUrl(url, { mediaContext })}
@@ -193,6 +207,14 @@ function EmojiImage({ url, label, size = 22 }: { url: string; label: string; siz
       style={{ width: size, height: size }}
       contentFit="contain"
     />
+  );
+  if (inlineTextSize === undefined) return image;
+  // Android aligns the attachment bottom to the text baseline. Use the text size
+  // for that attachment so the full-size image can straddle the baseline.
+  return (
+    <View collapsable={false} style={{ width: size, height: inlineTextSize }}>
+      {image}
+    </View>
   );
 }
 
@@ -231,6 +253,7 @@ function BoostBubble({
 }) {
   const context = useContext(Context);
   const { styles, settings } = useReaderThemeStyles(createStyles);
+  const inlineEmoji = { size: Math.round(16 * settings.uiFontScale), inlineTextSize: styles.content.fontSize };
   const label = boost.content.map((part) => ('text' in part ? part.text : part.emoji)).join('');
   return (
     <View
@@ -274,25 +297,11 @@ function BoostBubble({
                     tokenIndex % 2 === 1 && context && Object.hasOwn(context.emojiUrls, name)
                       ? context.emojiUrls[name]
                       : undefined;
-                  return imageUrl ? (
-                    <EmojiImage
-                      key={tokenIndex}
-                      url={imageUrl}
-                      label={text}
-                      size={Math.round(16 * settings.uiFontScale)}
-                    />
-                  ) : (
-                    text
-                  );
+                  return imageUrl ? <EmojiImage key={tokenIndex} url={imageUrl} label={text} {...inlineEmoji} /> : text;
                 })}
               </Text>
             ) : (
-              <EmojiImage
-                key={index}
-                url={part.imageUrl}
-                label={part.emoji}
-                size={Math.round(16 * settings.uiFontScale)}
-              />
+              <EmojiImage key={index} url={part.imageUrl} label={part.emoji} {...inlineEmoji} />
             )
           )}
         </Text>
@@ -603,8 +612,17 @@ export function LinuxDoPostInteractionsProvider({
     (presentedBoost?.target !== currentBoostTarget || presentedBoost.composer !== actions.boostComposer)
   )
     setPresentedBoost({ scopeKey, target: currentBoostTarget, composer: actions.boostComposer });
-  const boostVisible = active && !!actions.boostComposer && !!currentBoostTarget;
+  const boostDecision = currentBoostTarget
+    ? actions.decisionFor({ action: 'boost', target: currentBoostTarget })
+    : null;
+  const boostAvailable = !!currentBoostTarget && (!!boostDecision?.allowed || boostDecision?.reason === 'pending');
+  const boostVisible = active && !!actions.boostComposer && boostAvailable;
   const boostTarget = currentBoostTarget || presentedBoost?.target;
+  const boostPostId = actions.boostComposer?.postId;
+  const closeBoost = actions.closeBoostComposer;
+  useLayoutEffect(() => {
+    if (active && boostPostId !== undefined && !boostAvailable) closeBoost(boostPostId);
+  }, [active, boostAvailable, boostPostId, closeBoost]);
   useEffect(() => {
     if (boostVisible && !inputRef.current?.isFocused()) inputRef.current?.focus();
   }, [boostVisible]);
@@ -622,6 +640,15 @@ export function LinuxDoPostInteractionsProvider({
     isPending,
     refetch
   } = useQuery({ ...actions.linuxDoInteractionConfigQuery, enabled, retry: false });
+  const configNeedsVerification = isLinuxDoCloudflareError(error);
+  const retryConfig = (close: () => void) => {
+    if (!configNeedsVerification) {
+      void refetch();
+      return;
+    }
+    close();
+    actions.verifyLinuxDoInteractionConfig(errorMessage(error));
+  };
   useEffect(() => {
     closeReactionPicker();
     setEmojiPickerOpen(false);
@@ -642,7 +669,16 @@ export function LinuxDoPostInteractionsProvider({
     },
     [height, width, openReactionPicker]
   );
-  const overlayOpen = Boolean(picker || actions.boostComposer);
+  const reactionVisible = active && !!picker && !!currentPost;
+  const overlayOpen = reactionVisible || boostVisible;
+  const reportOverlayBack = useTopicInteractionBackReport();
+  const closeVisibleBoost = useCallback(() => closeBoost(), [closeBoost]);
+  useLayoutEffect(() => {
+    const close = reactionVisible ? closeReactionPicker : boostVisible ? closeVisibleBoost : null;
+    if (!close) return;
+    reportOverlayBack(close);
+    return () => reportOverlayBack(null);
+  }, [boostVisible, closeReactionPicker, closeVisibleBoost, reactionVisible, reportOverlayBack]);
   const { decisionFor, reactToPost, openBoostComposer, deleteBoost } = actions;
   const context = useMemo(
     () => ({
@@ -677,7 +713,6 @@ export function LinuxDoPostInteractionsProvider({
   );
   const content = actions.boostComposer?.content ?? presentedBoost?.composer.content ?? '';
   const stats = discourseBoostStats(content, emojiNames);
-  const boostDecision = boostTarget ? actions.decisionFor({ action: 'boost', target: boostTarget }) : null;
   const unknown = boostTarget?.siteExtension?.interactionUnconfirmed === true;
   const canReact = currentPost && actions.decisionFor({ action: 'like', target: currentPost }).allowed;
   const chooseReaction = (id: string) => choosePickerReaction(id, actions.reactToPost);
@@ -709,8 +744,13 @@ export function LinuxDoPostInteractionsProvider({
             <Text style={styles.muted}>正在读取表情…</Text>
           ) : error ? (
             <View style={styles.row}>
-              <Text style={styles.error}>表情读取失败</Text>
-              <AppButton compact variant="primary" label="重试" onPress={() => void refetch()} />
+              <Text style={styles.error}>{configNeedsVerification ? '需要完成安全验证' : '表情读取失败'}</Text>
+              <AppButton
+                compact
+                variant="primary"
+                label={configNeedsVerification ? '去验证' : '重试'}
+                onPress={() => retryConfig(closeReactionPicker)}
+              />
             </View>
           ) : config?.reactionsEnabled ? (
             <View style={styles.choices}>
@@ -766,7 +806,7 @@ export function LinuxDoPostInteractionsProvider({
                       加电给 {boostTarget?.author} · {boostTargetLabel}
                     </Text>
                   </View>
-                  <IconButton icon={X} label="关闭加电" iconOnly ghost onPress={actions.closeBoostComposer} />
+                  <IconButton icon={X} label="关闭加电" iconOnly ghost onPress={closeVisibleBoost} />
                 </View>
                 <TextInput
                   ref={inputRef}
@@ -844,7 +884,10 @@ export function LinuxDoPostInteractionsProvider({
                       onPress={() => void actions.recheckLinuxDoPost(boostTarget.commentId!)}
                     />
                   ) : error ? (
-                    <AppButton label="重试读取互动配置" onPress={() => void refetch()} />
+                    <AppButton
+                      label={configNeedsVerification ? '去验证' : '重试读取互动配置'}
+                      onPress={() => retryConfig(closeVisibleBoost)}
+                    />
                   ) : (
                     <AppButton
                       variant="solid"

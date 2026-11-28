@@ -20,7 +20,7 @@ import { type LibraryTab } from '@/domain/forum/feed';
 import type { libraryCategoryFilterItems } from './model/libraryFilters';
 import { formatDateTime, sourceLabel } from '@/domain/forum/presentation';
 import { sourceCatalog, sourceValues, type Source } from '@/domain/forum/sourceCatalog';
-import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
+import type { TopicListItemStateSource } from '@/domain/forum/topicListItemState';
 import { type ReaderTheme } from '@/ui/theme/tokens';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { AppButton } from '@/ui/controls/ButtonControls';
@@ -30,7 +30,7 @@ import { PopupMenu, PopupMenuItem } from '@/ui/controls/PopupMenu';
 import { PillRail } from '@/ui/controls/SelectionControls';
 import { TOUCH_HIT_SLOP } from '@/ui/controls/touchTarget';
 import { Avatar } from '@/ui/avatar/Avatar';
-import { MemoizedTopicCard, TopicListPlaceholder } from '@/ui/topic/TopicCard';
+import { TopicListCard, TopicListPlaceholder } from '@/ui/topic/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 import {
@@ -209,7 +209,7 @@ export const LibraryScreen = memo(function LibraryScreen({
   loaded: boolean;
   loadingMore: boolean;
   scrollRef?: RefObject<FlashListRef<FollowedUserRecord | LibraryListItem> | null>;
-  topicStateIndex: TopicListItemStateIndex;
+  topicStateIndex: TopicListItemStateSource;
   onClearHistory: () => void;
   onManageContentSources: () => void;
   onOpenTopic: (topic: Topic) => void;
@@ -428,12 +428,11 @@ export const LibraryScreen = memo(function LibraryScreen({
         );
       }
       const record = item.record;
-      const readerState = getTopicListItemStateFromIndex(topicStateIndex, record.topic);
       return (
         <View style={styles.libraryItem}>
-          <MemoizedTopicCard
+          <TopicListCard
             testID={item.first ? (tab === 'favorites' ? 'library-favorite-first' : 'library-history-first') : undefined}
-            readerState={readerState}
+            topicStateIndex={topicStateIndex}
             scene={tab}
             renderTrailingAction={tab === 'favorites' ? renderFavoriteTrailingAction : renderHistoryTrailingAction}
             showSource={sourceFilter === 'all'}

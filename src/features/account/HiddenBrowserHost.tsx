@@ -26,16 +26,25 @@ type HiddenBrowserDocumentProps = Pick<
   | 'userAgent'
   | 'injectedJavaScriptBeforeContentLoaded'
   | 'onShouldStartLoadWithRequest'
-  | 'onLoadStart'
   | 'onMessage'
   | 'onError'
   | 'onHttpError'
   | 'onRenderProcessGone'
-> & { browserRef: RefObject<WebView | null>; script: string; styles: AccountHostStyles };
+> & {
+  browserRef: RefObject<WebView | null>;
+  script: string;
+  styles: AccountHostStyles;
+  clearHttpError: () => void;
+};
 
 function HiddenBrowserDocument(props: HiddenBrowserDocumentProps) {
   const { browserRef, script, styles } = props;
   const documentRef = useRef<WebView | null>(null);
+  const frame = useRef<{
+    url?: string;
+    errorUrl?: string;
+    nextError?: Parameters<NonNullable<WebViewProps['onHttpError']>>[0];
+  }>({});
   const bindDocument = useCallback(
     (view: WebView | null) => {
       documentRef.current = view;
@@ -57,11 +66,32 @@ function HiddenBrowserDocument(props: HiddenBrowserDocumentProps) {
       injectedJavaScriptBeforeContentLoaded={props.injectedJavaScriptBeforeContentLoaded}
       containerStyle={styles.hiddenBrowserWebView}
       style={styles.hiddenBrowserWebView}
-      onLoadStart={props.onLoadStart}
+      onMainFrameLoadStart={({ nativeEvent }) => {
+        if (!documentRef.current) return;
+        const url = nativeEvent.url.split('#', 1)[0];
+        const previous = frame.current;
+        const earlyError = previous.nextError;
+        const firstCommitOfFailedDocument = previous.url === undefined && previous.errorUrl === url;
+        frame.current = { url, errorUrl: firstCommitOfFailedDocument ? url : undefined };
+        if (!firstCommitOfFailedDocument && previous.errorUrl !== undefined) props.clearHttpError();
+        if (earlyError?.nativeEvent.url?.split('#', 1)[0] === url) {
+          frame.current.errorUrl = url;
+          props.onHttpError?.(earlyError);
+        }
+      }}
       onLoadEnd={() => documentRef.current?.injectJavaScript(script)}
       onMessage={props.onMessage}
       onError={props.onError}
-      onHttpError={props.onHttpError}
+      onHttpError={(event) => {
+        if (!documentRef.current) return;
+        const url = event.nativeEvent.url?.split('#', 1)[0];
+        if (url && frame.current.url !== undefined && frame.current.url !== url) {
+          frame.current.nextError = event;
+          return;
+        }
+        frame.current.errorUrl = url ?? '';
+        props.onHttpError?.(event);
+      }}
       onRenderProcessGone={props.onRenderProcessGone}
       renderError={() => <View style={styles.hiddenBrowserWebView} />}
     />
@@ -173,9 +203,7 @@ export function HiddenBrowserHost({
             userAgent={nodeSeekBrowserFetchRequest.userAgent || state.nodeSeek.userAgent}
             onShouldStartLoadWithRequest={handleNodeSeekBrowserNavigation}
             injectedJavaScriptBeforeContentLoaded={nodeSeekBrowserFetchScript}
-            onLoadStart={() => {
-              onNodeSeekHttpErrorStatus(nodeSeekBrowserFetchRequest.id, undefined);
-            }}
+            clearHttpError={() => onNodeSeekHttpErrorStatus(nodeSeekBrowserFetchRequest.id, undefined)}
             onMessage={handleNodeSeekBrowserFetchMessage}
             onError={(event) => {
               failNodeSeekBrowserFetchById(
@@ -217,9 +245,7 @@ export function HiddenBrowserHost({
             source={{ uri: linuxDoBrowserFetchRequest.url }}
             userAgent={linuxDoBrowserFetchRequest.userAgent || state.linuxDo.userAgent}
             onShouldStartLoadWithRequest={handleLinuxDoBrowserNavigation}
-            onLoadStart={() => {
-              onLinuxDoHttpErrorStatus(linuxDoBrowserFetchRequest.id, undefined);
-            }}
+            clearHttpError={() => onLinuxDoHttpErrorStatus(linuxDoBrowserFetchRequest.id, undefined)}
             onMessage={handleLinuxDoBrowserFetchMessage}
             onError={(event) => {
               failLinuxDoBrowserFetchById(

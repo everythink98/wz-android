@@ -433,3 +433,82 @@ index 8fc34f17..25ed0f97 100644
    /**
     * Allows multiple files to be selected from the system UI.
     * @default false
+diff --git a/node_modules/expo-document-picker/android/src/main/java/expo/modules/documentpicker/DocumentDetailsReader.kt b/node_modules/expo-document-picker/android/src/main/java/expo/modules/documentpicker/DocumentDetailsReader.kt
+index 80e6094..389a7af 100644
+--- a/node_modules/expo-document-picker/android/src/main/java/expo/modules/documentpicker/DocumentDetailsReader.kt
++++ b/node_modules/expo-document-picker/android/src/main/java/expo/modules/documentpicker/DocumentDetailsReader.kt
+@@ -1,53 +1,33 @@
+ package expo.modules.documentpicker
+ 
++import android.content.ContentResolver
+ import android.content.Context
++import android.database.Cursor
+ import android.net.Uri
+ import android.provider.OpenableColumns
+ import android.provider.DocumentsContract
+-import java.io.File
++import android.webkit.MimeTypeMap
+ import java.io.IOException
+ 
+ class DocumentDetailsReader(private val context: Context) {
+   fun read(uri: Uri): DocumentInfo {
+-    context
+-      .contentResolver
+-      .query(uri, null, null, null, null)
+-      ?.use { cursor ->
+-        cursor.moveToFirst()
+-        val columnIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+-        val name = cursor.getString(columnIndex)
+-        val size = cursor.getColumnIndex(OpenableColumns.SIZE).let { sizeColumnIndex ->
+-          if (!cursor.isNull(sizeColumnIndex)) {
+-            cursor.getLong(sizeColumnIndex)
+-          } else {
+-            null
+-          }
+-        }
+-        val mimeType = context.contentResolver.getType(uri)
++    if (uri.scheme != ContentResolver.SCHEME_CONTENT || uri.authority.isNullOrEmpty()) {
++      throw IOException("The document picker must return a content URI")
++    }
++    val resolver = context.contentResolver
++    val mimeType = resolver.getType(uri)
++    val extension = MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType)
++    val fallbackName = if (extension.isNullOrEmpty()) "document" else "document.$extension"
++    val now = System.currentTimeMillis()
++    return resolver.query(uri, null, null, null, null)?.use { cursor ->
++      if (!cursor.moveToFirst()) return@use null
++      val name = cursor.column(OpenableColumns.DISPLAY_NAME)?.let(cursor::getString)
++        ?.takeUnless { it.isBlank() } ?: fallbackName
++      val size = cursor.column(OpenableColumns.SIZE)?.let(cursor::getLong)?.takeIf { it >= 0 }
++      val lastModified = cursor.column(DocumentsContract.Document.COLUMN_LAST_MODIFIED)?.let(cursor::getLong) ?: now
++      DocumentInfo(uri, name, mimeType, size, lastModified)
++    } ?: DocumentInfo(uri, fallbackName, mimeType, null, now)
++  }
+ 
+-        // Get last modified date or use current date if not available.
+-        // This follows the Web API spec.
+-        // https://developer.mozilla.org/en-US/docs/Web/API/File/lastModified
+-        val lastModified = try {
+-          // First try to get it from the content resolver
+-          val lastModifiedColumn = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+-          if (lastModifiedColumn != -1 && !cursor.isNull(lastModifiedColumn)) {
+-            cursor.getLong(lastModifiedColumn)
+-          } else {
+-            // Fallback to getting it from the file
+-            val file = File(uri.path ?: "")
+-            if (file.exists()) {
+-              file.lastModified()
+-            } else {
+-              System.currentTimeMillis()
+-            }
+-          }
+-        } catch (e: Exception) {
+-          // If all else fails, use current time
+-          System.currentTimeMillis()
+-        }
+-
+-        return DocumentInfo(uri, name, mimeType, size, lastModified)
+-      } ?: throw IOException("Failed to read document details for URI: $uri")
+-  }
++  private fun Cursor.column(name: String): Int? = getColumnIndex(name).takeIf { it >= 0 && !isNull(it) }
+ }

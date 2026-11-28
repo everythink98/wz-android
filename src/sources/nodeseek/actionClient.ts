@@ -4,7 +4,8 @@ import { NODESEEK_VOTE_API_HEADERS, normalizeNodeSeekVoteInfo } from './polls';
 import { fetchWithTimeout, isDefinitiveHttpRejection, type Fetcher } from '@/platform/network/request';
 import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
 import { isRecord } from '@/domain/forum/html';
-import { NODESEEK_BASE_URL } from './protocol';
+import { isNodeSeekChallengeResponse, NODESEEK_BASE_URL } from './protocol';
+import { canContainCloudflareChallengePage } from '@/platform/network/cloudflareChallenge';
 
 export const NODESEEK_ACTION_HEADERS = {
   accept: 'application/json, text/plain, */*',
@@ -21,6 +22,12 @@ export const NODESEEK_ACTION_HEADERS = {
 
 export function isConfirmedNodeSeekAction(data: unknown): data is Record<string, unknown> & { success: true } {
   return isRecord(data) && data.success === true;
+}
+
+export function unconfirmedNodeSeekVerification(error: unknown) {
+  if (isRecord(error) && error.reason === 'cloudflare' && error.serverRejected === false) {
+    return { status: 'unknown' as const, message: '请到 NodeSeek 原站完成验证并核对本次提交结果，勿重复提交' };
+  }
 }
 
 function isFailedActionPayload(data: unknown) {
@@ -79,8 +86,9 @@ export async function fetchNodeSeekVoteInfo({
     throw new Error('投票 id 不正确');
   }
   const cleanUserAgent = (await resolveWebViewUserAgent(userAgent, signal)).trim();
+  const url = `${NODESEEK_BASE_URL}/api/vote/info/${encodeURIComponent(cleanPollId)}`;
   const response = await fetchWithTimeout(
-    `${NODESEEK_BASE_URL}/api/vote/info/${encodeURIComponent(cleanPollId)}`,
+    url,
     withBrowserFetchIntent(
       {
         method: 'GET',
@@ -98,12 +106,7 @@ export async function fetchNodeSeekVoteInfo({
       timeoutMs
     }
   );
-  let data: unknown;
-  try {
-    data = await response.json();
-  } catch {
-    throw new Error('NodeSeek 返回内容格式不正确');
-  }
+  const { data } = await readNodeSeekActionPayload(response, url);
   if (!response.ok) {
     throw nodeSeekActionError(data, response.status);
   }
@@ -129,8 +132,9 @@ export async function runNodeSeekAction({
 }) {
   const cleanUserAgent = (await resolveWebViewUserAgent(userAgent, signal)).trim();
 
+  const url = `${NODESEEK_BASE_URL}${request.path}`;
   const response = await fetchWithTimeout(
-    `${NODESEEK_BASE_URL}${request.path}`,
+    url,
     withBrowserFetchIntent(
       {
         method: request.method,
@@ -149,13 +153,7 @@ export async function runNodeSeekAction({
       timeoutMs
     }
   );
-  let data: unknown = null;
-  let parsedJson = true;
-  try {
-    data = await response.json();
-  } catch {
-    parsedJson = false;
-  }
+  const { data, parsedJson } = await readNodeSeekActionPayload(response, url);
 
   if (!response.ok) {
     const attendanceRequest = /^\/api\/attendance\?random=(?:true|false)$/.test(request.path);
@@ -179,6 +177,29 @@ export async function runNodeSeekAction({
   }
 
   return data;
+}
+
+export async function readNodeSeekActionPayload(response: Response, url: string) {
+  const readChallengeBody =
+    (response.status === 403 || response.status === 503) && canContainCloudflareChallengePage(response.headers);
+  const body = readChallengeBody ? await response.text().catch(() => '') : undefined;
+  if (
+    (body !== undefined || response.headers.has('cf-mitigated')) &&
+    isNodeSeekChallengeResponse(response, body ?? '', response.url || url)
+  ) {
+    throw Object.assign(new Error('NodeSeek 需要完成 Cloudflare 验证'), {
+      source: 'nodeseek',
+      reason: 'cloudflare',
+      status: response.status,
+      serverRejected: false
+    });
+  }
+  try {
+    const data: unknown = body === undefined ? await response.json() : JSON.parse(body);
+    return { data, parsedJson: true };
+  } catch {
+    return { data: null, parsedJson: false };
+  }
 }
 
 function nodeSeekActionError(

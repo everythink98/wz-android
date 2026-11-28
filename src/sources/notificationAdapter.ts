@@ -2,6 +2,7 @@ import type {
   ForumNotification,
   NotificationCategory,
   NotificationDetail,
+  NotificationLaterMessagePage,
   NotificationMarkResult,
   NotificationMessagePage,
   NotificationPage,
@@ -37,6 +38,11 @@ export interface NotificationAdapter {
     cursor: string,
     options: NotificationAdapterAccess
   ): Promise<NotificationMessagePage>;
+  loadLaterMessages?(
+    item: ForumNotification,
+    cursor: string,
+    options: NotificationAdapterAccess
+  ): Promise<NotificationLaterMessagePage>;
   replyToConversation(
     item: ForumNotification,
     content: string,

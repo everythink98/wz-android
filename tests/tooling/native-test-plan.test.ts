@@ -55,6 +55,9 @@ describe('Native behavior test selection', () => {
         'com.wz.reader.SharingModuleTest'
       ])
     );
+    const screens = ':react-native-screens:testDebugUnitTest';
+    expect(relatedNativeTasks(['patches/react-native-screens+4.27.0.patch'])).toContain(screens);
+    expect(nativeTestTasks[screens].classes).toContain('com.swmansion.rnscreens.FeedPopAnimationTest');
   });
   it('runs migrated platform behavior and bridge owners directly in the library', () => {
     const owners = [
@@ -118,7 +121,8 @@ describe('Native behavior test selection', () => {
     ['tests/native/ComposerKeyboardTest.kt', ':app:testReleaseUnitTest'],
     ['tests/native/ComposerWebViewPrewarmTest.kt', ':app:testReleaseUnitTest'],
     ['tests/native/CreditWebViewNavigationTest.kt', ':app:testReleaseUnitTest'],
-    ['tests/native/composer-keyboard.gradle', ':app:testReleaseUnitTest']
+    ['tests/native/composer-keyboard.gradle', ':app:testReleaseUnitTest'],
+    ['patches/react-native-screens+4.27.0.patch', ':app:testReleaseUnitTest']
   ])('schedules the owning JVM task for %s', (file, task) => {
     expect(relatedNativeTasks([file])).toContain(task);
   });

@@ -1,7 +1,11 @@
-const { withMainActivity, withMainApplication } = require('@expo/config-plugins');
+const { AndroidConfig, withGradleProperties, withMainActivity, withMainApplication } = require('@expo/config-plugins');
 const { injectMainApplicationPackage } = require('./androidPackageRegistration');
 
 module.exports = function withForumPlatform(config) {
+  config = withGradleProperties(config, (config) => {
+    AndroidConfig.BuildProperties.updateAndroidBuildProperty(config.modResults, 'expo.webp.animated', 'true');
+    return config;
+  });
   config = withMainApplication(config, (config) => {
     let contents = config.modResults.contents;
     for (const name of ['ForumPlatformPackage', 'NetworkProxyPackage', 'SvgRendererPackage'])

@@ -20,6 +20,7 @@ type ShareActivity =
   { phase: 'idle' } | { phase: 'acquiring-controller' } | { phase: 'in-flight'; controller: AbortController };
 
 type ShareOwner = { lifetime: 'current' | 'retired'; activity: ShareActivity };
+type ShareFeedback = 'copied' | { error: string } | null;
 
 export function TopicShareOptions({
   topic,
@@ -37,8 +38,8 @@ export function TopicShareOptions({
   const { styles, theme } = useReaderThemeStyles(createStyles);
   const owner = useRef<ShareOwner>({ lifetime: 'current', activity: { phase: 'idle' } });
   const [busy, setBusy] = useState<'idle' | 'link' | 'copy'>('idle');
-  const [feedback, setFeedback] = useState('');
-  const [error, setError] = useState('');
+  const [feedback, setFeedback] = useState<ShareFeedback>(null);
+  const showBusy = busy !== 'idle' && (busy !== 'copy' || feedback !== 'copied');
   useEffect(() => {
     owner.current = { ...owner.current, lifetime: 'current' };
     return () => {
@@ -59,16 +60,15 @@ export function TopicShareOptions({
     const abort = new AbortController();
     owner.current = { ...owner.current, activity: { phase: 'in-flight', controller: abort } };
     setBusy(action);
-    setError('');
-    setFeedback('');
+    if (action === 'link' || feedback !== 'copied') setFeedback(null);
     try {
       if (action === 'link') await onShareLink(abort.signal);
       else {
         await onCopyLink();
-        if (owner.current.lifetime === 'current') setFeedback('链接已复制');
+        if (owner.current.lifetime === 'current') setFeedback('copied');
       }
     } catch (cause) {
-      if (owner.current.lifetime === 'current') setError(errorMessage(cause));
+      if (owner.current.lifetime === 'current') setFeedback({ error: errorMessage(cause) });
     } finally {
       owner.current = { ...owner.current, activity: { phase: 'idle' } };
       if (owner.current.lifetime === 'current') setBusy('idle');
@@ -123,10 +123,10 @@ export function TopicShareOptions({
             accessibilityState={{ disabled: disabled || busy !== 'idle', busy: busy === key }}
             disabled={disabled || busy !== 'idle'}
             onPress={onPress}
-            style={[styles.action, busy !== key && (disabled || busy !== 'idle') && styles.disabled]}
+            style={[styles.action, (disabled || (showBusy && busy !== key)) && styles.disabled]}
           >
             <View style={styles.icon}>
-              {busy === key ? (
+              {showBusy && busy === key ? (
                 <ActivityIndicator color={theme.primary} />
               ) : (
                 <Icon size={22} color={theme.primary} strokeWidth={1.8} />
@@ -139,14 +139,13 @@ export function TopicShareOptions({
             <ChevronRight size={18} color={theme.muted} />
           </Pressable>
         ))}
-        {feedback ? (
+        {feedback === 'copied' ? (
           <Text accessibilityLiveRegion="polite" style={styles.feedback}>
-            {feedback}
+            链接已复制
           </Text>
-        ) : null}
-        {error ? (
+        ) : feedback?.error ? (
           <Text accessibilityRole="alert" style={styles.error}>
-            {error}
+            {feedback.error}
           </Text>
         ) : null}
       </ScrollView>

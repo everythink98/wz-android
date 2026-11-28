@@ -244,6 +244,33 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
       ...textSizeStyle(scaled(15), Math.round(scaled(15) * lineHeightMultiplier(settings.lineHeight)))
     },
     detailLink: { color: theme.primary, fontWeight: '600' },
+    noticeActions: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      columnGap: 8,
+      marginTop: 2
+    },
+    noticeActionTarget: { minHeight: 48, maxWidth: '100%', justifyContent: 'center' },
+    noticeAction: {
+      minHeight: 32,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      backgroundColor: theme.surface2,
+      borderRadius: readerRadii.control
+    },
+    noticeReplyAction: { backgroundColor: theme.primarySoft },
+    noticeActionLabel: {
+      flexShrink: 1,
+      color: theme.ink,
+      fontFamily: uiFontFamily,
+      ...textSizeStyle(uiFontSize(12), uiFontSize(18)),
+      fontWeight: '600'
+    },
+    noticeReplyActionLabel: { color: theme.dark ? theme.primary : theme.primaryStrong },
     conversationNotice: {
       color: theme.muted,
       fontFamily: uiFontFamily,
@@ -281,6 +308,7 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
       borderBottomLeftRadius: readerRadii.surface,
       borderBottomRightRadius: 4
     },
+    messageBubbleAnchor: { borderColor: theme.primary },
     messageMetaRow: {
       maxWidth: '86%',
       alignItems: 'baseline',

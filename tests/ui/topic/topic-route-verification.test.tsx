@@ -37,12 +37,14 @@ import { act, fireEvent, render, waitFor } from '../render';
 
 let mockStallHiddenRead = false;
 const mockTopicScreenMount = jest.fn();
+const mockVerificationInjectJavaScript = jest.fn();
 let mockTopicScreenProps: ComponentProps<typeof TopicScreen> | undefined;
 
 // Presentation and native WebView are boundaries; Route, Account, gateway and Query owners are real.
 jest.mock('@/features/topic/TopicScreen', () => {
   const React = require('react');
   const { Text, Pressable } = require('react-native');
+  const { NavigationBackdropTarget } = jest.requireActual('@/ui/navigation/NavigationGlass');
   return {
     TopicScreen: (props: ComponentProps<typeof TopicScreen>) => {
       mockTopicScreenProps = props;
@@ -50,7 +52,7 @@ jest.mock('@/features/topic/TopicScreen', () => {
         mockTopicScreenMount();
       }, []);
       return (
-        <>
+        <NavigationBackdropTarget active={props.active} testID="mock-topic-backdrop">
           <Text accessibilityLabel={props.article.error?.message} accessibilityState={{ busy: props.article.busy }}>
             {props.article.error ? 'topic-error' : props.article.topic?.title || 'topic-pending'}
           </Text>
@@ -63,7 +65,7 @@ jest.mock('@/features/topic/TopicScreen', () => {
           <Pressable onPress={props.chrome.openReadingSettings}>
             <Text>离开详情</Text>
           </Pressable>
-        </>
+        </NavigationBackdropTarget>
       );
     }
   };
@@ -104,7 +106,11 @@ jest.mock('react-native-webview', () => {
       },
       ref: unknown
     ) {
-      React.useImperativeHandle(ref, () => ({ stopLoading: jest.fn(), injectJavaScript: jest.fn() }), []);
+      React.useImperativeHandle(
+        ref,
+        () => ({ stopLoading: jest.fn(), injectJavaScript: mockVerificationInjectJavaScript }),
+        []
+      );
       React.useEffect(() => {
         if (!mockStallHiddenRead && props.source?.uri?.includes('/t/42.json'))
           props.onError?.({ nativeEvent: { description: 'Fixture hidden browser unavailable' } });
@@ -153,17 +159,21 @@ async function mount(
     topic: Topic;
     gateway: Pick<ReadGateway, 'getTopic' | 'getReadPlan'>;
     verify: TopicRouteRuntimeValue['account']['requestNodeSeekVerification'];
-  }
+  },
+  readInteraction?: Fetcher
 ) {
   const navigationRef = createNavigationContainerRef<RootStackParamList>();
   const readerCommit = jest.fn<void, Parameters<TopicRouteRuntimeValue['reader']['commit']>>();
-  await saveAccountSessionSnapshot(seedLinuxDoAccount());
+  // Each fixture starts with a completed login, including after tests that leave a handoff pending.
+  await saveAccountSessionSnapshot(seedLinuxDoAccount(), () => true);
   await markAccountSessionMigrationCompleted();
   let challenged = true;
   const requests: string[] = [];
   const fetcher: Fetcher = async (url, init) => {
     requests.push(url);
     if (url === 'https://linux.do/cdn-cgi/trace') return new Response('ip=192.0.2.17\nhttp=h2\n');
+    if (readInteraction && (url === 'https://linux.do/latest' || url === 'https://linux.do/session/csrf'))
+      return readInteraction(url, init);
     if (/\/t\/\d+(?:\.json|\/posts\.json)/.test(url) && readTopic) return readTopic(url, init);
     if (url.includes('/t/42.json'))
       return challenged
@@ -281,6 +291,15 @@ async function mount(
     }
   };
 }
+
+it('draws topic sharing glass from the current topic backdrop', async () => {
+  const { view } = await mount(async () => Response.json(body));
+  await waitFor(() => expect(view.getByText('Recovered topic')).toBeTruthy());
+  await act(() => mockTopicScreenProps!.chrome.share());
+  const glass = view.getByTestId('navigation-glass-surface');
+  expect(glass.props.blurTarget?.current).toBeTruthy();
+  expect(glass.props.blurMethod).toBe('dimezisBlurViewSdk31Plus');
+});
 
 it('manually verifies the NodeSeek Topic and refreshes its original authenticated detail', async () => {
   let handoff: 'closed' | 'open' | 'resuming' = 'closed';
@@ -458,6 +477,83 @@ async function returnToForum(view: Awaited<ReturnType<typeof mount>>['view']) {
   await observe(false);
   return () => observe(true);
 }
+
+it('opens security verification for like configuration and token challenges without submitting a like', async () => {
+  const configUrl = 'https://linux.do/latest';
+  const settings = { discourse_reactions_enabled: true, discourse_reactions_reaction_for_like: 'heart' };
+  let configBlocked = true;
+  const { view, account, requests } = await mount(
+    async () =>
+      Response.json({
+        ...body,
+        post_stream: {
+          posts: [{ ...body.post_stream.posts[0], actions_summary: [{ id: 2, can_act: true }] }]
+        }
+      }),
+    undefined,
+    async (url) =>
+      configBlocked || url.endsWith('/session/csrf')
+        ? new Response('<title>Just a moment...</title>', {
+            status: 403,
+            headers: { 'cf-mitigated': 'challenge', 'content-type': 'text/html' }
+          })
+        : new Response(
+            `<script id="data-preloaded" type="application/json">${JSON.stringify({
+              siteSettings: JSON.stringify(settings)
+            })}</script>`,
+            { headers: { 'content-type': 'text/html' } }
+          )
+  );
+  await waitFor(() => expect(mockTopicScreenProps?.article.topic?.commentId).toBe(100));
+  const epoch = account().read.forumSessionEpochs.linuxdo;
+  const key = forumQueryKeys.interactionConfig(epoch);
+
+  let pending!: Promise<boolean>;
+  await act(async () => {
+    pending = mockTopicScreenProps!.actions.reactToPost(100);
+  });
+  const hidden = await view.findByTestId('verification-webview', { includeHiddenElements: true });
+  expect(hidden.props.source.uri).toBe(configUrl);
+  mockVerificationInjectJavaScript.mockClear();
+  await fireEvent(hidden, 'loadEnd');
+  const script = mockVerificationInjectJavaScript.mock.calls.at(-1)?.[0];
+  const id = Number(/const requestId = (\d+);/.exec(script)?.[1]);
+  expect(Number.isFinite(id)).toBe(true);
+  await fireEvent(hidden, 'httpError', { nativeEvent: { url: configUrl, statusCode: 403 } });
+  await fireEvent(hidden, 'message', {
+    nativeEvent: {
+      url: configUrl,
+      data: JSON.stringify({ type: 'linuxdo-browser-fetch', id, url: configUrl, challenge: true })
+    }
+  });
+  await act(async () => {
+    await expect(pending).resolves.toBe(false);
+  });
+
+  expect(await view.findByText('linux.do 安全验证')).toBeTruthy();
+  expect((await view.findByTestId('verification-webview')).props.source.uri).toBe('https://cdk.linux.do/');
+  expect(appQueryClient.getQueryData(key)).toBeUndefined();
+  const completeInitialization = await returnToForum(view);
+  configBlocked = false;
+  const before = requests.length;
+  await fireEvent.press(view.getByText('检测并继续'));
+  await completeInitialization();
+  await waitFor(() => expect(appQueryClient.getQueryData(key)).toMatchObject({ reactionForLike: 'heart' }));
+  expect(requests.slice(before)).toEqual([configUrl]);
+  expect(requests.some((url) => /\/session\/csrf|\/discourse-reactions\/|\/post_actions/.test(url))).toBe(false);
+  expect(account().read.forumSessionEpochs.linuxdo).toBe(epoch);
+  await waitFor(() => expect(view.queryByTestId('verification-webview')).toBeNull());
+
+  const beforeToken = requests.length;
+  await act(async () => {
+    await expect(mockTopicScreenProps!.actions.reactToPost(100)).resolves.toBe(false);
+  });
+  expect(await view.findByText('linux.do 安全验证')).toBeTruthy();
+  expect((await view.findByTestId('verification-webview')).props.source.uri).toBe('https://cdk.linux.do/');
+  expect(
+    requests.slice(beforeToken).filter((url) => /\/session\/csrf|\/discourse-reactions\/|\/post_actions/.test(url))
+  ).toEqual(['https://linux.do/session/csrf']);
+});
 
 it('cancels a long-image export when opening login revokes private topic reads at the same epoch', async () => {
   const capture = Promise.withResolvers<Awaited<ReturnType<typeof captureLongTopicImage>>>();

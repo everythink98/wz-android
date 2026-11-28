@@ -1,18 +1,15 @@
 package expo.modules.forumcontentselection
 
 import android.view.View
+import com.facebook.react.bridge.ReadableArray
+import com.facebook.react.bridge.ReadableMap
+import com.facebook.react.bridge.ReadableType
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
-import expo.modules.kotlin.records.Field
-import expo.modules.kotlin.records.Record
 import expo.modules.kotlin.functions.Queues
 
-data class ForumSelectionRowRecord(
-  @Field val documentId: String = "",
-  @Field val rowKey: String = "",
-  @Field val nativeId: String = "",
-  @Field val selectionToken: String = ""
-) : Record
+private fun ReadableMap?.selectionString(key: String): String =
+  if (this != null && hasKey(key) && getType(key) == ReadableType.String) getString(key).orEmpty() else ""
 
 class ForumContentSelectionModule : Module() {
   override fun definition() = ModuleDefinition {
@@ -31,8 +28,16 @@ class ForumContentSelectionModule : Module() {
       Prop("revision") { view: ForumContentSelectionView, revision: String? ->
         view.pendingRevision = revision.orEmpty()
       }
-      Prop("rows") { view: ForumContentSelectionView, rows: List<ForumSelectionRowRecord>? ->
-        view.pendingRows = rows.orEmpty()
+      Prop("rows") { view: ForumContentSelectionView, rows: ReadableArray? ->
+        view.pendingRows = if (rows == null) emptyList() else List(rows.size()) { index ->
+          val row = if (rows.getType(index) == ReadableType.Map) rows.getMap(index) else null
+          ForumSelectionRowDefinition(
+            documentId = row.selectionString("documentId"),
+            rowKey = row.selectionString("rowKey"),
+            nativeId = row.selectionString("nativeId"),
+            selectionToken = row.selectionString("selectionToken")
+          )
+        }
       }
 
       OnViewDidUpdateProps { view: ForumContentSelectionView ->

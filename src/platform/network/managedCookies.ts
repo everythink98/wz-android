@@ -12,6 +12,7 @@ export type ManagedCookieReadResult =
   { status: 'ok'; header: string } | { status: 'unsupported' } | { status: 'error'; message: string };
 
 export type ManagedCookieNativeModule = {
+  setLinuxDoMediaRecheck?: (owner: string, active: boolean) => Promise<void>;
   setLinuxDoCookieResponseBarrier?: (
     blocked: boolean,
     reason: CookieBarrierReason,
@@ -64,6 +65,10 @@ export function managedCookieHeaderOrThrow(result: ManagedCookieReadResult) {
 
 function nativeManagedCookieModule() {
   return NativeModules?.NetworkProxyModule as ManagedCookieNativeModule | undefined;
+}
+
+export async function setLinuxDoMediaRecheck(owner: string, active: boolean) {
+  await nativeManagedCookieModule()?.setLinuxDoMediaRecheck?.(owner, active);
 }
 
 export async function readManagedCookieHeader(

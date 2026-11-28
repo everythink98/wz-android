@@ -21,6 +21,7 @@ import { useCloseOnBack } from './useCloseOnBack';
 import type { MainTabParamList, RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import type { LibraryTab } from '@/domain/forum/feed';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
+import { openHttpUrl } from '@/ui/navigation/openHttpUrl';
 import { useMoreRouteRuntime } from './MoreRouteRuntime';
 
 export function MoreRoute() {
@@ -70,6 +71,10 @@ export function MoreRoute() {
         if (navigation.isFocused()) return operation(...args);
       },
     [navigation]
+  );
+  const openReleaseNoteLink = useMemo(
+    () => whenFocused((href: string) => openHttpUrl(href, runtime.notify)),
+    [runtime.notify, whenFocused]
   );
   const account = useMemo<typeof runtime.account>(() => {
     const { center } = runtime.account;
@@ -151,6 +156,7 @@ export function MoreRoute() {
         progress: update.downloadProgress,
         info: update.appUpdateInfo,
         message: update.appUpdateMessage,
+        openReleaseNoteLink,
         check: update.checkAppUpdate,
         start: update.startAppUpdateDownload,
         pause: update.pauseAppUpdateDownload,

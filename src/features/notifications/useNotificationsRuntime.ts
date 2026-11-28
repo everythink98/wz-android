@@ -741,7 +741,7 @@ export function useNotificationsRuntime({
     foregroundDeliveries.invalidate();
   }, [remoteQueryEnabled, foregroundDeliveries]);
   const refetchSnapshots = useCallback(
-    async (target?: NotificationSnapshotTarget) => {
+    async (target?: NotificationSnapshotTarget, options?: { ifStale?: boolean }) => {
       if (!mountedRef.current || !remoteQueryEnabledRef.current) return [];
       const reads = snapshotSourcesRef.current.flatMap((source, index) => {
         const identityKey = identityKeysRef.current[source];
@@ -749,6 +749,20 @@ export function useNotificationsRuntime({
         const query = snapshotQueriesRef.current[index];
         if (target && (source !== target.source || identityKey !== target.identityKey || epoch !== target.sessionEpoch))
           return [];
+        if (identityKey && options?.ifStale) {
+          const state = appQueryClient.getQueryState(
+            forumQueryKeys.notificationSnapshot({ source, identityKey, sessionEpoch: epoch })
+          );
+          if (
+            state &&
+            (state.fetchStatus !== 'idle' ||
+              (state.status === 'success' &&
+                query?.data?.snapshot.total === 0 &&
+                !state.isInvalidated &&
+                Date.now() - state.dataUpdatedAt < 15_000))
+          )
+            return [];
+        }
         return identityKey && query
           ? [
               {
@@ -762,14 +776,16 @@ export function useNotificationsRuntime({
           : [];
       });
       // Initial loads otherwise share the pre-write promise, even with cancelRefetch.
-      await Promise.all(
-        reads.map(({ source, identityKey, epoch }) =>
-          appQueryClient.cancelQueries({
-            queryKey: forumQueryKeys.notificationSnapshot({ source, identityKey, sessionEpoch: epoch }),
-            exact: true
-          })
-        )
-      );
+      if (!options?.ifStale) {
+        await Promise.all(
+          reads.map(({ source, identityKey, epoch }) =>
+            appQueryClient.cancelQueries({
+              queryKey: forumQueryKeys.notificationSnapshot({ source, identityKey, sessionEpoch: epoch }),
+              exact: true
+            })
+          )
+        );
+      }
       return Promise.all(
         reads.flatMap(({ source, identityKey, epoch, lifecycle, query }) =>
           mountedRef.current &&
@@ -778,7 +794,7 @@ export function useNotificationsRuntime({
           sourceLifecyclesRef.current[source] === lifecycle &&
           identityKeysRef.current[source] === identityKey &&
           sessionEpochsRef.current[source] === epoch
-            ? [query.refetch()]
+            ? [query.refetch({ cancelRefetch: !options?.ifStale })]
             : []
         )
       );

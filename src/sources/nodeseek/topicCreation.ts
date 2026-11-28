@@ -4,7 +4,7 @@ import type { CreateTopicInput, CreateTopicResult, TopicCreationContext } from '
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
-import { NODESEEK_ACTION_HEADERS, runNodeSeekAction } from './actionClient';
+import { NODESEEK_ACTION_HEADERS, runNodeSeekAction, unconfirmedNodeSeekVerification } from './actionClient';
 import { randomNodeSeekContentToken } from './actionRequest';
 import { parseNodeSeekPageDocument, NODESEEK_BASE_URL, throwIfNodeSeekChallenge } from './protocol';
 import { acceptForumReadResponse } from '@/sources/forumSourceReadAttempt';
@@ -101,6 +101,8 @@ export async function createNodeSeekTopic({
       }
     });
   } catch (error) {
+    const verification = unconfirmedNodeSeekVerification(error);
+    if (verification) return verification;
     if (isRecord(error) && [408, 409].includes(Number(error.status)) && error.serverRejected === false)
       return { status: 'unknown', message: 'NodeSeek 未确认是否已发布，请到原站核对，勿直接重发' };
     if (isRecord(error) && error.serverRejected === true)

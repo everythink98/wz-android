@@ -285,6 +285,9 @@ describe('reply image upload helpers', () => {
   });
 
   it('builds reply markup for uploaded images', () => {
+    expect(replyImageMarkupForSource('nodeseek', 'https://images.example/a (copy).png', 'demo.png')).toBe(
+      '![demo.png](https://images.example/a%20%28copy%29.png)'
+    );
     expect(replyImageMarkupForSource('linuxdo', 'upload://abc.png', 'demo image.png')).toBe(
       '![demo image.png](upload://abc.png)'
     );
@@ -392,6 +395,7 @@ describe('reply image upload helpers', () => {
   );
 
   it('reads NodeImage upload responses', () => {
+    expect(() => nodeImageUrlFromUploadResponse({ url: 'file:///cache/picture.png' })).toThrow('图片地址');
     expect(
       nodeImageUrlFromUploadResponse({
         success: true,

@@ -9,6 +9,7 @@ export { MAX_COMPOSER_MARKDOWN_LENGTH };
 
 const strictObject = <Shape extends z.ZodRawShape>(shape: Shape) => z.object(shape).strict();
 export const MAX_COMPOSER_EMOJI_COUNT = 2000;
+export const EDIT_RECOVERY_CHUNK_LENGTH = 32 * 1024;
 const composerSiteSchema = z.enum(['linuxdo', 'nodeseek']);
 const composerModeSchema = z.enum(['rich', 'source']);
 const composerToolbarActionSchema = z.enum([
@@ -189,13 +190,14 @@ export const composerHostMessageSchema = z.discriminatedUnion('type', [
     })
   }),
   strictObject({
+    type: z.literal('REQUEST_EDIT_RECOVERY'),
+    payload: strictObject({ requestId: z.string().min(1).max(80), documentEpoch: z.number().int().nonnegative() })
+  }),
+  strictObject({
     type: z.literal('REQUEST_SNAPSHOT'),
     payload: strictObject({
       requestId: z.string().min(1).max(80),
-      submission: strictObject({
-        documentEpoch: z.number().int().nonnegative(),
-        revision: z.number().int().nonnegative()
-      }).optional()
+      submission: strictObject({ documentEpoch: z.number().int().nonnegative() }).optional()
     })
   }),
   strictObject({ type: z.literal('SET_THEME'), payload: editorThemeSchema }),
@@ -203,6 +205,16 @@ export const composerHostMessageSchema = z.discriminatedUnion('type', [
 ]);
 
 export const composerEditorMessageSchema = z.discriminatedUnion('type', [
+  strictObject({
+    type: z.literal('EDIT_RECOVERY'),
+    payload: strictObject({
+      documentEpoch: z.number().int().nonnegative(),
+      requestId: z.string().min(1).max(80),
+      index: z.number().int().nonnegative(),
+      last: z.boolean(),
+      text: z.string().max(EDIT_RECOVERY_CHUNK_LENGTH)
+    })
+  }),
   strictObject({
     type: z.literal('TOOLBAR_STATE'),
     payload: strictObject({

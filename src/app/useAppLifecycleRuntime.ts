@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AppState, ToastAndroid, useWindowDimensions } from 'react-native';
+import { AppState, ToastAndroid, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
 import { focusManager } from '@tanstack/react-query';
 import type { UserActivityTab, UserReference } from '@/domain/forum/models';
 import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
@@ -11,7 +11,7 @@ import type { Screen } from '@/ui/navigation/types';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 import { useAppDeepLinkNavigation } from './useAppDeepLinkNavigation';
-import { navigationRef, pushUserRoute } from './appNavigation';
+import { currentRecoveryRoute, navigationRef, pushUserRoute } from './appNavigation';
 import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
 import { diagnosticRef, type DiagnosticFields } from '@/platform/diagnostics/diagnosticPolicy';
 import { useInitialForegroundRuntime } from './useInitialForegroundRuntime';
@@ -23,6 +23,12 @@ export function useAppLifecycleRuntime() {
   const [appActive, setAppActive] = useState(
     () => AppState.currentState !== 'background' && AppState.currentState !== 'inactive'
   );
+  const [recoveryRoute, setRecoveryRoute] = useState<ReturnType<typeof currentRecoveryRoute>>();
+  const [tabBarHeight, setTabBarHeight] = useState<number>();
+  const onBottomTabBarLayout = useCallback(({ nativeEvent }: LayoutChangeEvent) => {
+    const barHeight = nativeEvent.layout.height;
+    setTabBarHeight(barHeight > 0 ? barHeight : undefined);
+  }, []);
   const screenRef = useRef<Screen>('feed');
   const screenRouteKeyRef = useRef('');
   const onNavigationReady = useAppDeepLinkNavigation();
@@ -57,6 +63,8 @@ export function useAppLifecycleRuntime() {
   const onScreenChange = useCallback((nextScreen: Screen, routeKey: string) => {
     const previousScreen = screenRef.current;
     const route = navigationRef.getCurrentRoute();
+    const recoveryRoute = currentRecoveryRoute();
+    setRecoveryRoute((previous) => (previous?.key === recoveryRoute?.key ? previous : recoveryRoute));
     const topicDestination = route?.name === 'Topic' ? (route.params as RootStackParamList['Topic']) : undefined;
     const userDestination = route?.name === 'User' ? (route.params as RootStackParamList['User']) : undefined;
     const topic = topicDestination?.topic;
@@ -127,6 +135,9 @@ export function useAppLifecycleRuntime() {
     onFeedInitialContentReady: initialForeground.onFeedInitialContentReady,
     onReady: onNavigationReady,
     onScreenChange,
+    onBottomTabBarLayout,
+    recoveryRoute,
+    tabBarHeight,
     openUserRoute,
     screen,
     width

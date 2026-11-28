@@ -376,7 +376,7 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSett
     searchGroupTitleText: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      ...textSizeStyle(fontSize(13), fontSize(18)),
+      ...textSizeStyle(fontSize(16), fontSize(18)),
       fontWeight: '700'
     },
     searchGroupMetaText: {

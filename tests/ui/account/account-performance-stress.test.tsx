@@ -11,6 +11,7 @@ import { QueryTestWrapper } from '../QueryTestWrapper';
 jest.mock('@/platform/network/managedCookies', () => ({
   ...jest.requireActual<typeof import('@/platform/network/managedCookies')>('@/platform/network/managedCookies'),
   setLinuxDoCookieResponseBarrier: jest.fn(async () => undefined),
+  setLinuxDoMediaRecheck: jest.fn(async () => undefined),
   readManagedCookieHeader: jest.fn(async () => ({ status: 'ok', header: 'session=mock-only' }))
 }));
 

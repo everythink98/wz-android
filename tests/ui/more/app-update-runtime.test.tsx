@@ -19,6 +19,7 @@ const mockOpen = jest.fn<() => Promise<boolean>>();
 const mockNetwork = jest.fn<() => Promise<void>>();
 const mockNotify = jest.fn();
 const mockReceivedOffsets: number[] = [];
+const mockAppendedRange: boolean[] = [];
 const mockTaskFactory = jest.fn();
 type Transfer = (uri: string, progress: (data: DownloadProgress) => void) => Promise<object | null>;
 const mockPlans: Transfer[] = [];
@@ -88,6 +89,7 @@ jest.mock('expo-file-system', () => {
     mockTaskFactory();
     const result = {
       state: offset ? 'paused' : 'idle',
+      appendedRange: false,
       release: jest.fn(),
       pauseAsync: async () => {
         await mockPause();
@@ -96,6 +98,7 @@ jest.mock('expo-file-system', () => {
       downloadAsync: async () => {
         result.state = 'active';
         mockReceivedOffsets.push(offset);
+        result.appendedRange = mockAppendedRange.shift() === true;
         if (options.headers?.['Accept-Encoding'] !== 'identity') throw new Error('Expected identity encoding');
         const progress = options.onProgress!;
         mockLastProgress = progress;
@@ -154,6 +157,7 @@ beforeEach(() => {
   mockStore.clear();
   mockPlans.length = 0;
   mockReceivedOffsets.length = 0;
+  mockAppendedRange.length = 0;
   mockCheck.mockResolvedValue(update());
   mockOpen.mockResolvedValue(true);
   mockNetwork.mockResolvedValue();
@@ -169,6 +173,8 @@ beforeEach(() => {
   };
 });
 
+const openReleaseNoteLink = jest.fn<(href: string) => void>();
+
 function RuntimePanel({ visible = true }: { visible?: boolean }) {
   const runtime = useAppUpdateRuntime(options);
   return visible ? (
@@ -181,6 +187,7 @@ function RuntimePanel({ visible = true }: { visible?: boolean }) {
         message: runtime.appUpdateMessage,
         progress: runtime.downloadProgress,
         check: runtime.checkAppUpdate,
+        openReleaseNoteLink,
         start: runtime.startAppUpdateDownload,
         pause: runtime.pauseAppUpdateDownload,
         resume: runtime.resumeAppUpdateDownload,
@@ -761,6 +768,20 @@ describe('recoverable app updates', () => {
     );
   });
 
+  it('installs the verified replacement after a failed metadata save in the discarded range attempt', async () => {
+    save();
+    mockFiles.set(target(), 40);
+    mockPlans.push(async (_uri, progress) => {
+      jest.mocked(AsyncStorage.setItem).mockRejectedValueOnce(new Error('metadata unavailable'));
+      progress({ bytesWritten: 50, totalBytes: 101 });
+      throw Object.assign(new Error('range'), { code: 'ERR_DOWNLOAD_RANGE' });
+    });
+    const hook = await readyHook();
+    await act(() => hook.result.current.resumeAppUpdateDownload());
+    expect(mockReceivedOffsets).toEqual([40, 0]);
+    expect(mockOpen).toHaveBeenCalledTimes(1);
+  });
+
   it('ignores callbacks from a replaced native task during the full retry', async () => {
     save();
     mockFiles.set(target(), 40);
@@ -855,6 +876,60 @@ describe('recoverable app updates', () => {
     expect(mockReceivedOffsets).toEqual([40, 0]);
     expect(mockOpen).not.toHaveBeenCalled();
     expect(hook.result.current.phase).toBe('idle');
+  });
+
+  it.each([true, false])('restarts a digest mismatch only after a real 206 append: %s', async (appendedRange) => {
+    mockFiles.set(target(), 89);
+    save();
+    const inspect = NativeModules.ApkInstallerModule.inspectApk;
+    let firstFullArtifact = true;
+    NativeModules.ApkInstallerModule.inspectApk = async (uri: string) => {
+      const info = await inspect(uri);
+      if (!firstFullArtifact) return info;
+      firstFullArtifact = false;
+      return { ...info, sha256: '0'.repeat(64) };
+    };
+    mockAppendedRange.push(appendedRange);
+
+    const hook = await readyHook();
+    await act(() => hook.result.current.resumeAppUpdateDownload());
+
+    expect(mockReceivedOffsets).toEqual(appendedRange ? [89, 0] : [89]);
+    expect(mockFiles.has(target())).toBe(false);
+    expect(mockOpen).toHaveBeenCalledTimes(appendedRange ? 1 : 0);
+  });
+
+  it('resumes at zero after a corrupt appended file finishes during a pause', async () => {
+    save();
+    mockFiles.set(target(), 40);
+    mockAppendedRange.push(true);
+    const completed = Promise.withResolvers<object>();
+    mockPlans.push(async (uri) => {
+      mockFiles.set(uri, 90);
+      return completed.promise;
+    });
+    const inspect = NativeModules.ApkInstallerModule.inspectApk;
+    NativeModules.ApkInstallerModule.inspectApk = async (uri: string) => ({
+      ...(await inspect(uri)),
+      sha256: '0'.repeat(64)
+    });
+    const hook = await readyHook();
+    let transfer!: Promise<void>;
+    await act(async () => {
+      transfer = hook.result.current.resumeAppUpdateDownload();
+    });
+    await waitFor(() => expect(mockReceivedOffsets).toEqual([40]));
+    await act(() => hook.result.current.pauseAppUpdateDownload());
+    await act(async () => {
+      completed.resolve({});
+      await transfer;
+    });
+    expect(hook.result.current.artifact).toMatchObject({ kind: 'partial', downloadedBytes: 0 });
+    expect(mockFiles.has(target())).toBe(false);
+    expect(mockOpen).not.toHaveBeenCalled();
+    NativeModules.ApkInstallerModule.inspectApk = inspect;
+    await act(() => hook.result.current.resumeAppUpdateDownload());
+    expect(mockReceivedOffsets).toEqual([40, 0]);
   });
 
   it('discards a fully transferred invalid APK and retries only on the next user action', async () => {
@@ -952,7 +1027,8 @@ describe('recoverable app updates', () => {
     const restoringStyle = sectionStyle();
     try {
       expect(view.getByText('正在恢复下载记录')).toBeTruthy();
-      expect(view.getByRole('button', { name: '正在恢复下载记录' })).toBeDisabled();
+      expect(view.getByTestId('more-update-check')).toBeDisabled();
+      expect(view.queryByTestId('more-update-action')).toBeNull();
       expect(view.queryByLabelText('下载并安装')).toBeNull();
     } finally {
       await act(async () => recovery.resolve(null));
@@ -967,16 +1043,20 @@ describe('recoverable app updates', () => {
       expect(view.getByLabelText('检查中').props.accessibilityState.disabled).toBe(true);
       expect(sectionStyle()).toEqual(idleStyle);
       expect(view.queryByText('正在检查更新')).toBeNull();
-      expect(view.getByTestId('more-update-action')).toBe(view.getByLabelText('检查中'));
+      expect(view.getByTestId('more-update-check')).toBe(view.getByLabelText('检查中'));
+      expect(view.queryByTestId('more-update-action')).toBeNull();
     } finally {
       await act(async () => checked.resolve(null));
     }
     expect(mockNotify).toHaveBeenCalledWith(`已是最新版 ${appConfig.expo.version}`);
     expect(view.getByText(`当前版本 ${appConfig.expo.version}`)).toBeTruthy();
+    expect(view.queryByTestId('more-update-action')).toBeNull();
+    expect(view.getByTestId('more-update-check')).toBeEnabled();
     expect(sectionStyle()).toEqual(restoringStyle);
     await fireEvent.press(view.getByLabelText('检查更新'));
-    expect(view.getByText('更新说明')).toBeTruthy();
+    expect(view.getByRole('button', { name: '收起更新说明' })).toBeTruthy();
     expect(view.getByLabelText('下载并安装')).toBeEnabled();
+    expect(view.queryByTestId('more-update-check')).toBeNull();
     expect(sectionStyle()).toEqual(idleStyle);
   });
 
@@ -997,7 +1077,7 @@ describe('recoverable app updates', () => {
       expect(view.getByText('正在校验安装包')).toBeTruthy();
       expect(view.getByRole('button', { name: '正在校验安装包' }).props.accessibilityValue.now).toBe(100);
       expect(view.queryByLabelText('暂停下载')).toBeNull();
-      expect(view.getByLabelText('检查更新').props.accessibilityState.disabled).toBe(true);
+      expect(view.queryByTestId('more-update-check')).toBeNull();
       await act(async () => inspected.resolve(update()));
       await waitFor(() => expect(view.getByRole('button', { name: '正在打开安装确认' })).toBeDisabled());
       expect(view.getByText('正在打开安装确认')).toBeTruthy();
@@ -1059,16 +1139,33 @@ describe('recoverable app updates', () => {
     });
     await view.rerender(<RuntimePanel />);
     expect(view.getByText('60%')).toBeTruthy();
-    await fireEvent.press(view.getByLabelText('暂停下载'));
+    const action = view.getByLabelText('暂停下载');
+    await fireEvent.press(action);
     await waitFor(() => expect(view.getByLabelText('继续下载').props.accessibilityState.disabled).toBe(false));
+    expect(view.getByLabelText('继续下载')).toBe(action);
     expect(view.getByText('60%')).toBeTruthy();
-    await fireEvent.press(view.getByLabelText('继续下载'));
+    const networkReady = Promise.withResolvers<void>();
+    mockNetwork.mockReturnValueOnce(networkReady.promise);
+    try {
+      await act(async () => {
+        void fireEvent.press(view.getByLabelText('继续下载'));
+      });
+      expect(view.getByLabelText('暂停下载')).toBe(action);
+      expect(view.getByText('60%')).toBeTruthy();
+      expect(view.getByLabelText('暂停下载').props.accessibilityValue.now).toBe(60);
+      expect(mockReceivedOffsets).toEqual([0]);
+    } finally {
+      await act(async () => networkReady.resolve());
+    }
     await waitFor(() => expect(view.getByLabelText('安装').props.accessibilityState.disabled).toBe(false));
+    await view.unmount();
+    const restored = await render(<RuntimePanel />);
+    await waitFor(() => expect(restored.getByLabelText('安装')).toBeEnabled());
     mockCheck.mockRejectedValueOnce(new Error('检查失败'));
-    await fireEvent.press(view.getByLabelText('检查更新'));
-    expect(view.getByText('检查失败')).toBeTruthy();
-    await waitFor(() => expect(view.getByLabelText('安装').props.accessibilityState.disabled).toBe(false));
-    await fireEvent.press(view.getByLabelText('安装'));
+    await fireEvent.press(restored.getByTestId('more-update-check'));
+    expect(restored.getByText('检查失败')).toBeTruthy();
+    expect(restored.getByTestId('more-update-check')).toBeEnabled();
+    await fireEvent.press(restored.getByLabelText('安装'));
     await waitFor(() => expect(mockOpen).toHaveBeenCalledTimes(2));
     expect(mockReceivedOffsets).toEqual([0, 60]);
   });
@@ -1096,10 +1193,14 @@ describe('recoverable app updates', () => {
       await act(async () => {
         void fireEvent.press(view.getByLabelText('暂停下载'));
       });
-      expect(view.getByText('正在暂停下载')).toBeTruthy();
-      expect(view.getByRole('button', { name: '正在暂停下载' })).toBeDisabled();
+      expect(view.getByText('暂停下载')).toBeTruthy();
+      expect(view.queryByText('正在暂停下载')).toBeNull();
+      const pausing = view.getByRole('button', { name: '正在暂停下载' });
+      expect(pausing).toBe(pause);
+      expect(pausing).toBeDisabled();
+      expect(pausing.props.accessibilityValue).toEqual(pause.props.accessibilityValue);
       expect(view.queryByLabelText('继续下载')).toBeNull();
-      expect(view.getByLabelText('检查更新').props.accessibilityState.disabled).toBe(true);
+      expect(view.queryByTestId('more-update-check')).toBeNull();
     } finally {
       await act(async () => stopped.resolve(null));
     }

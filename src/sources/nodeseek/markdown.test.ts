@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { MAX_NODESEEK_MARKDOWN_BYTES, nodeSeekMarkdownCandidateHtml, nodeSeekMarkdownToHtml } from './markdown';
 
 describe('NodeSeek Markdown', () => {
+  it('preserves a reference link named x at the beginning of a list item', () => {
+    const html = nodeSeekMarkdownToHtml('- [x] linked item\n\n[x]: https://example.com/reference');
+    expect(html).toContain('href="https://example.com/reference"');
+    expect(html).not.toContain('task-list-marker');
+  });
+
   it('keeps ordinary Markdown and linkify rendering enabled', () => {
     const html = nodeSeekMarkdownToHtml('**正文** https://example.com/path');
 

@@ -1,7 +1,7 @@
-import type { RefObject } from 'react';
+import { useLayoutEffect, useRef, type RefObject } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
-import { LoginWebViewModal } from '@/ui/navigation/LoginWebViewModal';
+import { type InlineLoginWebView, LoginWebViewModal } from '@/ui/navigation/LoginWebViewModal';
 import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
 import { MemoizedLinuxDoVerifyModal } from './components/LinuxDoVerifyModal';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
@@ -19,6 +19,7 @@ export function AccountHost({
   onLinuxDoDocumentNavigation,
   onLinuxDoVerificationPageEvent,
   recoveryPanel,
+  inlineRecovery,
   retryLinuxDoRecovery,
   checking,
   credentialFillAttempt,
@@ -61,6 +62,7 @@ export function AccountHost({
   onLinuxDoDocumentNavigation?: (webViewKey: number) => void;
   onLinuxDoVerificationPageEvent?: (event: LinuxDoVerificationPageEvent, webViewKey: number) => void;
   recoveryPanel?: LinuxDoRecoveryPanel;
+  inlineRecovery?: InlineLoginWebView;
   retryLinuxDoRecovery?: () => void;
   checking: boolean;
   credentialFillAttempt: number;
@@ -99,6 +101,15 @@ export function AccountHost({
   styles: AccountHostStyles;
   webViewBlockMessage: string;
 }) {
+  const nodeImageKey = showNodeImageAuthPanel && !nodeImageWebViewBlockMessage ? nodeImageAuthDocument?.key : undefined;
+  const frame = useRef({ key: nodeImageKey, url: '', started: false, failed: false });
+  useLayoutEffect(() => {
+    frame.current = { key: nodeImageKey, url: '', started: false, failed: false };
+  }, [nodeImageKey]);
+  const activeNodeImageFrame = () => {
+    const current = frame.current;
+    return nodeImageKey && current.key === nodeImageKey ? current : undefined;
+  };
   return (
     <>
       <MemoizedLinuxDoVerifyModal
@@ -106,6 +117,7 @@ export function AccountHost({
         onDocumentNavigation={onLinuxDoDocumentNavigation}
         onVerificationPageEvent={onLinuxDoVerificationPageEvent}
         recoveryPanel={recoveryPanel}
+        inlineRecovery={inlineRecovery}
         onRetryRecovery={retryLinuxDoRecovery}
         checking={checking}
         credentialAttempt={credentialFillAttempt}
@@ -153,14 +165,38 @@ export function AccountHost({
               sharedCookiesEnabled
               thirdPartyCookiesEnabled
               setSupportMultipleWindows={false}
-              onLoadStart={() => {
+              onMainFrameLoadStart={({ nativeEvent }) => {
+                const nodeImageFrame = activeNodeImageFrame();
+                if (!nodeImageFrame) return;
+                const url = nativeEvent.url.split('#', 1)[0];
+                const earlyFailure =
+                  !nodeImageFrame.started &&
+                  nodeImageFrame.failed &&
+                  (!nodeImageFrame.url || nodeImageFrame.url === url);
+                nodeImageFrame.started = true;
+                nodeImageFrame.url = url;
+                if (earlyFailure) return;
+                nodeImageFrame.failed = false;
+                setNodeImageAuthError('');
                 setLoadingNodeImageAuthPage(true);
               }}
-              onLoadEnd={() => {
+              onLoadEnd={({ nativeEvent }) => {
+                const nodeImageFrame = activeNodeImageFrame();
+                if (
+                  !nodeImageFrame ||
+                  (nodeImageFrame.url && nativeEvent.url && nodeImageFrame.url !== nativeEvent.url.split('#', 1)[0])
+                )
+                  return;
                 setLoadingNodeImageAuthPage(false);
               }}
               onMessage={handleNodeImageAuthMessage}
               onError={(event) => {
+                const nodeImageFrame = activeNodeImageFrame();
+                if (!nodeImageFrame) return;
+                const url = event.nativeEvent.url?.split('#', 1)[0];
+                if (url && nodeImageFrame.url && nodeImageFrame.url !== url) return;
+                nodeImageFrame.url = url || nodeImageFrame.url;
+                nodeImageFrame.failed = true;
                 setLoadingNodeImageAuthPage(false);
                 setNodeImageAuthError(
                   `NodeImage 页面加载失败：${event.nativeEvent.description || '请检查网络后关闭重试。'}`
@@ -168,6 +204,7 @@ export function AccountHost({
               }}
               renderError={() => <View style={styles.webViewErrorPlaceholder} />}
               onRenderProcessGone={() => {
+                if (!activeNodeImageFrame()) return;
                 setLoadingNodeImageAuthPage(false);
                 setNodeImageAuthError('NodeImage 授权页面已停止，请关闭后重试。');
               }}

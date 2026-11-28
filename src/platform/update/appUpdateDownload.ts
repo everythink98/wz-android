@@ -27,10 +27,15 @@ export function appUpdateFile(update: AppUpdateInfo, complete = false) {
   return new File(updateDirectory(), `wz-update-${update.versionCode}-${update.sha256}.${complete ? 'apk' : 'part'}`);
 }
 
-async function verify(file: File, update: AppUpdateInfo, trace?: DiagnosticTrace) {
+async function verify(file: File, update: AppUpdateInfo, trace?: DiagnosticTrace, completedTransfer = false) {
   if (trace) markDiagnosticStage(trace, 'parse', { state: 'package-verification', versionCode: update.versionCode });
   try {
-    await verifyDownloadedApk(NativeModules.ApkInstallerModule as ApkInstaller | undefined, file.uri, update);
+    await verifyDownloadedApk(
+      NativeModules.ApkInstallerModule as ApkInstaller | undefined,
+      file.uri,
+      update,
+      completedTransfer
+    );
     if (trace) markDiagnosticStage(trace, 'parse', { state: 'verified' });
   } catch (error) {
     if (trace)
@@ -187,7 +192,7 @@ export async function finishAppUpdateDownload(
 ): Promise<AppUpdateArtifact> {
   const partial = appUpdateFile(artifact.update);
   try {
-    await verify(partial, artifact.update, trace);
+    await verify(partial, artifact.update, trace, true);
   } catch (error) {
     if (isInvalidApk(error) && partial.exists) partial.delete();
     throw error;

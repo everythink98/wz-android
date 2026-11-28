@@ -464,7 +464,8 @@ describe('H12 offline untouched edit recovery & refocus receipt settlement', () 
       const verify = await view.findByRole('button', { name: '完成验证后继续' });
       await fireEvent.press(verify);
       expect(nextRuntime.openAccount).toHaveBeenCalledTimes(1);
-      const recovery = jest.mocked(nextRuntime.openAccount).mock.calls[0]![2]!;
+      const recovery = jest.mocked(nextRuntime.openAccount).mock.calls[0]![2];
+      if (!recovery || !('queryKey' in recovery)) throw new Error('Missing edit read recovery');
       challenged = false;
       await act(async () => {
         const resumed = recovery.resume();

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, within, waitFor } from '../render';
 import React, { useState } from 'react';
-import { Animated, Platform, StyleSheet } from 'react-native';
+import { Animated, Platform, StyleSheet, View } from 'react-native';
 import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
 import { getAnimatedStyle } from 'react-native-reanimated';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
@@ -16,6 +16,8 @@ import { setStartupTimingRecorder, type StartupPhase } from '@/platform/diagnost
 import { createTheme } from '@/ui/theme/tokens';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { defaultFeedFilters } from '@/domain/forum/feedOptions';
+import { NavigationBackdropProvider, NavigationBackdropTarget, NavigationGlass } from '@/ui/navigation/NavigationGlass';
+import * as loadingPlaceholder from '@/ui/controls/ContentLoadingPlaceholder';
 import type { ReadingFilter } from '@/domain/forum/feed';
 import type { Category, FeedFilterState, FeedSource, Source, SourceFeedFilter, Topic } from '@/domain/forum/models';
 
@@ -305,10 +307,14 @@ function renderFeed(
   );
 }
 
+const defaultControllerSources: Source[] = ['linuxdo'];
+
 function ControllerFeed({
+  enabledSources = defaultControllerSources,
   gateway,
   showLinuxDoVerification = () => undefined
 }: {
+  enabledSources?: Source[];
   gateway: ReadGateway;
   showLinuxDoVerification?: Parameters<typeof useFeedController>[0]['showLinuxDoVerification'];
 }) {
@@ -319,15 +325,15 @@ function ControllerFeed({
         ...readerData.settings,
         contentSources: readerData.settings.contentSources.map((entry) => ({
           ...entry,
-          enabled: entry.source === 'linuxdo'
+          enabled: enabledSources.includes(entry.source)
         }))
       }
     }),
-    []
+    [enabledSources]
   );
   const controller = useFeedController({
-    enabledSources: ['linuxdo'],
-    enabledSourcesKey: 'linuxdo',
+    enabledSources,
+    enabledSourcesKey: enabledSources.join('|'),
     active: true,
     catalogCategories: categories,
     linuxDoVerificationActive: false,
@@ -350,6 +356,7 @@ function ControllerFeed({
     feedFilters: controller.feedFilters,
     feedFilter: controller.feedFilter,
     enabledFeedSources: controller.enabledFeedSources,
+    failedFeedSources: controller.failedFeedSources,
     loadMoreFailureSignal: controller.activeFeedState.loadMoreFailureSignal,
     loadMoreErrorMessage: controller.activeFeedState.loadMoreErrorMessage,
     loadingMore: controller.activeFeedState.loadingMore,
@@ -390,6 +397,51 @@ describe('feed initial content readiness', () => {
     } finally {
       setStartupTimingRecorder(undefined);
     }
+  });
+
+  it('offers a retry for the failed source while keeping the successful aggregate posts visible', async () => {
+    const enabledSources: Source[] = ['v2ex', 'linuxdo'];
+    const available = { ...topic, source: 'v2ex' as const, id: '471', title: 'V2EX 仍可阅读' };
+    const recovered = { ...topic, source: 'linuxdo' as const, id: '472', title: 'L 站重试成功' };
+    const getFeed = jest.fn<ReadGateway['getFeed']>(async ({ source }) =>
+      source === 'all'
+        ? {
+            items: [available],
+            hasMore: false,
+            nextPage: null,
+            errors: { linuxdo: { kind: 'ordinary', message: 'Connection reset', retryable: true } }
+          }
+        : { items: [recovered], hasMore: false, nextPage: null, errors: {} }
+    );
+    const fetcher = jest.fn(async () => new Response('{}'));
+    const gateway = {
+      ...createReadGateway({
+        fetcher,
+        anonymousFetcher: fetcher,
+        getEnabledSources: () => enabledSources,
+        linuxDoUserAgent: () => 'saved',
+        nodeSeekUserAgent: () => 'saved',
+        readSessionRuntimeSnapshot: (source) => ({
+          source,
+          sourceEnabled: enabledSources.includes(source),
+          authenticated: false,
+          authSurfaceOpen: false,
+          identityKey: `${source}:anonymous`,
+          identityTrust: 'unknown',
+          sessionEpoch: 0
+        })
+      }),
+      getFeed
+    };
+    const view = await render(
+      <QueryTestWrapper>
+        <ControllerFeed enabledSources={enabledSources} gateway={gateway} />
+      </QueryTestWrapper>
+    );
+    await waitFor(() => expect(view.getByText(available.title)).toBeTruthy());
+    await fireEvent.press(view.getByRole('button', { name: '前往 linux.do 重试' }));
+    await waitFor(() => expect(view.getByText(recovered.title)).toBeTruthy());
+    expect(getFeed.mock.calls.map(([request]) => request.source)).toEqual(['all', 'linuxdo']);
   });
 
   it.each(['unavailable', 'verification'] as const)(
@@ -1158,6 +1210,57 @@ describe('Feed loading', () => {
       const action = StyleSheet.flatten(view.getByTestId('feed-create-topic-action').props.style);
       expect(action.bottom).toBeGreaterThanOrEqual(height + 16);
     }
+  });
+
+  it('keeps the create action on the Feed backdrop when Search takes over the bottom bar', async () => {
+    const screen = (feedActive: boolean) => (
+      <NavigationBackdropProvider>
+        {renderFeed(false, [topic], { active: feedActive })}
+        <NavigationBackdropTarget active={!feedActive}>
+          <View />
+        </NavigationBackdropTarget>
+        <NavigationGlass variant="control" />
+      </NavigationBackdropProvider>
+    );
+    const view = await render(screen(true));
+    const createGlass = () =>
+      within(view.getByTestId('feed-create-topic-action', { includeHiddenElements: true })).getByTestId(
+        'navigation-glass',
+        { includeHiddenElements: true }
+      );
+    const tabGlass = () => view.getByTestId('navigation-glass-control');
+    const feedTarget: unknown = createGlass().props.blurTarget?.current;
+    expect(feedTarget).toBeTruthy();
+    expect(tabGlass().props.blurTarget?.current).toBe(feedTarget);
+
+    await view.rerender(screen(false));
+
+    expect(tabGlass().props.blurTarget?.current).toBeTruthy();
+    expect(tabGlass().props.blurTarget?.current === feedTarget).toBe(false);
+    expect(createGlass().props.blurTarget?.current === feedTarget).toBe(true);
+  });
+
+  it('keeps the settled pager and list mounted when route focus changes', async () => {
+    const skeletonBlocks = jest.spyOn(loadingPlaceholder, 'SkeletonBlock');
+    const feed = renderFeed(false, [topic]);
+    const view = await render(feed);
+    await waitFor(() => expect(view.getByText(topic.title)).toBeTruthy());
+    expect(skeletonBlocks).toHaveBeenCalled();
+    skeletonBlocks.mockClear();
+    const pagerRenders = mockFeedPagerRenders;
+    const listMounts = mockFlashListMountCount;
+
+    await view.rerender(React.cloneElement(feed, { active: false }));
+    expect(view.queryByLabelText('发帖')).toBeNull();
+    const blurSkeletonBlocks = skeletonBlocks.mock.calls.length;
+    skeletonBlocks.mockClear();
+
+    await view.rerender(React.cloneElement(feed, { active: true }));
+    expect(view.getByText(topic.title)).toBeTruthy();
+    expect(view.getByLabelText('发帖')).toBeTruthy();
+    expect(mockFlashListMountCount).toBe(listMounts);
+    expect(mockFeedPagerRenders).toBe(pagerRenders);
+    expect({ blur: blurSkeletonBlocks, focus: skeletonBlocks.mock.calls.length }).toEqual({ blur: 0, focus: 0 });
   });
 
   it('hides creation on downward scrolling, reveals it upward and restores it when returning', async () => {

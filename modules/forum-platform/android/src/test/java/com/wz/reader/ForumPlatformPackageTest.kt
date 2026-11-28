@@ -13,7 +13,13 @@ class ForumPlatformPackageTest {
     ReactNativeFeatureFlagsForTests.setUp()
     val context = BridgeReactContext(android.content.ContextWrapper(null))
     assertEquals(
-      listOf("WzPreviewRegionImage", "WzComposerKeyboardHost", "WzSearchHistoryIcon", "WzSearchHistoryFrame"),
+      listOf(
+        "WzPreviewRegionImage",
+        "WzComposerKeyboardHost",
+        "WzSearchHistoryIcon",
+        "WzSearchHistoryFrame",
+        "WzRetainedTabScene",
+      ),
       ForumPlatformPackage().createViewManagers(context).map { it.getName() },
     )
   }

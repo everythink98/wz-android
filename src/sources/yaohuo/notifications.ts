@@ -1,4 +1,4 @@
-import { elementText, hasRenderableHtmlContent, parseHtml, toIsoString } from '@/domain/forum/html';
+import { elementText, hasRenderableHtmlContent, isRecord, parseHtml, toIsoString } from '@/domain/forum/html';
 import { parseForumUserLink } from '@/domain/forum/links';
 import { notificationPageError, notificationPageQuality } from '@/domain/notifications/notificationQuality';
 import {
@@ -20,8 +20,11 @@ import type {
   NotificationListOptions
 } from '@/sources/notificationAdapter';
 import { sanitizeContentHtmlWithRoot } from '@/domain/forum/contentSanitizer';
+import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
+import { fetchWithTimeout } from '@/platform/network/request';
 import { fetchYaohuoHtml } from './reader';
-import { YAOHUO_BASE_URL } from './protocol';
+import { requireYaohuoRequestUrl, YAOHUO_BASE_URL, YAOHUO_LOGIN_URL } from './protocol';
+import { ensureYaohuoHtmlLoggedIn, yaohuoLoginRequiredError } from './sessionParser';
 import { buildYaohuoMessageReplyRequest } from './actionRequest';
 import { runYaohuoAction } from './actionClient';
 
@@ -34,6 +37,8 @@ const yaohuoNotificationCategories = [
 const absoluteChatTimePattern = /\d{4}[/-]\d{1,2}[/-]\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?/;
 
 type ParsedNotificationMessage = NotificationMessage & { contentKey: string };
+type ChatNode = ReturnType<typeof parseHtml>;
+type YaohuoChatScope = { kind: 'system' } | { kind: 'member'; partnerId?: string; name: string; selfId: string };
 type YaohuoUnreadScan =
   | { kind: 'reading'; cursor: number; seen: Set<number>; items: ForumNotification[]; pages: NotificationPage[] }
   | { kind: 'complete'; items: ForumNotification[]; pages: NotificationPage[] };
@@ -174,37 +179,200 @@ function currentChatContent(row: ReturnType<typeof parseHtml>, detailUrl: string
 }
 
 function currentChatMessages(
-  page: ReturnType<typeof parseHtml>,
+  rows: ChatNode[],
   detailUrl: string,
-  otherAuthor: string,
-  originalId: string
+  scope: YaohuoChatScope,
+  anchor?: ChatNode
 ): NotificationMessage[] {
-  return page
-    .querySelectorAll('.chat-list .chat-msg')
-    .flatMap((row) => {
-      const id = row.getAttribute('data-message-id') || '';
-      if (!/^\d+$/.test(id) || id === originalId) return [];
-      const mine = row.classList.contains('chat-msg--out');
-      const notice = row.classList.contains('chat-msg--notice');
-      if (!mine && !notice && !row.classList.contains('chat-msg--in')) return [];
-      const content = currentChatContent(row, detailUrl);
-      if (!hasRenderableHtmlContent(content.contentHtml, content.root)) return [];
-      const time = `${row.getAttribute('data-date') || ''} ${elementText(row.querySelector('.chat-time'))}`;
-      return [
-        {
-          id: `chat:${id}`,
-          author: mine ? '我' : notice ? '系统' : otherAuthor,
-          contentHtml: content.contentHtml,
-          createdAt: toIsoString(time, '+08:00') || null,
-          mine
+  const anchorId = anchor?.getAttribute('data-message-id');
+  const messages = new Map<string, NotificationMessage>();
+  let groupDate: string | undefined;
+  for (const row of rows) {
+    if (row.classList.contains('chat-date')) {
+      groupDate = row.getAttribute('data-date');
+      continue;
+    }
+    if (!row.classList.contains('chat-msg') || row.classList.contains('is-pending')) continue;
+    const id = row.getAttribute('data-message-id') || '';
+    if (!positiveId(id) || (id === anchorId && row !== anchor) || messages.has(id)) continue;
+    const notice = row.classList.contains('chat-msg--notice');
+    const mine = scope.kind === 'member' && row.classList.contains('chat-msg--out');
+    if (row !== anchor && !notice && (scope.kind === 'system' || (!mine && !row.classList.contains('chat-msg--in'))))
+      continue;
+    const sender = row.getAttribute('data-sender');
+    if (!notice && sender && scope.kind === 'member') {
+      const expectedSender = mine ? scope.selfId : scope.partnerId;
+      if (expectedSender && sender !== expectedSender) continue;
+    }
+    const content = currentChatContent(row, detailUrl);
+    if (!hasRenderableHtmlContent(content.contentHtml, content.root)) continue;
+    const date = row.getAttribute('data-date') || groupDate;
+    const time = elementText(row.querySelector('.chat-time'));
+    const timestamp =
+      time && date && !absoluteChatTimePattern.test(time) ? `${date} ${time}` : time || row.getAttribute('data-date');
+    messages.set(id, {
+      id: `chat:${id}`,
+      author: mine ? '我' : scope.kind === 'system' || notice ? '系统' : scope.name,
+      contentHtml: content.contentHtml,
+      createdAt: toIsoString(timestamp, '+08:00') || null,
+      mine
+    });
+  }
+  return [...messages.values()];
+}
+
+function sortChatMessages(messages: NotificationMessage[]) {
+  return [...messages].sort((left, right) => {
+    if (left.createdAt && right.createdAt && left.createdAt !== right.createdAt)
+      return left.createdAt < right.createdAt ? -1 : 1;
+    if (Boolean(left.createdAt) !== Boolean(right.createdAt)) return left.createdAt ? -1 : 1;
+    return Number(left.id.slice('chat:'.length)) - Number(right.id.slice('chat:'.length));
+  });
+}
+
+function positiveId(value: string | undefined): value is string {
+  return Boolean(value && /^[1-9]\d*$/.test(value) && Number.isSafeInteger(Number(value)));
+}
+
+function exactChatWindow(page: ChatNode, item: ForumNotification, id: string, selfId: string) {
+  const rows = page.querySelector('.chat-list')?.children || [];
+  const messageRows = rows.filter((row) => row.classList.contains('chat-msg') && !row.classList.contains('is-pending'));
+  const marked = messageRows.filter((row) => row.classList.contains('is-anchor'));
+  const candidates = marked.length ? marked : messageRows.filter((row) => row.getAttribute('data-message-id') === id);
+  const anchor = candidates[0];
+  if (
+    page.getAttribute('data-message-id') !== id ||
+    candidates.length !== 1 ||
+    anchor?.getAttribute('data-message-id') !== id
+  )
+    throw new Error('妖火消息对应的正文未找到');
+
+  const declaredPartner = page.getAttribute('data-partner-id');
+  const partnerId = positiveId(declaredPartner) ? declaredPartner : undefined;
+  const privateMessage = item.kind === 'private-message';
+  if (privateMessage && partnerId && item.actor.id && partnerId !== item.actor.id)
+    throw new Error('妖火消息会话与收件箱不一致');
+  const scope: YaohuoChatScope =
+    privateMessage || partnerId
+      ? {
+          kind: 'member',
+          partnerId,
+          name: page.getAttribute('data-partner-name')?.trim() || (privateMessage ? item.actor.name : '妖火用户'),
+          selfId
         }
-      ];
-    })
-    .sort(
-      (left, right) =>
-        (left.createdAt ? Date.parse(left.createdAt) : Number.POSITIVE_INFINITY) -
-        (right.createdAt ? Date.parse(right.createdAt) : Number.POSITIVE_INFINITY)
+      : { kind: 'system' };
+  return { rows, anchor, scope };
+}
+
+function messageWindowCursor(anchorId: string, partnerId: string, boundary: NotificationMessage | undefined) {
+  const edgeId = boundary?.id.slice('chat:'.length);
+  return positiveId(anchorId) && positiveId(edgeId) ? `${anchorId}:${partnerId}:${edgeId}` : null;
+}
+
+async function readMessageWindow(
+  item: ForumNotification,
+  cursor: string,
+  direction: 'up' | 'down',
+  options: NotificationAdapterAccess
+) {
+  const [anchorId, partnerId, boundaryId, ...rest] = cursor.split(':');
+  if (
+    rest.length ||
+    item.target.type !== 'message-detail' ||
+    anchorId !== item.target.messageId ||
+    anchorId !== messageId(item.target.url) ||
+    !positiveId(anchorId) ||
+    !positiveId(boundaryId) ||
+    (partnerId !== '0' && !positiveId(partnerId)) ||
+    (item.kind !== 'system' && (item.kind !== 'private-message' || partnerId === '0' || partnerId !== item.actor.id))
+  )
+    throw new Error('妖火会话游标不正确');
+  const detailUrl = item.target.url;
+  let scope: YaohuoChatScope = { kind: 'member', partnerId, name: item.actor.name, selfId: options.userId };
+  if (item.kind === 'system') {
+    const original = await fetchYaohuoHtml(detailUrl, options.fetcher, options);
+    const page = parseHtml(original.html).querySelector('.msgview-page');
+    if (!page) throw new Error('妖火会话游标不正确');
+    scope = exactChatWindow(page, item, anchorId, options.userId).scope;
+    if ((scope.kind === 'member' ? scope.partnerId : '0') !== partnerId) throw new Error('妖火会话游标不正确');
+  }
+  const userAgent = await resolveWebViewUserAgent(options.userAgent, options.signal);
+  const requestJson = async (path: string, body?: URLSearchParams): Promise<unknown> => {
+    const url = new URL(path, YAOHUO_BASE_URL).toString();
+    const response = await fetchWithTimeout(
+      url,
+      {
+        headers: {
+          Accept: 'application/json',
+          Referer: detailUrl,
+          'Cache-Control': 'no-store',
+          'User-Agent': userAgent,
+          ...(body
+            ? { Origin: YAOHUO_BASE_URL, 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' }
+            : {})
+        },
+        redirect: 'manual',
+        ...(body ? { method: 'POST', body: body.toString() } : {})
+      },
+      options
     );
+    const responseUrl = requireYaohuoRequestUrl(response.url || url);
+    const responseBody = await response.text();
+    if (!response.ok) {
+      const location = response.headers.get('location');
+      if (
+        response.status >= 300 &&
+        response.status < 400 &&
+        location &&
+        requireYaohuoRequestUrl(location, url) === YAOHUO_LOGIN_URL
+      )
+        throw yaohuoLoginRequiredError();
+      if (responseBody.trimStart().startsWith('<')) ensureYaohuoHtmlLoggedIn(responseBody, responseUrl);
+      throw Object.assign(new Error(`HTTP ${response.status}`), { status: response.status });
+    }
+    try {
+      return JSON.parse(responseBody);
+    } catch {
+      ensureYaohuoHtmlLoggedIn(responseBody, responseUrl);
+      throw new Error('妖火会话响应格式不正确');
+    }
+  };
+  const token = await requestJson('/bbs/messagelist_del.aspx?action=csrftoken');
+  if (!isRecord(token) || token.success !== true || typeof token.token !== 'string' || !token.token.trim()) {
+    throw new Error('无法读取妖火会话凭据');
+  }
+  const result = await requestJson(
+    '/bbs/messagelist_view.aspx',
+    new URLSearchParams({
+      action: 'loadMore',
+      direction,
+      lastMessageId: boundaryId,
+      partnerId,
+      format: 'html',
+      ajax: '1',
+      __CSRFToken: token.token
+    })
+  );
+  if (
+    !isRecord(result) ||
+    result.success !== true ||
+    typeof result.hasMore !== 'boolean' ||
+    typeof result.count !== 'number' ||
+    !Number.isSafeInteger(result.count) ||
+    result.count < 0 ||
+    (result.html != null && typeof result.html !== 'string')
+  )
+    throw new Error('妖火会话分页格式不正确');
+  const rows = parseHtml(result.html ?? '').children;
+  const messages = currentChatMessages(rows, detailUrl, scope);
+  const hasMore = result.hasMore && result.count > 0;
+  const next = hasMore
+    ? messageWindowCursor(anchorId, partnerId, direction === 'up' ? messages[0] : messages.at(-1))
+    : null;
+  if ((result.count > 0 && !messages.length) || (hasMore && (!next || next === cursor))) {
+    throw new Error('妖火会话分页缺少消息或没有向前推进');
+  }
+  return { messages: sortChatMessages(messages), cursor: next };
 }
 
 function messageContentKey(root: ReturnType<typeof parseHtml>) {
@@ -357,34 +525,34 @@ export const yaohuoNotificationAdapter = {
     const root = parseHtml(result.html);
     const page = root.querySelector('.msgview-page');
     if (page) {
-      const anchors = page.querySelectorAll('.chat-list .chat-msg.is-anchor');
-      const anchor = anchors[0];
       const id = item.target.messageId;
-      if (
-        page.getAttribute('data-message-id') !== id ||
-        anchors.length !== 1 ||
-        anchor?.getAttribute('data-message-id') !== id
-      )
-        throw new Error('妖火消息对应的正文未找到');
-      const content = currentChatContent(anchor, detailUrl);
-      if (!hasRenderableHtmlContent(content.contentHtml, content.root)) throw new Error('妖火消息对应的正文未找到');
+      const { rows, anchor, scope } = exactChatWindow(page, item, id, options.userId);
       const replyable = item.kind === 'private-message';
-      const partnerId = page.getAttribute('data-partner-id') || '';
-      const actorId =
-        replyable && /^\d+$/.test(partnerId) && Number.isSafeInteger(Number(partnerId)) && Number(partnerId) > 0
-          ? partnerId
+      const actorId = replyable && scope.kind === 'member' ? scope.partnerId : undefined;
+      const notification = actorId ? { ...item, actor: { ...item.actor, id: actorId } } : item;
+      const messages = currentChatMessages(rows, detailUrl, scope, anchor);
+      const messageAnchorId = `chat:${id}`;
+      if (!messages.some((message) => message.id === messageAnchorId)) throw new Error('妖火消息对应的正文未找到');
+      const historyPartner = scope.kind === 'member' ? scope.partnerId : '0';
+      const older = page.querySelector('#msgviewOlder');
+      const newer = page.querySelector('#msgviewNewer');
+      const messageHistory =
+        historyPartner && (older || newer)
+          ? {
+              olderCursor:
+                older && !older.hasAttribute('hidden') ? messageWindowCursor(id, historyPartner, messages[0]) : null,
+              newerCursor:
+                newer && !newer.hasAttribute('hidden') ? messageWindowCursor(id, historyPartner, messages.at(-1)) : null
+            }
           : undefined;
       return {
-        notification: actorId ? { ...item, actor: { ...item.actor, id: actorId } } : item,
+        notification,
         title: item.title,
-        contentHtml: content.contentHtml,
-        ...(replyable
-          ? {
-              messages: currentChatMessages(page, detailUrl, item.actor.name, id),
-              reply: { format: 'plain-text' as const },
-              historyNotice: '仅展示原站当前返回的聊天记录。'
-            }
-          : {})
+        messages: sortChatMessages(messages),
+        messageAnchorId,
+        ...(messageHistory ? { messageHistory } : {}),
+        ...(replyable ? { reply: { format: 'plain-text' } } : {}),
+        ...(replyable && !messageHistory ? { historyNotice: '仅展示原站当前返回的聊天记录。' } : {})
       };
     }
     const content = detailContent(root, detailUrl);
@@ -406,6 +574,16 @@ export const yaohuoNotificationAdapter = {
           }
         : {})
     };
+  },
+
+  async loadEarlierMessages(item: ForumNotification, cursor: string, options: NotificationAdapterAccess) {
+    const page = await readMessageWindow(item, cursor, 'up', options);
+    return { messages: page.messages, olderCursor: page.cursor };
+  },
+
+  async loadLaterMessages(item: ForumNotification, cursor: string, options: NotificationAdapterAccess) {
+    const page = await readMessageWindow(item, cursor, 'down', options);
+    return { messages: page.messages, newerCursor: page.cursor };
   },
 
   async replyToConversation(

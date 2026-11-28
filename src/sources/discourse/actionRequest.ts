@@ -223,11 +223,23 @@ export function buildDiscourseActionRequest(action: DiscourseAction): DiscourseA
   };
 }
 
+function uploadMarkdownUrl(markdown: string) {
+  const open = markdown.indexOf('](');
+  if (open < 0) return '';
+  let depth = 1;
+  for (let index = open + 2; index < markdown.length; index++) {
+    const char = markdown[index];
+    if (char === '\\') index++;
+    else if (char === '(') depth++;
+    else if (char === ')' && --depth === 0) return markdown.slice(open + 2, index).replace(/\\([\\()])/g, '$1');
+  }
+  return '';
+}
+
 export function discourseImageUrlFromUploadResponse(data: unknown, baseUrl: string, siteName: string) {
   const record = data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
   const markdown = typeof record.markdown === 'string' ? record.markdown : '';
-  const markdownUrl = markdown.match(/\]\(([^)]+)\)/)?.[1];
-  const rawUrl = String(markdownUrl || record.short_url || record.url || '').trim();
+  const rawUrl = String(record.short_url || record.url || uploadMarkdownUrl(markdown)).trim();
   if (!rawUrl) {
     throw new Error(`${siteName} 上传返回缺少图片地址`);
   }

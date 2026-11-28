@@ -385,27 +385,76 @@ function useOriginalImageUpgrade(
   };
 }
 
+function usePreviewImageLayout(
+  {
+    alignment,
+    boundarySpacing,
+    contentWidth: availableWidth,
+    frameBackgroundColor,
+    frameBorderColor,
+    imageProps,
+    imageSource,
+    maxHeight
+  }: PreviewImageBlockProps,
+  dimensions?: CachedImageDimensions
+) {
+  const contentWidth = Math.max(1, availableWidth);
+  const naturalDimensions = dimensions || { width: contentWidth, height: Math.round(contentWidth * 0.75) };
+  const { height: _height, width: _width, ...naturalImageStyle } = StyleSheet.flatten(imageProps.style) || {};
+  const imageState = useIMGElementStateWithCache({
+    ...imageProps,
+    cachedNaturalDimensions: naturalDimensions,
+    contentWidth,
+    height: undefined,
+    source: imageSource,
+    style: [naturalImageStyle, { resizeMode: 'contain', ...(maxHeight === undefined ? {} : { maxHeight }) }],
+    width: undefined
+  });
+  const {
+    width: _boxWidth,
+    height: _boxHeight,
+    ...containerStyle
+  } = StyleSheet.flatten(imageState.containerStyle) || {};
+  const sharedContainerStyle = [
+    { flexDirection: 'row' as const, alignSelf: 'stretch' as const, justifyContent: alignment },
+    containerStyle,
+    boundarySpacing
+  ];
+  const imageStateFrameStyle = [
+    {
+      alignItems: 'center' as const,
+      backgroundColor: frameBackgroundColor,
+      borderColor: frameBorderColor,
+      borderRadius: readerRadii.content,
+      borderWidth: StyleSheet.hairlineWidth,
+      justifyContent: 'center' as const,
+      overflow: 'hidden' as const
+    },
+    imageState.dimensions
+  ];
+  return { imageState, sharedContainerStyle, imageStateFrameStyle, naturalDimensions };
+}
+
 function AdmittedPreviewImageBlock({
-  alignment,
-  attributes,
-  boundarySpacing,
   bodyMediaLease,
-  contentWidth: availableContentWidth,
-  displaySize,
-  errorTextStyle,
-  frameBackgroundColor,
-  frameBorderColor,
-  hasDestinationLink,
-  imageProps,
-  imageSource,
-  loadingColor,
-  maxHeight,
-  mediaContext,
-  nodeSeekMediaUserAgent,
-  onOpenImagePreview,
-  originalUri,
-  src
-}: PreviewImageBlockProps & { bodyMediaLease: ReturnType<typeof useTopicBodyMediaLease> }) {
+  ...props
+}: PreviewImageBlockProps & {
+  bodyMediaLease: ReturnType<typeof useTopicBodyMediaLease>;
+}) {
+  const {
+    attributes,
+    displaySize,
+    errorTextStyle,
+    hasDestinationLink,
+    imageProps,
+    imageSource,
+    loadingColor,
+    mediaContext,
+    nodeSeekMediaUserAgent,
+    onOpenImagePreview,
+    originalUri,
+    src
+  } = props;
   const referrerPolicy = normalizeMediaReferrerPolicy(attributes.referrerpolicy);
   const requestIdentity = compatibleImageRequestIdentity(imageSource);
   const cacheKey = imageDisplayCacheIdentity(imageSource);
@@ -429,7 +478,6 @@ function AdmittedPreviewImageBlock({
   } | null>(null, [requestIdentity]);
   const [displayedImageLoadIdentity, setDisplayedImageLoadIdentity] = useRecyclingState('', [requestIdentity]);
   const [failedRequestIdentity, setFailedRequestIdentity] = useRecyclingState('', [requestIdentity]);
-  const contentWidth = Math.max(1, availableContentWidth);
   const handleTerminalFailure = useCallback(
     () => setFailedRequestIdentity(bodyRequestIdentity, true),
     [bodyRequestIdentity, setFailedRequestIdentity]
@@ -455,9 +503,10 @@ function AdmittedPreviewImageBlock({
     loadedImage?.requestIdentity === bodyRequestIdentity && loadedImage.imageLoadIdentity === imageLoadIdentity
       ? loadedImage
       : null;
-  const naturalDimensions = activeLoadedImage
-    ? activeLoadedImage.dimensions
-    : cachedDimensions || displaySize || { height: Math.round(contentWidth * 0.75), width: contentWidth };
+  const { imageState, sharedContainerStyle, imageStateFrameStyle, naturalDimensions } = usePreviewImageLayout(
+    props,
+    activeLoadedImage?.dimensions || cachedDimensions || displaySize
+  );
   const handleImageLoad = useCallback(
     (event: ImageLoadEventData) => {
       if (!isCurrentImageAttempt() || isImageAttemptSettled()) return;
@@ -504,38 +553,6 @@ function AdmittedPreviewImageBlock({
     [bodyMediaLease, isCurrentImageAttempt, isImageAttemptSettled]
   );
   const loadFailed = failedRequestIdentity === bodyRequestIdentity;
-  const {
-    height: _specifiedStyleHeight,
-    width: _specifiedStyleWidth,
-    ...naturalImageStyle
-  } = StyleSheet.flatten(imageProps.style) || {};
-  const imageState = useIMGElementStateWithCache({
-    ...imageProps,
-    cachedNaturalDimensions: naturalDimensions,
-    contentWidth,
-    height: undefined,
-    source: imageSource,
-    style: [naturalImageStyle, { resizeMode: 'contain', ...(maxHeight === undefined ? {} : { maxHeight }) }],
-    width: undefined
-  });
-  const { width: _width, height: _height, ...containerStyle } = StyleSheet.flatten(imageState.containerStyle) || {};
-  const sharedContainerStyle = [
-    { flexDirection: 'row' as const, alignSelf: 'stretch' as const, justifyContent: alignment },
-    containerStyle,
-    boundarySpacing
-  ];
-  const imageStateFrameStyle = [
-    {
-      alignItems: 'center' as const,
-      backgroundColor: frameBackgroundColor,
-      borderColor: frameBorderColor,
-      borderRadius: readerRadii.content,
-      borderWidth: StyleSheet.hairlineWidth,
-      justifyContent: 'center' as const,
-      overflow: 'hidden' as const
-    },
-    imageState.dimensions
-  ];
   const imageLoadingOverlayStyle = [StyleSheet.absoluteFill, imageStateFrameStyle];
   const imageDisplayed = Boolean(activeLoadedImage) && displayedImageLoadIdentity === imageLoadIdentity;
   const original = useOriginalImageUpgrade(requestIdentity, originalSource, imageDisplayed);
@@ -606,6 +623,45 @@ function AdmittedPreviewImageBlock({
   );
 }
 
+function PendingImageFrame({
+  errorTextStyle,
+  lease,
+  style
+}: {
+  errorTextStyle: StyleProp<TextStyle>;
+  lease: ReturnType<typeof useTopicBodyMediaLease>;
+  style: StyleProp<ViewStyle>;
+}) {
+  if (!lease.failure) return <View testID="topic-image-idle" style={style} />;
+  return (
+    <Pressable
+      accessibilityLabel="图片加载失败，点按重试"
+      accessibilityRole="button"
+      style={style}
+      onPress={lease.retry}
+    >
+      <Text numberOfLines={2} style={errorTextStyle}>
+        图片加载失败，点按重试
+      </Text>
+    </Pressable>
+  );
+}
+
+function PendingPreviewImageBlock({
+  lease,
+  ...props
+}: PreviewImageBlockProps & {
+  lease: ReturnType<typeof useTopicBodyMediaLease>;
+}) {
+  const dimensions = cachedImageDisplayDimensions(imageDisplayCacheIdentity(props.imageSource)) || props.displaySize;
+  const { sharedContainerStyle, imageStateFrameStyle } = usePreviewImageLayout(props, dimensions);
+  return (
+    <View style={sharedContainerStyle}>
+      <PendingImageFrame errorTextStyle={props.errorTextStyle} lease={lease} style={imageStateFrameStyle} />
+    </View>
+  );
+}
+
 function PreviewImageBlock(props: PreviewImageBlockProps) {
   const packet = props.mediaContext.contentSource === 'linuxdo' && isLinuxDoPacketCover(props.src);
   const viewer = useContext(LinuxDoPacketViewer);
@@ -621,6 +677,13 @@ function PreviewImageBlock(props: PreviewImageBlockProps) {
       seen: viewer.revision,
       lease: bodyMediaLease.admitted ? packetRevision.lease : viewer.revision
     });
+  }
+  if (!packet) {
+    return bodyMediaLease.admitted ? (
+      <AdmittedPreviewImageBlock {...props} bodyMediaLease={bodyMediaLease} />
+    ) : (
+      <PendingPreviewImageBlock {...props} lease={bodyMediaLease} />
+    );
   }
   const contentWidth = Math.max(1, props.contentWidth);
   const cacheKey = imageDisplayCacheIdentity(props.imageSource);
@@ -639,38 +702,35 @@ function PreviewImageBlock(props: PreviewImageBlockProps) {
       }
     : { height: Math.round(naturalDimensions.height * scale), width: naturalDimensions.width * scale };
   if (bodyMediaLease.admitted) {
-    if (packet) {
-      const cover = (
-        <LinuxDoPacketCover
-          key={bodyMediaLease.attemptId}
-          cover={props.src}
-          dimensions={dimensions}
-          settle={bodyMediaLease.settle}
-        />
-      );
-      return props.hasDestinationLink ? (
-        <View style={[{ alignSelf: props.alignment }, props.boundarySpacing]}>{cover}</View>
-      ) : (
-        <ImagePreviewPressable
-          accessibilityRole="button"
-          accessibilityLabel={props.attributes.alt || '查看红包封面'}
-          style={[{ alignSelf: props.alignment }, props.boundarySpacing]}
-          onPress={(event) => {
-            event.stopPropagation?.();
-            props.onOpenImagePreview(
-              props.src,
-              dimensions,
-              undefined,
-              normalizeMediaReferrerPolicy(props.attributes.referrerpolicy),
-              props.originalUri
-            );
-          }}
-        >
-          {cover}
-        </ImagePreviewPressable>
-      );
-    }
-    return <AdmittedPreviewImageBlock {...props} bodyMediaLease={bodyMediaLease} />;
+    const cover = (
+      <LinuxDoPacketCover
+        key={bodyMediaLease.attemptId}
+        cover={props.src}
+        dimensions={dimensions}
+        settle={bodyMediaLease.settle}
+      />
+    );
+    return props.hasDestinationLink ? (
+      <View style={[{ alignSelf: props.alignment }, props.boundarySpacing]}>{cover}</View>
+    ) : (
+      <ImagePreviewPressable
+        accessibilityRole="button"
+        accessibilityLabel={props.attributes.alt || '查看红包封面'}
+        style={[{ alignSelf: props.alignment }, props.boundarySpacing]}
+        onPress={(event) => {
+          event.stopPropagation?.();
+          props.onOpenImagePreview(
+            props.src,
+            dimensions,
+            undefined,
+            normalizeMediaReferrerPolicy(props.attributes.referrerpolicy),
+            props.originalUri
+          );
+        }}
+      >
+        {cover}
+      </ImagePreviewPressable>
+    );
   }
   const frameStyle = [
     {
@@ -686,21 +746,7 @@ function PreviewImageBlock(props: PreviewImageBlockProps) {
     dimensions,
     props.boundarySpacing
   ];
-  if (bodyMediaLease.failure) {
-    return (
-      <Pressable
-        accessibilityLabel="图片加载失败，点按重试"
-        accessibilityRole="button"
-        style={frameStyle}
-        onPress={bodyMediaLease.retry}
-      >
-        <Text numberOfLines={2} style={props.errorTextStyle}>
-          图片加载失败，点按重试
-        </Text>
-      </Pressable>
-    );
-  }
-  return <View testID="topic-image-idle" style={frameStyle} />;
+  return <PendingImageFrame errorTextStyle={props.errorTextStyle} lease={bodyMediaLease} style={frameStyle} />;
 }
 
 function ManagedSemanticInlineForumImage({

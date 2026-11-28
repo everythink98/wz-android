@@ -1,44 +1,71 @@
 diff --git a/node_modules/expo-sharing/android/src/main/java/expo/modules/sharing/SharingModule.kt b/node_modules/expo-sharing/android/src/main/java/expo/modules/sharing/SharingModule.kt
 --- a/node_modules/expo-sharing/android/src/main/java/expo/modules/sharing/SharingModule.kt
 +++ b/node_modules/expo-sharing/android/src/main/java/expo/modules/sharing/SharingModule.kt
-@@ -13,17 +13,18 @@
+@@ -4,6 +4,8 @@
+ import android.content.Intent
+ import android.content.pm.PackageManager
+ import android.net.Uri
++import android.os.Handler
++import android.os.Looper
+ import androidx.core.content.FileProvider
+ import expo.modules.core.errors.InvalidArgumentException
+ import expo.modules.kotlin.Promise
+@@ -13,19 +15,21 @@
  import expo.modules.kotlin.services.FilePermissionService
  import java.io.File
  import java.net.URLConnection
-+import java.util.concurrent.atomic.AtomicReference
++import java.util.BitSet
  
  class SharingModule : Module() {
    private val context: Context
      get() = appContext.reactContext ?: throw Exceptions.ReactContextLost()
 -  private var pendingPromise: Promise? = null
-+  private val pendingPromise = AtomicReference<Promise?>(null)
++  private class Share(val promise: Promise, var openedWithCode: Int? = null)
++  private val mainHandler = Handler(Looper.getMainLooper())
++  private var pending: Share? = null
++  private var destroyed = false
  
    override fun definition() = ModuleDefinition {
      Name("ExpoSharing")
  
      AsyncFunction("shareAsync") { url: String?, params: SharingOptions, promise: Promise ->
 -      if (pendingPromise != null) {
-+      if (pendingPromise.get() != null) {
-         throw SharingInProgressException()
-       }
+-        throw SharingInProgressException()
+-      }
++      val request = beginShare(promise)
        try {
-@@ -48,11 +49,12 @@
+         val fileToShare = getLocalFileFoUrl(url)
+         val contentUri = FileProvider.getUriForFile(
+@@ -48,12 +52,23 @@
            val packageName = it.activityInfo.packageName
            context.grantUriPermission(packageName, contentUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
          }
 -        pendingPromise = promise
-+        pendingPromise.set(promise)
-         appContext.throwingActivity.startActivityForResult(intent, REQUEST_CODE)
+-        appContext.throwingActivity.startActivityForResult(intent, REQUEST_CODE)
 -      } catch (e: InvalidArgumentException) {
 -        throw SharingInvalidArgsException(e.message, e)
++        if (Looper.myLooper() == Looper.getMainLooper()) {
++          openChooser(request, intent)
++        } else {
++          // Only the Activity launch moves to main. Provider lookup and grants stay on Expo's queue.
++          check(mainHandler.post {
++            try {
++              openChooser(request, intent)
++            } catch (e: Exception) {
++              if (release(request)) promise.reject(SharingFailedException("Failed to open the chooser: ${e.message}", e))
++            }
++          }) { "The share host has stopped." }
++        }
        } catch (e: Exception) {
-+        // An Activity launch failure has no result callback to release this request.
-+        pendingPromise.compareAndSet(promise, null)
-+        if (e is InvalidArgumentException) throw SharingInvalidArgsException(e.message, e)
-         throw SharingFailedException("Failed to share the file: ${e.message}", e)
+-        throw SharingFailedException("Failed to share the file: ${e.message}", e)
++        if (release(request)) {
++          if (e is InvalidArgumentException) throw SharingInvalidArgsException(e.message, e)
++          throw SharingFailedException("Failed to share the file: ${e.message}", e)
++        }
        }
      }
-@@ -78,10 +80,7 @@
+ 
+@@ -78,10 +93,56 @@
      }
  
      OnActivityResult { _, (requestCode) ->
@@ -46,10 +73,85 @@ diff --git a/node_modules/expo-sharing/android/src/main/java/expo/modules/sharin
 -        pendingPromise?.resolve(null)
 -        pendingPromise = null
 -      }
-+      if (requestCode == REQUEST_CODE) pendingPromise.getAndSet(null)?.resolve(null)
++      if (requestCode in FIRST_CODE until END_CODE) {
++        returnCode(requestCode)
++        val completed = synchronized(this@SharingModule) {
++          pending?.takeIf { it.openedWithCode == requestCode }?.also { pending = null }
++        }
++        completed?.promise?.resolve(null)
++      }
++    }
++    OnActivityDestroys {
++      // A recreated Activity receives the result for the same AppContext.
++      if (appContext.currentActivity?.isFinishing == true) abandonShare(false)
++    }
++    OnDestroy { abandonShare(true) }
++  }
++
++  @Synchronized private fun beginShare(promise: Promise): Share {
++    if (destroyed) throw SharingFailedException("The share host has stopped.")
++    if (pending != null) throw SharingInProgressException()
++    return Share(promise).also { pending = it }
++  }
++
++  @Synchronized private fun openChooser(request: Share, intent: Intent) {
++    if (pending !== request) return
++    val activity = appContext.throwingActivity
++    check(!activity.isFinishing && !activity.isDestroyed) { "The share host has stopped." }
++    val code = reserveCode()
++    try {
++      activity.startActivityForResult(intent, code)
++      request.openedWithCode = code
++    } catch (e: Exception) {
++      returnCode(code)
++      throw e
++    }
++  }
++
++  @Synchronized private fun release(request: Share): Boolean {
++    if (pending !== request) return false
++    pending = null
++    return true
++  }
++
++  private fun abandonShare(moduleDestroyed: Boolean) {
++    val request = synchronized(this) {
++      if (moduleDestroyed) destroyed = true
++      pending.also { pending = null }
++    } ?: return
++    if (request.openedWithCode == null) {
++      request.promise.reject(SharingFailedException("The share host stopped before opening the chooser."))
++    } else {
++      request.promise.reject("ERR_SHARING_RESULT_UNKNOWN", "The chooser opened but its result is unavailable.", null)
      }
    }
  
+@@ -121,6 +182,24 @@
+     }
+ 
+   companion object {
+-    private const val REQUEST_CODE = 8524
++    // Backup export uses 0x8000–0xffff. Expo's Activity Result registry uses the upper bits.
++    private const val FIRST_CODE = 0x4000
++    private const val END_CODE = 0x8000
++    private const val CODE_COUNT = END_CODE - FIRST_CODE
++    private val unreturned = BitSet(CODE_COUNT)
++    private var nextSlot = 0
++
++    @Synchronized private fun reserveCode(): Int {
++      var slot = unreturned.nextClearBit(nextSlot)
++      if (slot >= CODE_COUNT) slot = unreturned.nextClearBit(0)
++      check(slot < CODE_COUNT) { "Too many outstanding share requests." }
++      unreturned.set(slot)
++      nextSlot = (slot + 1) % CODE_COUNT
++      return FIRST_CODE + slot
++    }
++
++    @Synchronized private fun returnCode(code: Int) {
++      unreturned.clear(code - FIRST_CODE)
++    }
+   }
+ }
 diff --git a/node_modules/expo-sharing/android/src/main/java/expo/modules/sharing/SharingExceptions.kt b/node_modules/expo-sharing/android/src/main/java/expo/modules/sharing/SharingExceptions.kt
 --- a/node_modules/expo-sharing/android/src/main/java/expo/modules/sharing/SharingExceptions.kt
 +++ b/node_modules/expo-sharing/android/src/main/java/expo/modules/sharing/SharingExceptions.kt
@@ -63,9 +165,10 @@ diff --git a/node_modules/expo-sharing/android/src/main/java/expo/modules/sharin
 -  CodedException("Another share request is being processed now.")
 +  CodedException(SHARE_NOT_STARTED, "Another share request is being processed now.", null)
  
- internal class SharingFailedException(message: String, e: Exception) :
+-internal class SharingFailedException(message: String, e: Exception) :
 -  CodedException(message, e.cause)
-+  CodedException(SHARE_NOT_STARTED, message, e.cause)
++internal class SharingFailedException(message: String, cause: Exception? = null) :
++  CodedException(SHARE_NOT_STARTED, message, cause)
  
  internal class SharingInvalidArgsException(message: String?, e: Exception) :
 -  CodedException(message, e.cause)

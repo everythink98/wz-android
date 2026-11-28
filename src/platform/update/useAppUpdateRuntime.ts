@@ -14,6 +14,7 @@ import {
   formatAppUpdateDownloadProgress,
   openApkInstaller,
   verifyDownloadedApk,
+  isApkDigestMismatch,
   isInvalidApk,
   sameAppUpdate
 } from './appUpdate';
@@ -234,11 +235,11 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
     async (target: AppUpdateArtifact, request: AppUpdateOperation, trace: UpdateTrace) => {
       let latest = target;
       let pendingSave = Promise.resolve();
-      let saveError: unknown;
       try {
         if (target.kind === 'partial') {
           if (!request.pauseRequested) await beforeRequest?.();
           for (let attempt = 0; attempt < 2; attempt++) {
+            let saveError: unknown;
             if (!request.current() || request.pauseRequested || latest.kind === 'verified') break;
             if (attempt > 0) {
               // Drop the rejected prefix only when this writer can start its replacement.
@@ -294,11 +295,10 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
             } catch (error) {
               if (!request.current()) return;
               const code = error && typeof error === 'object' && 'code' in error ? error.code : null;
-              if (
-                attempt === 0 &&
-                ['ERR_DOWNLOAD_RANGE', 'ERR_DOWNLOAD_RANGE_NOT_SATISFIABLE'].includes(String(code))
-              ) {
-                latest = await inspectAppUpdateArtifact(latest, trace);
+              const rejectedRange = ['ERR_DOWNLOAD_RANGE', 'ERR_DOWNLOAD_RANGE_NOT_SATISFIABLE'].includes(String(code));
+              const corruptAppend = task.appendedRange && isApkDigestMismatch(error);
+              if (attempt === 0 && (rejectedRange || corruptAppend)) {
+                if (rejectedRange) latest = await inspectAppUpdateArtifact(latest, trace);
                 if (latest.kind === 'verified') break;
                 await pendingSave;
                 if (!request.current() || request.pauseRequested) break;

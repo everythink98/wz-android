@@ -134,11 +134,29 @@ export function captureComposerImeDom(document, phase) {
     for (const type of previous.types) document.removeEventListener(type, previous.listener, true);
   if (phase === 'start') {
     const observation = {
-      types: ['keydown', 'keyup', 'beforeinput', 'input', 'compositionstart', 'compositionupdate', 'compositionend'],
+      types: [
+        'keydown',
+        'keyup',
+        'beforeinput',
+        'input',
+        'compositionstart',
+        'compositionupdate',
+        'compositionend',
+        'pointerdown',
+        'pointerup',
+        'pointercancel',
+        'click',
+        'dblclick',
+        'contextmenu'
+      ],
       count: 0,
       counts: {},
       inputTypes: {},
       dataChars: {},
+      chineseInput: null,
+      compositionEnd: null,
+      trustedCompositionStarts: 0,
+      imageEvents: [],
       printableKeyChars: {},
       anomalyCount: 0,
       anomalies: [],
@@ -151,6 +169,23 @@ export function captureComposerImeDom(document, phase) {
       if (!target) return;
       observation.count += 1;
       observation.counts[event.type] = (observation.counts[event.type] ?? 0) + 1;
+      if (event.isTrusted && event.type === 'compositionstart') observation.trustedCompositionStarts++;
+      if (event.isTrusted && event.type === 'input' && event.isComposing && /\p{Script=Han}/u.test(event.data || ''))
+        observation.chineseInput = event.data;
+      if (event.type === 'compositionend') observation.compositionEnd = { text: event.data, trusted: event.isTrusted };
+      if (['pointerdown', 'pointerup', 'pointercancel', 'click', 'dblclick', 'contextmenu'].includes(event.type)) {
+        if (
+          event.target.closest('.composer-image')?.querySelector('img')?.alt === 'wz-proof-image' &&
+          observation.imageEvents.length < 32
+        )
+          observation.imageEvents.push({
+            type: event.type,
+            at: event.timeStamp,
+            trusted: event.isTrusted,
+            pointer: event.pointerType ?? null
+          });
+        return;
+      }
       if (event.type === 'keydown' || event.type === 'keyup') {
         observation.printableKeyChars[event.type] =
           (observation.printableKeyChars[event.type] ?? 0) + (event.key?.length === 1 ? 1 : 0);
@@ -162,6 +197,7 @@ export function captureComposerImeDom(document, phase) {
       const entry = {
         at: Date.now(),
         type: event.type,
+        trusted: event.isTrusted,
         inputType: event.inputType ?? null,
         composing: event.isComposing ?? null,
         data: event.data?.slice(0, 32) ?? null,
@@ -211,6 +247,10 @@ export function captureComposerImeDom(document, phase) {
           counts: previous.counts,
           inputTypes: previous.inputTypes,
           dataChars: previous.dataChars,
+          chineseInput: previous.chineseInput,
+          compositionEnd: previous.compositionEnd,
+          trustedCompositionStarts: previous.trustedCompositionStarts,
+          imageEvents: previous.imageEvents,
           printableKeyChars: previous.printableKeyChars,
           anomalyCount: previous.anomalyCount,
           anomalies: previous.anomalies,
@@ -260,21 +300,75 @@ export function captureTopicFormatPanel(document) {
   };
   const panelVisible = visible(panel);
   const buttonVisible = visible(button);
+  const panelHeight = panel?.closest('.builder-backdrop')?.getBoundingClientRect().height ?? null;
+  const documentPane = document.querySelector('.editor-pane.active, .source-pane.active');
   const rect = button?.getBoundingClientRect();
-  const target =
-    panelVisible && buttonVisible ? document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2) : null;
+  const center = rect && { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+  const target = panelVisible && buttonVisible ? document.elementFromPoint(center.x, center.y) : null;
+  const element = (node) =>
+    node && { tag: node.localName, id: node.id, class: node.getAttribute('class'), role: node.getAttribute('role') };
+  const web = document.defaultView;
+  const viewport = web.visualViewport;
+  const viewportWidth = viewport?.width ?? web.innerWidth;
+  const viewportHeight = viewport?.height ?? web.innerHeight;
   const hit = Boolean(button && target && button.contains(target));
   const enabled = Boolean(button && !button.matches(':disabled') && button.getAttribute('aria-disabled') !== 'true');
   return {
     panelVisible,
+    panelHeight,
+    documentPaneHeight: documentPane?.getBoundingClientRect().height ?? null,
     buttonVisible,
     label: button?.getAttribute('aria-label') ?? null,
     pressed: button?.getAttribute('aria-pressed') ?? null,
     enabled,
     hit,
+    center,
+    target: element(target),
+    targetParent: element(target?.parentElement),
+    active: element(document.activeElement),
+    focused: document.hasFocus(),
+    viewport: {
+      width: viewportWidth,
+      height: viewportHeight,
+      top: viewport?.offsetTop ?? 0,
+      left: viewport?.offsetLeft ?? 0
+    },
+    centerInViewport: Boolean(
+      center && center.x >= 0 && center.y >= 0 && center.x < viewportWidth && center.y < viewportHeight
+    ),
+    editorScrollTop: documentPane?.scrollTop ?? null,
     rect: rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null,
     ready: panelVisible && buttonVisible && enabled && hit
   };
+}
+
+export function captureComposerImageHit(document) {
+  const image = document.querySelector('.ProseMirror .composer-image img[alt="wz-proof-image"]');
+  if (!image) return null;
+  const rect = image.getBoundingClientRect();
+  const center = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+  const target = document.elementFromPoint(center.x, center.y);
+  return {
+    center,
+    viewportWidth: document.defaultView.innerWidth,
+    width: image.naturalWidth,
+    height: image.naturalHeight,
+    ready: image.complete && image.naturalWidth === 128 && image.naturalHeight === 96 && target === image,
+    hit: target?.localName ?? null,
+    selected: image.closest('.composer-image').classList.contains('ProseMirror-selectednode')
+  };
+}
+
+export function assertChineseImeCommit(before, after, expected, events) {
+  if (
+    !expected ||
+    !/\p{Script=Han}/u.test(expected) ||
+    !(events?.trustedCompositionStarts > 0) ||
+    events?.chineseInput !== expected ||
+    events?.compositionEnd?.text !== expected
+  )
+    throw new Error('No trusted Chinese composition start and matching committed candidate in the focused editor');
+  assertComposerImeEdit(before, after, expected);
 }
 
 export function captureComposerExpressionTarget(document, targetLabel) {
@@ -535,7 +629,14 @@ export const topicCreationCases = [
   { id: 'topic-switch-drafts', source: 'nodeseek', entry: 'topic', stress: 'switch' },
   { id: 'topic-restart-drafts', source: 'yaohuo', entry: 'topic', stress: 'restart' },
   { id: 'topic-nodeseek-panel-keyboard', source: 'nodeseek', entry: 'topic', stress: 'panel-keyboard' },
-  { id: 'topic-linuxdo-panel-keyboard', source: 'linuxdo', entry: 'topic', stress: 'panel-keyboard', dark: true }
+  { id: 'topic-linuxdo-panel-keyboard', source: 'linuxdo', entry: 'topic', stress: 'panel-keyboard', dark: true },
+  ...['nodeseek', 'linuxdo'].map((source) => ({
+    id: `topic-${source}-image-gestures`,
+    source,
+    entry: 'topic',
+    stress: 'image-gestures'
+  })),
+  { id: 'topic-linuxdo-pinyin', source: 'linuxdo', entry: 'topic', stress: 'pinyin' }
 ];
 export const composerCases = [
   ...['rich', 'source'].map((mode) => ({
@@ -712,7 +813,9 @@ export function assertTopicCreationReceipt(receipt, expected) {
     if (
       value.writes !== 0 ||
       Object.keys(value.attempts).length !== 0 ||
-      sources.some((source) => !value.drafts[source]?.retained)
+      sources.some((source) =>
+        source === expected.editedSource ? !value.drafts[source]?.exists : !value.drafts[source]?.retained
+      )
     )
       throw new Error('Local topic interaction lost a draft or dispatched a request');
     return;
@@ -938,6 +1041,7 @@ async function main() {
       cases: { type: 'string' },
       'ime-cycles': { type: 'string' },
       'ime-chars': { type: 'string' },
+      'pinyin-taps': { type: 'string' },
       'ime-timeout-minutes': { type: 'string' }
     }
   });
@@ -1021,7 +1125,7 @@ async function main() {
         if (!scenario) throw new Error(`Unknown composer case: ${id}`);
         return scenario;
       })
-    : composerCases;
+    : composerCases.filter((scenario) => scenario.stress !== 'pinyin' || values['pinyin-taps']);
   const session = `composer-${randomUUID()}`;
   const agent = (args, capture = true) =>
     runAgentDevice(
@@ -1233,8 +1337,8 @@ async function main() {
       dom.close();
     }
   };
-  const verifyTopicFormatPanel = async (directory, stage, open) => {
-    const dom = await connectComposerImeDom(adb);
+  const verifyTopicFormatPanel = async (directory, stage, open, existingDom) => {
+    const dom = existingDom ?? (await connectComposerImeDom(adb));
     try {
       const deadline = Date.now() + 30000;
       do {
@@ -1245,7 +1349,7 @@ async function main() {
       } while (Date.now() < deadline);
       throw new Error(open ? 'Topic format tools did not become ready' : 'Title focus left the format panel visible');
     } finally {
-      dom.close();
+      if (!existingDom) dom.close();
     }
   };
   let primaryFailure;
@@ -1399,6 +1503,141 @@ async function main() {
           openComposerFixture(agent, '打开测试发帖');
           await waitForTitle(scenario.source, 'opened');
           capture(directory, 'opened');
+          if (scenario.stress === 'pinyin') {
+            // The coordinates come from the current device's Pinyin keyboard, including the candidate tap.
+            if (!values['pinyin-taps'])
+              throw new Error('Supply --pinyin-taps with the current keyboard coordinates and expected candidate');
+            const { expected, taps, subtype, languageSwitch } = JSON.parse(readFileSync(values['pinyin-taps'], 'utf8'));
+            const point = (p) => Array.isArray(p) && p.length === 2 && p.every((v) => Number.isInteger(v) && v >= 0);
+            if (
+              typeof expected !== 'string' ||
+              !/\p{Script=Han}/u.test(expected) ||
+              !Array.isArray(taps) ||
+              taps.length < 2 ||
+              !taps.every(point) ||
+              !/^-?\d+$/.test(subtype) ||
+              !point(languageSwitch)
+            )
+              throw new Error('Invalid Pinyin candidate or screen coordinates');
+            if (adb('shell', 'settings', 'get', 'secure', 'default_input_method') !== ime)
+              adb('shell', 'ime', 'set', ime);
+            replay('topic-focus-body', '发布');
+            await receipt(token, (value) => value.keyboardShown);
+            // The RN keyboard receipt can precede Gboard's final on-screen button positions.
+            let previousKeys;
+            let stableSince = Date.now();
+            const keyboardDeadline = stableSince + 5000;
+            do {
+              const screen = capture(directory, 'pinyin-keyboard');
+              const rowBytes = screen.width * 4;
+              const keys = hash(
+                screen.data.subarray(
+                  Math.floor(screen.height * 0.65) * rowBytes,
+                  Math.floor(screen.height * 0.94) * rowBytes
+                )
+              );
+              if (keys !== previousKeys) {
+                previousKeys = keys;
+                stableSince = Date.now();
+              } else if (Date.now() - stableSince >= 300) break;
+              if (Date.now() >= keyboardDeadline) throw new Error('Gboard key rows did not stop moving');
+              await delay(100);
+            } while (true);
+            const readSubtype = () => adb('shell', 'settings', 'get', 'secure', 'selected_input_method_subtype');
+            if (readSubtype() !== String(subtype)) {
+              adb('shell', 'input', 'tap', ...languageSwitch.map(String));
+              const deadline = Date.now() + 2000;
+              while (Date.now() < deadline && readSubtype() !== String(subtype)) await delay(100);
+            }
+            if (readSubtype() !== String(subtype)) throw new Error('The configured Pinyin language is not selected');
+            const dom = await connectComposerImeDom(adb);
+            const evidence = { ime, subtype: readSubtype(), expected };
+            try {
+              const original = await dom.snapshot(`${token}-before-pinyin`);
+              const before = original.payload.snapshot.markdown;
+              await dom.capture('start');
+              for (const [x, y] of taps) {
+                adb('shell', 'input', 'tap', String(x), String(y));
+                await delay(180);
+              }
+              const reply = await dom.snapshot(`${token}-after-pinyin`);
+              const after = reply.payload.snapshot.markdown;
+              const observation = await dom.capture('stop');
+              evidence.events = observation.events;
+              if (adb('shell', 'settings', 'get', 'secure', 'default_input_method') !== ime)
+                throw new Error('Input method changed during candidate selection');
+              assertChineseImeCommit(before, after, expected, observation.events);
+              await receipt(token, (value) => value.topic?.drafts[scenario.source]?.body === after);
+              result.chineseCandidate = expected;
+            } finally {
+              dom.close();
+              writeFileSync(path.join(directory, 'pinyin.json'), JSON.stringify(evidence, null, 2));
+            }
+          }
+          if (scenario.stress === 'image-gestures') {
+            const dom = await connectComposerImeDom(adb);
+            const stages = {};
+            try {
+              // A decoded local PNG exercises the normal image NodeView without a picker, upload or remote host.
+              await dom.evaluate(`(() => {
+                const canvas = document.createElement('canvas'); canvas.width = 128; canvas.height = 96;
+                const paint = canvas.getContext('2d'); paint.fillStyle = '#157387'; paint.fillRect(0, 0, 128, 96);
+                window.dispatchEvent(new MessageEvent('message', {data: JSON.stringify({
+                  type: 'COMMAND', payload: {name: 'insert-markdown', markdown: '![wz-proof-image](' + canvas.toDataURL('image/png') + ')'}
+                })}));
+              })()`);
+              if ((await receipt(token)).keyboardShown) adb('shell', 'input', 'keyevent', 'KEYCODE_ESCAPE');
+              await receipt(token, (value) => !value.keyboardShown);
+              const imageHit = () => dom.evaluate(`(${captureComposerImageHit.toString()})(document)`);
+              for (const gesture of ['tap', 'double', 'long']) {
+                const deadline = Date.now() + 5000;
+                let hit;
+                do {
+                  hit = await imageHit();
+                  if (!hit?.ready) await delay(75);
+                } while (!hit?.ready && Date.now() < deadline);
+                if (!hit?.ready) throw new Error(`Decoded image was not hittable before ${gesture}`);
+                const nodes = snapshot(directory, `image-${gesture}-before`);
+                const web =
+                  nodes.find((node) => node.identifier === 'structured-composer-webview' && node.rect)?.rect ??
+                  nodes.find((node) => node.type === 'android.webkit.WebView' && node.rect)?.rect;
+                if (!web) throw new Error('Cannot map DOM coordinates to the Android WebView bounds');
+                const scale = web.width / hit.viewportWidth;
+                const x = String(Math.round(web.x + hit.center.x * scale));
+                const y = String(Math.round(web.y + hit.center.y * scale));
+                await dom.capture('start');
+                if (gesture === 'long') adb('shell', 'input', 'swipe', x, y, x, y, '750');
+                else {
+                  adb('shell', 'input', 'tap', x, y);
+                  if (gesture === 'double') adb('shell', 'input', 'tap', x, y);
+                }
+                const events = (await dom.capture('stop')).events?.imageEvents ?? [];
+                const selected = await imageHit();
+                stages[gesture] = { hit, x, y, selected, events };
+                const down = events.filter((e) => e.trusted && e.type === 'pointerdown' && e.pointer === 'touch');
+                const up = events.findLast((e) => e.trusted && e.type === 'pointerup');
+                if (
+                  !down.length ||
+                  (gesture === 'tap' && !selected?.selected) ||
+                  (gesture === 'double' && (down.length !== 2 || down[1].at - down[0].at > 400)) ||
+                  (gesture === 'long' &&
+                    !events.some((e) => e.trusted && e.type === 'contextmenu') &&
+                    (!up || up.at - down[0].at < 500))
+                )
+                  throw new Error(`Android ${gesture} did not reach the decoded editor image`);
+                agent(['press', 'label="更多编辑工具"']);
+                agent(['press', 'label="预览"']);
+                agent(['press', 'label="继续编辑"']);
+                const roundTrip = await dom.snapshot(`${token}-${gesture}`);
+                if (!roundTrip.payload.snapshot?.markdown.includes('![wz-proof-image]('))
+                  throw new Error('Image lost after preview');
+              }
+              result.imageGestures = Object.keys(stages);
+            } finally {
+              dom.close();
+              writeFileSync(path.join(directory, 'image-gestures.json'), JSON.stringify(stages, null, 2));
+            }
+          }
           if (scenario.stress === 'expressions') {
             await verifyExpressions(scenario, token, directory, '表情');
             result.expressions = true;
@@ -1441,13 +1680,48 @@ async function main() {
             await verifyGeometry('keyboard-restored', true);
             replay('topic-panel-close', '发布');
             await verifyGeometry('after-panel-close', false);
-            agent(['open', pkg, '--test-ime']);
-            replay('topic-focus-body', '发布');
-            agent(['type', 'Long draft line\n'.repeat(100)]);
-            adb('shell', 'ime', 'set', ime);
-            agent(['press', 'label="文字格式"']);
-            await receipt(token, (value) => value.keyboardShown === false);
-            await verifyTopicFormatPanel(directory, 'long-format-panel', true);
+            const longDom = await connectComposerImeDom(adb);
+            const evidence = {
+              input: '100 ASCII lines with the automation input method',
+              originalIme: ime,
+              phase: 'input'
+            };
+            try {
+              await longDom.capture('start');
+              agent(['open', pkg, '--test-ime']);
+              replay('topic-focus-body', '发布');
+              agent(['type', 'Long draft line\n'.repeat(100)]);
+              adb('shell', 'ime', 'set', ime);
+              const reply = await longDom.snapshot(`${token}-long`);
+              const retainedLines =
+                reply.type === 'SNAPSHOT'
+                  ? reply.payload.snapshot.markdown.split(/\r?\n/).filter((line) => line.includes('Long draft line'))
+                      .length
+                  : 0;
+              evidence.retainedLines = retainedLines;
+              if (retainedLines !== 100) throw new Error(`Long editor retained ${retainedLines} of 100 input lines`);
+              evidence.phase = 'hide-keyboard';
+              agent(['press', 'label="文字格式"']);
+              await receipt(token, (value) => value.keyboardShown === false);
+              evidence.phase = 'hit-format-control';
+              await verifyTopicFormatPanel(directory, 'long-format-panel', true, longDom);
+              evidence.phase = 'ready';
+            } finally {
+              try {
+                const observed = await longDom.capture('stop');
+                evidence.events = observed.events;
+                evidence.selection = observed.selection;
+                evidence.panel = await longDom.evaluate(`(${captureTopicFormatPanel.toString()})(document)`);
+                evidence.ime = adb('shell', 'settings', 'get', 'secure', 'default_input_method');
+                const windowState = adb('shell', 'dumpsys', 'window');
+                evidence.imeVisible = windowState.match(/type=ime[^\r\n]*?\bvisible=(true|false)/)?.[1] ?? null;
+              } catch (captureError) {
+                evidence.captureError = captureError.message;
+              } finally {
+                writeFileSync(path.join(directory, 'long-panel-input.json'), JSON.stringify(evidence, null, 2));
+                longDom.close();
+              }
+            }
             const longFormatNodes = snapshot(directory, 'long-format-panel');
             capture(directory, 'long-format-panel');
             if (!longFormatNodes.some((node) => String(node.value || node.label || '').includes('Long draft line')))
@@ -1504,9 +1778,16 @@ async function main() {
             await waitForTitle(scenario.source, 'restarted');
             capture(directory, 'restarted');
           }
-          if (['switch', 'restart', 'panel-keyboard', 'expressions'].includes(scenario.stress)) {
+          if (
+            ['switch', 'restart', 'panel-keyboard', 'expressions', 'pinyin', 'image-gestures'].includes(scenario.stress)
+          ) {
             const settled = await receipt(token, (value) => value.topic?.route === 'TopicComposer');
-            assertTopicCreationReceipt(settled, { token, buildId: artifact.buildId, noWrites: true });
+            assertTopicCreationReceipt(settled, {
+              token,
+              buildId: artifact.buildId,
+              noWrites: true,
+              editedSource: ['pinyin', 'image-gestures'].includes(scenario.stress) ? scenario.source : undefined
+            });
             writeFileSync(path.join(directory, 'settled.json'), JSON.stringify(settled));
           } else {
             agent(['press', 'label="发布"']);
@@ -1566,7 +1847,10 @@ async function main() {
               : scenario.entry === 'floor'
                 ? '取消楼层回复'
                 : '收起回复';
-          replay(message ? 'open-message' : 'open', submitLabel);
+          if (scenario.entry === 'edit') {
+            agent(['open', pkg]);
+            agent(['wait', 'text="touches=0"', '30000']);
+          } else replay(message ? 'open-message' : 'open', submitLabel);
           adb('shell', 'ime', 'set', ime);
           const before = capture(directory, 'before');
           replay('open-editor', submitLabel, launcher);

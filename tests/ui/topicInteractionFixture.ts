@@ -20,7 +20,7 @@ export function inactivePostInteractionActions() {
     deleteBoost: (_postId: number, _boostId: number) => {},
     reactToPost: async (_postId: number, _reactionId?: string) => false,
     recheckLinuxDoPost: async (_postId: number) => false,
-    loadLinuxDoInteractionConfig: async () => testLinuxDoInteractionConfig,
+    verifyLinuxDoInteractionConfig: () => true,
     linuxDoInteractionConfigQuery: queryOptions({
       queryKey: forumQueryKeys.interactionConfig(0),
       queryFn: async () => testLinuxDoInteractionConfig,

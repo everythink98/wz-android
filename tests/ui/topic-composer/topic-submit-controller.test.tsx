@@ -394,7 +394,8 @@ it('resumes the initial linux.do edit read after verification without dispatchin
       await test.result.current.recoverInitialEditRead?.();
     });
     expect(test.runtime.openAccount).toHaveBeenCalledWith('linuxdo', expect.any(String), expect.any(Object));
-    const recovery = jest.mocked(test.runtime.openAccount).mock.calls[0]![2]!;
+    const recovery = jest.mocked(test.runtime.openAccount).mock.calls[0]![2];
+    if (!recovery || !('queryKey' in recovery)) throw new Error('Missing edit read recovery');
     challenged = false;
     await act(async () => {
       expect(await recovery.resume()).toBe('completed');
@@ -415,7 +416,8 @@ it('uses the new account for the edit read after an earlier account verified the
   try {
     await waitFor(() => expect(test.result.current.loading).toBe(false));
     await act(async () => test.result.current.recoverInitialEditRead?.());
-    const recovery = jest.mocked(test.runtime.openAccount).mock.calls[0]![2]!;
+    const recovery = jest.mocked(test.runtime.openAccount).mock.calls[0]![2];
+    if (!recovery || !('queryKey' in recovery)) throw new Error('Missing edit read recovery');
     challenged = false;
     await act(async () => {
       expect(await recovery.resume()).toBe('completed');
@@ -823,11 +825,30 @@ describe('写入账号恢复接线', () => {
         await chain.controller.uploadFiles([file], false);
       });
       expect(uploadPosts).toBe(1);
-      await waitFor(() => expect(view.getByTestId('login-webview')).toBeTruthy());
+      const challenge = await view.findByTestId('login-webview');
+      expect(challenge.props.source.uri).toBe('https://cdk.linux.do/');
       expect(chain.account.hosts.surfaces.linuxdo).toBe(true);
       expect(chain.controller.draft?.attachments[0]?.status).toBe('failed');
 
       challengeActive = false;
+      await fireEvent(challenge, 'loadStart', {
+        nativeEvent: { url: 'https://cdk.linux.do/login', loading: true }
+      });
+      await fireEvent(challenge, 'message', {
+        nativeEvent: {
+          url: 'https://cdk.linux.do',
+          data: JSON.stringify({
+            type: 'linuxdo-webview',
+            documentKey: 'https://cdk.linux.do/login:9998',
+            hasChallengeMarker: false
+          })
+        }
+      });
+      await waitFor(() => expect(view.getByTestId('login-webview').props.source.uri).toBe('https://linux.do/latest'));
+      await fireEvent(view.getByTestId('login-webview'), 'loadStart', {
+        nativeEvent: { url: 'https://linux.do/latest', loading: true }
+      });
+      await fireEvent.press(view.getByText('检测并继续'));
       await fireEvent(view.getByTestId('login-webview'), 'message', {
         nativeEvent: {
           url: 'https://linux.do',
@@ -841,7 +862,6 @@ describe('写入账号恢复接线', () => {
           })
         }
       });
-      await fireEvent.press(view.getByText('检测登录'));
       await waitFor(() => expect(chain.account.hosts.surfaces.linuxdo).toBe(false));
       expect(uploadPosts).toBe(1);
       expect(chain.controller.draft?.attachments[0]?.status).toBe('failed');
@@ -1360,7 +1380,11 @@ describe('创建主题发布控制器', () => {
 
     await act(async () => test.result.current.submit());
     expect(test.result.current.attempt?.status).toBe('rejected');
-    expect(test.runtime.openAccount).toHaveBeenCalledWith('linuxdo', expect.stringContaining('验证'));
+    expect(test.runtime.openAccount).toHaveBeenCalledWith(
+      'linuxdo',
+      expect.stringContaining('验证'),
+      expect.objectContaining({ kind: 'website', isCurrent: expect.any(Function) })
+    );
     expect(test.posts()).toHaveLength(1);
     expect(test.result.current.draft?.title).toBe('这是一个完整主题标题');
   });

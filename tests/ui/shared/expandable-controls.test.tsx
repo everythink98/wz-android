@@ -229,85 +229,90 @@ describe('ExpandablePanel', () => {
     await view.rerender(<DisclosureChevron expanded color="#333333" />);
     expect(StyleSheet.flatten(chevron.props.style).transform).toEqual([{ rotate: { current: '180deg' } }]);
   });
-  it('keeps drafts while animating both directions and blocks collapsed content before animation finishes', async () => {
-    const saveDraft = jest.fn();
-    const expandedChanges = jest.fn();
+  it.each([undefined, false])(
+    'keeps drafts and touch isolation while clipping with fadeContent=%s',
+    async (fadeContent) => {
+      const saveDraft = jest.fn();
+      const expandedChanges = jest.fn();
 
-    function DraftContent() {
-      const [draft, setDraft] = useState('');
-      return (
-        <View testID="draft-content">
-          <TextInput accessibilityLabel="草稿" value={draft} onChangeText={setDraft} />
-          <Pressable accessibilityRole="button" accessibilityLabel="保存草稿" onPress={() => saveDraft(draft)}>
-            <Text>保存草稿</Text>
-          </Pressable>
-        </View>
-      );
+      function DraftContent() {
+        const [draft, setDraft] = useState('');
+        return (
+          <View testID="draft-content">
+            <TextInput accessibilityLabel="草稿" value={draft} onChangeText={setDraft} />
+            <Pressable accessibilityRole="button" accessibilityLabel="保存草稿" onPress={() => saveDraft(draft)}>
+              <Text>保存草稿</Text>
+            </Pressable>
+          </View>
+        );
+      }
+
+      function Panel() {
+        const [expanded, setExpanded] = useState(false);
+        return (
+          <ExpandablePanel
+            expanded={expanded}
+            fadeContent={fadeContent}
+            title="测试面板"
+            onExpandedChange={(next) => {
+              expandedChanges(next);
+              setExpanded(next);
+            }}
+          >
+            <DraftContent />
+          </ExpandablePanel>
+        );
+      }
+
+      const view = await render(<Panel />);
+      const content = view.getByTestId('draft-content', { includeHiddenElements: true });
+      const measuredContent = content.parent;
+      const body = measuredContent?.props.pointerEvents ? measuredContent : measuredContent?.parent;
+      if (!body || !measuredContent) throw new Error('Missing disclosure content');
+
+      expect(body.props.pointerEvents).toBe('none');
+      expect(body.props.importantForAccessibility).toBe('no-hide-descendants');
+      expect(view.queryByLabelText('草稿')).toBeNull();
+      await fireEvent(measuredContent, 'layout', { nativeEvent: { layout: { height: 160, width: 320 } } });
+
+      await fireEvent.press(view.getByLabelText('展开测试面板'));
+
+      const opacity = (progress: number) => (fadeContent === false ? 1 : progress);
+      const openingStyle = StyleSheet.flatten(body.props.style);
+      expect(openingStyle).toMatchObject({ height: 80, opacity: opacity(0.5) });
+      expect(openingStyle).not.toHaveProperty('transform');
+      expect(body.props.pointerEvents).toBe('auto');
+      expect(body.props.importantForAccessibility).toBe('auto');
+      expect(mockWithTiming).not.toHaveBeenCalledWith(160, expect.anything());
+      expect(mockWithTiming).toHaveBeenCalledWith(1, expect.objectContaining({ reduceMotion: ReduceMotion.System }));
+      await fireEvent.changeText(view.getByLabelText('草稿'), '尚未保存的内容');
+
+      await fireEvent(measuredContent, 'layout', { nativeEvent: { layout: { height: 240, width: 320 } } });
+      await view.rerender(<Panel />);
+      expect(StyleSheet.flatten(body.props.style)).toMatchObject({ height: 120, opacity: opacity(0.5) });
+      expect(mockWithTiming).not.toHaveBeenCalledWith(240, expect.anything());
+      await fireEvent(measuredContent, 'layout', { nativeEvent: { layout: { height: 160, width: 320 } } });
+
+      mockWithTiming.mockClear();
+      await fireEvent.press(view.getByLabelText('收起测试面板'));
+
+      expect(StyleSheet.flatten(body.props.style)).toMatchObject({ height: 40, opacity: opacity(0.25) });
+      expect(body.props.pointerEvents).toBe('none');
+      expect(view.queryByLabelText('保存草稿')).toBeNull();
+      expect(mockWithTiming).toHaveBeenCalledWith(0, expect.objectContaining({ reduceMotion: ReduceMotion.System }));
+      expect(view.getByTestId('draft-content', { includeHiddenElements: true })).toBe(content);
+
+      mockProgress = 0.25;
+      await fireEvent.press(view.getByLabelText('展开测试面板'));
+
+      expect(StyleSheet.flatten(body.props.style)).toMatchObject({ height: 40, opacity: opacity(0.25) });
+      expect(body.props.pointerEvents).toBe('auto');
+      expect(view.getByLabelText('草稿').props.value).toBe('尚未保存的内容');
+      await fireEvent.press(view.getByLabelText('保存草稿'));
+      expect(saveDraft).toHaveBeenCalledWith('尚未保存的内容');
+      expect(expandedChanges.mock.calls).toEqual([[true], [false], [true]]);
     }
-
-    function Panel() {
-      const [expanded, setExpanded] = useState(false);
-      return (
-        <ExpandablePanel
-          expanded={expanded}
-          title="测试面板"
-          onExpandedChange={(next) => {
-            expandedChanges(next);
-            setExpanded(next);
-          }}
-        >
-          <DraftContent />
-        </ExpandablePanel>
-      );
-    }
-
-    const view = await render(<Panel />);
-    const content = view.getByTestId('draft-content', { includeHiddenElements: true });
-    const measuredContent = content.parent;
-    const body = measuredContent?.props.pointerEvents ? measuredContent : measuredContent?.parent;
-    if (!body || !measuredContent) throw new Error('Missing disclosure content');
-
-    expect(body.props.pointerEvents).toBe('none');
-    expect(body.props.importantForAccessibility).toBe('no-hide-descendants');
-    expect(view.queryByLabelText('草稿')).toBeNull();
-    await fireEvent(measuredContent, 'layout', { nativeEvent: { layout: { height: 160, width: 320 } } });
-
-    await fireEvent.press(view.getByLabelText('展开测试面板'));
-
-    const openingStyle = StyleSheet.flatten(body.props.style);
-    expect(openingStyle).toMatchObject({ height: 80, opacity: 0.5 });
-    expect(openingStyle).not.toHaveProperty('transform');
-    expect(body.props.pointerEvents).toBe('auto');
-    expect(body.props.importantForAccessibility).toBe('auto');
-    expect(mockWithTiming).not.toHaveBeenCalledWith(160, expect.anything());
-    expect(mockWithTiming).toHaveBeenCalledWith(1, expect.objectContaining({ reduceMotion: ReduceMotion.System }));
-    await fireEvent.changeText(view.getByLabelText('草稿'), '尚未保存的内容');
-
-    await fireEvent(measuredContent, 'layout', { nativeEvent: { layout: { height: 240, width: 320 } } });
-    await view.rerender(<Panel />);
-    expect(StyleSheet.flatten(body.props.style)).toMatchObject({ height: 120, opacity: 0.5 });
-    expect(mockWithTiming).not.toHaveBeenCalledWith(240, expect.anything());
-    await fireEvent(measuredContent, 'layout', { nativeEvent: { layout: { height: 160, width: 320 } } });
-
-    mockWithTiming.mockClear();
-    await fireEvent.press(view.getByLabelText('收起测试面板'));
-
-    expect(StyleSheet.flatten(body.props.style)).toMatchObject({ height: 40, opacity: 0.25 });
-    expect(body.props.pointerEvents).toBe('none');
-    expect(view.queryByLabelText('保存草稿')).toBeNull();
-    expect(mockWithTiming).toHaveBeenCalledWith(0, expect.objectContaining({ reduceMotion: ReduceMotion.System }));
-    expect(view.getByTestId('draft-content', { includeHiddenElements: true })).toBe(content);
-
-    mockProgress = 0.25;
-    await fireEvent.press(view.getByLabelText('展开测试面板'));
-
-    expect(StyleSheet.flatten(body.props.style)).toMatchObject({ height: 40, opacity: 0.25 });
-    expect(body.props.pointerEvents).toBe('auto');
-    expect(view.getByLabelText('草稿').props.value).toBe('尚未保存的内容');
-    await fireEvent.press(view.getByLabelText('保存草稿'));
-    expect(saveDraft).toHaveBeenCalledWith('尚未保存的内容');
-    expect(expandedChanges.mock.calls).toEqual([[true], [false], [true]]);
-  });
+  );
 
   it('announces the expanded state of nested disclosure buttons', async () => {
     function Menu() {

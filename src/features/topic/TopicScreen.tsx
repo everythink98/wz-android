@@ -29,7 +29,7 @@ import { forumQueryKeys } from '@/platform/query/serverState';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { AuthNoticeBox, EmptyText } from '@/ui/controls/FeedbackStates';
 import { ScreenTopBar, ScreenTopBarActions, ScreenTopBarTitle } from '@/ui/controls/ScreenTopBar';
-import { NavigationBackdropProvider, NavigationBackdropTarget, NavigationGlass } from '@/ui/navigation/NavigationGlass';
+import { NavigationBackdropTarget, NavigationGlass } from '@/ui/navigation/NavigationGlass';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { createTopicStyles } from './styles';
 import { ReplyComposerSheet } from './components/ReplyComposerSheet';
@@ -133,7 +133,7 @@ export const TopicScreen = memo(function TopicScreen({
   const replyLocationRef = useRef<((target: ReplyLocationTarget) => void) | null>(null);
   const [commentSearchFocused, setCommentSearchFocused] = useState(false);
   const replyComposerIntent = state.replyComposerIntent;
-  const replyComposerOpen = replyComposerIntent.kind !== 'closed';
+  const replyComposerOpen = replyComposerIntent.kind !== 'closed' || state.replyEditRecovery != null;
   const entryPositionReady = read.readingEntry?.ready !== false && read.readingEntry?.positionReady !== false;
   const showReplyJump = active && entryPositionReady && canJumpToReply && jumpAnchor !== null && !replyComposerOpen;
   const currentFloor = entryPositionReady && viewportFloor?.topicKey === topicKey ? viewportFloor.floor : undefined;
@@ -165,11 +165,12 @@ export const TopicScreen = memo(function TopicScreen({
       }
     });
   }, []);
-  const discourseEmojiSource = active && isDiscourseSource(itemSource) ? itemSource : null;
+  const discourseEmojiSource = isDiscourseSource(itemSource) ? itemSource : null;
   const { data: discourseEmojiData, refetch: refetchDiscourseEmojiUrls } = useQuery({
     queryKey: forumQueryKeys.emojiUrls(discourseEmojiSource),
     gcTime: Infinity,
-    enabled: Boolean(discourseEmojiSource),
+    enabled: active && Boolean(discourseEmojiSource),
+    subscribed: active,
     queryFn: ({ signal }) =>
       discourseEmojiSource
         ? retryEmojiCatalog(() => chrome.getDiscourseEmojiUrls({ source: discourseEmojiSource, signal }), signal)
@@ -367,7 +368,7 @@ export const TopicScreen = memo(function TopicScreen({
                 style={[styles.replyAction, styles.replyJumpAction]}
                 onPress={openReplyJump}
               >
-                <NavigationGlass variant="control" />
+                <NavigationGlass variant="control" cropToViewport pauseWhenHidden />
                 <Text numberOfLines={1} style={[styles.replyActionText, styles.replyJumpActionText]}>
                   {floorLabel}
                 </Text>
@@ -387,7 +388,7 @@ export const TopicScreen = memo(function TopicScreen({
               style={[styles.replyAction, styles.replyWriteAction]}
               onPress={() => commands.composer.toggle(true)}
             >
-              <NavigationGlass accent />
+              <NavigationGlass accent cropToViewport pauseWhenHidden />
               <SquarePen size={20} color={theme.dark ? theme.primary : theme.primaryStrong} strokeWidth={1.8} />
               <Text style={styles.replyActionText}>回复</Text>
             </Pressable>
@@ -423,6 +424,9 @@ export const TopicScreen = memo(function TopicScreen({
         visible={active && topicMenuOpen}
       />
       <ReplyComposerSheet
+        key={state.replyComposerScope}
+        editRecoveryRef={commands.composer.editRecoveryRef}
+        recoveryContent={state.replyEditRecovery}
         actionBusy={actionBusy}
         uploadingImage={actions.replyImageUploading}
         discourseEmojiUrls={discourseEmojiUrls}
@@ -437,7 +441,8 @@ export const TopicScreen = memo(function TopicScreen({
         styles={styles}
         theme={theme}
         topicId={item.id}
-        visible={Boolean(canOpenReplyComposer && replyComposerIntent.kind !== 'closed')}
+        visible={state.replyEditRecovery != null || (canOpenReplyComposer && replyComposerIntent.kind !== 'closed')}
+        onBackAfterClose={chrome.back}
         onReplyComposerOpenChange={commands.composer.toggle}
         onReplyContentChange={commands.composer.changeContent}
         onReplyFaceChange={commands.composer.changeFace}
@@ -458,18 +463,16 @@ export const TopicScreen = memo(function TopicScreen({
     </View>
   );
   return (
-    <NavigationBackdropProvider>
-      <LinuxDoPostInteractionsProvider
-        active={active}
-        scopeKey={`${html.mediaSessionIdentity}:${item.id}`}
-        topic={topic}
-        replies={read.topicReplies}
-        actions={actions}
-        emojiUrls={discourseEmojiUrls}
-        onOpenUser={chrome.openUser}
-      >
-        {content}
-      </LinuxDoPostInteractionsProvider>
-    </NavigationBackdropProvider>
+    <LinuxDoPostInteractionsProvider
+      active={active}
+      scopeKey={`${html.mediaSessionIdentity}:${item.id}`}
+      topic={topic}
+      replies={read.topicReplies}
+      actions={actions}
+      emojiUrls={discourseEmojiUrls}
+      onOpenUser={chrome.openUser}
+    >
+      {content}
+    </LinuxDoPostInteractionsProvider>
   );
 });

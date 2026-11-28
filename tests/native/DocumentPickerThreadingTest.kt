@@ -206,6 +206,27 @@ class DocumentPickerThreadingTest {
     }
 
     @Test
+    fun keepsTheSelectionWhenAProviderOmitsMetadata() {
+        provider.omitMetadata = "second"
+        val promise = pick(multiple = true)
+        result(multipleSelection("first", "second"))
+        awaitSettlement(promise)
+        assertNull(promise.error)
+        val assets = requireNotNull(promise.value?.assets)
+        assertEquals(2, assets.size)
+        assets.forEach { assertArrayEquals(provider.bytes, File(requireNotNull(it.uri.path)).readBytes()) }
+    }
+
+    @Test
+    fun rejectsNonContentUrisBeforeReadingMetadata() {
+        val promise = pick()
+        result(Intent().setData(Uri.parse("file:///unused-picker-test.png")))
+        awaitSettlement(promise)
+        assertNotNull(promise.error)
+        assertEquals(0, provider.reads)
+    }
+
+    @Test
     fun aLaterProviderFailureRemovesOnlyTheCopiesMadeByThatSelection() {
         val baseline = pickerCacheFiles()
         val existing = pick()
@@ -391,6 +412,7 @@ class DocumentPickerThreadingTest {
         var failRead = false
         var failOpen: String? = null
         var unknownSize: String? = null
+        var omitMetadata: String? = null
         val opened = mutableListOf<String>()
         var reads = 0
         val bytes = byteArrayOf(1, 2, 3, 4, 5)
@@ -415,6 +437,7 @@ class DocumentPickerThreadingTest {
             blockAt(BlockAt.QUERY)
             if (failRead) throw IOException("Provider failed to read metadata")
             val name = uri.lastPathSegment
+            if (name == omitMetadata) return MatrixCursor(emptyArray())
             val extension = if (name == "accepted") "jpeg" else "png"
             return MatrixCursor(arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE, DocumentsContract.Document.COLUMN_LAST_MODIFIED)).apply {
                 addRow(arrayOf<Any?>("$name.$extension", bytes.size.toLong().takeUnless { name == unknownSize }, 123L))

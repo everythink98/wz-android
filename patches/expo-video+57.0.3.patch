@@ -32,10 +32,10 @@ index 0000000..b08f05c
 +</manifest>
 diff --git a/node_modules/expo-video/android/src/androidTest/java/expo/modules/video/ReaderPlaybackInstrumentedTest.kt b/node_modules/expo-video/android/src/androidTest/java/expo/modules/video/ReaderPlaybackInstrumentedTest.kt
 new file mode 100644
-index 00000000..e80ccbfa
+index 00000000..5a664a13
 --- /dev/null
 +++ b/node_modules/expo-video/android/src/androidTest/java/expo/modules/video/ReaderPlaybackInstrumentedTest.kt
-@@ -0,0 +1,410 @@
+@@ -0,0 +1,849 @@
 +package expo.modules.video
 +
 +import android.net.Uri
@@ -44,6 +44,14 @@ index 00000000..e80ccbfa
 +import android.media.MediaCodecInfo
 +import android.media.MediaFormat
 +import android.media.MediaMuxer
++import android.graphics.Color
++import android.graphics.Bitmap
++import android.graphics.Rect
++import android.os.Handler
++import android.os.Looper
++import android.view.PixelCopy
++import android.view.TextureView
++import android.widget.FrameLayout
 +import android.os.SystemClock
 +import android.util.Log
 +import androidx.media3.common.C
@@ -51,17 +59,23 @@ index 00000000..e80ccbfa
 +import androidx.media3.common.util.UnstableApi
 +import androidx.media3.datasource.DataSpec
 +import androidx.media3.exoplayer.ExoPlayer
++import androidx.media3.ui.PlayerView
 +import androidx.test.ext.junit.runners.AndroidJUnit4
 +import androidx.test.core.app.ActivityScenario
 +import androidx.test.platform.app.InstrumentationRegistry
 +import expo.modules.video.managers.VideoManager
++import expo.modules.video.player.VideoPlayerLoadControl
++import expo.modules.video.records.ButtonOptions
 +import expo.modules.video.records.VideoSource
 +import okhttp3.OkHttpClient
++import okhttp3.ResponseBody
 +import okhttp3.mockwebserver.Dispatcher
 +import okhttp3.mockwebserver.MockResponse
 +import okhttp3.mockwebserver.MockWebServer
 +import okhttp3.mockwebserver.RecordedRequest
 +import okio.Buffer
++import okio.ForwardingSource
++import okio.buffer
 +import org.junit.After
 +import org.junit.Assert.*
 +import org.junit.Before
@@ -72,6 +86,8 @@ index 00000000..e80ccbfa
 +import java.util.Collections
 +import java.util.concurrent.CountDownLatch
 +import java.util.concurrent.TimeUnit
++import java.util.concurrent.atomic.AtomicLong
++import java.util.concurrent.atomic.AtomicInteger
 +
 +@androidx.annotation.OptIn(UnstableApi::class)
 +@RunWith(AndroidJUnit4::class)
@@ -82,7 +98,21 @@ index 00000000..e80ccbfa
 +  private val ranges = Collections.synchronizedList(mutableListOf<String>())
 +  private var bytes = wav()
 +  private var mime = "audio/wav"
-+  private val client = OkHttpClient()
++  @Volatile private var throttledBytesPer100Ms = 0L
++  private val networkBytes = AtomicLong()
++  private val client = OkHttpClient.Builder().addNetworkInterceptor { chain ->
++    val response = chain.proceed(chain.request())
++    val body = response.body ?: return@addNetworkInterceptor response
++    val counted = object : ForwardingSource(body.source()) {
++      override fun read(sink: Buffer, byteCount: Long): Long =
++        super.read(sink, byteCount).also { if (it > 0) networkBytes.addAndGet(it) }
++    }.buffer()
++    response.newBuilder().body(object : ResponseBody() {
++      override fun contentType() = body.contentType()
++      override fun contentLength() = body.contentLength()
++      override fun source() = counted
++    }).build()
++  }.build()
 +
 +  @Before fun setup() {
 +    VideoManager.cache = VideoCache(context)
@@ -97,11 +127,16 @@ index 00000000..e80ccbfa
 +        val start = match?.groupValues?.get(1)?.toInt() ?: 0
 +        val end = match?.groupValues?.get(2)?.toIntOrNull()?.coerceAtMost(bytes.lastIndex) ?: bytes.lastIndex
 +        if (start > end) return MockResponse().setResponseCode(416)
-+        return MockResponse().setResponseCode(if (range == null) 200 else 206)
++        val response = MockResponse().setResponseCode(if (range == null) 200 else 206)
 +          .setHeader("Content-Type", mime)
 +          .setHeader("Accept-Ranges", "bytes")
 +          .setHeader("Content-Range", "bytes $start-$end/${bytes.size}")
 +          .setBody(Buffer().write(bytes, start, end - start + 1))
++        if (throttledBytesPer100Ms > 0) {
++          response.setHeadersDelay(300, TimeUnit.MILLISECONDS)
++          response.throttleBody(throttledBytesPer100Ms, 100, TimeUnit.MILLISECONDS)
++        }
++        return response
 +      }
 +    }
 +    server.start()
@@ -259,9 +294,16 @@ index 00000000..e80ccbfa
 +    try {
 +      scenario.onActivity { activity ->
 +        val view = activity.playerView
-+        view.layoutParams = view.layoutParams.apply { height = (136 * view.resources.displayMetrics.density).toInt() }
++        val density = view.resources.displayMetrics.density
++        val host = android.widget.FrameLayout(activity)
++        activity.setContentView(host)
++        // A reader video sits below the page header, inside the system window's visible area.
++        host.addView(view, android.widget.FrameLayout.LayoutParams(
++          android.view.ViewGroup.LayoutParams.MATCH_PARENT,
++          (136 * density).toInt()
++        ).apply { topMargin = (56 * density).toInt() })
 +        view.controllerShowTimeoutMs = 0
-+        view.setSettingsButtonVisibility(true)
++        view.applyButtonOptions(ButtonOptions(showSettings = true, showBottomBar = true))
 +        player = ExoPlayer.Builder(context).build().apply {
 +          view.player = this
 +          setMediaSource(buildExpoVideoMediaSource(context, media))
@@ -274,17 +316,47 @@ index 00000000..e80ccbfa
 +      val mediaResources = context.resources
 +      val speedMenu = mediaResources.getString(androidx.media3.ui.R.string.exo_controls_playback_speed)
 +      val speeds = mediaResources.getStringArray(androidx.media3.ui.R.array.exo_controls_playback_speeds)
-+      for ((label, multiplier) in listOf(speeds[5] to 1.5f, speeds[6] to 2f)) {
++      val layouts = listOf(
++        Triple(92, speeds[5], 1.5f),
++        Triple(136, speeds[5], 1.5f),
++        Triple(320, speeds[6], 2f),
++        Triple(136, speeds[5], 1.5f)
++      )
++      val observedControlModes = mutableSetOf<Boolean>()
++      for ((heightDp, label, multiplier) in layouts) {
++        scenario.onActivity { activity ->
++          val view = activity.playerView
++          val heightPx = (heightDp * view.resources.displayMetrics.density).toInt()
++          view.layoutParams = view.layoutParams.apply { height = heightPx }
++        }
++        instrumentation.waitForIdleSync()
++        var popupBottomRange = IntRange.EMPTY
 +        scenario.onActivity { activity ->
 +          val view = activity.playerView
 +          view.showController()
 +          val settings = view.findViewById<android.view.View>(androidx.media3.ui.R.id.exo_settings)
-+          assertEquals(androidx.media3.ui.R.id.exo_center_controls, (settings.parent as android.view.View).id)
 +          assertTrue(settings.isShown && settings.isClickable)
++          val compact = view.findViewById<android.view.ViewGroup>(androidx.media3.ui.R.id.exo_minimal_controls)
++          val bottom = view.findViewById<android.view.View>(androidx.media3.ui.R.id.exo_bottom_bar)
++          observedControlModes.add(compact.isShown)
++          assertFalse("Two control bars are visible at ${heightDp}dp", compact.isShown && bottom.isShown)
++          if (compact.isShown) assertSame("Compact settings lost its owner", compact, settings.parent)
++          val settingsBounds = android.graphics.Rect()
++          val playerBounds = android.graphics.Rect()
++          assertTrue(settings.getGlobalVisibleRect(settingsBounds) && view.getGlobalVisibleRect(playerBounds))
++          val bottomGap = playerBounds.bottom - settingsBounds.bottom
++          val density = view.resources.displayMetrics.density
++          assertEquals("Player layout height", (heightDp * density).toInt(), view.height)
++          val maxGap = (24 * density).toInt()
++          assertTrue("Settings must sit at the bottom of the ${heightDp}dp player, gap=$bottomGap px", bottomGap in 0..maxGap)
++          val screenLocation = IntArray(2)
++          view.getLocationOnScreen(screenLocation)
++          val playerBottom = screenLocation[1] + view.height
++          popupBottomRange = (playerBottom - (40 * density).toInt())..playerBottom
 +          assertTrue(settings.performClick())
 +        }
-+        clickNativeMenuText(speedMenu)
-+        clickNativeMenuText(label)
++        clickNativeMenuText(speedMenu, popupBottomRange)
++        clickNativeMenuText(label, popupBottomRange)
 +        val playing = CountDownLatch(1)
 +        val playbackListener = object : Player.Listener {
 +          override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -316,21 +388,28 @@ index 00000000..e80ccbfa
 +          assertEquals("Actual media progression at ${multiplier}x", multiplier, actualSpeed, 0.22f)
 +        }
 +      }
++      assertEquals("Fixture did not exercise compact and full controls", setOf(true, false), observedControlModes)
 +    } finally {
 +      instrumentation.runOnMainSync { player?.release() }
 +      scenario.close()
 +    }
 +  }
 +
-+  private fun clickNativeMenuText(text: String) {
++  private fun clickNativeMenuText(text: String, popupBottomRange: IntRange) {
 +    val deadline = SystemClock.elapsedRealtime() + 5000
 +    var nextScroll = SystemClock.elapsedRealtime() + 250
++    var lastPopupBounds: android.graphics.Rect? = null
 +    do {
 +      val root = instrumentation.uiAutomation.rootInActiveWindow
 +      val items = root?.findAccessibilityNodeInfosByText(text).orEmpty()
 +      for (item in items.filter { it.text?.toString() == text }) {
 +        val control = generateSequence(item) { it.parent }.firstOrNull { it.isClickable }
-+        if (control?.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK) == true) return
++        if (control != null && root != null) {
++          val popupBounds = android.graphics.Rect()
++          root.getBoundsInScreen(popupBounds)
++          lastPopupBounds = popupBounds
++          if (popupBounds.bottom in popupBottomRange && control.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)) return
++        }
 +      }
 +      if (root != null && SystemClock.elapsedRealtime() >= nextScroll) {
 +        // Media3 clips the popup to the height of the inline controller, so speed rows can require scrolling.
@@ -346,7 +425,59 @@ index 00000000..e80ccbfa
 +      }
 +      SystemClock.sleep(50)
 +    } while (SystemClock.elapsedRealtime() < deadline)
-+    fail("Media3 did not expose the menu item: $text")
++    fail("Media3 menu item $text must be selectable with popup bottom in $popupBottomRange, last window=$lastPopupBounds")
++  }
++
++  @Test fun compareBackBufferCandidatesForRenderedVideoSeek() {
++    val scenario = ActivityScenario.launch<ReaderPlaybackTestActivity>(Intent(context, ReaderPlaybackTestActivity::class.java))
++    try {
++      for ((keyframeSeconds, bitrate) in listOf(1 to 128_000, 5 to 1_500_000)) {
++        bytes = mp4(keyframeSeconds, bitrate)
++        mime = "video/mp4"
++        val cached = source().apply { uri = Uri.parse(server.url("/seek-$keyframeSeconds.mp4").toString()) }
++        read(cached, 0, bytes.size.toLong())
++        for (backBufferMs in listOf(0L, 10_000L, 30_000L)) {
++          val frameUs = java.util.concurrent.atomic.AtomicLong(-1)
++          val requestsBefore = ranges.size
++          var player: ExoPlayer? = null
++          try {
++            scenario.onActivity { activity ->
++              player = ExoPlayer.Builder(activity).setLoadControl(VideoPlayerLoadControl(backBufferMs)).build().apply {
++                setVideoFrameMetadataListener { timeUs, _, _, _ -> frameUs.set(timeUs) }
++                activity.playerView.player = this
++                setMediaSource(buildExpoVideoMediaSource(activity, cached))
++                prepare()
++                play()
++              }
++            }
++            awaitReady(player!!)
++            val until = SystemClock.elapsedRealtime() + 7000L
++            while (frameUs.get() < 3_000_000 && SystemClock.elapsedRealtime() < until) SystemClock.sleep(10)
++            assertTrue("Playback did not reach the test point", frameUs.get() >= 3_000_000)
++            val start = SystemClock.elapsedRealtime()
++            instrumentation.runOnMainSync {
++              player!!.pause()
++              player!!.seekTo(1_000)
++            }
++            while (kotlin.math.abs(frameUs.get() - 1_000_000L) > 150_000L && SystemClock.elapsedRealtime() - start < 5000L) {
++              SystemClock.sleep(5)
++            }
++            val seekMs = SystemClock.elapsedRealtime() - start
++            assertTrue("The requested video frame did not render", kotlin.math.abs(frameUs.get() - 1_000_000L) <= 150_000L)
++            val upstreamRequests = ranges.size - requestsBefore
++            assertEquals("A fully cached video should seek without another Range", 0, upstreamRequests)
++            Log.i("ReaderPlaybackProof", "backBufferMs=$backBufferMs keyframeSeconds=$keyframeSeconds bitrate=$bitrate seekMs=$seekMs requests=$upstreamRequests pssKiB=${android.os.Debug.getPss()}")
++          } finally {
++            scenario.onActivity { activity ->
++              activity.playerView.player = null
++              player?.release()
++            }
++          }
++        }
++      }
++    } finally {
++      scenario.close()
++    }
 +  }
 +
 +  @Test fun realPlayerSeeksWithinDownloadedAudioWithoutNewRequests() {
@@ -373,6 +504,282 @@ index 00000000..e80ccbfa
 +    } finally { instrumentation.runOnMainSync { player?.release() } }
 +  }
 +
++  @Test fun longGopVideoRendersTheLastSeekOnWarmAndPartialCache() {
++    bytes = mp4(keyframeSeconds = 12, bitrate = 8_000_000, longGop = true)
++    mime = "video/mp4"
++    val scenario = ActivityScenario.launch<ReaderPlaybackTestActivity>(Intent(context, ReaderPlaybackTestActivity::class.java))
++    try {
++      for (warm in listOf(true, false)) {
++        val source = source(identity = "long-gop-$warm").apply { uri = Uri.parse(server.url("/long-gop-$warm.mp4").toString()) }
++        if (warm) read(source, 0, bytes.size.toLong())
++        throttledBytesPer100Ms = if (warm) 0L else 128 * 1024L
++        val frames = AtomicLong(-1)
++        var player: ExoPlayer? = null
++        try {
++          scenario.onActivity { activity ->
++            player = ExoPlayer.Builder(activity).setLoadControl(VideoPlayerLoadControl()).build().apply {
++              setVideoFrameMetadataListener { pts, _, _, _ -> frames.set(pts) }
++              activity.playerView.player = this
++              setMediaSource(buildExpoVideoMediaSource(activity, source))
++              prepare()
++            }
++          }
++          val active = checkNotNull(player)
++          awaitReady(active)
++          if (!warm) instrumentation.runOnMainSync { assertTrue("Cold target already loaded", active.bufferedPosition < 11_375) }
++          for (seeks in listOf(listOf(11_375L), listOf(18_750L, 6_750L, 22_375L), listOf(5_375L))) {
++            val target = seeks.last()
++            val start = SystemClock.elapsedRealtime()
++            val requests = ranges.size
++            val beforeBytes = networkBytes.get()
++            var finalInput = start
++            for (seek in seeks) {
++              if (seek == target) finalInput = SystemClock.elapsedRealtime()
++              instrumentation.runOnMainSync { active.seekTo(seek) }
++              if (seek != target) SystemClock.sleep(35)
++            }
++            var displayedFrame = -1
++            val expectedFrame = (target * 24 / 1000).toInt()
++            do {
++              if (kotlin.math.abs(frames.get() - target * 1000) < 4_000) {
++                scenario.onActivity { activity ->
++                  val texture = activity.playerView.videoSurfaceView as TextureView
++                  texture.getBitmap(40, 16)?.let { bitmap ->
++                    try {
++                      displayedFrame = decodeFrameNumber(bitmap)
++                    } finally { bitmap.recycle() }
++                  }
++                }
++                if (displayedFrame == expectedFrame) break
++              }
++              SystemClock.sleep(15)
++            } while (SystemClock.elapsedRealtime() - start < 15_000)
++            assertTrue("No visible target frame at $target: pts=${frames.get()} displayed=$displayedFrame expected=$expectedFrame",
++              kotlin.math.abs(frames.get() - target * 1000) < 4_000 && displayedFrame == expectedFrame)
++            val received = networkBytes.get() - beforeBytes
++            if (warm) assertEquals("Warm video reread the network", 0L, received)
++            Log.i("ReaderPlaybackProof", "longGop warm=$warm seeks=$seeks targetMs=$target frame=$displayedFrame ptsUs=${frames.get()} releaseToTargetMs=${SystemClock.elapsedRealtime() - finalInput} ranges=${ranges.size - requests} bytes=$received pssKiB=${android.os.Debug.getPss()}")
++          }
++        } finally {
++          scenario.onActivity { it.playerView.player = null; player?.release() }
++        }
++      }
++    } finally { scenario.close() }
++  }
++
++  @Test fun endedFullscreenReturnDisplaysTheLastFrame() = verifyStoppedFullscreenReturn(ended = true)
++
++  @Test fun pausedFullscreenReturnDisplaysTheCurrentFrame() = verifyStoppedFullscreenReturn(ended = false)
++
++  private fun verifyStoppedFullscreenReturn(ended: Boolean) {
++    bytes = mp4(keyframeSeconds = 12, bitrate = 8_000_000, longGop = true)
++    mime = "video/mp4"
++    val source = source(identity = "return-$ended").apply { uri = Uri.parse(server.url("/surface-return.mp4").toString()) }
++    read(source, 0, bytes.size.toLong())
++    val scenario = ActivityScenario.launch<ReaderPlaybackTestActivity>(Intent(context, ReaderPlaybackTestActivity::class.java))
++    lateinit var inline: PlayerView
++    lateinit var fullscreen: PlayerView
++    lateinit var active: ExoPlayer
++    try {
++      scenario.onActivity { activity ->
++        inline = activity.playerView
++        val root = inline.parent as FrameLayout
++        // API 35 lays this test window edge-to-edge beneath its framework action bar.
++        inline.layoutParams = FrameLayout.LayoutParams(320, 192).apply { topMargin = 320 }
++        fullscreen = activity.layoutInflater.inflate(R.layout.texture_player_view, root, false) as PlayerView
++        root.addView(fullscreen, FrameLayout.LayoutParams(320, 192).apply { topMargin = 540 })
++        for (view in listOf(inline, fullscreen)) {
++          view.useController = false
++          view.setKeepContentOnPlayerReset(true)
++          view.setShutterBackgroundColor(Color.TRANSPARENT)
++        }
++      }
++      val surfacesReady = CountDownLatch(2)
++      scenario.onActivity {
++        for (view in listOf(inline, fullscreen)) view.post { surfacesReady.countDown() }
++      }
++      assertTrue("Test PlayerViews were not laid out", surfacesReady.await(3, TimeUnit.SECONDS))
++      scenario.onActivity { activity ->
++        for (view in listOf(inline, fullscreen)) {
++          val texture = view.videoSurfaceView as TextureView
++          assertTrue("Missing laid-out TextureView", texture.isAvailable && texture.width > 0 && texture.height > 0)
++        }
++        active = ExoPlayer.Builder(activity).setLoadControl(VideoPlayerLoadControl()).build()
++        inline.player = active
++        active.setMediaSource(buildExpoVideoMediaSource(activity, source))
++        active.prepare()
++      }
++      awaitReady(active)
++      scenario.onActivity { active.seekTo(1_125) }
++      awaitVisibleFrame(scenario, inline, 27)
++      scenario.onActivity {
++        PlayerView.switchTargetView(active, inline, fullscreen)
++        active.seekTo(if (ended) 23_500 else 5_375)
++      }
++      val finalFrame = if (ended) 575 else 129
++      if (ended) scenario.onActivity { active.play() }
++      awaitVisibleFrame(scenario, fullscreen, finalFrame)
++      var position = -1L
++      var playIntent = false
++      if (ended) {
++        val deadline = SystemClock.elapsedRealtime() + 3_000
++        while (SystemClock.elapsedRealtime() < deadline) {
++          var finished = false
++          scenario.onActivity { finished = active.playbackState == Player.STATE_ENDED }
++          if (finished) break
++          SystemClock.sleep(20)
++        }
++      }
++      val requests = ranges.size
++      val received = networkBytes.get()
++      var handoffStarted = 0L
++      var handoffMainUs = 0L
++      scenario.onActivity {
++        assertEquals(if (ended) Player.STATE_ENDED else Player.STATE_READY, active.playbackState)
++        position = active.currentPosition
++        playIntent = active.playWhenReady
++        handoffStarted = SystemClock.elapsedRealtimeNanos()
++        inline.restoreInlinePlayerFrom(fullscreen, active)
++        handoffMainUs = (SystemClock.elapsedRealtimeNanos() - handoffStarted) / 1_000
++      }
++      awaitVisibleFrame(scenario, inline, finalFrame)
++      val displayedUs = (SystemClock.elapsedRealtimeNanos() - handoffStarted) / 1_000
++      SystemClock.sleep(250)
++      assertEquals("Returned frame was subsequently erased", finalFrame, windowFrame(scenario, inline))
++      scenario.onActivity {
++        assertEquals(position, active.currentPosition)
++        assertEquals(playIntent, active.playWhenReady)
++        assertEquals(if (ended) Player.STATE_ENDED else Player.STATE_READY, active.playbackState)
++      }
++      assertEquals("Surface transfer requested upstream data", requests, ranges.size)
++      assertEquals("Surface transfer read upstream bytes", received, networkBytes.get())
++      if (!ended) {
++        scenario.onActivity { active.play() }
++        val deadline = SystemClock.elapsedRealtime() + 3_000
++        var visible = finalFrame
++        while (visible !in finalFrame + 3..finalFrame + 90 && SystemClock.elapsedRealtime() < deadline) {
++          visible = windowFrame(scenario, inline)
++          SystemClock.sleep(25)
++        }
++        assertTrue("Paused handoff did not yield to resumed video: $visible", visible in finalFrame + 3..finalFrame + 90)
++      }
++      // A retained frame must yield to the first real frame after an explicit new seek.
++      scenario.onActivity { active.pause(); active.seekTo(8_375) }
++      awaitVisibleFrame(scenario, inline, 201)
++      Log.i("ReaderPlaybackProof", "fullscreen-return ended=$ended position=$position frame=$finalFrame nextFrame=201 bytes=0 mainUs=$handoffMainUs visibleUs=$displayedUs source=320x192 target=320x192")
++    } finally {
++      scenario.onActivity { inline.player = null; fullscreen.player = null; active.release() }
++      scenario.close()
++    }
++  }
++
++  private fun awaitVisibleFrame(scenario: ActivityScenario<ReaderPlaybackTestActivity>, view: PlayerView, frame: Int) {
++    var observed: Int
++    val deadline = SystemClock.elapsedRealtime() + 4_000
++    do {
++      observed = windowFrame(scenario, view)
++      if (observed == frame) return
++      SystemClock.sleep(25)
++    } while (SystemClock.elapsedRealtime() < deadline)
++    var surface = -1
++    var info = ""
++    scenario.onActivity {
++      val texture = view.videoSurfaceView as TextureView
++      val origin = IntArray(2)
++      texture.getLocationInWindow(origin)
++      texture.getBitmap(40, 16)?.let { bitmap -> try { surface = decodeFrameNumber(bitmap) } finally { bitmap.recycle() } }
++      info = "origin=${origin.toList()} size=${texture.width}x${texture.height} state=${view.player?.playbackState} position=${view.player?.currentPosition}"
++    }
++    fail("Visible handoff frame expected=$frame observed=$observed surface=$surface $info")
++  }
++
++  private fun windowFrame(scenario: ActivityScenario<ReaderPlaybackTestActivity>, view: PlayerView): Int {
++    val result = AtomicInteger(-1)
++    val ready = CountDownLatch(1)
++    val bitmap = Bitmap.createBitmap(40, 16, Bitmap.Config.ARGB_8888)
++    try {
++      scenario.onActivity { activity ->
++        val texture = view.videoSurfaceView as TextureView
++        val origin = IntArray(2)
++        texture.getLocationInWindow(origin)
++        if (texture.width == 0 || texture.height == 0) { ready.countDown(); return@onActivity }
++        val rect = Rect(origin[0], origin[1], origin[0] + texture.width, origin[1] + texture.height)
++        PixelCopy.request(activity.window, rect, bitmap, { status -> result.set(status); ready.countDown() }, Handler(Looper.getMainLooper()))
++      }
++      assertTrue("PixelCopy callback timed out", ready.await(2, TimeUnit.SECONDS))
++      return if (result.get() == PixelCopy.SUCCESS) decodeFrameNumber(bitmap) else -1
++    } finally { bitmap.recycle() }
++  }
++
++  private fun decodeFrameNumber(bitmap: Bitmap): Int {
++    var decoded = 0
++    for (bit in 0 until 10) {
++      val red = Color.red(bitmap.getPixel(4 * bit + 2, 8))
++      if (red in 73..179) return -1
++      if (red >= 180) decoded = decoded or (1 shl bit)
++    }
++    return decoded
++  }
++
++  @Test fun shortAudioBackSeekWhileTheUpstreamIsStillLoading() {
++    bytes = wav(seconds = 45)
++    throttledBytesPer100Ms = 4096
++    for (backBufferMs in listOf(0L, 10_000L, 30_000L, null)) {
++      val cached = source().apply { uri = Uri.parse(server.url("/throttled-$backBufferMs.wav").toString()) }
++      var player: ExoPlayer? = null
++      try {
++        instrumentation.runOnMainSync {
++          val loadControl = backBufferMs?.let(::VideoPlayerLoadControl) ?: VideoPlayerLoadControl()
++          player = ExoPlayer.Builder(context).setLoadControl(loadControl).build().apply {
++            setMediaSource(buildExpoVideoMediaSource(context, cached))
++            prepare()
++            play()
++          }
++        }
++        val activePlayer = checkNotNull(player)
++        awaitReady(activePlayer)
++        awaitAudioPosition(activePlayer, 3_000L..4_500L)
++        val requestsBeforeBackSeek = ranges.size
++        val start = SystemClock.elapsedRealtime()
++        instrumentation.runOnMainSync {
++          assertTrue("The stream must still be partially loaded", activePlayer.bufferedPosition < 30_000L)
++          activePlayer.pause()
++          activePlayer.seekTo(1_000)
++          activePlayer.play()
++        }
++        awaitAudioPosition(activePlayer, 1_060L..1_400L)
++        val backSeekMs = SystemClock.elapsedRealtime() - start
++        val backRequests = ranges.size - requestsBeforeBackSeek
++        val requestsBeforeColdSeek = ranges.size
++        val coldStart = SystemClock.elapsedRealtime()
++        instrumentation.runOnMainSync { activePlayer.seekTo(35_000) }
++        awaitAudioPosition(activePlayer, 35_060L..35_500L)
++        val coldSeekMs = SystemClock.elapsedRealtime() - coldStart
++        val coldRequests = ranges.size - requestsBeforeColdSeek
++        assertTrue("A seek to uncached audio should reach the upstream", coldRequests > 0)
++        Log.i("ReaderPlaybackProof", "throttledAudio backBufferMs=${backBufferMs ?: "production"} backMs=$backSeekMs backRequests=$backRequests coldMs=$coldSeekMs coldRequests=$coldRequests pssKiB=${android.os.Debug.getPss()}")
++        if (backBufferMs == null) assertEquals("A short backward seek should reuse buffered audio", 0, backRequests)
++      } finally {
++        instrumentation.runOnMainSync { player?.release() }
++      }
++    }
++  }
++
++  private fun awaitAudioPosition(player: ExoPlayer, expected: LongRange, timeoutMs: Long = 8_000) {
++    val limit = SystemClock.elapsedRealtime() + timeoutMs
++    do {
++      var playing = false
++      var position = -1L
++      instrumentation.runOnMainSync {
++        playing = player.isPlaying
++        position = player.currentPosition
++      }
++      if (playing && position in expected) return
++      SystemClock.sleep(10)
++    } while (SystemClock.elapsedRealtime() < limit)
++    fail("Audio did not advance into $expected")
++  }
++
 +  private fun awaitReady(player: ExoPlayer) {
 +    val ready = CountDownLatch(1)
 +    var error: Exception? = null
@@ -388,8 +795,8 @@ index 00000000..e80ccbfa
 +    finally { instrumentation.runOnMainSync { player.removeListener(listener) } }
 +  }
 +
-+  private fun wav(): ByteArray {
-+    val samples = 8000 * 8
++  private fun wav(seconds: Int = 8): ByteArray {
++    val samples = 8000 * seconds
 +    return ByteBuffer.allocate(44 + samples * 2).order(ByteOrder.LITTLE_ENDIAN).apply {
 +      put("RIFF".toByteArray()); putInt(36 + samples * 2); put("WAVEfmt ".toByteArray())
 +      putInt(16); putShort(1); putShort(1); putInt(8000); putInt(16000); putShort(2); putShort(16)
@@ -398,32 +805,51 @@ index 00000000..e80ccbfa
 +    }.array()
 +  }
 +
-+  private fun mp4(): ByteArray {
++  private fun mp4(keyframeSeconds: Int = 1, bitrate: Int = 128_000, longGop: Boolean = false): ByteArray {
 +    val file = java.io.File(context.cacheDir, "reader-playback-fixture.mp4")
 +    val codec = MediaCodec.createEncoderByType("video/avc")
 +    val muxer = MediaMuxer(file.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
 +    var muxing = false
 +    try {
-+      codec.configure(MediaFormat.createVideoFormat("video/avc", 160, 96).apply {
++      val width = if (longGop) 320 else 160
++      val height = if (longGop) 192 else 96
++      val fps = if (longGop) 24 else 10
++      val seconds = if (longGop) 24 else 8
++      val endFrame = seconds * fps
++      val data = ByteArray(width * height * 3 / 2) { 128.toByte() }
++      val noise = ByteArray(width * height)
++      val random = java.util.Random(17)
++      val keyframeTimes = mutableListOf<Long>()
++      codec.configure(MediaFormat.createVideoFormat("video/avc", width, height).apply {
 +        setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible)
-+        setInteger(MediaFormat.KEY_BIT_RATE, 128_000)
-+        setInteger(MediaFormat.KEY_FRAME_RATE, 10)
-+        setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
++        setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
++        setInteger(MediaFormat.KEY_FRAME_RATE, fps)
++        setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, keyframeSeconds)
 +      }, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
 +      codec.start()
 +      var frame = 0
 +      var track = -1
 +      val info = MediaCodec.BufferInfo()
-+      val deadline = SystemClock.elapsedRealtime() + 30_000
++      val deadline = SystemClock.elapsedRealtime() + if (longGop) 120_000L else 30_000L
 +      while (SystemClock.elapsedRealtime() < deadline) {
-+        if (frame <= 80) {
++        if (frame <= endFrame) {
 +          val inputIndex = codec.dequeueInputBuffer(10_000)
 +          if (inputIndex >= 0) {
-+            val data = ByteArray(160 * 96 * 3 / 2) { 128.toByte() }
-+            java.util.Arrays.fill(data, 0, 160 * 96, (32 + frame * 2).toByte())
++            if (longGop) {
++              random.nextBytes(noise)
++              noise.copyInto(data)
++              // Encode the individual frame number in ten grayscale blocks across the center strip.
++              for (row in height / 2 - 20 until height / 2 + 20) for (bit in 0 until 10) {
++                val start = row * width + bit * width / 10
++                val end = row * width + (bit + 1) * width / 10
++                java.util.Arrays.fill(data, start, end, if (frame and (1 shl bit) == 0) 32.toByte() else 216.toByte())
++              }
++            } else {
++              java.util.Arrays.fill(data, 0, width * height, (32 + frame * 2).toByte())
++            }
 +            codec.getInputBuffer(inputIndex)!!.put(data)
-+            codec.queueInputBuffer(inputIndex, 0, if (frame == 80) 0 else data.size, frame * 100_000L,
-+              if (frame == 80) MediaCodec.BUFFER_FLAG_END_OF_STREAM else 0)
++            codec.queueInputBuffer(inputIndex, 0, if (frame == endFrame) 0 else data.size, frame * 1_000_000L / fps,
++              if (frame == endFrame) MediaCodec.BUFFER_FLAG_END_OF_STREAM else 0)
 +            frame++
 +          }
 +        }
@@ -431,13 +857,26 @@ index 00000000..e80ccbfa
 +        if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
 +          track = muxer.addTrack(codec.outputFormat); muxer.start(); muxing = true
 +        } else if (index >= 0) {
-+          if (info.size > 0 && info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0) muxer.writeSampleData(track, codec.getOutputBuffer(index)!!, info)
++          if (info.size > 0 && info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0) {
++            muxer.writeSampleData(track, codec.getOutputBuffer(index)!!, info)
++            if (info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0) keyframeTimes.add(info.presentationTimeUs)
++          }
 +          codec.releaseOutputBuffer(index, false)
 +          if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) break
 +        }
 +      }
-+      check(muxing && frame == 81) { "Synthetic MP4 encoder did not finish" }
++      check(muxing && frame == endFrame + 1 && info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) { "Synthetic MP4 encoder did not finish" }
 +      muxer.stop(); muxing = false
++      if (longGop) {
++        val gapUs = (keyframeTimes + seconds * 1_000_000L).zipWithNext { first, next -> next - first }.maxOrNull() ?: 0
++        val measuredBitrate = file.length() * 8 / seconds
++        val lateTargets = listOf(11_375_000L, 22_375_000L)
++        check(lateTargets.all { target -> keyframeTimes.lastOrNull { it <= target }?.let { target - it >= 8_000_000L } == true } &&
++          gapUs >= 10_000_000 && measuredBitrate >= 4_000_000) {
++          "Fixture does not meet long GOP/high bitrate requirement: keyframes=$keyframeTimes gapUs=$gapUs bitrate=$measuredBitrate"
++        }
++        Log.i("ReaderPlaybackProof", "fixture keyframes=$keyframeTimes gapUs=$gapUs bitrate=$measuredBitrate")
++      }
 +      return file.readBytes()
 +    } finally {
 +      codec.stop(); codec.release()
@@ -469,17 +908,22 @@ index 0000000..b77e1bf
 +  }
 +}
 diff --git a/node_modules/expo-video/android/src/main/java/expo/modules/video/FullscreenPlayerActivity.kt b/node_modules/expo-video/android/src/main/java/expo/modules/video/FullscreenPlayerActivity.kt
-index 45d3d7b9..a141e423 100644
+index 45d3d7b9..dde739ab 100644
 --- a/node_modules/expo-video/android/src/main/java/expo/modules/video/FullscreenPlayerActivity.kt
 +++ b/node_modules/expo-video/android/src/main/java/expo/modules/video/FullscreenPlayerActivity.kt
-@@ -8,12 +8,15 @@ import android.os.Bundle
+@@ -6,14 +6,20 @@ import android.content.res.Configuration
+ import android.os.Build
+ import android.os.Bundle
  import android.content.Context
++import android.graphics.Bitmap
++import android.graphics.drawable.BitmapDrawable
  import android.util.Log
  import android.view.View
 +import android.view.TextureView
 +import android.widget.ImageView
 +import android.widget.FrameLayout
 +import androidx.media3.common.Player
++import androidx.media3.common.MediaItem
 +import androidx.media3.common.PlaybackException
  import android.view.accessibility.CaptioningManager
  import android.view.WindowInsets
@@ -490,7 +934,7 @@ index 45d3d7b9..a141e423 100644
  import expo.modules.video.listeners.VideoManagerListener
  import expo.modules.video.player.VideoPlayer
  import expo.modules.video.records.FullscreenOptions
-@@ -28,7 +31,8 @@ import expo.modules.video.managers.VideoManager
+@@ -28,7 +34,8 @@ import expo.modules.video.managers.VideoManager
  @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
  class FullscreenPlayerActivity : Activity(), VideoManagerListener {
    private lateinit var mContentView: View
@@ -500,7 +944,7 @@ index 45d3d7b9..a141e423 100644
    private var videoPlayer: VideoPlayer? = null
    private lateinit var playerView: PlayerView
    private lateinit var videoView: VideoView
-@@ -38,14 +42,29 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+@@ -38,14 +45,29 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
    private lateinit var options: FullscreenOptions
    private var orientationHelper: FullscreenActivityOrientationHelper? = null
    private var captioningChangeListener: CaptioningManager.CaptioningChangeListener? = null
@@ -531,7 +975,7 @@ index 45d3d7b9..a141e423 100644
        options = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
          intent.getSerializableExtra(INTENT_FULLSCREEN_OPTIONS_KEY, FullscreenOptions::class.java)
            ?: throw FullScreenOptionsNotFoundException()
-@@ -55,9 +74,6 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+@@ -55,9 +77,6 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
            ?: throw FullScreenOptionsNotFoundException()
        }
  
@@ -541,7 +985,7 @@ index 45d3d7b9..a141e423 100644
        orientationHelper = FullscreenActivityOrientationHelper(
          this,
          options,
-@@ -69,33 +85,41 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+@@ -69,33 +88,36 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
          }
        )
        orientationHelper?.startOrientationEventListener()
@@ -552,13 +996,8 @@ index 45d3d7b9..a141e423 100644
 +      playerView.setKeepContentOnPlayerReset(true)
 +      requestedOrientation = options.orientation.toActivityOrientation()
 +
-+      (videoView.playerView.videoSurfaceView as? TextureView)?.takeUnless { videoView.shouldHideSurfaceView }?.bitmap?.let { bitmap ->
-+        val frame = ImageView(this).apply {
-+          importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-+          scaleType = ImageView.ScaleType.FIT_CENTER
-+          setImageBitmap(bitmap)
-+        }
-+        transitionFrame = FullscreenTransitionFrame(playerView.overlayFrameLayout, videoPlayer?.player, frame).also { it.install() }
++      if (!videoView.shouldHideSurfaceView) videoView.playerView.displayedVideoFrame()?.let { bitmap ->
++        transitionFrame = playerView.showHandoffFrame(videoPlayer?.player, bitmap)
 +      }
 +      videoPlayer?.sendEvent(expo.modules.video.player.PlayerEvent.FullscreenChanged(true))
 +      videoPlayer?.player?.let {
@@ -603,7 +1042,7 @@ index 45d3d7b9..a141e423 100644
      hideStatusBar()
      setupFullscreenButton()
      val requiresLinearPlayback = videoPlayer?.requiresLinearPlayback ?: false
-@@ -121,16 +145,22 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+@@ -121,16 +143,22 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
    }
  
    override fun finish() {
@@ -615,7 +1054,7 @@ index 45d3d7b9..a141e423 100644
 -        VideoManager.getVideoView(it).attachPlayer()
 +        val inlineView = VideoManager.getVideoView(it)
 +        if (::playerView.isInitialized && inlineView === videoView && inlineView.videoPlayer === videoPlayer) {
-+          videoPlayer?.player?.let { player -> PlayerView.switchTargetView(player, playerView, inlineView.playerView) }
++          videoPlayer?.player?.let { player -> inlineView.playerView.restoreInlinePlayerFrom(playerView, player) }
 +          inlineView.attachPlayer()
 +        }
        } catch (e: VideoViewNotFoundException) {
@@ -628,7 +1067,7 @@ index 45d3d7b9..a141e423 100644
      // Disable the exit transition
      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
        overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, 0)
-@@ -141,6 +171,11 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+@@ -141,6 +169,11 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
    }
  
    override fun onResume() {
@@ -640,7 +1079,7 @@ index 45d3d7b9..a141e423 100644
      orientationHelper?.startOrientationEventListener()
      playerView.useController = true
      // Reconfigure subtitles when resuming (handles returning from settings)
-@@ -149,8 +184,13 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+@@ -149,8 +182,13 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
    }
  
    override fun onPause() {
@@ -655,7 +1094,7 @@ index 45d3d7b9..a141e423 100644
        if (wasAutoPaused) {
          playerView.useController = false
          videoPlayer?.player?.pause()
-@@ -171,6 +211,8 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+@@ -171,6 +209,8 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
    }
  
    override fun onDestroy() {
@@ -664,7 +1103,7 @@ index 45d3d7b9..a141e423 100644
      super.onDestroy()
  
      // Clean up captioning change listener
-@@ -181,8 +223,9 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+@@ -181,8 +221,9 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
      }
  
      if (::videoView.isInitialized) {
@@ -675,7 +1114,7 @@ index 45d3d7b9..a141e423 100644
      VideoManager.unregisterListener(this)
      videoViewId?.let { VideoManager.unregisterFullscreenPlayerActivity(it) }
      orientationHelper?.stopOrientationEventListener()
-@@ -200,12 +243,14 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+@@ -200,12 +241,14 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
  
    private fun setupFullscreenButton() {
      playerView.setFullscreenButtonClickListener { finish() }
@@ -693,18 +1132,58 @@ index 45d3d7b9..a141e423 100644
      if (!isInPictureInPictureMode) {
        playerView.useController = videoView.useNativeControls
      } else {
-@@ -256,3 +301,56 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+@@ -256,3 +299,137 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
      const val INTENT_FULLSCREEN_OPTIONS_KEY = "fullscreen_options"
    }
  }
 +
++@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
++internal fun PlayerView.restoreInlinePlayerFrom(fullscreen: PlayerView, player: Player) {
++  // Rebinding an idle decoder can leave the entry frame at EOS or advance a paused surface by one frame.
++  val still = player.playbackState == Player.STATE_ENDED || (player.playbackState == Player.STATE_READY && !player.playWhenReady)
++  if (still && fullscreen.player === player && player.videoSize.width > 0) {
++    val target = videoSurfaceView as? TextureView
++    if (target != null && target.width > 0 && target.height > 0) {
++      fullscreen.displayedVideoFrame(target)?.let { showHandoffFrame(player, it) }
++    }
++  }
++  PlayerView.switchTargetView(player, fullscreen, this)
++}
++
++@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
++private fun PlayerView.displayedVideoFrame(target: TextureView? = null): Bitmap? {
++  val retained = getTag(R.id.wz_video_handoff_frame) as? FullscreenTransitionFrame
++  retained?.bitmap?.let { return it }
++  val texture = videoSurfaceView as? TextureView ?: return null
++  if (!texture.isAvailable || texture.width <= 0 || texture.height <= 0) return null
++  if (target == null) return texture.bitmap
++  val scale = minOf(1f, target.width.toFloat() / texture.width, target.height.toFloat() / texture.height)
++  return texture.getBitmap((texture.width * scale).toInt().coerceAtLeast(1), (texture.height * scale).toInt().coerceAtLeast(1))
++}
++
++@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
++private fun PlayerView.showHandoffFrame(player: Player?, bitmap: Bitmap): FullscreenTransitionFrame {
++  clearVideoHandoffFrame()
++  val frame = ImageView(context).apply {
++    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
++    scaleType = ImageView.ScaleType.FIT_CENTER
++    setImageBitmap(bitmap)
++  }
++  return FullscreenTransitionFrame(this, player, frame).also { it.install() }
++}
++
++@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
++internal fun PlayerView.clearVideoHandoffFrame() {
++  (getTag(R.id.wz_video_handoff_frame) as? FullscreenTransitionFrame)?.release()
++}
++
 +/** Owns the captured overlay and decoder callback through the two composition frames. */
 +@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 +private class FullscreenTransitionFrame(
-+  private val overlay: FrameLayout?,
++  private val target: PlayerView,
 +  private val player: Player?,
 +  frame: ImageView
-+) : Player.Listener {
++) : Player.Listener, View.OnAttachStateChangeListener {
 +  private sealed class State {
 +    data class WaitingForDecoder(val frame: ImageView) : State()
 +    data class WaitingForComposition(val frame: ImageView) : State()
@@ -712,14 +1191,28 @@ index 45d3d7b9..a141e423 100644
 +  }
 +
 +  private var state: State = State.WaitingForDecoder(frame)
++  private val stoppedPosition = player?.takeIf { it.playbackState == Player.STATE_ENDED || !it.playWhenReady }?.currentPosition
++  private var bufferObserver: android.view.ViewTreeObserver.OnDrawListener? = null
++  val bitmap: Bitmap? get() = when (val current = state) {
++    is State.WaitingForDecoder -> current.frame
++    is State.WaitingForComposition -> current.frame
++    State.Released -> null
++  }?.let { (it.drawable as? BitmapDrawable)?.bitmap }
 +
 +  fun install() {
 +    val waiting = state as? State.WaitingForDecoder ?: return
-+    overlay?.addView(waiting.frame, FrameLayout.LayoutParams(-1, -1))
++    target.setTag(R.id.wz_video_handoff_frame, this)
++    target.overlayFrameLayout?.addView(waiting.frame, FrameLayout.LayoutParams(-1, -1))
++    target.addOnAttachStateChangeListener(this)
 +    player?.addListener(this)
 +  }
 +
 +  override fun onRenderedFirstFrame() {
++    if (stoppedPosition != null && player?.isPlaying == false && player.currentPosition == stoppedPosition) return
++    revealDecoderFrame()
++  }
++
++  private fun revealDecoderFrame() {
 +    val waiting = state as? State.WaitingForDecoder ?: return
 +    val composition = State.WaitingForComposition(waiting.frame)
 +    state = composition
@@ -738,6 +1231,29 @@ index 45d3d7b9..a141e423 100644
 +    release()
 +  }
 +
++  // A paused target may already have emitted its first-frame event at the wrong adjacent frame.
++  // On resume or seek, wait until the target surface actually latches a different buffer.
++  private fun observeNextBuffer() {
++    if (stoppedPosition == null || state !is State.WaitingForDecoder || bufferObserver != null) return
++    val texture = target.videoSurfaceView as? TextureView ?: return
++    val timestamp = texture.surfaceTexture?.timestamp ?: return
++    val check = Runnable {
++      val now = texture.surfaceTexture?.timestamp
++      if (now != null && now > 0 && now != timestamp) revealDecoderFrame()
++    }
++    val observer = android.view.ViewTreeObserver.OnDrawListener { target.post(check) }
++    bufferObserver = observer
++    target.viewTreeObserver.addOnDrawListener(observer)
++  }
++
++  override fun onIsPlayingChanged(isPlaying: Boolean) { if (isPlaying) observeNextBuffer() }
++  override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
++    if (newPosition.positionMs != stoppedPosition) observeNextBuffer()
++  }
++  override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) = release()
++  override fun onViewAttachedToWindow(view: View) = Unit
++  override fun onViewDetachedFromWindow(view: View) = release()
++
 +  fun release() {
 +    val frame = when (val current = state) {
 +      is State.WaitingForDecoder -> current.frame
@@ -746,25 +1262,31 @@ index 45d3d7b9..a141e423 100644
 +    }
 +    state = State.Released
 +    player?.removeListener(this)
-+    overlay?.removeView(frame)
++    bufferObserver?.let { if (target.viewTreeObserver.isAlive) target.viewTreeObserver.removeOnDrawListener(it) }
++    bufferObserver = null
++    target.removeOnAttachStateChangeListener(this)
++    if (target.getTag(R.id.wz_video_handoff_frame) === this) target.setTag(R.id.wz_video_handoff_frame, null)
++    target.overlayFrameLayout?.removeView(frame)
 +    frame.setImageDrawable(null)
 +  }
 +}
 diff --git a/node_modules/expo-video/android/src/main/java/expo/modules/video/PlayerViewExtension.kt b/node_modules/expo-video/android/src/main/java/expo/modules/video/PlayerViewExtension.kt
-index 235844ef..a639720d 100644
+index 235844ef..5c81894a 100644
 --- a/node_modules/expo-video/android/src/main/java/expo/modules/video/PlayerViewExtension.kt
 +++ b/node_modules/expo-video/android/src/main/java/expo/modules/video/PlayerViewExtension.kt
-@@ -1,9 +1,39 @@
+@@ -1,8 +1,66 @@
  package expo.modules.video
  
  import android.graphics.Color
 +import android.view.Gravity
++import android.view.View
 +import android.view.ViewGroup
 +import android.widget.ImageButton
 +import android.widget.LinearLayout
  import androidx.media3.ui.DefaultTimeBar
  import androidx.media3.ui.PlayerView
- 
++import androidx.media3.ui.R as Media3R
++
 +@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 +internal fun PlayerView.applyReaderControls(fullscreen: Boolean) {
 +  val density = resources.displayMetrics.density
@@ -778,23 +1300,48 @@ index 235844ef..a639720d 100644
 +  }
 +  findViewById<android.view.View>(androidx.media3.ui.R.id.exo_controls_background)
 +    ?.setBackgroundColor(0x66000000)
-+  if (!fullscreen && id == R.id.texture_player_view) {
-+    // Media3 hides the bottom bar for short videos. Keep its own Settings button with the play controls.
-+    val settings = findViewById<ImageButton>(androidx.media3.ui.R.id.exo_settings)
-+    val center = findViewById<LinearLayout>(androidx.media3.ui.R.id.exo_center_controls)
-+    val source = settings?.parent as? ViewGroup
-+    if (settings != null && center != null && source != null && source !== center) {
-+      source.removeView(settings)
-+      val touchTarget = (48 * density).toInt()
-+      center.addView(settings, LinearLayout.LayoutParams(touchTarget, touchTarget).apply { gravity = Gravity.CENTER_VERTICAL })
-+    }
-+  }
++  keepSettingsInBottomControls()
 +}
 +
++@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
++private fun PlayerView.keepSettingsInBottomControls() {
++  val settings = findViewById<ImageButton>(Media3R.id.exo_settings) ?: return
++  val bottomBar = findViewById<View>(Media3R.id.exo_bottom_bar) ?: return
++  val standard = findViewById<LinearLayout>(Media3R.id.exo_basic_controls) ?: return
++  val compact = findViewById<LinearLayout>(Media3R.id.exo_minimal_controls) ?: return
++  if (settings.getTag(R.id.wz_video_settings_layout) != null) return
++  settings.setTag(R.id.wz_video_settings_layout, true)
++
++  val standardParams = settings.layoutParams
++  val touchTarget = (48 * resources.displayMetrics.density).toInt()
++  val compactParams = LinearLayout.LayoutParams(touchTarget, touchTarget).apply { gravity = Gravity.CENTER_VERTICAL }
++  val update = Runnable {
++    if (!isAttachedToWindow) return@Runnable
++    val parent = settings.parent as? ViewGroup ?: return@Runnable
++    val useCompactControls = bottomBar.visibility == View.INVISIBLE
++    if (useCompactControls == (parent === compact)) return@Runnable
++
++    parent.removeView(settings)
++    if (useCompactControls) {
++      compact.addView(settings, 0, compactParams)
++    } else {
++      val next = standard.findViewById<View>(Media3R.id.exo_fullscreen)
++        ?: standard.findViewById<View>(Media3R.id.exo_overflow_show)
++      standard.addView(settings, next?.let(standard::indexOfChild) ?: -1, standardParams)
++    }
++  }
++  addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
++    if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) {
++      // The child controller posts its compact-mode layout during its own layout pass.
++      post(update)
++    }
++  }
++  if (isLaidOut) post(update)
++}
+ 
  @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
  internal fun PlayerView.applyRequiresLinearPlayback(requireLinearPlayback: Boolean) {
-   setShowFastForwardButton(!requireLinearPlayback)
-@@ -35,6 +65,20 @@ internal fun PlayerView.setFullscreenButtonVisibility(visible: Boolean) {
+@@ -35,6 +93,20 @@ internal fun PlayerView.setFullscreenButtonVisibility(visible: Boolean) {
    }
  }
  
@@ -838,7 +1385,7 @@ index b880e87..0caf646 100644
  
    fun release() {
 diff --git a/node_modules/expo-video/android/src/main/java/expo/modules/video/VideoView.kt b/node_modules/expo-video/android/src/main/java/expo/modules/video/VideoView.kt
-index 58c8b10..b5f1bee 100644
+index 58c8b10d..b26b7009 100644
 --- a/node_modules/expo-video/android/src/main/java/expo/modules/video/VideoView.kt
 +++ b/node_modules/expo-video/android/src/main/java/expo/modules/video/VideoView.kt
 @@ -10,7 +10,6 @@ import android.view.LayoutInflater
@@ -849,7 +1396,15 @@ index 58c8b10..b5f1bee 100644
  import androidx.media3.common.Tracks
  import androidx.media3.ui.PlayerView
  import com.facebook.react.bridge.ReactContext
-@@ -185,6 +184,8 @@ open class VideoView(context: Context, appContext: AppContext, useTextureView: B
+@@ -128,6 +127,7 @@ open class VideoView(context: Context, appContext: AppContext, useTextureView: B
+         VideoManager.onVideoPlayerDetachedFromView(it, this)
+       }
+       val oldPlayer = videoPlayer
++      if (oldPlayer !== newPlayer) playerView.clearVideoHandoffFrame()
+       val hasEmittedFirstFrame = newPlayer?.firstFrameEventGenerator?.hasSentFirstFrameForCurrentMediaItem
+         ?: false
+       oldPlayer?.removeListener(this)
+@@ -185,6 +185,8 @@ open class VideoView(context: Context, appContext: AppContext, useTextureView: B
    }
  
    init {
@@ -858,7 +1413,7 @@ index 58c8b10..b5f1bee 100644
      VideoManager.registerVideoView(this)
      playerView.setFullscreenButtonClickListener { enterFullscreen() }
      // The prop `useNativeControls` prop is sometimes applied after the view is created, and sometimes there is a visible
-@@ -217,17 +218,23 @@ open class VideoView(context: Context, appContext: AppContext, useTextureView: B
+@@ -217,17 +219,23 @@ open class VideoView(context: Context, appContext: AppContext, useTextureView: B
    }
  
    fun enterFullscreen() {
@@ -887,7 +1442,7 @@ index 58c8b10..b5f1bee 100644
        @Suppress("DEPRECATION")
        currentActivity.overridePendingTransition(0, 0)
      }
-@@ -239,11 +246,10 @@ open class VideoView(context: Context, appContext: AppContext, useTextureView: B
+@@ -239,11 +247,10 @@ open class VideoView(context: Context, appContext: AppContext, useTextureView: B
      videoPlayer?.changeVideoView(this)
    }
  
@@ -902,6 +1457,14 @@ index 58c8b10..b5f1bee 100644
      onFullscreenExit(Unit)
      isInFullscreen = false
      pipParams = pipParams.copy(blocksAppFromEntering = false)
+@@ -294,6 +301,7 @@ open class VideoView(context: Context, appContext: AppContext, useTextureView: B
+     // while the new stream buffers — e.g. switching from a higher-resolution URL to a lower one.
+     // See https://github.com/expo/expo/issues/44385
+     if (player == videoPlayer && oldSource != null) {
++      playerView.clearVideoHandoffFrame()
+       shouldHideSurfaceView = true
+       applySurfaceViewVisibility()
+     }
 diff --git a/node_modules/expo-video/android/src/main/java/expo/modules/video/managers/VideoManager.kt b/node_modules/expo-video/android/src/main/java/expo/modules/video/managers/VideoManager.kt
 index 5f9ad2a..75b2a11 100644
 --- a/node_modules/expo-video/android/src/main/java/expo/modules/video/managers/VideoManager.kt
@@ -1453,3 +2016,32 @@ index 96bff11..a3f1e76 100644
    /**
     * Handler for an event emitted when the status of the player changes.
     */
+diff --git a/node_modules/expo-video/android/src/main/res/values/wz_video_view_ids.xml b/node_modules/expo-video/android/src/main/res/values/wz_video_view_ids.xml
+new file mode 100644
+index 00000000..c22a52f5
+--- /dev/null
++++ b/node_modules/expo-video/android/src/main/res/values/wz_video_view_ids.xml
+@@ -0,0 +1,5 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++  <item type="id" name="wz_video_settings_layout" />
++  <item type="id" name="wz_video_handoff_frame" />
++</resources>
+diff --git a/node_modules/expo-video/android/src/main/java/expo/modules/video/player/VideoPlayerLoadControl.kt b/node_modules/expo-video/android/src/main/java/expo/modules/video/player/VideoPlayerLoadControl.kt
+index 4ffe72b..96b76a1 100644
+--- a/node_modules/expo-video/android/src/main/java/expo/modules/video/player/VideoPlayerLoadControl.kt
++++ b/node_modules/expo-video/android/src/main/java/expo/modules/video/player/VideoPlayerLoadControl.kt
+@@ -6,7 +6,12 @@ import androidx.media3.common.util.Util
+ import expo.modules.video.records.BufferOptions
+ 
+ @UnstableApi
+-class VideoPlayerLoadControl : DefaultLoadControl() {
++class VideoPlayerLoadControl(backBufferMs: Long = 10_000) : DefaultLoadControl() {
++  init {
++    // Keep recently played samples available while the disk cache is still being written.
++    backBufferDurationUs = Util.msToUs(backBufferMs)
++  }
++
+   private var targetBufferMs: Long
+     get() = maxBufferUs / 1000
+     set(value) {

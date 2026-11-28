@@ -69,7 +69,7 @@ class ForumContentSelectionView(
 
   internal var pendingEnabled = true
   internal var pendingRevision = ""
-  internal var pendingRows: List<ForumSelectionRowRecord> = emptyList()
+  internal var pendingRows: List<ForumSelectionRowDefinition> = emptyList()
   internal var hapticFeedbackObserverForTest: ((Int) -> Unit)? = null
   internal var selectionChangeObserverForTest: ((Map<String, Any>) -> Unit)? = null
   internal var clipboardWriterForTest: ((ClipData) -> Unit)? = null
@@ -214,16 +214,8 @@ class ForumContentSelectionView(
       cancelSelection()
       return
     }
-    val rows = pendingRows.map {
-      ForumSelectionRowDefinition(
-        documentId = it.documentId,
-        rowKey = it.rowKey,
-        nativeId = it.nativeId,
-        selectionToken = it.selectionToken
-      )
-    }
     val hadActiveSelection = selectionActive || selectionDocument.selection() != null
-    when (val update = selectionDocument.replace(pendingRevision, rows)) {
+    when (val update = selectionDocument.replace(pendingRevision, pendingRows)) {
       ForumSelectionUpdate.Applied -> {
         lastErrorCode = null
         if (hadActiveSelection && selectionDocument.selection() == null) {

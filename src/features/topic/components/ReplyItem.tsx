@@ -6,7 +6,17 @@ import { TopicCopySurface } from './TopicCopySurface';
 import { useMappingHelper } from '@shopify/flash-list';
 import { Image as ExpoImage } from 'expo-image';
 import * as Clipboard from 'expo-clipboard';
-import { CheckCircle, Drumstick, MessageCircle, Pencil, ThumbsDown, ThumbsUp, Trash2 } from 'lucide-react-native';
+import {
+  CheckCircle,
+  Drumstick,
+  Heart,
+  MessageCircle,
+  Pencil,
+  Smile,
+  ThumbsDown,
+  ThumbsUp,
+  Trash2
+} from 'lucide-react-native';
 import type {
   Reply,
   ReplyLocationTarget,
@@ -133,6 +143,7 @@ export function DiscourseReactionPill({
 }) {
   const mediaContext = useForumMediaRequestContext(contentSource);
   const mediaSessionIdentity = mediaContext.sessionIdentity;
+  const FallbackIcon = stat.id === 'heart' ? Heart : Smile;
   return (
     <View
       accessible
@@ -146,10 +157,16 @@ export function DiscourseReactionPill({
           style={styles.linuxDoReactionImage}
           contentFit="contain"
         />
-      ) : (
+      ) : stat.id === 'boost' && stat.label === '加电' ? (
         <Text style={styles.linuxDoReactionLabel} numberOfLines={1}>
           {stat.label}
         </Text>
+      ) : (
+        <FallbackIcon
+          color={styles.linuxDoReactionLabel.color}
+          size={styles.linuxDoReactionImage.width}
+          accessible={false}
+        />
       )}
       <Text style={styles.linuxDoReactionCount}>{stat.value}</Text>
     </View>

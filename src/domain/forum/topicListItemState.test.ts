@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createEmptyReaderData, topicKey } from '@/domain/reader/readerData';
-import { createTopicListItemStateIndex, getTopicListItemStateFromIndex } from './topicListItemState';
+import {
+  createTopicListItemStateIndex,
+  createTopicListItemStateStore,
+  getTopicListItemStateFromIndex
+} from './topicListItemState';
 import type { Topic } from './models';
 
 const topic: Topic = {
@@ -37,6 +41,34 @@ describe('Android topic list item state', () => {
       listDensity: 'compact',
       read: true
     });
+  });
+
+  it('only notifies card selectors whose visible state changed', () => {
+    const data = createEmptyReaderData();
+    const store = createTopicListItemStateStore(createTopicListItemStateIndex(data));
+    const selected = store.select(topic);
+    const other = store.select({ ...topic, id: '2' });
+    const onSelected = vi.fn();
+    const onOther = vi.fn();
+    const unsubscribe = selected.subscribe(onSelected);
+    other.subscribe(onOther);
+    const otherBefore = other.getSnapshot();
+
+    store.setIndex(
+      createTopicListItemStateIndex({
+        ...data,
+        history: { [topicKey(topic)]: { topic, savedAt: topic.createdAt, visitCount: 1 } }
+      })
+    );
+    expect(onSelected).toHaveBeenCalledTimes(1);
+    expect(onOther).not.toHaveBeenCalled();
+    expect(selected.getSnapshot().read).toBe(true);
+    expect(other.getSnapshot()).toBe(otherBefore);
+
+    unsubscribe();
+    store.setIndex(createTopicListItemStateIndex(data));
+    expect(onSelected).toHaveBeenCalledTimes(1);
+    expect(selected.getSnapshot().read).toBe(false);
   });
 
   it('looks up topic row state without enumerating ReaderData records', () => {

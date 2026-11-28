@@ -220,12 +220,31 @@ describe('linux.do visible verification coordinator', () => {
     const { controller, reconcileAccountStatus, notify, showLinuxDoPanelRef } = createController({
       reconcileAccountStatus: async () => ({ status: 'anonymous', session: anonymousSession })
     });
-    controller.changeLinuxDoPanel(true, true);
+    await expect(
+      controller.showLinuxDoVerification('需要验证', { kind: 'website', isCurrent: () => true })
+    ).resolves.toBe(true);
     await controller.checkLinuxDoCookie();
     expect(reconcileAccountStatus).toHaveBeenCalledOnce();
     expect(waitForLinuxDoLoginInitialization).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledWith('linux.do 主站可访问，当前未登录。');
     expect(showLinuxDoPanelRef.current).toBe(false);
+  });
+
+  it('checks the origin again before opening a queued website verification', async () => {
+    vi.useFakeTimers();
+    let current = true;
+    const { controller, showLinuxDoPanelRef, onLinuxDoSurfaceOpened } = createController();
+    controller.changeLinuxDoPanel(true);
+    controller.closeLinuxDoPanel();
+    const pending = controller.showLinuxDoVerification('需要验证', {
+      kind: 'website',
+      isCurrent: () => current
+    });
+    current = false;
+    await vi.advanceTimersByTimeAsync(400);
+    await expect(pending).resolves.toBe(false);
+    expect(showLinuxDoPanelRef.current).toBe(false);
+    expect(onLinuxDoSurfaceOpened).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -1038,6 +1057,37 @@ describe('linux.do visible verification coordinator', () => {
     expect(await controller.showLinuxDoVerification('再次验证', { ...recovery, explicit: true })).toBe(true);
     await controller.checkLinuxDoCookie();
     expect(recovery.resume).toHaveBeenCalledOnce();
+  });
+
+  it('switches inline reading routes without dismissing the old group or announcing the new one twice', async () => {
+    const { controller, notify } = createController();
+    const recovery = (origin: string, dismissalGroup: object) => ({
+      queryKey: recoveryQueryKeyFor(origin),
+      dismissalGroup,
+      isCurrent: () => true,
+      resume: vi.fn(async () => 'completed' as const)
+    });
+    const group = {};
+    await controller.showLinuxDoVerification('Feed 验证', recovery('feed', group), 'feed');
+    await controller.showLinuxDoVerification('Search 验证', recovery('search', {}), 'search');
+    expect(notify.mock.calls.filter(([message]) => message === 'Search 验证')).toHaveLength(1);
+    expect(await controller.showLinuxDoVerification('Feed 验证', recovery('feed', group), 'feed')).toBe(true);
+  });
+
+  it('acquires one account barrier when manual login takes over a dedicated read document', async () => {
+    const { controller, onLinuxDoSurfaceOpened } = createController();
+    await controller.showLinuxDoVerification(
+      '读取验证',
+      {
+        queryKey: recoveryQueryKeyFor('login-takeover'),
+        isCurrent: () => true,
+        resume: vi.fn(async () => 'completed' as const)
+      },
+      'feed'
+    );
+    controller.changeLinuxDoPanel(true);
+    controller.changeLinuxDoPanel(true);
+    expect(onLinuxDoSurfaceOpened.mock.calls).toEqual([[{ accountBarrier: false }], [{ accountBarrier: true }]]);
   });
 
   it('attaches reading to an existing verification without resetting its WebView', async () => {

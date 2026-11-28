@@ -12,6 +12,7 @@ import type { TopicListItem } from '@/features/topic/model/topicListModel';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
 import { createTopicStyles } from '@/features/topic/styles';
 import { TopicScreen } from '@/features/topic/TopicScreen';
+import { NavigationBackdropProvider } from '@/ui/navigation/NavigationGlass';
 import type { useTopicController } from '@/features/topic/useTopicController';
 import { useTopicSessionController } from '@/features/topic/useTopicSessionController';
 import type { InteractionType } from '@/domain/forum/topicActionState';
@@ -422,41 +423,43 @@ function TopicScenarioScreen({
         insets: { top: 0, right: 0, bottom: 0, left: 0 }
       }}
     >
-      <TopicScreen
-        actions={actions}
-        article={{
-          busy: false,
-          error: null,
-          topic,
-          ...(source === 'yaohuo' ? { yaohuoBookmarked: topic.bookmarked } : {})
-        }}
-        chrome={{
-          back: noop,
-          favorite,
-          getDiscourseEmojiUrls: getEmptyDiscourseEmojiUrls,
-          openOriginal: noop,
-          openReadingSettings: noop,
-          openTopic: noop,
-          openUser: noop,
-          refreshReplies: noop,
-          refreshTopic: noop,
-          share: noop,
-          toggleFavorite: noop,
-          verifyLinuxDo: noop,
-          verifyNodeSeek: noop
-        }}
-        currentNodeSeekUser={undefined}
-        html={{
-          ...html,
-          contentWidth: Math.min(width - 40, contentWidthValue(settings.contentWidth)),
-          mediaSessionIdentity
-        }}
-        nodeSeekUserId={null}
-        onImagePreviewDescriptors={noop}
-        read={read}
-        session={session}
-        topicScrollRef={topicScrollRef}
-      />
+      <NavigationBackdropProvider>
+        <TopicScreen
+          actions={actions}
+          article={{
+            busy: false,
+            error: null,
+            topic,
+            ...(source === 'yaohuo' ? { yaohuoBookmarked: topic.bookmarked } : {})
+          }}
+          chrome={{
+            back: noop,
+            favorite,
+            getDiscourseEmojiUrls: getEmptyDiscourseEmojiUrls,
+            openOriginal: noop,
+            openReadingSettings: noop,
+            openTopic: noop,
+            openUser: noop,
+            refreshReplies: noop,
+            refreshTopic: noop,
+            share: noop,
+            toggleFavorite: noop,
+            verifyLinuxDo: noop,
+            verifyNodeSeek: noop
+          }}
+          currentNodeSeekUser={undefined}
+          html={{
+            ...html,
+            contentWidth: Math.min(width - 40, contentWidthValue(settings.contentWidth)),
+            mediaSessionIdentity
+          }}
+          nodeSeekUserId={null}
+          onImagePreviewDescriptors={noop}
+          read={read}
+          session={session}
+          topicScrollRef={topicScrollRef}
+        />
+      </NavigationBackdropProvider>
     </SafeAreaProvider>
   );
 }

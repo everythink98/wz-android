@@ -490,7 +490,19 @@ function ForumContentVideoPlayer({
   }, [mediaIdentity, playback, player]);
   const ended = presentation.player === player && presentation.playback === 'ended';
   const hasReadyFrame = presentation.player === player && presentation.frame === 'rendered';
+  const progressCallback = useCommittedRef(onProgress);
   useEffect(() => {
+    let lastBufferedPosition = 0;
+    const timeSubscription = player.addListener('timeUpdate', ({ bufferedPosition }) => {
+      if (
+        currentPlayer.current !== player ||
+        !Number.isFinite(bufferedPosition) ||
+        bufferedPosition <= lastBufferedPosition
+      )
+        return;
+      lastBufferedPosition = bufferedPosition;
+      progressCallback.current(bufferedPosition);
+    });
     const endSubscription = player.addListener('playToEnd', () => {
       if (currentPlayer.current === player && player.duration > 0) observePlayer(player, 'ended');
     });
@@ -498,32 +510,14 @@ function ForumContentVideoPlayer({
       if (isPlaying) observePlayer(player, 'playing');
     });
     return () => {
+      timeSubscription.remove();
       endSubscription.remove();
       playingSubscription.remove();
     };
-  }, [currentPlayer, observePlayer, player]);
-  const lastBufferedPositionRef = useRef(
-    Number.isFinite(player.bufferedPosition) ? Math.max(0, player.bufferedPosition) : 0
-  );
+  }, [currentPlayer, observePlayer, player, progressCallback]);
   const statusEvent = useEvent(player, 'statusChange', { status: player.status });
   const status = statusEvent.status === 'idle' && ended ? 'ended' : statusEvent.status;
   const videoTrack = useEvent(player, 'videoTrackChange', { videoTrack: player.videoTrack }).videoTrack;
-  const timeUpdate = useEvent(player, 'timeUpdate', {
-    bufferedPosition: player.bufferedPosition,
-    currentLiveTimestamp: null,
-    currentOffsetFromLive: null,
-    currentTime: player.currentTime
-  });
-  useEffect(() => {
-    if (
-      !Number.isFinite(timeUpdate.bufferedPosition) ||
-      timeUpdate.bufferedPosition <= lastBufferedPositionRef.current
-    ) {
-      return;
-    }
-    lastBufferedPositionRef.current = timeUpdate.bufferedPosition;
-    onProgress(timeUpdate.bufferedPosition);
-  }, [onProgress, timeUpdate.bufferedPosition]);
   useEffect(() => onStatusChange(status || 'idle', statusEvent.error), [onStatusChange, status, statusEvent.error]);
   const aspectRatio = videoAspectRatio(videoTrack?.size);
   useLayoutEffect(() => onPresentation(aspectRatio, hasReadyFrame), [aspectRatio, hasReadyFrame, onPresentation]);

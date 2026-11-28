@@ -557,6 +557,67 @@ describe('linux.do reader', () => {
     }
   });
 
+  it('starts the signed-in pin index before latest settles and normalizes it with the latest catalog', async () => {
+    const latest = Promise.withResolvers<Response>();
+    const paths: string[] = [];
+    const fetcher: Fetcher = async (input) => {
+      const path = new URL(String(input)).pathname;
+      paths.push(path);
+      if (path === '/latest.json') return latest.promise;
+      if (path !== '/filter.json') throw new Error(`Unexpected request: ${path}`);
+      return jsonResponse({
+        topic_list: {
+          topics: [{ ...topic(71), category_id: 2, pinned_globally: true, pinned: false, unpinned: true }]
+        }
+      });
+    };
+    const feed = getLinuxDoFeed({ fetcher, linuxDoAccess: { authenticated: true } });
+    try {
+      await vi.waitFor(() => expect(paths).toEqual(['/latest.json', '/filter.json']));
+    } finally {
+      latest.resolve(jsonResponse({ categories: [{ id: 2, name: '公告' }], topic_list: { topics: [topic(1)] } }));
+      await feed;
+    }
+    expect((await feed).items.map(({ id, pinned, category }) => [id, pinned, category])).toEqual([
+      ['71', true, '公告'],
+      ['1', undefined, '未分类']
+    ]);
+  });
+
+  it('uses the category supplied by the pin index when latest has no row in that category', async () => {
+    const fetcher = vi.fn<Fetcher>(async (input) => {
+      if (new URL(input).pathname === '/filter.json') {
+        return jsonResponse({
+          categories: [{ id: 8, name: '社区公告' }],
+          topic_list: { topics: [{ ...topic(71), category_id: 8, pinned_globally: true, pinned: true }] }
+        });
+      }
+      return jsonResponse({ topic_list: { topics: [topic(1)] } });
+    });
+    const feed = await getLinuxDoFeed({ fetcher, linuxDoAccess: { authenticated: true, userAgent: 'fixture' } });
+    expect(feed.items.find((row) => row.id === '71')?.category).toBe('社区公告');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it('cancels a speculative pin index when the signed-in latest request fails', async () => {
+    const latest = Promise.withResolvers<Response>();
+    const pinStarted = Promise.withResolvers<AbortSignal>();
+    const fetcher: Fetcher = async (input, init) => {
+      if (new URL(String(input)).pathname === '/latest.json') return latest.promise;
+      const signal = init!.signal!;
+      pinStarted.resolve(signal);
+      return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    };
+    const feed = getLinuxDoFeed({ fetcher, linuxDoAccess: { authenticated: true } });
+    const failed = expect(feed).rejects.toThrow('HTTP 502');
+    const pinSignal = await pinStarted.promise;
+    latest.resolve(new Response(null, { status: 502 }));
+    await failed;
+    expect(pinSignal.aborted).toBe(true);
+  });
+
   it('shows active announcements omitted from a signed-in latest page after reading them', async () => {
     const globalPin = { ...topic(71), category_id: 2, pinned_globally: true, pinned: false, unpinned: true };
     const localPin = { ...topic(72), category_id: 4, pinned_globally: false, pinned: false, unpinned: true };
@@ -2047,5 +2108,17 @@ describe('linux.do successful emoji cache', () => {
     expect(result).toEqual({});
     expect(await getLinuxDoEmojiUrls({ fetcher })).toBe(result);
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['', 'null'])('retries an emoji response with a missing catalog document (%j)', async (body) => {
+    vi.resetModules();
+    const { getLinuxDoEmojiUrls } = await import('./reader');
+    const fetcher = vi
+      .fn<Fetcher>()
+      .mockResolvedValueOnce(new Response(body, { status: 200 }))
+      .mockResolvedValue(jsonResponse({ standard: [{ name: 'heart', url: '/heart.png' }] }));
+    await expect(getLinuxDoEmojiUrls({ fetcher })).rejects.toThrow('格式不正确');
+    await expect(getLinuxDoEmojiUrls({ fetcher })).resolves.toEqual({ heart: 'https://linux.do/heart.png' });
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 });

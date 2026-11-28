@@ -5,7 +5,7 @@ import type { Topic } from '@/domain/forum/models';
 
 import { openForumSearchCustomTab } from '@/platform/android/forumSearchCustomTab';
 import { errorMessage } from '@/platform/network/errors';
-import { dispatchFocusedRoute, manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
+import { dispatchFocusedRoute, dispatchTopicRoute, manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 import type { SearchListItem } from './listItems';
 import { SearchScreen } from './SearchScreen';
@@ -106,7 +106,7 @@ export function SearchRoute() {
   );
   const changeSearchSource = useLatestCallback(controller.setSearchSource);
   const openTopic = useCallback(
-    (topic: Topic) => dispatchFocusedRoute(navigation, StackActions.push('Topic', { topic })),
+    (topic: Topic) => dispatchTopicRoute(() => dispatchFocusedRoute(navigation, StackActions.push('Topic', { topic }))),
     [navigation]
   );
   const manageContentSources = useCallback(

@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.view.View
+import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.ImageView
 import androidx.media3.common.PlaybackException
@@ -106,7 +107,7 @@ class FullscreenPlayerActivityEarlyExitTest {
       owner.image.advanceFrame()
       assertNull(owner.image.parent)
       assertNull(owner.image.drawable)
-      assertEquals(1, fixture.overlay.removals(owner.image))
+      assertEquals(1, fixture.imageRemovals(owner.image))
       assertEquals(1, owner.image.clears)
       assertEquals(2, fixture.removals(owner)) // Decoder unsubscribe, then terminal cleanup.
 
@@ -114,7 +115,7 @@ class FullscreenPlayerActivityEarlyExitTest {
       owner.listener.onPlayerError(frameError())
       owner.release()
       assertEquals(0, owner.image.pendingFrames)
-      assertEquals(1, fixture.overlay.removals(owner.image))
+      assertEquals(1, fixture.imageRemovals(owner.image))
       assertEquals(1, owner.image.clears)
       assertEquals(2, fixture.removals(owner))
     } finally {
@@ -136,7 +137,7 @@ class FullscreenPlayerActivityEarlyExitTest {
         previous.release()
         assertNull(previous.image.parent)
         assertNull(previous.image.drawable)
-        assertEquals(1, fixture.overlay.removals(previous.image))
+        assertEquals(1, fixture.imageRemovals(previous.image))
         assertEquals(1, previous.image.clears)
         assertEquals(if (compositions < 0) 1 else 2, fixture.removals(previous))
 
@@ -147,7 +148,7 @@ class FullscreenPlayerActivityEarlyExitTest {
         previous.release()
         assertSame(fixture.overlay, next.image.parent)
         assertTrue(next.image.drawable != null)
-        assertEquals(0, fixture.overlay.removals(next.image))
+        assertEquals(0, fixture.imageRemovals(next.image))
         assertEquals(0, next.image.clears)
         assertEquals(0, previous.image.pendingFrames)
         assertEquals(0, fixture.removals(next))
@@ -181,7 +182,7 @@ class FullscreenPlayerActivityEarlyExitTest {
         owner.release()
         owner.release()
         assertEquals(0, owner.image.pendingFrames)
-        assertEquals(1, fixture.overlay.removals(owner.image))
+        assertEquals(1, fixture.imageRemovals(owner.image))
         assertEquals(1, owner.image.clears)
         assertEquals(if (decoded) 2 else 1, fixture.removals(owner))
       } finally {
@@ -194,11 +195,18 @@ class FullscreenPlayerActivityEarlyExitTest {
   private fun frameError() = PlaybackException("controlled frame failure", null, PlaybackException.ERROR_CODE_UNSPECIFIED)
 
   private class TransitionFixture {
-    val overlay = ObservedOverlay(RuntimeEnvironment.getApplication())
+    // Media3 UI is an implementation dependency of expo-video. Exercise its actual target and overlay.
+    private val context: Context = RuntimeEnvironment.getApplication()
+    private val targetType = Class.forName("androidx.media3.ui.PlayerView").asSubclass(ViewGroup::class.java)
+    private val target = targetType.getConstructor(Context::class.java).newInstance(context)
+    val overlay = requireNotNull(targetType.getMethod("getOverlayFrameLayout").invoke(target) as? FrameLayout)
+    private val removedImages = mutableListOf<View>()
     val added = mutableListOf<Player.Listener>()
     private val removed = mutableListOf<Player.Listener>()
     private val player = Player::class.java.cast(Proxy.newProxyInstance(Player::class.java.classLoader, arrayOf(Player::class.java)) { proxy, method, arguments ->
       when (method.name) {
+        "getPlaybackState" -> Player.STATE_READY
+        "getPlayWhenReady", "isPlaying" -> true
         "addListener" -> { added.add(Player.Listener::class.java.cast(arguments!![0])); null }
         "removeListener" -> { removed.add(Player.Listener::class.java.cast(arguments!![0])); null }
         "hashCode" -> System.identityHashCode(proxy)
@@ -207,12 +215,18 @@ class FullscreenPlayerActivityEarlyExitTest {
         else -> error("Unexpected player call: ${method.name}")
       }
     })
+    init {
+      overlay.setOnHierarchyChangeListener(object : ViewGroup.OnHierarchyChangeListener {
+        override fun onChildViewAdded(parent: View, child: View) = Unit
+        override fun onChildViewRemoved(parent: View, child: View) { removedImages.add(child) }
+      })
+    }
     fun install(): TransitionOwner {
-      val image = CompositionImage(RuntimeEnvironment.getApplication())
+      val image = CompositionImage(context)
       image.setImageDrawable(ColorDrawable(Color.BLUE))
       val type = Class.forName("expo.modules.video.FullscreenTransitionFrame")
-      val instance = type.getDeclaredConstructor(FrameLayout::class.java, Player::class.java, ImageView::class.java)
-        .apply { isAccessible = true }.newInstance(overlay, player, image)
+      val instance = type.getDeclaredConstructor(targetType, Player::class.java, ImageView::class.java)
+        .apply { isAccessible = true }.newInstance(target, player, image)
       type.getDeclaredMethod("install").apply { isAccessible = true }.invoke(instance)
       return TransitionOwner(instance, Player.Listener::class.java.cast(instance), image) {
         type.getDeclaredMethod("release").apply { isAccessible = true }.invoke(instance)
@@ -220,18 +234,10 @@ class FullscreenPlayerActivityEarlyExitTest {
     }
 
     fun removals(owner: TransitionOwner) = removed.count { it === owner.listener }
+    fun imageRemovals(image: View) = removedImages.count { it === image }
   }
 
   private class TransitionOwner(val instance: Any, val listener: Player.Listener, val image: CompositionImage, val release: () -> Unit)
-
-  private class ObservedOverlay(context: Context) : FrameLayout(context) {
-    private val removed = mutableListOf<View>()
-    override fun removeView(view: View) {
-      removed.add(view)
-      super.removeView(view)
-    }
-    fun removals(view: View) = removed.count { it === view }
-  }
 
   private class CompositionImage(context: Context) : ImageView(context) {
     private val posted = ArrayDeque<Runnable>()

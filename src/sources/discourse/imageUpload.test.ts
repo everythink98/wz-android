@@ -2,6 +2,22 @@ import { describe, expect, it } from 'vitest';
 import { buildDiscourseActionRequest, discourseImageUrlFromUploadResponse } from './actionRequest';
 
 describe('linux.do image upload requests', () => {
+  it('retains the complete upload destination when the filename contains parentheses', () => {
+    const path = '/uploads/example (copy).png';
+    for (const response of [{ markdown: `![photo](${path})` }, { markdown: '![photo](/wrong)', short_url: path }]) {
+      expect(discourseImageUrlFromUploadResponse(response, 'https://linux.do', 'linux.do')).toBe(
+        'https://linux.do/uploads/example%20(copy).png'
+      );
+    }
+  });
+
+  it('decodes escaped Markdown parentheses in a legacy upload destination', () => {
+    const markdown = String.raw`![photo](/uploads/file\(v2\).png)`;
+    expect(discourseImageUrlFromUploadResponse({ markdown }, 'https://linux.do', 'linux.do')).toBe(
+      'https://linux.do/uploads/file(v2).png'
+    );
+  });
+
   it('builds a Discourse composer upload request without forcing a multipart boundary', () => {
     const request = buildDiscourseActionRequest({
       type: 'upload',

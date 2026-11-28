@@ -2,6 +2,8 @@ import {
   applyReaderChange,
   createEmptyReaderState,
   projectReaderCommand,
+  readerCollections,
+  readerCommandChange,
   type ReaderChange,
   type ReaderCommand,
   type ReaderState,
@@ -9,6 +11,31 @@ import {
 } from '@/domain/reader/readerRecordState';
 
 type Operation = { readonly command: ReaderCommand; owner: AbortSignal };
+
+function confirmsProjection(base: ReaderState, command: ReaderCommand, change: ReaderChange) {
+  const expected = readerCommandChange(base, command);
+  // A record's title or timestamp can change without changing its membership.
+  const membership = change.membership.filter(
+    (item) => Object.hasOwn(base[item.collection], item.key) !== item.present
+  );
+  if (membership.length !== expected.membership.length) return false;
+  if (
+    !membership.every((item, i) => {
+      const other = expected.membership[i]!;
+      return item.collection === other.collection && item.key === other.key && item.present === other.present;
+    })
+  )
+    return false;
+  if (
+    !readerCollections.every(
+      (key) => (change.counts[key] ?? base.counts[key]) === (expected.counts[key] ?? base.counts[key])
+    )
+  )
+    return false;
+  const settings = change.settings ?? base.settings;
+  const projectedSettings = expected.settings ?? base.settings;
+  return settings === projectedSettings || JSON.stringify(settings) === JSON.stringify(projectedSettings);
+}
 
 export function createReaderCommandQueue() {
   let lifetime = new AbortController();
@@ -58,18 +85,19 @@ export function createReaderCommandQueue() {
       if (lifetime.signal.aborted || status !== 'ready') return null;
       const operation: Operation = { command, owner: lifetime.signal };
       pending.push(operation);
-      project();
+      projection = projectReaderCommand(projection, command);
       return operation;
-    },
-    confirmed(change: ReaderChange) {
-      committed = applyReaderChange(committed, change);
     },
     requireRestart() {
       status = 'restart-required';
     },
-    settled(operation: Readonly<Operation>) {
+    settled(operation: Readonly<Operation>, change?: ReaderChange) {
+      const previous = projection;
+      const matches = change && pending[0] === operation && confirmsProjection(committed, operation.command, change);
       pending = pending.filter((item) => item !== operation);
-      project();
+      if (change) committed = matches && !pending.length ? projection : applyReaderChange(committed, change);
+      if (!matches) project();
+      return projection !== previous;
     }
   };
 }

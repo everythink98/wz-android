@@ -6,6 +6,19 @@ const native = (file: string) => readFileSync(`modules/forum-platform/android/${
 const xml = (file: string) => new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '' }).parse(native(file));
 
 describe('forum platform Android packaging', () => {
+  it('enables the Fresco animated WebP decoder during Expo prebuild', async () => {
+    const withForumPlatform = require('../../plugins/withForumPlatform');
+    const config = withForumPlatform({ name: 'test', slug: 'test' });
+    const templateProperties = [{ type: 'property', key: 'expo.webp.animated', value: 'false' }];
+    const result = await config.mods.android.gradleProperties?.({ ...config, modResults: templateProperties });
+
+    expect(result?.modResults ?? templateProperties).toContainEqual({
+      type: 'property',
+      key: 'expo.webp.animated',
+      value: 'true'
+    });
+  });
+
   it('declares the Custom Tabs query and its direct AndroidX dependency in the library', () => {
     const manifest = xml('src/main/AndroidManifest.xml').manifest;
     expect(manifest.queries.intent.action).toEqual({

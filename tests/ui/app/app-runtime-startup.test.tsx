@@ -3,6 +3,8 @@ import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/r
 import { createRoot } from 'test-renderer';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { useAppRuntime } from '@/app/useAppRuntime';
+import { AppComposition } from '@/app/AppComposition';
+import * as appRoutesModule from '@/app/AppRoutes';
 import { useAppStartupRuntime } from '@/app/useAppStartupRuntime';
 import { setStartupTimingRecorder, type StartupPhase } from '@/platform/diagnostics/startupTiming';
 import { useInitialForegroundRuntime } from '@/app/useInitialForegroundRuntime';
@@ -14,11 +16,11 @@ import type { ReadRecovery } from '@/platform/query/readRecovery';
 import React from 'react';
 import { View } from 'react-native';
 import { defaultScheduler, notifyManager } from '@tanstack/react-query';
-import type { Topic } from '@/domain/forum/models';
+import type { Category, Topic } from '@/domain/forum/models';
 import type { DiscourseReadingState } from '@/domain/forum/discourseReading';
-import { getTopicListItemStateFromIndex } from '@/domain/forum/topicListItemState';
+import { selectTopicListItemState } from '@/domain/forum/topicListItemState';
 import { createDiscourseReadingRuntime, discourseReadingQueryKey } from '@/platform/query/discourseReadingRuntime';
-import { MemoizedTopicCard } from '@/ui/topic/TopicCard';
+import { TopicListCard } from '@/ui/topic/TopicCard';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
@@ -27,7 +29,7 @@ import { saveAccountSessionSnapshot } from '@/platform/storage/accountSessionSto
 import type { Fetcher } from '@/platform/network/request';
 import { notificationPermissionGranted } from '@/platform/notifications/notificationSystem';
 import { render, fireEvent, within } from '../render';
-import { accountQueryKeys, appQueryClient } from '@/platform/query/serverState';
+import { accountQueryKeys, appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { formatAppUpdateDownloadProgress, type AppUpdateDownloadProgress } from '@/platform/update/appUpdate';
 
 const mockUseAccountRuntime = jest.fn();
@@ -63,7 +65,6 @@ jest.mock('@/platform/storage/readerDataStore', () => ({
 const renderHook: typeof renderNativeHook = (callback, options) =>
   renderNativeHook(callback, { wrapper: QueryTestWrapper, ...options });
 const mockUseAppUpdateRuntime = jest.fn();
-const mockUseForumCatalogRuntime = jest.fn();
 const mockHandleNavigationReady = jest.fn();
 const mockNotificationNavigationReady = jest.fn();
 let mockReaderData: ReaderData | undefined;
@@ -84,7 +85,7 @@ const mockReadGateway = {
   getFeed: jest.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
   getCategories: jest.fn(async () => ({ items: [], errors: {} }))
 };
-const mockForumSessionEpochs = { linuxdo: 7, nodeseek: 7, yaohuo: 7 };
+let mockForumSessionEpochs = { linuxdo: 7, nodeseek: 7, yaohuo: 7 };
 const mockOnFeedInitialContentReady = jest.fn(() => {
   mockInitialForegroundReady = true;
   mockFeedContentReady = true;
@@ -301,12 +302,6 @@ jest.mock('react-native-webview', () => {
   };
 });
 
-jest.mock('@/app/useForumCatalogRuntime', () => ({
-  useForumCatalogRuntime: (options: unknown) => {
-    mockUseForumCatalogRuntime(options);
-    return { categories: [], settled: true };
-  }
-}));
 jest.mock('@/app/useAppDiagnosticsRuntime', () => ({ useAppDiagnosticsRuntime: () => ({ metadata: {} }) }));
 jest.mock('@/app/useAppBackHandler', () => ({ useAppBackHandler: jest.fn() }));
 jest.mock('@/app/useContentSourceQueryCleanup', () => ({ useContentSourceQueryCleanup: jest.fn() }));
@@ -338,8 +333,94 @@ describe('app runtime startup', () => {
     mockUseAccountRuntime.mockClear();
     mockShowLinuxDoVerification.mockClear();
     mockUseAppUpdateRuntime.mockClear();
-    mockUseForumCatalogRuntime.mockClear();
     mockCommitReader.mockReset();
+  });
+
+  it('keeps unchanged warm catalogs out of the root commit when a reader regains focus', async () => {
+    mockFeedContentReady = true;
+    mockReaderData = createEmptyReaderData();
+    mockReaderData.settings.contentSources = mockReaderData.settings.contentSources.map((item) => ({
+      ...item,
+      enabled: item.source === 'v2ex'
+    }));
+    const key = forumQueryKeys.categories('v2ex', mockForumSessionEpochs, undefined, 'public:fixture');
+    const category = { id: 'general', source: 'v2ex', name: '分类' };
+    appQueryClient.setQueryData(key, { items: [category], errors: {} });
+    const routes = jest.spyOn(appRoutesModule, 'AppRoutes').mockImplementation(() => <></>);
+    try {
+      const app = await render(<AppComposition />, { wrapper: QueryTestWrapper });
+      const current = () => routes.mock.calls.at(-1)?.[0];
+      await waitFor(() => expect(current()?.feedRouteRuntime.catalogCategories).toEqual([category]));
+      mockScreen = 'topic';
+      await app.rerender(<AppComposition />);
+      const before = mockUseAccountRuntime.mock.calls.length;
+      const beforeRoutes = routes.mock.calls.length;
+      mockScreen = 'feed';
+      await app.rerender(<AppComposition />);
+      expect(mockUseAccountRuntime.mock.calls.length - before).toBe(1);
+      expect(routes.mock.calls.length - beforeRoutes).toBe(1);
+      expect(current()?.searchRouteRuntime.catalogCategories).toEqual([category]);
+      const updated = { ...category, name: '更新的分类' };
+      await act(async () => {
+        appQueryClient.setQueryData(key, { items: [updated], errors: {} });
+      });
+      await waitFor(() => expect(current()?.searchRouteRuntime.catalogCategories).toEqual([updated]));
+      expect(current()?.feedRouteRuntime.catalogCategories).toEqual([updated]);
+      expect(mockUseAccountRuntime.mock.calls.length - before).toBe(1);
+      expect(routes.mock.calls.length - beforeRoutes).toBe(2);
+    } finally {
+      routes.mockRestore();
+    }
+  });
+
+  it('publishes the current source and session catalog in the first route render after a change', async () => {
+    mockFeedContentReady = true;
+    const originalEpochs = mockForumSessionEpochs;
+    const nextEpochs = { ...originalEpochs, linuxdo: originalEpochs.linuxdo + 1 };
+    const current = { id: 'public', source: 'v2ex' as const, name: '公共' };
+    const first = { id: 'first', source: 'linuxdo' as const, name: '第一会话' };
+    const next = { id: 'next', source: 'linuxdo' as const, name: '第二会话' };
+    for (const [category, epochs] of [
+      [current, originalEpochs],
+      [first, originalEpochs],
+      [next, nextEpochs]
+    ] as const) {
+      const key = forumQueryKeys.categories(category.source, epochs, undefined, 'public:fixture');
+      appQueryClient.setQueryData(key, { items: [category], errors: {} });
+    }
+    function choose(source: 'v2ex' | 'linuxdo') {
+      const data = createEmptyReaderData();
+      data.settings.contentSources = data.settings.contentSources.map((item) => ({
+        ...item,
+        enabled: item.source === source
+      }));
+      mockReaderData = data;
+    }
+    const routes = jest.spyOn(appRoutesModule, 'AppRoutes').mockImplementation(() => <></>);
+    try {
+      choose('v2ex');
+      const app = await render(<AppComposition />, { wrapper: QueryTestWrapper });
+      const verify = (start: number, category: Category) => {
+        const frames = routes.mock.calls.slice(start);
+        expect(frames.length).toBeGreaterThan(0);
+        for (const [frame] of frames) {
+          expect(frame.feedRouteRuntime.catalogCategories).toEqual([category]);
+          expect(frame.searchRouteRuntime.catalogCategories).toEqual([category]);
+        }
+      };
+      verify(0, current);
+      const beforeSource = routes.mock.calls.length;
+      choose('linuxdo');
+      await app.rerender(<AppComposition />);
+      verify(beforeSource, first);
+      const beforeAccount = routes.mock.calls.length;
+      mockForumSessionEpochs = nextEpochs;
+      await app.rerender(<AppComposition />);
+      verify(beforeAccount, next);
+    } finally {
+      mockForumSessionEpochs = originalEpochs;
+      routes.mockRestore();
+    }
   });
 
   it('preserves More account and utility inputs through real account runtime progress renders', async () => {
@@ -545,7 +626,6 @@ describe('app runtime startup', () => {
         const routes = hook.result.current.routes!;
         return [
           routes.feedRouteRuntime.reader.data,
-          routes.searchRouteRuntime.topicStateIndex,
           routes.topicRouteRuntime.reader.data,
           routes.userRouteRuntime.reader.data
         ];
@@ -565,7 +645,7 @@ describe('app runtime startup', () => {
       const command: ReaderCommand = type === 'visit' ? { type, topic, at: '2026-09-30T00:00:00Z' } : { type, topic };
       await act(async () => hook.result.current.routes!.topicRouteRuntime.reader.commit(command));
       expect(mockCommitReader).toHaveBeenCalledWith(command);
-      expect(views().map((view, index) => view === before[index])).toEqual([true, true, true, true]);
+      expect(views().map((view, index) => view === before[index])).toEqual([true, true, true]);
       await act(async () => {
         saved.resolve({
           membership: [{ collection: 'history', key: 'nodeseek:1', present: true }],
@@ -578,7 +658,7 @@ describe('app runtime startup', () => {
       expect(hook.result.current.routes!.topicRouteRuntime.reader.dataRef.current).toBe(
         hook.result.current.routes!.libraryRouteRuntime.reader.data
       );
-      expect(views().map((view, index) => view === before[index])).toEqual([true, true, true, true]);
+      expect(views().map((view, index) => view === before[index])).toEqual([true, true, true]);
       mockCommitReader.mockResolvedValueOnce({
         membership: [{ collection: 'history', key: 'nodeseek:2', present: true }],
         counts: { history: 2 },
@@ -641,6 +721,7 @@ describe('app runtime startup', () => {
     const feedCommits = jest.fn<React.ProfilerOnRenderCallback>();
     const searchCommits = jest.fn<React.ProfilerOnRenderCallback>();
     const openTopic = () => undefined;
+    const catalogCategories: Category[] = [];
     type Routes = NonNullable<ReturnType<typeof useAppRuntime>['routes']>;
     const cards = (
       runtime: Routes['feedRouteRuntime' | 'searchRouteRuntime'],
@@ -650,10 +731,10 @@ describe('app runtime startup', () => {
       <React.Profiler id={id} onRender={onCommit}>
         <View testID={id}>
           {topics.map((topic) => (
-            <MemoizedTopicCard
+            <TopicListCard
               key={topic.id}
               topic={topic}
-              readerState={getTopicListItemStateFromIndex(runtime.topicStateIndex, topic)}
+              topicStateIndex={runtime.topicStateIndex}
               onOpenTopic={openTopic}
             />
           ))}
@@ -669,7 +750,7 @@ describe('app runtime startup', () => {
         active: false,
         enabledSources: runtime.enabledSources,
         enabledSourcesKey: runtime.enabledSourcesKey,
-        catalogCategories: runtime.catalogCategories,
+        catalogCategories,
         sessionEpochs: runtime.account.sessionEpochs,
         linuxDoVerificationActive: false,
         notify: runtime.notify,
@@ -717,9 +798,10 @@ describe('app runtime startup', () => {
       expect(feedCommits).toHaveBeenCalled();
       expect(searchCommits).toHaveBeenCalled();
       const before = inputs();
-      const selected = before[0].topicStateIndex.reading;
-      expect(selected?.['482293']).toEqual({ visited: true, hasNewReplies: false });
-      expect(selected?.['482294']).toEqual({ visited: false, hasNewReplies: false });
+      const firstCard = selectTopicListItemState(before[0].topicStateIndex, topics[0]!);
+      const secondCard = selectTopicListItemState(before[0].topicStateIndex, topics[1]!);
+      expect(firstCard.getSnapshot().read).toBe(true);
+      expect(secondCard.getSnapshot().read).toBe(false);
       const commitsBefore = [feedCommits.mock.calls.length, searchCommits.mock.calls.length] as const;
       const initialEntry = reading.state()['482293'];
       await update((previous) => ({
@@ -729,7 +811,6 @@ describe('app runtime startup', () => {
       expect(reading.state()['482293']).not.toBe(initialEntry);
       expect(reading.state()['482293'].anchor).toEqual({ floor: 501, rowKey: 'reply:501', offset: 12 });
       expect(inputs().map((input, index) => input === before[index])).toEqual([true, true]);
-      expect(inputs().map((input) => input.topicStateIndex.reading === selected)).toEqual([true, true]);
       expect([feedCommits.mock.calls.length, searchCommits.mock.calls.length]).toEqual(commitsBefore);
       const entryBeforeFloor = reading.state()['482293'];
       await update((previous) => ({
@@ -744,17 +825,18 @@ describe('app runtime startup', () => {
       expect(reading.state()['482293'].readPosts).not.toBe(entryBeforeFloor.readPosts);
       expect(reading.state()['482293'].readPosts[501]).toBe(true);
       expect(inputs().map((input, index) => input === before[index])).toEqual([true, true]);
-      expect(inputs().map((input) => input.topicStateIndex.reading === selected)).toEqual([true, true]);
       expect([feedCommits.mock.calls.length, searchCommits.mock.calls.length]).toEqual(commitsBefore);
       await update((previous) => ({
         ...previous,
         '482294': { ...previous['482294'], visited: true, localVersion: 1 }
       }));
-      expect(inputs().map((input) => getTopicListItemStateFromIndex(input.topicStateIndex, topics[1]!).read)).toEqual([
+      expect(
+        inputs().map((input) => selectTopicListItemState(input.topicStateIndex, topics[1]!).getSnapshot().read)
+      ).toEqual([true, true]);
+      expect(inputs().map((input, index) => input.topicStateIndex === before[index]!.topicStateIndex)).toEqual([
         true,
         true
       ]);
-      expect(inputs().map((input, index) => input === before[index])).toEqual([false, false]);
       expect(feedCommits.mock.calls.length).toBeGreaterThan(commitsBefore[0]);
       expect(searchCommits.mock.calls.length).toBeGreaterThan(commitsBefore[1]);
       const commitsAfterVisit = [feedCommits.mock.calls.length, searchCommits.mock.calls.length] as const;
@@ -763,7 +845,7 @@ describe('app runtime startup', () => {
         '482293': { ...previous['482293'], server: { ...previous['482293'].server, highestPostNumber: 502 } }
       }));
       expect(
-        inputs().map((input) => getTopicListItemStateFromIndex(input.topicStateIndex, topics[0]!).hasNewReplies)
+        inputs().map((input) => selectTopicListItemState(input.topicStateIndex, topics[0]!).getSnapshot().hasNewReplies)
       ).toEqual([true, true]);
       expect(feedCommits.mock.calls.length).toBeGreaterThan(commitsAfterVisit[0]);
       expect(searchCommits.mock.calls.length).toBeGreaterThan(commitsAfterVisit[1]);
@@ -835,7 +917,7 @@ describe('app runtime startup', () => {
     expect(mockUseNotificationsRuntime).toHaveBeenLastCalledWith(
       expect.objectContaining({ contentSourcesReady: false, enabledNotificationSources: [] })
     );
-    expect(mockUseForumCatalogRuntime).toHaveBeenLastCalledWith(
+    expect(hook.result.current.forumCatalog).toEqual(
       expect.objectContaining({ active: false, enabledFeedSources: [] })
     );
     mockImportReader.mockRejectedValueOnce(new Error('bad backup'));
@@ -946,7 +1028,7 @@ describe('app runtime startup', () => {
     expect(hook.result.current.routes!.topicRouteRuntime.reader.data.favorites).toBe(mockReaderData.favorites);
     expect(
       (hook.result.current.routes!.feedRouteRuntime as unknown as { topicStateIndex?: unknown }).topicStateIndex
-    ).not.toBe(feedIndex);
+    ).toBe(feedIndex);
     mockReaderData = { ...mockReaderData!, settings: { ...mockReaderData!.settings, theme: 'dark' } };
     await act(async () => hook.rerender({ revision: 3 }));
     expect(hook.result.current.routes!.topicRouteRuntime.reader.data.settings.theme).toBe('dark');
@@ -1043,13 +1125,11 @@ describe('app runtime startup', () => {
       { initialProps: { revision: 0 } }
     );
 
-    expect(mockUseForumCatalogRuntime).toHaveBeenLastCalledWith(
-      expect.objectContaining({ active: false, onSettled: undefined })
-    );
+    expect(hook.result.current.forumCatalog).toEqual(expect.objectContaining({ active: false, onSettled: undefined }));
 
     mockReaderDataLoaded = true;
     await act(async () => hook.rerender({ revision: 1 }));
-    expect(mockUseForumCatalogRuntime).toHaveBeenLastCalledWith(
+    expect(hook.result.current.forumCatalog).toEqual(
       expect.objectContaining({ active: true, onSettled: expect.any(Function) })
     );
   });
@@ -1063,10 +1143,8 @@ describe('app runtime startup', () => {
       { initialProps: { revision: 0 } }
     );
 
-    expect(mockUseForumCatalogRuntime).toHaveBeenLastCalledWith(
-      expect.objectContaining({ active: true, deferSecondary: true })
-    );
-    expect(mockUseForumCatalogRuntime).toHaveBeenLastCalledWith(
+    expect(hook.result.current.forumCatalog).toEqual(expect.objectContaining({ active: true, deferSecondary: true }));
+    expect(hook.result.current.forumCatalog).toEqual(
       expect.objectContaining({ readGateway: mockReadGateway, sessionEpochs: mockForumSessionEpochs })
     );
     expect(mockUseAccountRuntime).toHaveBeenLastCalledWith(expect.objectContaining({ ready: true }));
@@ -1084,7 +1162,7 @@ describe('app runtime startup', () => {
       ).onInitialContentReady?.()
     );
     await act(async () => hook.rerender({ revision: 1 }));
-    expect(mockUseForumCatalogRuntime).toHaveBeenLastCalledWith(expect.objectContaining({ deferSecondary: false }));
+    expect(hook.result.current.forumCatalog).toEqual(expect.objectContaining({ deferSecondary: false }));
     expect(mockUseAccountRuntime).toHaveBeenLastCalledWith(expect.objectContaining({ ready: true }));
     expect(mockUseAppUpdateRuntime).toHaveBeenLastCalledWith(expect.objectContaining({ autoCheck: true }));
   });
@@ -1157,10 +1235,8 @@ describe('app runtime startup', () => {
 
   it('loads Search categories even before the initial Feed is visible', async () => {
     mockScreen = 'search';
-    await renderHook(() => useAppRuntime());
-    expect(mockUseForumCatalogRuntime).toHaveBeenLastCalledWith(
-      expect.objectContaining({ active: true, deferSecondary: false })
-    );
+    const hook = await renderHook(() => useAppRuntime());
+    expect(hook.result.current.forumCatalog).toEqual(expect.objectContaining({ active: true, deferSecondary: false }));
   });
 
   it('withholds routes and remote queries until local account sessions are restored', async () => {
@@ -1174,13 +1250,13 @@ describe('app runtime startup', () => {
     );
 
     expect(mockUseAccountRuntime).toHaveBeenLastCalledWith(expect.objectContaining({ ready: true }));
-    expect(mockUseForumCatalogRuntime).toHaveBeenLastCalledWith(expect.objectContaining({ active: false }));
+    expect(hook.result.current.forumCatalog).toEqual(expect.objectContaining({ active: false }));
     expect(hook.result.current.routes).toBeNull();
 
     mockSessionsReady = true;
     await act(async () => hook.rerender({ revision: 1 }));
 
-    expect(mockUseForumCatalogRuntime).toHaveBeenLastCalledWith(expect.objectContaining({ active: true }));
+    expect(hook.result.current.forumCatalog).toEqual(expect.objectContaining({ active: true }));
     expect(hook.result.current.routes).not.toBeNull();
   });
 });

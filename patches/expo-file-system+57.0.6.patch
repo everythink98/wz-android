@@ -1,5 +1,5 @@
 diff --git a/node_modules/expo-file-system/android/src/main/java/expo/modules/filesystem/FileSystemDownloadTask.kt b/node_modules/expo-file-system/android/src/main/java/expo/modules/filesystem/FileSystemDownloadTask.kt
-index 44dd86d..6629530 100644
+index 44dd86d..5406b6d 100644
 --- a/node_modules/expo-file-system/android/src/main/java/expo/modules/filesystem/FileSystemDownloadTask.kt
 +++ b/node_modules/expo-file-system/android/src/main/java/expo/modules/filesystem/FileSystemDownloadTask.kt
 @@ -6,6 +6,7 @@ import com.facebook.react.modules.network.OkHttpClientProvider
@@ -21,7 +21,7 @@ index 44dd86d..6629530 100644
  import java.net.URI
  import java.net.URLConnection
  import java.util.concurrent.TimeUnit
-@@ -42,31 +40,44 @@ class DownloadTaskOptions : Record {
+@@ -42,31 +40,47 @@ class DownloadTaskOptions : Record {
   */
  class FileSystemDownloadTask : SharedObject() {
    companion object {
@@ -57,6 +57,8 @@ index 44dd86d..6629530 100644
 -  @Volatile private var bytesWritten = 0L
 -  private var lastProgressTime: Long = 0
 +  @Volatile private var nextTransfer = Transfer()
++  @Volatile var appendedRange = false
++    private set
    private val progressThrottleInterval = 100.milliseconds
  
 -  suspend fun start(url: URI, to: FileSystemPath, options: DownloadTaskOptions?): String? {
@@ -66,6 +68,7 @@ index 44dd86d..6629530 100644
 +  // A synchronous stop can arrive before the coroutine starts. Its callbacks keep that stop on settlement.
 +  private suspend inline fun runTransfer(operation: (Transfer) -> String?): String? {
 +    val transfer = nextTransfer
++    appendedRange = false
 +    return try {
 +      operation(transfer)
 +    } finally {
@@ -80,7 +83,7 @@ index 44dd86d..6629530 100644
  
      val requestBuilder = Request.Builder().url(url.toString())
  
-@@ -76,12 +87,12 @@ class FileSystemDownloadTask : SharedObject() {
+@@ -76,12 +90,12 @@ class FileSystemDownloadTask : SharedObject() {
  
      val request = requestBuilder.build()
  
@@ -96,7 +99,7 @@ index 44dd86d..6629530 100644
      // Use the file's on-disk length rather than the in-memory bytesWritten counter,
      // which may be ahead of what was actually flushed. A too-low offset is safe because
      // resume() truncates the file to the offset before appending — we just re-download
-@@ -89,22 +100,19 @@ class FileSystemDownloadTask : SharedObject() {
+@@ -89,22 +103,19 @@ class FileSystemDownloadTask : SharedObject() {
      // would extend the file with zeros, corrupting the download.
      // For SAF-backed files, DocumentFile.length() metadata may lag behind the actual
      // written bytes, but this is still safe — worst case we re-download a small amount.
@@ -124,7 +127,7 @@ index 44dd86d..6629530 100644
  
      val requestBuilder = Request.Builder().url(url.toString())
  
-@@ -116,20 +124,19 @@ class FileSystemDownloadTask : SharedObject() {
+@@ -116,20 +127,19 @@ class FileSystemDownloadTask : SharedObject() {
  
      val request = requestBuilder.build()
  
@@ -149,7 +152,7 @@ index 44dd86d..6629530 100644
      request: Request,
      destination: UnifiedFileInterface,
      isResume: Boolean,
-@@ -150,141 +157,65 @@ class FileSystemDownloadTask : SharedObject() {
+@@ -150,141 +160,66 @@ class FileSystemDownloadTask : SharedObject() {
          }
        }
  
@@ -205,6 +208,7 @@ index 44dd86d..6629530 100644
 +              progress = { count, total -> emitProgress(transfer, count, total) }
 +            )
 +            if (written != null) {
++              appendedRange = isResume && offset > 0 && response.code == 206
 +              emitProgress(transfer, written, written)
 +            }
 +            safeResume(if (written == null) null else destination.uri.toString())
@@ -330,7 +334,7 @@ index 44dd86d..6629530 100644
        emit(
          "progress",
          mapOf(
-@@ -305,18 +236,6 @@ val URI.filename: String
+@@ -305,18 +240,6 @@ val URI.filename: String
      return filename.ifBlank { "download" }
    }
  
@@ -696,3 +700,55 @@ index 0000000..e767cee
 +    assertArrayEquals(payload, file.readBytes())
 +  }
 +}
+diff --git a/node_modules/expo-file-system/android/src/main/java/expo/modules/filesystem/FileSystemModule.kt b/node_modules/expo-file-system/android/src/main/java/expo/modules/filesystem/FileSystemModule.kt
+index 5ad4088..c37c71f 100644
+--- a/node_modules/expo-file-system/android/src/main/java/expo/modules/filesystem/FileSystemModule.kt
++++ b/node_modules/expo-file-system/android/src/main/java/expo/modules/filesystem/FileSystemModule.kt
+@@ -374,6 +374,8 @@ class FileSystemModule : Module() {
+ 
+       Events("progress")
+ 
++      Property("appendedRange") { task: FileSystemDownloadTask -> task.appendedRange }
++
+       AsyncFunction("start") Coroutine { task: FileSystemDownloadTask, url: URI, to: FileSystemPath, options: DownloadTaskOptions? ->
+         to.validatePermission(FilePermissionService.Permission.WRITE)
+         task.start(url, to, options)
+diff --git a/node_modules/expo-file-system/build/NetworkTasks.d.ts b/node_modules/expo-file-system/build/NetworkTasks.d.ts
+index 7168e2c..da6b338 100644
+--- a/node_modules/expo-file-system/build/NetworkTasks.d.ts
++++ b/node_modules/expo-file-system/build/NetworkTasks.d.ts
+@@ -99,6 +99,7 @@ export declare class DownloadTask {
+      * The current state of the download task.
+      */
+     get state(): DownloadTaskState;
++    get appendedRange(): boolean;
+     /**
+      * Starts the download operation.
+      *
+diff --git a/node_modules/expo-file-system/src/NetworkTasks.ts b/node_modules/expo-file-system/src/NetworkTasks.ts
+index 4708e10..43e6856 100644
+--- a/node_modules/expo-file-system/src/NetworkTasks.ts
++++ b/node_modules/expo-file-system/src/NetworkTasks.ts
+@@ -253,6 +253,10 @@ export class DownloadTask {
+     return this._state;
+   }
+ 
++  get appendedRange(): boolean {
++    return this._state === 'completed' && this._nativeTask.appendedRange === true;
++  }
++
+   /**
+    * Starts the download operation.
+    *
+diff --git a/node_modules/expo-file-system/src/internal/NativeFileSystem.types.ts b/node_modules/expo-file-system/src/internal/NativeFileSystem.types.ts
+index 5f6aaf6..ced36a0 100644
+--- a/node_modules/expo-file-system/src/internal/NativeFileSystem.types.ts
++++ b/node_modules/expo-file-system/src/internal/NativeFileSystem.types.ts
+@@ -350,6 +350,7 @@ export declare class FileSystemUploadTask extends SharedObject<UploadTaskEvents>
+  * @hidden
+  */
+ export declare class FileSystemDownloadTask extends SharedObject<DownloadTaskEvents> {
++  readonly appendedRange?: boolean;
+   /**
+    * @hidden
+    */

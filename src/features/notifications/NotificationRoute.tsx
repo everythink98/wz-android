@@ -32,6 +32,7 @@ import {
 } from '@tanstack/react-query';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { NotificationSource } from '@/domain/forum/sourceCatalog';
+import { dispatchTopicRoute } from '@/ui/navigation/appRouteActions';
 import type { SourceErrorInfo, Topic, TopicLocationTarget, UserReference } from '@/domain/forum/models';
 import { isRecord } from '@/domain/forum/html';
 import type { LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
@@ -63,6 +64,7 @@ import {
 } from '@/platform/query/discoursePolicyCache';
 import { resumeExactQuery } from '@/platform/query/useFirstPageInfiniteQuery';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
+import { isLinuxDoCloudflareError } from '@/sources/errors';
 
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { retryEmojiCatalog } from '@/sources/discourse/retryEmojiCatalog';
@@ -179,7 +181,7 @@ export function NotificationsRoute({
   useFocusEffect(
     useCallback(() => {
       setCenterVisible(true);
-      void refreshSnapshots();
+      void refreshSnapshots(undefined, { ifStale: true });
       return () => setCenterVisible(false);
     }, [refreshSnapshots, setCenterVisible])
   );
@@ -1258,7 +1260,14 @@ export function NotificationsRoute({
               })
               .catch((error) => {
                 if (markAllRef.current === run && !controller.signal.aborted) {
-                  runtime.notify(errorMessage(error));
+                  const message = errorMessage(error);
+                  if (source === 'linuxdo' && isLinuxDoCloudflareError(error)) {
+                    const isCurrent = () =>
+                      Boolean(currentList()?.sourceAvailable) &&
+                      latestRuntimeRef.current.identityKeys.linuxdo === expectedIdentityKey &&
+                      latestRuntimeRef.current.sessionEpochs.linuxdo === selectedSourceEpoch;
+                    if (isCurrent()) void runtime.openAccountSurface(source, message, { kind: 'website', isCurrent });
+                  } else runtime.notify(message);
                 }
               })
               .finally(() => {
@@ -1271,7 +1280,17 @@ export function NotificationsRoute({
       ],
       { cancelable: true, onDismiss: cancelConfirmation }
     );
-  }, [cancelMarkAll, categories, categoryId, currentList, queryClient, runtime, selectedSourceEpoch, source]);
+  }, [
+    cancelMarkAll,
+    categories,
+    categoryId,
+    currentList,
+    latestRuntimeRef,
+    queryClient,
+    runtime,
+    selectedSourceEpoch,
+    source
+  ]);
   const changeSource = useCallback(
     (nextSource: NotificationFilterSource) => {
       if (nextSource === source) return;
@@ -1443,6 +1462,7 @@ function EnabledNotificationDetailRoute({
       : '账号状态暂时无法确认，请返回消息列表后重试。';
   const gateway = runtime.gateway;
   const notify = runtime.notify;
+  const openAccountSurface = runtime.openAccountSurface;
   const refreshSnapshots = runtime.refreshSnapshots;
   const [readReceipt] = useState(createNotificationReadReceipt);
   const [markPhase, setMarkPhase] = useState(readReceipt.phase);
@@ -1466,6 +1486,24 @@ function EnabledNotificationDetailRoute({
   const [replyStatus, setReplyStatus] = useState('');
   const [replyVisible, setReplyVisible] = useState(false);
   const replyScopeRef = useCommittedRef({ canAccessSource, identityKey, itemId: item.id, replySessionEpoch });
+  const showDetailVerification = useCallback(
+    (error: unknown) => {
+      if (item.source !== 'linuxdo' || !isLinuxDoCloudflareError(error)) return;
+      const isCurrent = () => {
+        const scope = replyScopeRef.current;
+        return (
+          navigation.isFocused() &&
+          focusManager.isFocused() &&
+          scope.canAccessSource &&
+          scope.identityKey === identityKey &&
+          scope.itemId === item.id &&
+          scope.replySessionEpoch === replySessionEpoch
+        );
+      };
+      if (isCurrent()) void openAccountSurface('linuxdo', errorMessage(error), { kind: 'website', isCurrent });
+    },
+    [identityKey, item.id, item.source, navigation, openAccountSurface, replyScopeRef, replySessionEpoch]
+  );
   const {
     busy: replyBusy,
     hasOperation: hasReplyOperation,
@@ -1766,7 +1804,7 @@ function EnabledNotificationDetailRoute({
       !routeFocused
     )
       return;
-    historyFlow.latest(replySessionEpoch, messages, pagination.olderCursor);
+    historyFlow.latest(replySessionEpoch, messages, pagination.olderCursor, pagination.newerCursor);
     publishHistory();
   }, [
     canAccessSource,
@@ -1790,30 +1828,43 @@ function EnabledNotificationDetailRoute({
       focusManager.isFocused(),
     [historyScopeRef, historyFlow]
   );
-  const loadEarlierMessages = useLatestCallback(async () => {
+  const loadMessageHistory = useLatestCallback(async (direction: 'earlier' | 'later') => {
     const history = historyFlow.committed;
     if (
-      !history?.olderCursor ||
-      history.blocked ||
+      !history ||
       history.sessionEpoch !== replySessionEpoch ||
       !canAccessSource ||
       !routeFocused ||
       !focusManager.isFocused()
     )
       return;
-    const request = historyFlow.beginEarlier(history.sessionEpoch);
+    const request =
+      direction === 'earlier'
+        ? historyFlow.beginEarlier(history.sessionEpoch)
+        : historyFlow.beginLater(history.sessionEpoch);
     if (!request) return;
     const controller = request.controller;
     publishHistory();
     try {
-      const page = await gateway.loadEarlierMessages(item, request.cursor, identityKey, controller.signal);
-      if (!historyRequestCurrent(controller, history.sessionEpoch)) return;
-      historyFlow.receivedEarlier(controller, page);
+      const notification = item.source === 'yaohuo' ? (detailQuery.data?.notification ?? item) : item;
+      if (direction === 'earlier') {
+        const page = await gateway.loadEarlierMessages(notification, request.cursor, identityKey, controller.signal);
+        if (!historyRequestCurrent(controller, history.sessionEpoch)) return;
+        historyFlow.receivedEarlier(controller, page);
+      } else {
+        const page = await gateway.loadLaterMessages(notification, request.cursor, identityKey, controller.signal);
+        if (!historyRequestCurrent(controller, history.sessionEpoch)) return;
+        historyFlow.receivedLater(controller, page);
+      }
       publishHistory();
     } catch (error) {
       if (historyRequestCurrent(controller, history.sessionEpoch)) {
-        historyFlow.failed(controller, '更早消息读取失败：' + errorMessage(error));
+        historyFlow.failed(
+          controller,
+          `${direction === 'earlier' ? '更早' : '更新'}消息读取失败：${errorMessage(error)}`
+        );
         publishHistory();
+        showDetailVerification(error);
       }
     } finally {
       historyFlow.finished(controller);
@@ -1835,7 +1886,8 @@ function EnabledNotificationDetailRoute({
           controller,
           replySessionEpoch,
           result.data.messages,
-          result.data.messageHistory.olderCursor
+          result.data.messageHistory.olderCursor,
+          result.data.messageHistory.newerCursor
         );
         publishHistory();
       }
@@ -1843,6 +1895,7 @@ function EnabledNotificationDetailRoute({
       if (historyRequestCurrent(controller, replySessionEpoch)) {
         historyFlow.failed(controller, '重新读取会话失败：' + errorMessage(error));
         publishHistory();
+        showDetailVerification(error);
       }
     } finally {
       historyFlow.finished(controller);
@@ -1851,8 +1904,15 @@ function EnabledNotificationDetailRoute({
   });
   const displayDetail = useMemo(() => {
     const detail = detailQuery.data;
-    return detail && messageHistory?.sessionEpoch === replySessionEpoch
-      ? { ...detail, messages: messageHistory.messages, messageHistory: { olderCursor: messageHistory.olderCursor } }
+    return detail?.messageHistory && messageHistory?.sessionEpoch === replySessionEpoch
+      ? {
+          ...detail,
+          messages: messageHistory.messages,
+          messageHistory: {
+            olderCursor: messageHistory.olderCursor,
+            ...(messageHistory.later ? { newerCursor: messageHistory.later.cursor } : {})
+          }
+        }
       : detail;
   }, [detailQuery.data, messageHistory, replySessionEpoch]);
   const actorUser = useMemo(
@@ -1862,7 +1922,8 @@ function EnabledNotificationDetailRoute({
         : undefined,
     [canAccessSource, detailQuery.data]
   );
-  const actorInHeader = Boolean(detailQuery.data?.messages && actorUser && item.source !== 'linuxdo');
+  const privateConversation = item.kind === 'private-message' && Boolean(detailQuery.data?.messages);
+  const actorInHeader = Boolean(privateConversation && actorUser && item.source !== 'linuxdo');
   const openActor = useLatestCallback((user: UserReference) => {
     if (navigation.isFocused()) navigation.navigate('User', { user });
   });
@@ -1900,21 +1961,13 @@ function EnabledNotificationDetailRoute({
   const discourseEmojiUrls = discourseEmojiSource ? discourseEmojiQuery.data || {} : {};
   useEffect(() => {
     navigation.setOptions?.({
-      title: canAccessSource && detailQuery.data?.messages ? detailQuery.data.title : '消息详情',
+      title: canAccessSource && privateConversation ? (detailQuery.data?.title ?? '消息详情') : '消息详情',
       headerTitle:
         actorInHeader && actorUser
           ? () => <NotificationContactTitle user={actorUser} onPress={() => openActor(actorUser)} />
           : undefined
     });
-  }, [
-    actorInHeader,
-    actorUser,
-    canAccessSource,
-    detailQuery.data?.messages,
-    detailQuery.data?.title,
-    navigation,
-    openActor
-  ]);
+  }, [actorInHeader, actorUser, canAccessSource, privateConversation, detailQuery.data?.title, navigation, openActor]);
   useEffect(
     () => () => {
       cancelReply();
@@ -2014,6 +2067,7 @@ function EnabledNotificationDetailRoute({
         readReceipt.failed(attempt);
         publishMark();
         setMarkMessage(`已读状态未更新：${errorMessage(error)}`);
+        if (refreshDetail) showDetailVerification(error);
       }
     } finally {
       // A canceled response cannot undo a server write. Reconciliation failure
@@ -2069,15 +2123,21 @@ function EnabledNotificationDetailRoute({
     },
     [navigation, notify]
   );
-  const runComposerRequest = useCallback(async <T,>(operation: (signal: AbortSignal) => Promise<T>) => {
-    const controller = new AbortController();
-    composerControllersRef.current.add(controller);
-    try {
-      return await operation(controller.signal);
-    } finally {
-      composerControllersRef.current.delete(controller);
-    }
-  }, []);
+  const runComposerRequest = useCallback(
+    async <T,>(operation: (signal: AbortSignal) => Promise<T>) => {
+      const controller = new AbortController();
+      composerControllersRef.current.add(controller);
+      try {
+        return await operation(controller.signal);
+      } catch (error) {
+        if (!controller.signal.aborted) showDetailVerification(error);
+        throw error;
+      } finally {
+        composerControllersRef.current.delete(controller);
+      }
+    },
+    [showDetailVerification]
+  );
   const resolveLinuxDoUpload = useCallback(
     (shortUrl: string) => runComposerRequest((signal) => gateway.resolveLinuxDoUpload(shortUrl, identityKey, signal)),
     [gateway, identityKey, runComposerRequest]
@@ -2143,7 +2203,10 @@ function EnabledNotificationDetailRoute({
           setPolicyError('');
         }
       } catch (error) {
-        if (current()) setPolicyError(errorMessage(error));
+        if (current()) {
+          setPolicyError(errorMessage(error));
+          showDetailVerification(error);
+        }
       } finally {
         policies.finish(run);
       }
@@ -2256,6 +2319,7 @@ function EnabledNotificationDetailRoute({
                 ? `发送结果未确认，可能已发送，请先核对会话。${errorMessage(error)}`
                 : errorMessage(error)
             );
+            showDetailVerification(error);
           })
           .finally(() => {
             finishReply(controller);
@@ -2318,6 +2382,7 @@ function EnabledNotificationDetailRoute({
       beginReplySend,
       confirmReply,
       finishReply,
+      showDetailVerification,
       markReplyUncertain,
       isReplyUncertain,
       beginReplyConfirmation,
@@ -2386,6 +2451,7 @@ function EnabledNotificationDetailRoute({
       );
     } catch (error) {
       if (controller.signal.aborted || (error instanceof Error && error.name === 'AbortError')) return undefined;
+      showDetailVerification(error);
       setReplyError(
         isNodeImageApiKeyExpiredError(error)
           ? 'NodeImage API Key 不可用，请到账号中心重新获取授权或手动粘贴'
@@ -2405,13 +2471,17 @@ function EnabledNotificationDetailRoute({
     hasReplyOperation,
     beginReplyUpload,
     finishReply,
+    showDetailVerification,
     item.id,
     replySessionEpoch
   ]);
   const openTopic = useLatestCallback((linkedTopic?: Topic, linkedLocation?: TopicLocationTarget) => {
     if (!navigation.isFocused()) return;
     const topic = linkedTopic || targetTopic;
-    if (topic) navigation.navigate('Topic', { topic, location: linkedTopic ? linkedLocation : location });
+    if (topic)
+      dispatchTopicRoute(() =>
+        navigation.navigate('Topic', { topic, location: linkedTopic ? linkedLocation : location })
+      );
   });
   return (
     <NotificationDetailScreen
@@ -2449,7 +2519,14 @@ function EnabledNotificationDetailRoute({
         messageHistory?.blocked
           ? undefined
           : () => {
-              void loadEarlierMessages();
+              void loadMessageHistory('earlier');
+            }
+      }
+      onLoadLaterMessages={
+        messageHistory?.later?.blocked
+          ? undefined
+          : () => {
+              void loadMessageHistory('later');
             }
       }
       onResetMessageHistory={() => {

@@ -1,6 +1,7 @@
 import { StyleSheet, View } from 'react-native';
 import type { LucideIcon, LucideProps } from 'lucide-react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { DiscourseReactionPill } from '@/features/topic/components/ReplyItem';
 import { DetailActionButton, type DetailActionTone } from '@/features/topic/components/TopicActionBar';
 import { createTopicStyles } from '@/features/topic/styles';
 import { resolveReaderStyleSettings, createTheme } from '@/ui/theme/tokens';
@@ -70,6 +71,38 @@ async function renderAction({
 }
 
 describe('topic post action rail', () => {
+  it('keeps counts visible without showing emoji shortcodes while reaction images are unavailable', async () => {
+    const { settings } = createEmptyReaderData();
+    const styles = createTopicStyles(createTheme(settings), resolveReaderStyleSettings(settings));
+    const view = await render(
+      <>
+        <DiscourseReactionPill
+          contentSource="linuxdo"
+          stat={{ id: 'heart', label: 'heart', value: 2 }}
+          styles={styles}
+        />
+        <DiscourseReactionPill
+          contentSource="linuxdo"
+          stat={{ id: 'party_blob', label: 'party blob', value: 3 }}
+          styles={styles}
+        />
+        <DiscourseReactionPill
+          contentSource="linuxdo"
+          stat={{ id: 'boost', label: '加电', value: 4 }}
+          styles={styles}
+        />
+      </>
+    );
+
+    expect(view.queryByText('heart')).toBeNull();
+    expect(view.queryByText('party blob')).toBeNull();
+    expect(view.getByLabelText('heart 2')).toBeTruthy();
+    expect(view.getByText('2')).toBeTruthy();
+    expect(view.getByLabelText('party blob 3')).toBeTruthy();
+    expect(view.getByText('3')).toBeTruthy();
+    expect(view.getByText('加电')).toBeTruthy();
+  });
+
   it('offers the reaction accessibility action only while the button can be used', async () => {
     const onLongPress = jest.fn();
     const disabled = await renderAction({ disabled: true, onLongPress });

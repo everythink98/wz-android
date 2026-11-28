@@ -3,17 +3,9 @@ import {
   type KeyboardSource,
   type PublishKeyboardSource
 } from '@/ui/hooks/useComposerKeyboardSource';
+import { useComposerKeyboardAdmission } from '@/ui/hooks/useComposerKeyboardAdmission';
 import { type ReactNode, type RefObject, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import {
-  AppState,
-  Keyboard,
-  Pressable,
-  StyleSheet,
-  View,
-  type LayoutChangeEvent,
-  type StyleProp,
-  type ViewStyle
-} from 'react-native';
+import { Pressable, StyleSheet, View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
 import Animated, {
   cancelAnimation,
   KeyboardState,
@@ -49,6 +41,7 @@ export function FixedComposerPanel({
   presented,
   sheetHeight,
   onClose,
+  onImeBack,
   onOpenReady
 }: {
   backgroundStyle?: StyleProp<ViewStyle>;
@@ -67,6 +60,7 @@ export function FixedComposerPanel({
   presented: boolean;
   sheetHeight: number;
   onClose: () => void;
+  onImeBack?: () => void;
   onOpenReady: (index: number) => void;
 }) {
   const [keyboard, setKeyboard] = useState<KeyboardSource | null>(null);
@@ -90,8 +84,8 @@ export function FixedComposerPanel({
   }, []);
   const openProgress = useSharedValue(0);
   const fullscreenProgress = useSharedValue(presentation === 'fullscreen' ? 1 : 0);
-  const foreground = useSharedValue(true);
-  const ignoreOldKeyboard = useSharedValue(false);
+  const { foreground, retainedWhileBackground, ignoreOldKeyboard, resumedKeyboardHeight, onImeInsets } =
+    useComposerKeyboardAdmission();
   const animationGeneration = useRef(0);
   const finish = useCallback(
     (generation: number, opened: boolean) => {
@@ -120,27 +114,6 @@ export function FixedComposerPanel({
     fullscreenProgress.set(withTiming(presentation === 'fullscreen' ? 1 : 0, { duration: 220 }));
     return () => cancelAnimation(fullscreenProgress);
   }, [fullscreenProgress, presentation]);
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', (state) => {
-      foreground.set(state === 'active');
-      ignoreOldKeyboard.set(!Keyboard.isVisible());
-    });
-    const show = Keyboard.addListener('keyboardDidShow', () => ignoreOldKeyboard.set(false));
-    return () => {
-      subscription.remove();
-      show.remove();
-    };
-  }, [foreground, ignoreOldKeyboard]);
-  useAnimatedReaction(
-    () =>
-      foreground.value &&
-      keyboard !== null &&
-      (keyboard.state.value === KeyboardState.OPENING ||
-        (keyboard.state.value === KeyboardState.CLOSED && keyboard.height.value === 0)),
-    (freshFrame) => {
-      if (freshFrame) ignoreOldKeyboard.set(false);
-    }
-  );
   useAnimatedReaction(
     () =>
       presented &&
@@ -159,8 +132,14 @@ export function FixedComposerPanel({
   // Read the native IME frame in the drawing mapper itself. Copying its height
   // through reactions/layout/detents lets the panel draw an older keyboard frame.
   const panelStyle = useAnimatedStyle(() => {
-    const keyboardHeight =
-      ignoreOldKeyboard.value && keyboard?.state.value !== KeyboardState.OPENING ? 0 : (keyboard?.height.value ?? 0);
+    const animatedHeight = keyboard?.height.value ?? 0;
+    const keyboardHeight = foreground.value
+      ? ignoreOldKeyboard.value && keyboard?.state.value !== KeyboardState.OPENING
+        ? resumedKeyboardHeight.value
+        : animatedHeight
+      : retainedWhileBackground.value
+        ? animatedHeight
+        : 0;
     // The panel keeps its navigation padding/background while the IME overlaps it.
     // Offset only the excess IME height so the footer stays above both insets.
     const keyboardOverlap = Math.max(0, keyboardHeight - insets.bottom);
@@ -215,6 +194,9 @@ export function FixedComposerPanel({
         ref={keyboardHostRef}
         enabled={presented}
         dismissOnDisable
+        trackImeInsets
+        onImeInsets={onImeInsets}
+        onImeBack={onImeBack}
         hiddenLayoutHeight={hiddenLayoutHeight}
         testID="composer-bottom-sheet"
         pointerEvents={presented ? 'auto' : 'none'}

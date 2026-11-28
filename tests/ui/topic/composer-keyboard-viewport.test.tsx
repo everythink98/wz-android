@@ -898,10 +898,11 @@ describe('Composer native keyboard viewport', () => {
   it.each([true, false])(
     'recognizes a fresh IME after resume without requiring a foreground OPENING frame (%s)',
     async (closedFrame) => {
+      const androidVersion = jest.spyOn(ReactNative.Platform, 'Version', 'get').mockReturnValue(35);
       const visible = jest.spyOn(Keyboard, 'isVisible').mockReturnValue(false);
       const prior = jest.mocked(AppState.addEventListener).mock.calls.length;
       try {
-        await render(
+        const view = await render(
           <ComposerBottomSheet dark={false} fixedContent visible onOpenChange={() => {}}>
             {() => <Text>正文</Text>}
           </ComposerBottomSheet>
@@ -911,6 +912,10 @@ describe('Composer native keyboard viewport', () => {
           .mock.calls.slice(prior)
           .findLast(([event]) => event === 'change')![1];
         const bottom = fixedBottom();
+        // A split-screen Activity can pause and resume without losing window focus.
+        await fireEvent(view.getByTestId('composer-bottom-sheet'), 'imeInsets', {
+          nativeEvent: { bottom: 0, keyboardBottom: 0, focusEpoch: 3, focused: true }
+        });
         await act(() => {
           mockKeyboard.state.value = mockKeyboardState.OPEN;
           mockKeyboard.height.value = 300;
@@ -931,9 +936,18 @@ describe('Composer native keyboard viewport', () => {
           mockKeyboard.height.value = 280;
           mockFrames.forEach((frame) => frame());
         });
+        expect(fixedBottom()).toBe(bottom);
+        await fireEvent(view.getByTestId('composer-bottom-sheet'), 'imeInsets', {
+          nativeEvent: { bottom: 280, keyboardBottom: 280, focusEpoch: 3, focused: true }
+        });
+        expect(fixedBottom()).toBe(bottom - 256);
+        await fireEvent(view.getByTestId('composer-bottom-sheet'), 'imeInsets', {
+          nativeEvent: { bottom: 0, keyboardBottom: 0, focusEpoch: 2, focused: false }
+        });
         expect(fixedBottom()).toBe(bottom - 256);
       } finally {
         visible.mockRestore();
+        androidVersion.mockRestore();
       }
     }
   );
@@ -973,6 +987,12 @@ describe('Composer native keyboard viewport', () => {
         mockKeyboard.height.value = 0;
         mockFrames.forEach((frame) => frame());
       });
+      await act(() => {
+        mockKeyboard.state.value = mockKeyboardState.OPEN;
+        mockKeyboard.height.value = 300;
+        mockFrames.forEach((frame) => frame());
+      });
+      expect(fixedBottom()).toBe(bottom);
       await act(() => {
         mockKeyboard.state.value = mockKeyboardState.OPENING;
         mockKeyboard.height.value = 100;

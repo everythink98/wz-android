@@ -213,7 +213,7 @@ describe('Android reader theme safety rails', () => {
     expect(createSearchStyles(theme, typography)).toMatchObject({
       searchFilterEntryText: { fontFamily: 'sans-serif', fontSize: 18, lineHeight: 25 },
       searchFilterEntrySummary: { fontSize: 17, lineHeight: 24 },
-      searchGroupTitleText: { fontSize: 18, lineHeight: 25 },
+      searchGroupTitleText: { fontSize: 22, lineHeight: 25 },
       searchGroupMetaText: { fontSize: 17, lineHeight: 24 },
       searchGroupActionText: { fontSize: 17, lineHeight: 24 }
     });

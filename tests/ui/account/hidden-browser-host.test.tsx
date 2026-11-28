@@ -211,7 +211,7 @@ describe('HiddenBrowserHost linux.do transport', () => {
     expect(mockInjectJavaScript).toHaveBeenCalledWith(expect.stringContaining('linuxdo-browser-fetch'));
   });
 
-  it('clears the previous main-document error when Cloudflare navigates to a new document', async () => {
+  it('preserves an early HTTP error through history and the first main-frame event, then clears it on a new document', async () => {
     const onLinuxDoHttpErrorStatus = jest.fn();
     await render(
       <HiddenBrowserHost
@@ -238,10 +238,17 @@ describe('HiddenBrowserHost linux.do transport', () => {
     mockWebViewProps.onHttpError({
       nativeEvent: { statusCode: 429, url: mockWebViewProps.source.uri }
     });
-    mockWebViewProps.onLoadStart();
+    mockWebViewProps.onLoadStart?.({ nativeEvent: { url: mockWebViewProps.source.uri, loading: false } });
+    expect(onLinuxDoHttpErrorStatus.mock.calls).toEqual([[8, 429]]);
 
-    expect(onLinuxDoHttpErrorStatus).toHaveBeenNthCalledWith(1, 8, 429);
-    expect(onLinuxDoHttpErrorStatus).toHaveBeenLastCalledWith(8, undefined);
+    mockWebViewProps.onMainFrameLoadStart({ nativeEvent: { url: mockWebViewProps.source.uri } });
+    expect(onLinuxDoHttpErrorStatus.mock.calls).toEqual([[8, 429]]);
+
+    mockWebViewProps.onMainFrameLoadStart({ nativeEvent: { url: mockWebViewProps.source.uri } });
+    expect(onLinuxDoHttpErrorStatus.mock.calls).toEqual([
+      [8, 429],
+      [8, undefined]
+    ]);
   });
 
   it('keeps the unrelated hidden-browser request running when the other renderer exits', async () => {

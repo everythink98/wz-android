@@ -26,6 +26,44 @@ function message(type: string, payload: unknown) {
 afterEach(() => setDiagnosticWriter(null));
 
 describe('StructuredReplyComposer', () => {
+  it('exports only ordered chunks from the active edit without treating recovery text as a draft snapshot', async () => {
+    const editRecoveryRef = createRef<() => Promise<string>>();
+    const onSnapshot = jest.fn();
+    const view = await render(
+      <StructuredReplyComposer
+        editRecoveryRef={editRecoveryRef}
+        actionBusy={false}
+        content="原正文"
+        initialMode="source"
+        intent={{ kind: 'edit-reply', site: 'nodeseek', topicId: '4', commentId: '2', sourceMarkdown: '原正文' }}
+        pendingNodeSeekPolls={[]}
+        presentation="sheet"
+        visible
+        onSnapshot={onSnapshot}
+      />
+    );
+    const web = view.getByTestId('structured-composer-webview');
+    expect(editRecoveryRef.current).toBeNull();
+    await fireEvent(web, 'loadEnd');
+    await fireEvent(web, 'message', message('READY', { documentEpoch: 0, revision: 0 }));
+    const pending = editRecoveryRef.current!();
+    const { requestId, documentEpoch } = composerHostMessages(view).findLast(
+      (entry) => entry.type === 'REQUEST_EDIT_RECOVERY'
+    )!.payload;
+    const reply = (id: string, epoch: number, index: number, last: boolean, text: string) =>
+      fireEvent(web, 'message', message('EDIT_RECOVERY', { requestId: id, documentEpoch: epoch, index, last, text }));
+    await reply(requestId, documentEpoch + 1, 0, true, '其他文档');
+    await reply('different', documentEpoch, 0, true, '其他请求');
+    await reply(requestId, documentEpoch, 0, false, '最新');
+    await reply(requestId, documentEpoch, 1, true, '末字');
+    await expect(pending).resolves.toBe('最新末字');
+    const gap = expect(editRecoveryRef.current!()).rejects.toThrow('未取得最新编辑内容');
+    const next = composerHostMessages(view).findLast((entry) => entry.type === 'REQUEST_EDIT_RECOVERY')!.payload;
+    await reply(next.requestId, next.documentEpoch, 1, true, '丢失分块');
+    await gap;
+    expect(onSnapshot).not.toHaveBeenCalled();
+  });
+
   it('passes initial Markdown with literal dollar signs through the document JSON', async () => {
     const markdown = "$$\nE = mc^2\n$$\n$& $' $` <text>";
     const view = await render(

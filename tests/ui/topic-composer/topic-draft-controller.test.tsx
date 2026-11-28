@@ -19,7 +19,6 @@ import { loadLinuxDoTopicCreationContext } from '@/sources/linuxdo/topicCreation
 import { useTopicComposerController } from '@/features/topic-composer/useTopicComposerController';
 import type { TopicComposerRouteRuntimeValue } from '@/features/topic-composer/TopicComposerRouteRuntime';
 import type { ComposerSnapshot } from '@/domain/forum/structuredComposer';
-import type { ReadRecovery } from '@/platform/query/readRecovery';
 import type { StructuredReplyComposerHandle } from '@/ui/composer/StructuredReplyComposer';
 import { createTopicProofTransport } from '../../helpers/topicCreationTransport';
 
@@ -709,9 +708,7 @@ describe('topic draft lifecycle', () => {
       }
       return transport.fetcher(url, init);
     };
-    const openAccount = jest.fn<
-      (_source: TopicCreationSource, _message?: string, _recovery?: ReadRecovery) => Promise<boolean>
-    >(async () => true);
+    const openAccount = jest.fn<TopicComposerRouteRuntimeValue['openAccount']>(async () => true);
     const saved = {
       ...emptyTopicDraft('linuxdo', 'linuxdo:123'),
       categoryId: '4',
@@ -725,7 +722,8 @@ describe('topic draft lifecycle', () => {
       searching = hook.result.current.searchTags('open');
     });
     await waitFor(() => expect(openAccount).toHaveBeenCalledTimes(1));
-    const recovery = openAccount.mock.calls[0][2]!;
+    const recovery = openAccount.mock.calls[0][2];
+    if (!recovery || !('queryKey' in recovery)) throw new Error('Missing tag read recovery');
     expect(recovery.isCurrent?.()).toBe(true);
     await act(async () => {
       expect(await recovery.resume()).toBe('verification-required');
@@ -749,9 +747,7 @@ describe('topic draft lifecycle', () => {
     const transport = createTopicProofTransport('success');
     let blocked = true;
     const runtime = runtimeFor('123', transport.fetcher);
-    const openAccount = jest.fn<
-      (_source: TopicCreationSource, _message?: string, _recovery?: ReadRecovery) => Promise<boolean>
-    >(async () => true);
+    const openAccount = jest.fn<TopicComposerRouteRuntimeValue['openAccount']>(async () => true);
     const owner = {
       ...runtime,
       openAccount,
@@ -774,9 +770,11 @@ describe('topic draft lifecycle', () => {
       })
     );
     await waitFor(() => expect(openAccount).toHaveBeenCalledTimes(1));
+    const recovery = openAccount.mock.calls[0][2];
+    if (!recovery || !('queryKey' in recovery)) throw new Error('Missing creation context read recovery');
     blocked = false;
     await act(async () => {
-      expect(await openAccount.mock.calls[0][2]!.resume()).toBe('completed');
+      expect(await recovery.resume()).toBe('completed');
     });
     await waitFor(() => expect(hook.result.current.context?.source).toBe('linuxdo'));
     expect(hook.result.current.contextError).toBe('');
@@ -798,9 +796,7 @@ describe('topic draft lifecycle', () => {
         }
         return transport.fetcher(url, init);
       };
-      const openAccount = jest.fn<
-        (_source: TopicCreationSource, _message?: string, _recovery?: ReadRecovery) => Promise<boolean>
-      >(async () => true);
+      const openAccount = jest.fn<TopicComposerRouteRuntimeValue['openAccount']>(async () => true);
       const hook = await setup(
         { ...emptyTopicDraft('linuxdo', 'linuxdo:123'), categoryId: '4' },
         { ...runtimeFor('123', fetcher), openAccount }
@@ -812,7 +808,8 @@ describe('topic draft lifecycle', () => {
         void searching.catch(() => undefined);
       });
       await waitFor(() => expect(openAccount).toHaveBeenCalledTimes(1));
-      const recovery = openAccount.mock.calls[0][2]!;
+      const recovery = openAccount.mock.calls[0][2];
+      if (!recovery || !('queryKey' in recovery)) throw new Error('Missing tag read recovery');
       if (action === 'account') await hook.rerender({ owner: { ...runtimeFor('456', fetcher), openAccount } });
       await act(async () => {
         if (action === 'cancel') recovery.cancel!();
@@ -1127,8 +1124,11 @@ describe('topic draft lifecycle', () => {
         expect(csrfGets).toBe(1);
         expect(uploadPosts).toBe(expectedPosts);
         expect(openAccount).toHaveBeenCalledTimes(1);
-        expect(openAccount).toHaveBeenCalledWith('linuxdo', expect.stringContaining('验证'));
-        expect(openAccount.mock.calls[0]?.[2]).toBeUndefined();
+        expect(openAccount).toHaveBeenCalledWith(
+          'linuxdo',
+          expect.stringContaining('验证'),
+          expect.objectContaining({ kind: 'website', isCurrent: expect.any(Function) })
+        );
         if (scenario === 'post-200') expect(hook.result.current.error).toContain('上传结果未知');
         else expect(hook.result.current.error).toContain('验证');
 

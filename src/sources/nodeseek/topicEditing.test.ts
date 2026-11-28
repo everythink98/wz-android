@@ -61,4 +61,14 @@ describe('NodeSeek own opening edits', () => {
     ).toHaveProperty('status', 'unknown');
     expect(transport.writes()).toHaveLength(1);
   });
+
+  it('tells the editor to verify the site and check the saved result after a dispatched challenge', async () => {
+    const transport = createTopicEditTransport('nodeseek');
+    const options = { ...transport, userAgent: 'test', topicId: '123', identityKey: 'nodeseek:42' };
+    const context = await loadNodeSeekTopicEditContext(options);
+    transport.respond(() => new Response('verification', { status: 403, headers: { 'cf-mitigated': 'challenge' } }));
+    const result = await editNodeSeekTopic({ ...options, draft: { ...draftFromTopicEdit(context), title: '新标题' } });
+    expect(result).toMatchObject({ status: 'unknown', message: expect.stringMatching(/原站.*验证.*核对/) });
+    expect(transport.writes()).toHaveLength(1);
+  });
 });

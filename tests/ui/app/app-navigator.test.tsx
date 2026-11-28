@@ -2,8 +2,9 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, jest } from '@jes
 import { cleanup } from '@testing-library/react-native';
 import { CommonActions, DefaultTheme, useIsFocused, useScrollToTop } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { Linking, NativeModules, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { SafeAreaInsetsContext } from 'react-native-safe-area-context';
 import { AppNavigator } from '@/app/AppNavigator';
 import { useAppLifecycleRuntime } from '@/app/useAppLifecycleRuntime';
 import { useAppDeepLinkNavigation } from '@/app/useAppDeepLinkNavigation';
@@ -63,7 +64,11 @@ function topic(id: string): Topic {
   };
 }
 
+const tabUpdateObserver = createContext<((label: string) => void) | null>(null);
+
 function StatefulTab({ label }: { label: string }) {
+  const observe = useContext(tabUpdateObserver);
+  useEffect(() => observe?.(label), [label, observe]);
   const focused = useIsFocused();
   const [value, setValue] = useState('');
   const [scrollToTopCount, setScrollToTopCount] = useState(0);
@@ -287,6 +292,49 @@ async function renderNavigator(moreHasBadge = false) {
 }
 
 describe('App navigator UI state', () => {
+  it.each([
+    [0, 8],
+    [24, 24],
+    [48, 48]
+  ])('uses a readable tab bar bottom gap with a %i dp system inset', async (bottom, paddingBottom) => {
+    const view = await render(
+      <SafeAreaInsetsContext.Provider value={{ top: 0, right: 0, bottom, left: 0 }}>
+        <Navigator />
+      </SafeAreaInsetsContext.Provider>
+    );
+
+    let bar = view.getByTestId('main-tab-feed').parent;
+    while (bar && StyleSheet.flatten(bar.props.style)?.paddingBottom === undefined) {
+      bar = bar.parent;
+    }
+    expect(bar).toHaveStyle({ paddingBottom });
+  });
+
+  it('defers hidden notification and account updates but keeps the feed and search live', async () => {
+    const observe = jest.fn<(_label: string) => void>();
+    const view = await render(
+      <tabUpdateObserver.Provider value={null}>
+        <Navigator />
+      </tabUpdateObserver.Provider>
+    );
+    await waitFor(() => expect(navigationRef.isReady()).toBe(true));
+    for (const name of ['notifications', 'more', 'search']) {
+      await fireEvent.press(view.getByTestId(`main-tab-${name}`));
+    }
+    await act(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
+    await view.rerender(
+      <tabUpdateObserver.Provider value={observe}>
+        <Navigator />
+      </tabUpdateObserver.Provider>
+    );
+    expect(observe).toHaveBeenCalledWith('首页');
+    expect(observe).toHaveBeenCalledWith('搜索');
+    expect(observe).not.toHaveBeenCalledWith('消息');
+    expect(observe).not.toHaveBeenCalledWith('我的');
+    await fireEvent.press(view.getByTestId('main-tab-notifications'));
+    expect(observe).toHaveBeenCalledWith('消息');
+  });
+
   it('renders one laid-out label per tab alongside the icon layers', async () => {
     const view = await renderNavigator();
     const label = within(view.getByTestId('main-tab-search'));
@@ -360,7 +408,7 @@ describe('App navigator UI state', () => {
     for (const route of ['feed', 'search', 'notifications', 'more', 'notifications', 'search', 'more', 'feed']) {
       await fireEvent.press(view.getByTestId(`main-tab-${route}`));
       const glass = view.getByTestId('navigation-glass');
-      expect(glass.props.blurMethod).toBe('dimezisBlurViewSdk31Plus');
+      expect(glass.props.blurMethod).toBe('dimezisViewport');
       const target: unknown = glass.props.blurTarget?.current;
       expect(target).toBeTruthy();
       if (targets.has(route)) expect(Object.is(target, targets.get(route))).toBe(true);
@@ -640,6 +688,21 @@ describe('App navigator UI state', () => {
       expect(view.getByLabelText(messagesLabel)).toBeTruthy();
     }
   );
+
+  it('renders Android tabs without the navigator placeholder icon', async () => {
+    const view = await render(<Navigator />);
+
+    for (const [name, label] of [
+      ['feed', '首页'],
+      ['search', '搜索'],
+      ['notifications', '消息'],
+      ['more', '我的']
+    ] as const) {
+      const tab = within(view.getByTestId(`main-tab-${name}`));
+      expect(tab.getAllByText(label)).toHaveLength(1);
+      expect(tab.queryAllByText('⏷', { includeHiddenElements: true })).toHaveLength(0);
+    }
+  });
 
   it('updates the rendered unread badge without removing an update badge or resetting the active tab', async () => {
     const view = await render(<Navigator moreBadgeState="both" />);

@@ -1,6 +1,6 @@
 import type { Source, SessionSource } from '@/domain/forum/sourceCatalog';
 import { createContext, useContext, type ReactNode } from 'react';
-import type { TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
+import type { TopicListItemStateSource } from '@/domain/forum/topicListItemState';
 import type { ReaderView, ReaderCommand } from '@/domain/reader/readerRecordState';
 import type { ReadRecovery } from '@/platform/query/readRecovery';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
@@ -20,7 +20,7 @@ export type UserRouteRuntimeValue = {
   appActive: boolean;
   nodeSeekMessaging: { identityKey: string | undefined; available: boolean };
   notify: (message: string) => void;
-  topicStateIndex: TopicListItemStateIndex;
+  topicStateIndex: TopicListItemStateSource;
   reader: {
     commit: (command: ReaderCommand) => void;
     data: ReaderView;

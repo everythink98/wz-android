@@ -1,0 +1,11 @@
+beforeProject { p ->
+    if (p.name == 'react-native-screens') {
+        p.plugins.withId('com.android.library') {
+            def android = p.extensions.getByName('android')
+            android.testOptions.unitTests.includeAndroidResources = true
+            android.sourceSets.getByName('test').java.srcDir(new File(p.rootDir.parentFile, 'tests/native/screens'))
+            p.dependencies.add('testImplementation', 'junit:junit:4.13.2')
+            p.dependencies.add('testImplementation', 'org.robolectric:robolectric:4.16')
+        }
+    }
+}

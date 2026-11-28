@@ -993,6 +993,9 @@ describe('content-source management navigation', () => {
     try {
       await waitFor(() => expect(navigationRef.isReady()).toBe(true));
       await fireEvent.press(view.getByTestId('main-tab-search'));
+      await fireEvent(view.getByTestId('search-screen'), 'layout', {
+        nativeEvent: { layout: { width: 400, height: 800, x: 0, y: 0 } }
+      });
       await waitFor(() => expect(view.getByText(saved)).toBeTruthy());
       if (action === 'submit') await fireEvent.changeText(view.getByPlaceholderText('输入关键词'), query);
 

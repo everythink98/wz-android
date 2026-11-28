@@ -99,17 +99,19 @@ const contentStyles = StyleSheet.create({
 export function ExpandableContent({
   children,
   expanded,
+  fade = true,
   style
 }: {
   children: ReactNode;
   expanded: boolean;
+  fade?: boolean;
   style?: StyleProp<ViewStyle>;
 }) {
   const height = useSharedValue(0);
   const progress = useDerivedValue(() => withTiming(expanded ? 1 : 0, DISCLOSURE_TIMING), [expanded]);
   const animatedStyle = useAnimatedStyle(() => ({
     height: height.value * progress.value,
-    opacity: progress.value
+    opacity: fade ? progress.value : 1
   }));
   return (
     <Animated.View
@@ -240,6 +242,7 @@ export function MenuButton({
 export function ExpandablePanel({
   children,
   expanded,
+  fadeContent,
   icon,
   meta,
   quiet = false,
@@ -249,6 +252,7 @@ export function ExpandablePanel({
 }: {
   children: ReactNode;
   expanded: boolean;
+  fadeContent?: boolean;
   icon?: LucideIcon;
   meta?: string;
   quiet?: boolean;
@@ -270,7 +274,7 @@ export function ExpandablePanel({
         value={meta}
         onPress={() => onExpandedChange(!expanded)}
       />
-      <ExpandableContent expanded={expanded} style={styles.body}>
+      <ExpandableContent expanded={expanded} fade={fadeContent} style={styles.body}>
         {children}
       </ExpandableContent>
     </View>

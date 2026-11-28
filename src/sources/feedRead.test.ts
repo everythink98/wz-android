@@ -1365,6 +1365,27 @@ describe('feed read', () => {
     }
   });
 
+  it('preserves the successful feed when another source resets its connection', async () => {
+    const reset = Object.assign(new Error('Connection reset by peer'), { code: 'ECONNRESET' });
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('nodeseek.com')) throw reset;
+      if (input === 'https://www.v2ex.com/?tab=all') {
+        return new Response(
+          '<div class="cell item"><a class="topic-link" href="/t/901#reply0">Ready topic</a><a class="node" href="/go/create">分享创造</a><strong><a href="/member/neo">neo</a></strong><span title="2026-05-20 00:00:00 +08:00"></span></div>'
+        );
+      }
+      throw new Error('Unexpected source in the reset fixture');
+    });
+
+    await expect(getFeed({ source: 'all', fetcher, unavailableSources: ['linuxdo', 'yaohuo'] })).resolves.toMatchObject(
+      {
+        items: [{ source: 'v2ex', id: '901' }],
+        errors: { nodeseek: expect.anything() },
+        hasMore: true
+      }
+    );
+  });
+
   it('keeps a timed-out source retryable when every completed source is empty', async () => {
     vi.useFakeTimers();
     try {

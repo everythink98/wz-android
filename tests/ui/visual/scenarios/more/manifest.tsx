@@ -109,7 +109,16 @@ function AppearanceScenario() {
 const updateInfo: AppUpdateInfo = {
   version: '1.4.0',
   apkUrl: 'https://updates.visual.invalid/app.apk',
-  notes: '新版本包含阅读体验改进和稳定性修复。',
+  notes: [
+    '## 更新内容',
+    '',
+    '- 「搜索 → 全部」的站名更清晰。',
+    '- 检查更新移到「关于阅坛」右上角。',
+    '',
+    '## 问题修复',
+    '',
+    '- 暂停、继续下载时保持进度显示稳定。'
+  ].join('\n'),
   sha256: '0'.repeat(64),
   packageName: 'visual.invalid',
   versionName: '1.4.0',
@@ -132,7 +141,8 @@ function UpdateAvailableScenario({ phase = 'idle' }: { phase?: 'idle' | 'restori
           start: noop,
           pause: noop,
           resume: noop,
-          install: noop
+          install: noop,
+          openReleaseNoteLink: noop
         }}
       />
     </MoreScreenFrame>
@@ -166,7 +176,8 @@ function UpdateProgressScenario({
           start: noop,
           pause: noop,
           resume: noop,
-          install: noop
+          install: noop,
+          openReleaseNoteLink: noop
         }}
       />
     </MoreScreenFrame>
@@ -201,7 +212,8 @@ function UpdateRetainedScenario({
           start: noop,
           pause: noop,
           resume: noop,
-          install: noop
+          install: noop,
+          openReleaseNoteLink: noop
         }}
       />
     </MoreScreenFrame>

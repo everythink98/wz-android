@@ -308,6 +308,7 @@ export function useAccountStatusController({
         surfaceGeneration?: number;
         parentTraceId?: string;
         beforeProbe?: () => Promise<void>;
+        prepareReadRecheck?: () => { ready: Promise<void>; release: () => Promise<void> };
       } = {}
     ): Promise<AccountReconcileResult> => {
       const owner = lifetimeRef.current.signal;
@@ -391,10 +392,17 @@ export function useAccountStatusController({
       if (options.signal?.aborted) abortProbe();
       else options.signal?.addEventListener('abort', abortProbe, { once: true });
       const promise = Promise.resolve().then(async (): Promise<AccountReconcileResult> => {
+        let releaseReadRecheck: (() => Promise<void>) | undefined;
         try {
           if (!isCurrent()) return stale();
           if (options.beforeProbe) {
             await options.beforeProbe();
+            if (!isCurrent()) return stale();
+          }
+          if (options.prepareReadRecheck) {
+            const protection = options.prepareReadRecheck();
+            releaseReadRecheck = protection.release;
+            await protection.ready;
             if (!isCurrent()) return stale();
           }
           const observation = await withAbortableTimeout(
@@ -494,6 +502,7 @@ export function useAccountStatusController({
             reason: normalizeDiagnosticReason(error)
           });
         } finally {
+          if (releaseReadRecheck) await releaseReadRecheck();
           options.signal?.removeEventListener('abort', abortProbe);
           const current = probesRef.current[source];
           if (current.kind === 'running' && current.promise === promise) {

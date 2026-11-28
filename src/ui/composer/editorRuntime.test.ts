@@ -60,7 +60,7 @@ async function mountRuntime({
   discourseEmoji?: { name: string; url: string }[];
   documentEpoch?: number;
   initialDocument?: boolean;
-  intentKind?: 'reply' | 'create-topic' | 'edit-topic' | 'private-message';
+  intentKind?: 'reply' | 'edit-reply' | 'create-topic' | 'edit-topic' | 'private-message';
   markdown?: string;
   mode?: 'rich' | 'source';
   nodeSeekMemberId?: string | null;
@@ -181,6 +181,16 @@ describe('Composer editor runtime codec', () => {
     expect(host.querySelector('.editor-pane img')).toBeNull();
     await send({ type: 'SET_MODE', payload: { mode: 'rich' } });
     expect(host.querySelector('.editor-pane img')?.getAttribute('src')).toBe(url);
+  });
+
+  it('mounts the local gesture fixture through the same Markdown command as the device runner', async () => {
+    const { host, send } = await mountRuntime({ mode: 'rich', markdown: '正文' });
+    const image =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/RTc9bQAAAABJRU5ErkJggg==';
+    await send({ type: 'COMMAND', payload: { name: 'insert-markdown', markdown: `![wz-proof-image](${image})` } });
+    expect(host.querySelector('.ProseMirror .composer-image img[alt="wz-proof-image"]')?.getAttribute('src')).toBe(
+      image
+    );
   });
 
   it('updates the receive tool for the current member and ignores a stale document message', async () => {
@@ -367,7 +377,7 @@ describe('Composer editor runtime codec', () => {
     const { host, send, postMessage } = await mountRuntime({ markdown: '已发送', documentEpoch: 3 });
     await send({
       type: 'REQUEST_SNAPSHOT',
-      payload: { requestId: 'settle', submission: { documentEpoch: 3, revision: 0 } }
+      payload: { requestId: 'settle', submission: { documentEpoch: 3 } }
     });
     expect(host.querySelector('.ProseMirror')?.getAttribute('contenteditable')).toBe('false');
     await send({ type: 'COMMAND', payload: { name: 'insert-markdown', markdown: '迟到写入' } });
@@ -529,7 +539,12 @@ describe('Composer editor runtime codec', () => {
   });
 
   it('returns a request error for oversized source text and recovers after editing', async () => {
-    const { host, send, postMessage } = await mountRuntime({ mode: 'source', markdown: '正文', documentEpoch: 7 });
+    const { host, send, postMessage } = await mountRuntime({
+      mode: 'source',
+      intentKind: 'edit-reply',
+      markdown: '正文',
+      documentEpoch: 7
+    });
     const source = EditorView.findFromDOM(host.querySelector('.cm-editor')!)!;
     await act(async () => {
       source.dispatch({
@@ -546,6 +561,15 @@ describe('Composer editor runtime codec', () => {
     });
     expect(composerEditorMessageSchema.safeParse(error).success).toBe(true);
     expect(source.state.doc.length).toBe(MAX_COMPOSER_MARKDOWN_LENGTH + 1);
+    await send({ type: 'REQUEST_EDIT_RECOVERY', payload: { requestId: 'stale-edit', documentEpoch: 6 } });
+    expect(replies().filter((reply) => reply.type === 'EDIT_RECOVERY')).toHaveLength(0);
+    await send({ type: 'REQUEST_EDIT_RECOVERY', payload: { requestId: 'edit-copy', documentEpoch: 7 } });
+    const parts = replies().filter(
+      (reply) => reply.type === 'EDIT_RECOVERY' && reply.payload.requestId === 'edit-copy'
+    );
+    expect(parts.map((part) => part.payload.text).join('').length).toBe(MAX_COMPOSER_MARKDOWN_LENGTH + 1);
+    expect(parts.map((part) => part.payload.text).join('') === source.state.doc.toString()).toBe(true);
+    expect(parts.every((part) => composerEditorMessageSchema.safeParse(part).success)).toBe(true);
     await act(async () => {
       source.dispatch({ changes: { from: 0, to: source.state.doc.length, insert: '修正后的正文' } });
     });
@@ -569,6 +593,7 @@ describe('Composer editor runtime codec', () => {
       site: 'nodeseek',
       mode: 'source',
       markdown: pendingNodeSeekPolls.map((poll) => nodeSeekPendingPollToken(poll.localId)).join('\n\n'),
+      intentKind: 'edit-reply',
       pendingNodeSeekPolls
     });
     await toolbarAction('poll');
@@ -584,6 +609,14 @@ describe('Composer editor runtime codec', () => {
       .findLast((reply) => reply.payload.requestId === 'too-many-polls');
     expect(error.type).toBe('ERROR');
     expect(error.payload).toMatchObject({ code: 'too-many-polls', message: '本地投票超过允许数量' });
+    await send({ type: 'REQUEST_EDIT_RECOVERY', payload: { requestId: 'poll-copy', documentEpoch: 0 } });
+    const recoveredPolls = postMessage.mock.calls
+      .map(([raw]) => JSON.parse(String(raw)))
+      .filter((reply) => reply.type === 'EDIT_RECOVERY' && reply.payload.requestId === 'poll-copy')
+      .map((reply) => reply.payload.text)
+      .join('');
+    expect(recoveredPolls).toContain('新增投票');
+    expect(recoveredPolls).toContain('投票 19');
     expect(composerEditorMessageSchema.safeParse(error).success).toBe(true);
     expect(
       EditorView.findFromDOM(host.querySelector('.cm-editor')!)!
@@ -628,7 +661,7 @@ describe('Composer editor runtime codec', () => {
     expect(reply.payload.snapshot.markdown.trim()).toBe(markdown.trim());
   });
 
-  it('locks only a matching document revision during submission settlement', async () => {
+  it('locks the captured revision of the matching document during submission settlement', async () => {
     const { host, send, postMessage } = await mountRuntime({
       mode: 'source',
       markdown: '已发送',
@@ -639,7 +672,7 @@ describe('Composer editor runtime codec', () => {
     await act(async () => source.dispatch({ changes: { from: source.state.doc.length, insert: '后续输入' } }));
     await send({
       type: 'REQUEST_SNAPSHOT',
-      payload: { requestId: 'old', submission: { documentEpoch: 7, revision: 0 } }
+      payload: { requestId: 'old', submission: { documentEpoch: 6 } }
     });
     const old = postMessage.mock.calls
       .map(([raw]) => JSON.parse(String(raw)))
@@ -649,7 +682,7 @@ describe('Composer editor runtime codec', () => {
     expect(source.state.doc.toString()).toBe('已发送后续输入仍可输入');
     await send({
       type: 'REQUEST_SNAPSHOT',
-      payload: { requestId: 'current', submission: { documentEpoch: 7, revision: 2 } }
+      payload: { requestId: 'current', submission: { documentEpoch: 7 } }
     });
     const current = postMessage.mock.calls
       .map(([raw]) => JSON.parse(String(raw)))
@@ -1860,6 +1893,22 @@ describe('Composer editor runtime codec', () => {
       expect(snapshot('after-preview').markdown.trim()).toBe('**保留草稿**');
     }
   );
+  it('keeps a selected image non-draggable when ProseMirror tries to enable dragging again', async () => {
+    const { host } = await mountRuntime({ markdown: '![图片](https://example.com/image.png)', mode: 'rich' });
+    const document = host.querySelector<HTMLElement>('.composer-document')!;
+    const editor = (document as HTMLElement & { editor: Editor }).editor;
+    await act(async () => editor.commands.setNodeSelection(0));
+    const image = host.querySelector<HTMLElement>('.composer-image.ProseMirror-selectednode')!;
+
+    expect(image.draggable).toBe(false);
+    image.draggable = true;
+    expect(image.draggable).toBe(false);
+    const drag = new Event('dragstart', { bubbles: true, cancelable: true });
+    image.dispatchEvent(drag);
+    expect(drag.defaultPrevented).toBe(true);
+    expect(editor.state.selection.from).toBe(0);
+  });
+
   it.each(['rich', 'source'] as const)(
     'hides selected image outlines in %s previews and restores them when editing resumes',
     async (mode) => {

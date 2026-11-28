@@ -12,6 +12,20 @@ export function dispatchFocusedRoute(navigation: FocusedRouteNavigation, action:
   if (navigation.isFocused()) navigation.dispatch(action);
 }
 
+let topicRouteDispatch: ((dispatch: () => void) => void) | undefined;
+
+export function installTopicRouteDispatch(handler: NonNullable<typeof topicRouteDispatch>) {
+  topicRouteDispatch = handler;
+  return () => {
+    if (topicRouteDispatch === handler) topicRouteDispatch = undefined;
+  };
+}
+
+export function dispatchTopicRoute(dispatch: () => void) {
+  if (topicRouteDispatch) topicRouteDispatch(dispatch);
+  else dispatch();
+}
+
 export function goBackFromFocusedRoute(navigation: FocusedRouteNavigation) {
   dispatchFocusedRoute(navigation, CommonActions.goBack());
 }

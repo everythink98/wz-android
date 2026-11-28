@@ -9,7 +9,7 @@ import {
 } from '@/domain/forum/topicComposer';
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
-import { NODESEEK_ACTION_HEADERS, runNodeSeekAction } from './actionClient';
+import { NODESEEK_ACTION_HEADERS, runNodeSeekAction, unconfirmedNodeSeekVerification } from './actionClient';
 import { randomNodeSeekContentToken } from './actionRequest';
 import {
   parseNodeSeekPageDocument,
@@ -130,6 +130,8 @@ export async function editNodeSeekTopic(options: Options & { draft: TopicDraft }
       ? { status: 'saved', message: '修改已保存' }
       : { status: 'unknown', message: 'NodeSeek 未返回明确保存结果，请到原站核对' };
   } catch (error) {
+    const verification = unconfirmedNodeSeekVerification(error);
+    if (verification) return verification;
     if (isRecord(error) && error.serverRejected === true)
       return { status: 'rejected', message: error instanceof Error ? error.message : 'NodeSeek 拒绝了修改' };
     if (

@@ -59,7 +59,7 @@ import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { LoadingState } from '@/ui/controls/FeedbackStates';
 import { ModalSheetFrame, ModalSheetHeader } from '@/ui/controls/ModalSheetFrame';
 import { TOUCH_HIT_SLOP } from '@/ui/controls/touchTarget';
-import { NavigationBackdropProvider, NavigationBackdropTarget, NavigationGlass } from '@/ui/navigation/NavigationGlass';
+import { NavigationBackdropProvider, NavigationGlass } from '@/ui/navigation/NavigationGlass';
 import { StructuredReplyComposer } from '@/ui/composer/StructuredReplyComposer';
 import { YaohuoReplyComposer } from '@/ui/composer/YaohuoReplyComposer';
 import { ComposerKeyboardHost, type ComposerKeyboardHostHandle } from '@/ui/composer/ComposerKeyboardHost';
@@ -74,6 +74,7 @@ import {
 import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { useKeyboardHandoff } from '@/ui/hooks/useKeyboardHandoff';
+import { useComposerKeyboardAdmission } from '@/ui/hooks/useComposerKeyboardAdmission';
 import type { useTopicComposerController } from './useTopicComposerController';
 import { TopicSelectionPanel } from './TopicSelectionPanel';
 import { useTopicTagSearch } from './useTopicTagSearch';
@@ -453,7 +454,6 @@ export function TopicComposerScreen({
   const insets = useSafeAreaInsets();
   const [titleEditing, setTitleEditing] = useState(false);
   const [titleMetadataExpanded, setTitleMetadataExpanded] = useState(false);
-  const [topBarHeight, setTopBarHeight] = useState(0);
   const [keyboardShown, setKeyboardShown] = useState(false);
   const [editorPanelOpen, setEditorPanelOpen] = useState(false);
   const [editorFocusPending, setEditorFocusPending] = useState(false);
@@ -477,14 +477,24 @@ export function TopicComposerScreen({
   // The Modal has its own window. Its native completion owns IME readiness;
   // reuse the handoff's UI-frame check without subscribing the Activity again.
   const modalPickerReady = useSharedValue(true);
+  const { foreground, retainedWhileBackground, ignoreOldKeyboard, resumedKeyboardHeight, onImeInsets } =
+    useComposerKeyboardAdmission();
+  const visibleKeyboardHeight = () => {
+    'worklet';
+    const animatedHeight = keyboard?.height.value ?? 0;
+    if (!foreground.value) return retainedWhileBackground.value ? animatedHeight : 0;
+    return ignoreOldKeyboard.value && keyboard?.state.value !== KeyboardState.OPENING
+      ? resumedKeyboardHeight.value
+      : animatedHeight;
+  };
   useAnimatedReaction(
-    () => (keyboard?.height.value ?? 0) > insets.bottom,
+    () => visibleKeyboardHeight() > insets.bottom,
     (shown, previous) => {
       if (shown !== previous) runOnJS(setKeyboardShown)(shown);
     }
   );
   const keyboardStyle = useAnimatedStyle(() => ({
-    paddingBottom: Math.max(0, (keyboard?.height.value ?? 0) - insets.bottom)
+    paddingBottom: Math.max(0, visibleKeyboardHeight() - insets.bottom)
   }));
   const metadataCollapsed =
     !titleEditing && !titleMetadataExpanded && (keyboardShown || editorPanelOpen || editorFocusPending);
@@ -817,6 +827,8 @@ export function TopicComposerScreen({
         testID="topic-keyboard-host"
         ref={keyboardHost}
         enabled={active && panel === null}
+        trackImeInsets
+        onImeInsets={onImeInsets}
         style={styles.root}
       >
         <Animated.View testID="create-topic-keyboard-viewport" style={[styles.root, keyboardStyle]}>
@@ -835,7 +847,7 @@ export function TopicComposerScreen({
             edges={['bottom']}
             onLayout={onLayout}
           >
-            <View style={styles.header} onLayout={(event) => setTopBarHeight(event.nativeEvent.layout.height)}>
+            <View style={styles.header}>
               <IconButton
                 icon={ChevronLeft}
                 iconSize={24}
@@ -865,7 +877,7 @@ export function TopicComposerScreen({
                 </Pressable>
               )}
               <AppButton
-                backdrop={<NavigationGlass accent={!submitDisabled || c.busy} />}
+                backdrop={<NavigationGlass accent={!submitDisabled || c.busy} sampleBackdrop={false} />}
                 minWidth={c.editing ? 84 : 68}
                 label={c.editing ? '保存修改' : '发布'}
                 style={{ minHeight: 48, justifyContent: 'center' }}
@@ -878,7 +890,7 @@ export function TopicComposerScreen({
                 }}
               />
             </View>
-            <NavigationBackdropTarget active={active} testID="composer-glass-content" topInset={topBarHeight}>
+            <View style={styles.flex} testID="composer-glass-content">
               {c.error ? (
                 <View style={[styles.banner, styles.spread]}>
                   <Text accessibilityRole="alert" style={[styles.error, styles.flex]}>
@@ -1234,7 +1246,7 @@ export function TopicComposerScreen({
                   ) : null}
                 </View>
               )}
-            </NavigationBackdropTarget>
+            </View>
             <ModalSheetFrame
               keyboardHostRef={modalKeyboardHost}
               visible={

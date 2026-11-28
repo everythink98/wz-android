@@ -24,7 +24,7 @@ md.core.ruler.after('inline', 'nodeseek-task-markers', ({ tokens, Token }) => {
       tokens[index - 1]?.type !== 'paragraph_open' ||
       item?.type !== 'list_item_open' ||
       !/^\[[ xX]\] /.test(token.content) ||
-      !token.children?.length
+      token.children?.[0]?.type !== 'text'
     )
       continue;
 

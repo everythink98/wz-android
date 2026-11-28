@@ -173,6 +173,7 @@ type ReadGatewayDependencies = {
   nodeSeekUserAgent: () => string;
   onSessionExpired?: (source: SessionSource, requestSessionEpoch: number) => void;
   requestAccountRecheck?: RequestAccountRecheck;
+  pendingLinuxDoReadRecheck?: (epoch: number, identityKey: string | undefined) => Promise<void> | undefined;
   readSessionRuntimeSnapshot: (source: SessionSource) => ForumReadSession;
 };
 
@@ -584,10 +585,20 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         }
         if (plan.transport === 'native-no-cookie') return anonymousFetcher;
         const managedFetcher: Fetcher = async (input, init) => {
+          const linuxDoSession = planSource === 'linuxdo' ? sessionSnapshots.get('linuxdo') : undefined;
+          if (linuxDoSession) {
+            const pending = dependencies.pendingLinuxDoReadRecheck?.(
+              linuxDoSession.sessionEpoch,
+              linuxDoSession.identityKey
+            );
+            if (pending) {
+              await withAbortableTimeout(() => pending, { signal: init?.signal ?? activeSignal });
+              if (!recoveryCommitIsEligible() || init?.signal?.aborted) throw new RequestCanceledError();
+            }
+          }
           const response = await dependencies.fetcher(input, init);
           const failure = await forumResponseAccountFailure(planSource, input, response, activeSignal);
           if (failure) recordAccountFailure(planSource, failure);
-          const linuxDoSession = sessionSnapshots.get('linuxdo');
           if (
             failure === 'http-401' &&
             source === 'linuxdo' &&

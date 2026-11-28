@@ -102,6 +102,89 @@ describe('topic route sessions', () => {
     expect(hook.result.current.state.selectedTopic).toEqual(firstTopic);
   });
 
+  it.each(['close', 'stale', 'save'] as const)(
+    'keeps a new reply draft separate when an edit ends by %s',
+    async (end) => {
+      const hook = await renderNativeHook(() => useTopicSessionController({ notify: jest.fn(), topic: firstTopic }));
+      await act(() => hook.result.current.commands.composer.changeContent('unfinished new reply'));
+      await act(() =>
+        hook.result.current.commands.composer.editReply({
+          commentId: 10,
+          contentMarkdown: 'published reply',
+          topicId: firstTopic.id,
+          ticket: { source: 'nodeseek', identityKey: 'nodeseek:alice', sessionEpoch: 0 }
+        })
+      );
+      expect(hook.result.current.state.replyContent).toBe('published reply');
+      await act(() => hook.result.current.commands.composer.changeContent('edited text'));
+      await act(() => {
+        const composer = hook.result.current.commands.composer;
+        if (end === 'close') composer.toggle(false);
+        else if (end === 'stale') composer.detachEdit();
+        else composer.completeSubmission(composer.getDraftRevision());
+      });
+      expect(hook.result.current.state.replyEditRecovery).toBe(end === 'stale' ? 'edited text' : null);
+      await act(() => hook.result.current.commands.composer.toggle(true));
+      expect(hook.result.current.state.replyContent).toBe('unfinished new reply');
+      await hook.unmount();
+    }
+  );
+
+  it.each(['same account', 'new account', 'new edit', 'timeout'] as const)(
+    'keeps pending edit recovery with its original document (%s)',
+    async (end) => {
+      const notify = jest.fn();
+      const hook = await renderNativeHook(
+        ({ accountScope }: { accountScope: string }) =>
+          useTopicSessionController({ accountScope, notify, topic: firstTopic }),
+        { initialProps: { accountScope: 'alice:1' } }
+      );
+      const target = {
+        commentId: 10,
+        contentMarkdown: 'published',
+        topicId: firstTopic.id,
+        ticket: { source: 'nodeseek' as const, identityKey: 'alice', sessionEpoch: 1 }
+      };
+      await act(() => hook.result.current.commands.composer.editReply(target));
+      const composer = hook.result.current.commands.composer;
+      let finish!: (text: string) => void;
+      let fail!: () => void;
+      composer.editRecoveryRef.current = () =>
+        new Promise<string>((resolve, reject) => {
+          finish = resolve;
+          fail = () => reject(new Error('timeout'));
+        });
+      await act(() => composer.detachEdit(target));
+      if (end === 'new account') await hook.rerender({ accountScope: 'bob:2' });
+      if (end === 'new edit') await act(() => composer.editReply({ ...target, commentId: 11 }));
+      await act(() => (end === 'timeout' ? fail() : finish('last keystrokes')));
+      expect(hook.result.current.state.replyEditRecovery).toBe(end === 'same account' ? 'last keystrokes' : null);
+      if (end === 'timeout') {
+        expect(hook.result.current.state.replyComposerIntent).toEqual({ kind: 'edit', target });
+        expect(notify).toHaveBeenCalledWith(expect.stringContaining('复制正文'));
+      }
+      await hook.unmount();
+    }
+  );
+
+  it('drops the previous account draft and ignores its late editor updates on the same route', async () => {
+    const notify = jest.fn();
+    const hook = await renderNativeHook(
+      ({ accountScope }: { accountScope: string }) =>
+        useTopicSessionController({ accountScope, notify, topic: firstTopic }),
+      { initialProps: { accountScope: 'alice:1' } }
+    );
+    const oldEditor = hook.result.current.commands.composer;
+    await act(() => oldEditor.changeContent('first account draft'));
+    await hook.rerender({ accountScope: 'bob:2' });
+    await act(() => {
+      hook.result.current.commands.composer.changeContent('second account draft');
+      oldEditor.changeContent('late snapshot');
+    });
+    expect(hook.result.current.state.replyContent).toBe('second account draft');
+    await hook.unmount();
+  });
+
   it('keeps draft revision checks and uses the latest notification callback', async () => {
     const notify = jest.fn<(message: string) => void>();
     const nextNotify = jest.fn<(message: string) => void>();

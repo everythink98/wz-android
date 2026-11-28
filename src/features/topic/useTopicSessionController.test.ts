@@ -215,74 +215,54 @@ describe('topic local session helpers', () => {
     ticket: { source: 'linuxdo', identityKey: 'linuxdo:alice', sessionEpoch: 1 }
   };
 
-  it.each([
-    {
-      label: 'opens a normal draft',
-      state: { intent: { kind: 'closed' as const }, content: '普通草稿', face: '旧表情' },
-      event: { type: 'open' as const },
-      expected: { intent: { kind: 'new' as const }, content: '普通草稿', face: '' }
-    },
-    {
-      label: 'targets a floor',
-      state: { intent: { kind: 'new' as const }, content: '楼层草稿', face: '旧表情' },
-      event: { type: 'reply-to-floor' as const, target: floorTarget },
-      expected: { intent: { kind: 'floor' as const, target: floorTarget }, content: '楼层草稿', face: '' }
-    },
-    {
-      label: 'starts an edit from the server markdown',
-      state: { intent: { kind: 'floor' as const, target: floorTarget }, content: '楼层草稿', face: '旧表情' },
-      event: { type: 'edit' as const, target: editTarget },
-      expected: { intent: { kind: 'edit' as const, target: editTarget }, content: '旧回复', face: '' }
-    },
-    {
-      label: 'keeps a normal draft on close',
-      state: { intent: { kind: 'new' as const }, content: '普通草稿', face: '旧表情' },
-      event: { type: 'close' as const },
-      expected: { intent: { kind: 'closed' as const }, content: '普通草稿', face: '' }
-    },
-    {
-      label: 'keeps a floor draft on close',
-      state: { intent: { kind: 'floor' as const, target: floorTarget }, content: '楼层草稿', face: '旧表情' },
-      event: { type: 'close' as const },
-      expected: { intent: { kind: 'closed' as const }, content: '楼层草稿', face: '' }
-    },
-    {
-      label: 'clears an edit draft on cancel',
-      state: { intent: { kind: 'edit' as const, target: editTarget }, content: '改写中', face: '旧表情' },
-      event: { type: 'close' as const },
-      expected: { intent: { kind: 'closed' as const }, content: '', face: '' }
-    },
-    {
-      label: 'preserves the draft when a stale edit detaches',
-      state: { intent: { kind: 'edit' as const, target: editTarget }, content: '权限失效时保留', face: '旧表情' },
-      event: { type: 'detach-edit' as const },
-      expected: { intent: { kind: 'closed' as const }, content: '权限失效时保留', face: '' }
-    },
-    {
-      label: 'resets after a successful submission',
-      state: { intent: { kind: 'floor' as const, target: floorTarget }, content: '已提交', face: '表情' },
-      event: { type: 'complete-submission' as const },
-      expected: { intent: { kind: 'closed' as const }, content: '', face: '' }
-    },
-    {
-      label: 'changes draft content',
-      state: { intent: { kind: 'new' as const }, content: '旧草稿', face: '' },
-      event: { type: 'change-content' as const, content: '新草稿' },
-      expected: { intent: { kind: 'new' as const }, content: '新草稿', face: '' }
-    },
-    {
-      label: 'changes the selected face',
-      state: { intent: { kind: 'new' as const }, content: '草稿', face: '' },
-      event: { type: 'change-face' as const, face: '踩' },
-      expected: { intent: { kind: 'new' as const }, content: '草稿', face: '踩' }
-    },
-    {
-      label: 'appends uploaded markup',
-      state: { intent: { kind: 'new' as const }, content: '草稿', face: '' },
-      event: { type: 'append-markup' as const, markup: '![图](https://img/1.png)' },
-      expected: { intent: { kind: 'new' as const }, content: '草稿\n![图](https://img/1.png)', face: '' }
-    }
-  ])('$label', ({ state, event, expected }) => {
-    expect(transitionReplyComposer(state, event)).toEqual(expected);
+  const initial = {
+    scope: 'linuxdo:1:alice',
+    mode: { kind: 'reply', intent: { kind: 'closed' } },
+    reply: { content: 'reply draft', face: 'face', polls: [] }
+  } satisfies Parameters<typeof transitionReplyComposer>[0];
+
+  it('keeps an existing draft when a floor reply is opened and closed', () => {
+    const target = transitionReplyComposer(initial, { type: 'reply-to-floor', target: floorTarget });
+    expect(target.mode).toEqual({ kind: 'reply', intent: { kind: 'floor', target: floorTarget } });
+    expect(transitionReplyComposer(target, { type: 'close' }).reply).toEqual(initial.reply);
+  });
+
+  it('initializes edits from the published text and releases unmodified edits', () => {
+    const target = transitionReplyComposer(initial, { type: 'edit', target: editTarget });
+    expect(target.mode).toMatchObject({ kind: 'edit', draft: { content: editTarget.contentMarkdown } });
+    expect(transitionReplyComposer(target, { type: 'detach-edit', target: editTarget })).toEqual(initial);
+  });
+
+  it('uses only the submitted draft slot when settling a reply', () => {
+    const editing = transitionReplyComposer(initial, { type: 'edit', target: editTarget });
+    expect(transitionReplyComposer(editing, { type: 'complete-submission' })).toEqual(initial);
+    expect(transitionReplyComposer(initial, { type: 'complete-submission' }).reply).toEqual({
+      content: '',
+      face: '',
+      polls: []
+    });
+  });
+  it('recovers poll choices even when the last confirmed edit text still matches the published reply', () => {
+    const editing = transitionReplyComposer(initial, { type: 'edit', target: editTarget });
+    const updated = transitionReplyComposer(editing, {
+      type: 'update',
+      owner: { scope: initial.scope, edit: editTarget },
+      update: (draft) => ({
+        ...draft,
+        polls: [
+          {
+            localId: 'draft_1',
+            fingerprint: 'fp',
+            title: '投票题目',
+            multiple: true,
+            isPublic: false,
+            options: ['甲', '乙']
+          }
+        ]
+      })
+    });
+    const result = transitionReplyComposer(updated, { type: 'detach-edit', target: editTarget });
+    expect(result.mode).toMatchObject({ kind: 'recovery', content: expect.stringContaining('投票题目') });
+    if (result.mode.kind === 'recovery') expect(result.mode.content).toContain('乙');
   });
 });

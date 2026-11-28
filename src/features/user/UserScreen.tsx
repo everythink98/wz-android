@@ -2,11 +2,11 @@ import { createUserListInteraction } from './userListInteraction';
 import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import { createUserStyles, type UserStyles } from './styles';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, Pressable, Text, View, useWindowDimensions, type ListRenderItem } from 'react-native';
+import { FlatList, Platform, Pressable, Text, View, useWindowDimensions, type ListRenderItem } from 'react-native';
 import { ChevronLeft, ExternalLink, RefreshCw } from 'lucide-react-native';
 import type { SourceErrorInfo, Topic, UserReference, UserReplyActivity } from '@/domain/forum/models';
 import { formatDateTime, sourceLabel } from '@/domain/forum/presentation';
-import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
+import type { TopicListItemStateSource } from '@/domain/forum/topicListItemState';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { DisclosureChevron } from '@/ui/controls/ExpandableControls';
@@ -16,7 +16,7 @@ import { TOUCH_HIT_SLOP } from '@/ui/controls/touchTarget';
 import { ScreenTopBar, ScreenTopBarActions, ScreenTopBarTitle } from '@/ui/controls/ScreenTopBar';
 import { NavigationBackdropProvider, NavigationBackdropTarget } from '@/ui/navigation/NavigationGlass';
 import { Avatar } from '@/ui/avatar/Avatar';
-import { MemoizedTopicCard, TopicListPlaceholder } from '@/ui/topic/TopicCard';
+import { TopicListCard, TopicListPlaceholder } from '@/ui/topic/TopicCard';
 import { authNoticeForSourceError } from '@/domain/session/siteSessionPrompts';
 import {
   createUserListItems,
@@ -29,6 +29,9 @@ import {
 // The profile is child 0. Keep the activity rail itself mounted and translated
 // by the native scroll animation, without handing off to a JS-selected copy.
 const USER_STICKY_HEADER_INDICES = [1];
+const USER_ACTIVITY_LIST_WINDOW = Platform.select({
+  android: { windowSize: 7, initialNumToRender: 8, maxToRenderPerBatch: 8 }
+});
 const EMPTY_TOPICS: Topic[] = [];
 const EMPTY_REPLIES: UserReplyActivity[] = [];
 const EMPTY_LIST_ITEMS: UserListItem[] = [];
@@ -177,7 +180,7 @@ export const UserScreen = memo(function UserScreen({
   followed: boolean;
   profile: UserProfileView | null;
   requestedUser: UserReference | null;
-  topicStateIndex: TopicListItemStateIndex;
+  topicStateIndex: TopicListItemStateSource;
   loadingMoreReplies: boolean;
   loadingMoreTopics: boolean;
   onBack: () => void;
@@ -451,9 +454,9 @@ export const UserScreen = memo(function UserScreen({
         return <UserReplyCard reply={item.reply} styles={styles} onOpenTopic={onOpenTopic} />;
       }
       return (
-        <MemoizedTopicCard
+        <TopicListCard
           testID={index === 1 ? 'user-topic-first' : undefined}
-          readerState={getTopicListItemStateFromIndex(topicStateIndex, item.topic)}
+          topicStateIndex={topicStateIndex}
           showSource={false}
           topic={item.topic}
           hideReplyCount={item.topic.source === 'nodeseek'}
@@ -509,6 +512,7 @@ export const UserScreen = memo(function UserScreen({
         </ScreenTopBar>
         <NavigationBackdropTarget active testID="user-glass-content" topInset={topBarHeight}>
           <FlatList
+            {...USER_ACTIVITY_LIST_WINDOW}
             overScrollMode="never"
             testID={profile ? 'user-screen-loaded' : undefined}
             key={userIdentity}

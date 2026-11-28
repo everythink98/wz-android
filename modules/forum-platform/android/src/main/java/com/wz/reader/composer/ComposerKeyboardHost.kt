@@ -36,11 +36,29 @@ import kotlin.math.roundToInt
 
 private const val HIDDEN_EVENT = "topKeyboardHidden"
 private const val INSETS_EVENT = "topImeInsets"
+private const val IME_BACK_EVENT = "topImeBack"
 
-private class ImeInsetsEvent(surfaceId: Int, viewTag: Int, private val bottom: Double) :
-  Event<ImeInsetsEvent>(surfaceId, viewTag) {
+private class ImeBackEvent(surfaceId: Int, viewTag: Int) : Event<ImeBackEvent>(surfaceId, viewTag) {
+  override fun getEventName() = IME_BACK_EVENT
+  override fun canCoalesce() = false
+  override fun getEventData() = Arguments.createMap()
+}
+
+private class ImeInsetsEvent(
+  surfaceId: Int,
+  viewTag: Int,
+  private val bottom: Double,
+  private val keyboardBottom: Double,
+  private val focusEpoch: Int,
+  private val focused: Boolean,
+) : Event<ImeInsetsEvent>(surfaceId, viewTag) {
   override fun getEventName() = INSETS_EVENT
-  override fun getEventData() = Arguments.createMap().apply { putDouble("bottom", bottom) }
+  override fun getEventData() = Arguments.createMap().apply {
+    putDouble("bottom", bottom)
+    putDouble("keyboardBottom", keyboardBottom)
+    putInt("focusEpoch", focusEpoch)
+    putBoolean("focused", focused)
+  }
 }
 
 private class KeyboardHiddenEvent(
@@ -82,11 +100,14 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
     class Consumed(downTime: Long) : BackPair(downTime)
   }
   private var backPair: BackPair = BackPair.Idle
+  var reportImeBack = false
   private var focusObserver: ViewTreeObserver? = null
   private var imeAnimating = false
   private var imeProgressBottom: Int? = null
   private var trackImeInsets = false
   private var currentImeInsets: WindowInsets? = null
+  private var imeFocusEpoch = 0
+  private var lastImeBottom: Int? = null
   private var lastImeOverlap: Int? = null
   private val rootPosition = IntArray(2)
   private val hostPosition = IntArray(2)
@@ -230,20 +251,23 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
   private fun publishImeInsets() {
     if (Build.VERSION.SDK_INT < 30 || !trackImeInsets || !windowAvailable() || height <= 0) return
     val insets = currentImeInsets ?: return
-    val imeBottom = insets.getInsets(WindowInsets.Type.ime()).bottom
+    val imeType = WindowInsets.Type.ime()
+    val imeBottom = if (!imeAnimating && !insets.isVisible(imeType)) 0 else insets.getInsets(imeType).bottom
     val root = rootView
     root.getLocationOnScreen(rootPosition)
     getLocationOnScreen(hostPosition)
     val alreadyAvoided = rootPosition[1] + root.height - hostPosition[1] - height
     val overlap = if (imeBottom == 0) 0 else maxOf(0, imeBottom - alreadyAvoided)
-    if (lastImeOverlap == overlap) return
+    if (lastImeOverlap == overlap && lastImeBottom == imeBottom) return
     lastImeOverlap = overlap
-    emitImeInsets(PixelUtil.toDIPFromPixel(overlap.toFloat()).toDouble())
+    lastImeBottom = imeBottom
+    emitImeInsets(overlap, imeBottom)
   }
 
-  private fun resetImeInsets() {
-    if (trackImeInsets && lastImeOverlap != null && lastImeOverlap != 0) emitImeInsets(0.0)
+  private fun resetImeInsets(focusLost: Boolean = false) {
+    if (trackImeInsets && (focusLost || (lastImeBottom ?: 0) > 0)) emitImeInsets(0, 0)
     lastImeOverlap = null
+    lastImeBottom = null
   }
 
   override fun onAttachedToWindow() {
@@ -270,8 +294,16 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
 
   override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
     super.onWindowFocusChanged(hasWindowFocus)
-    if (!hasWindowFocus) pending?.let(::cancelRequest)
-    if (hasWindowFocus) syncImeInsets() else resetImeInsets()
+    imeFocusEpoch += 1
+    if (hasWindowFocus) {
+      syncImeInsets()
+    } else {
+      pending?.let(::cancelRequest)
+      imeAnimating = false
+      imeProgressBottom = null
+      currentImeInsets = null
+      resetImeInsets(focusLost = true)
+    }
     if (hasWindowFocus) showAutoImeWhenReady()
   }
 
@@ -296,10 +328,11 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
     val pair = backPair
     if (pair.downTime != event.downTime) return super.dispatchKeyEventPreIme(event)
     if (event.action == KeyEvent.ACTION_UP) {
-      val shouldStart = pair is BackPair.Armed && !event.isCanceled && windowAvailable() &&
-        findFocus() === pair.focus && windowToken == pair.token && pending == null && canControlVisibleIme()
+      val valid = !event.isCanceled && windowAvailable() &&
+        (pair !is BackPair.Armed || (findFocus() === pair.focus && windowToken == pair.token))
       backPair = BackPair.Idle
-      if (shouldStart) startHide(null)
+      if (valid && pair is BackPair.Armed && pending == null && canControlVisibleIme()) startHide(null)
+      if (valid && reportImeBack) emitImeBack()
     }
     return true
   }
@@ -317,22 +350,20 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
 
   private fun observeImeAnimation() {
     setWindowInsetsAnimationCallback(object : WindowInsetsAnimation.Callback(DISPATCH_MODE_CONTINUE_ON_SUBTREE) {
-      private val running = mutableSetOf<WindowInsetsAnimation>()
+      private val running = mutableMapOf<WindowInsetsAnimation, Int>()
 
       override fun onPrepare(animation: WindowInsetsAnimation) {
         if (animation.typeMask and WindowInsets.Type.ime() != 0) {
-          running.add(animation)
+          running[animation] = imeFocusEpoch
           imeAnimating = true
           pending?.resetHiddenLayout()
         }
       }
 
       override fun onProgress(insets: WindowInsets, runningAnimations: MutableList<WindowInsetsAnimation>): WindowInsets {
-        runningAnimations.forEach { if (it.typeMask and WindowInsets.Type.ime() != 0) running.add(it) }
-        imeAnimating = running.isNotEmpty()
-        if (imeAnimating) {
-          imeProgressBottom = insets.getInsets(WindowInsets.Type.ime()).bottom
-        }
+        imeAnimating = runningAnimations.any { running[it] == imeFocusEpoch }
+        if (!imeAnimating && runningAnimations.any { it.typeMask and WindowInsets.Type.ime() != 0 }) return insets
+        if (imeAnimating) imeProgressBottom = insets.getInsets(WindowInsets.Type.ime()).bottom
         currentImeInsets = insets
         publishImeInsets()
         return insets
@@ -340,8 +371,8 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
 
       override fun onEnd(animation: WindowInsetsAnimation) {
         if (animation.typeMask and WindowInsets.Type.ime() == 0) return
-        running.remove(animation)
-        imeAnimating = running.isNotEmpty()
+        if (running.remove(animation) != imeFocusEpoch) return
+        imeAnimating = running.containsValue(imeFocusEpoch)
         if (!imeAnimating) imeProgressBottom = null
         syncImeInsets()
         if (pending?.fallback == true) postInvalidateOnAnimation()
@@ -577,6 +608,13 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
     } catch (_: RuntimeException) { false }
   }
 
+  protected open fun emitImeBack() {
+    val reactContext = context as ThemedReactContext
+    UIManagerHelper.getEventDispatcherForReactTag(reactContext, id)?.dispatchEvent(
+      ImeBackEvent(UIManagerHelper.getSurfaceId(reactContext), id),
+    )
+  }
+
   protected open fun emitKeyboardHidden(requestId: Double, success: Boolean) {
     val reactContext = context as ThemedReactContext
     UIManagerHelper.getEventDispatcherForReactTag(reactContext, id)?.dispatchEvent(
@@ -584,10 +622,19 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
     )
   }
 
-  protected open fun emitImeInsets(bottom: Double) {
+  private fun emitImeInsets(overlap: Int, imeBottom: Int) {
+    dispatchImeInsets(
+      PixelUtil.toDIPFromPixel(overlap.toFloat()).toDouble(),
+      PixelUtil.toDIPFromPixel(imeBottom.toFloat()).toDouble(),
+      imeFocusEpoch,
+      windowAvailable(),
+    )
+  }
+
+  protected open fun dispatchImeInsets(bottom: Double, keyboardBottom: Double, focusEpoch: Int, focused: Boolean) {
     val reactContext = context as ThemedReactContext
     UIManagerHelper.getEventDispatcherForReactTag(reactContext, id)?.dispatchEvent(
-      ImeInsetsEvent(UIManagerHelper.getSurfaceId(reactContext), id, bottom),
+      ImeInsetsEvent(UIManagerHelper.getSurfaceId(reactContext), id, bottom, keyboardBottom, focusEpoch, focused),
     )
   }
 
@@ -605,6 +652,11 @@ class ComposerKeyboardHostManager : ReactViewManager() {
 
   @ReactProp(name = "dismissOnDisable", defaultBoolean = false)
   fun setDismissOnDisable(view: ReactViewGroup, value: Boolean) = (view as ComposerKeyboardHost).setDismissOnDisable(value)
+
+  @ReactProp(name = "reportImeBack", defaultBoolean = false)
+  fun setReportImeBack(view: ReactViewGroup, value: Boolean) {
+    (view as ComposerKeyboardHost).reportImeBack = value
+  }
 
   @ReactProp(name = "trackImeInsets", defaultBoolean = false)
   fun setTrackImeInsets(view: ReactViewGroup, value: Boolean) = (view as ComposerKeyboardHost).setTrackImeInsets(value)
@@ -652,5 +704,6 @@ class ComposerKeyboardHostManager : ReactViewManager() {
     (super.getExportedCustomDirectEventTypeConstants() ?: mutableMapOf()).apply {
       put(HIDDEN_EVENT, mapOf("registrationName" to "onKeyboardHidden"))
       put(INSETS_EVENT, mapOf("registrationName" to "onImeInsets"))
+      put(IME_BACK_EVENT, mapOf("registrationName" to "onImeBack"))
     }
 }

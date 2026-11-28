@@ -44,6 +44,7 @@ import { sanitizeLinuxDoContentHtml } from '@/sources/linuxdo/parser';
 import { buildHtmlRenderingStyles } from '@/ui/content/forumHtmlStyles';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { TopicScreen } from '@/features/topic/TopicScreen';
+import { NavigationBackdropProvider } from '@/ui/navigation/NavigationGlass';
 import { resolveReaderStyleSettings, createTheme, readerRadii } from '@/ui/theme/tokens';
 import type { InteractionType } from '@/domain/forum/topicActionState';
 import { decideTopicAction, type TopicActionDecisionFor } from '@/features/topic/actions/topicActionDecision';
@@ -1093,57 +1094,62 @@ function TopicFilterHarness({
   return (
     <QueryTestWrapper>
       <View>
-        <TopicScreen
-          active={active}
-          composerRouteFocused={composerRouteFocused}
-          actions={actions}
-          article={{
-            busy: topicBusy,
-            error: topicError,
-            topic: preparedTopicDetail,
-            yaohuoBookmarked: yaohuoVisualBookmarked ?? preparedTopicDetail?.bookmarked
-          }}
-          chrome={{
-            back: jest.fn(),
-            favorite: topicFavorite,
-            getDiscourseEmojiUrls,
-            openOriginal: jest.fn(),
-            openReadingSettings: jest.fn(),
-            openTopic: onOpenTopic,
-            openUser: jest.fn(),
-            refreshReplies: onRefreshReplies,
-            refreshTopic: onRefreshWholeTopic,
-            share: jest.fn(),
-            toggleFavorite: onToggleFavorite,
-            verifyLinuxDo: onVerifyLinuxDo,
-            verifyNodeSeek: onVerifyNodeSeek
-          }}
-          currentNodeSeekUser={undefined}
-          html={
-            {
-              contentWidth: 720,
-              htmlBaseStyle: htmlStyles.htmlBaseStyle,
-              htmlClassesStyles: htmlStyles.htmlClassesStyles,
-              htmlIgnoredStyles: htmlStyles.htmlIgnoredStyles,
-              htmlRenderers: {},
-              htmlRenderersProps: {},
-              htmlTagsStyles: htmlStyles.htmlTagsStyles,
-              mediaContext: {
-                contentSource: preparedTopicDetail?.source || null,
-                sessionIdentity: effectiveMediaSessionIdentity
-              },
-              mediaSessionIdentity: effectiveMediaSessionIdentity,
-              nodeSeekMediaUserAgent: undefined
-            } as ReturnType<typeof useHtmlRenderingController> & { contentWidth: number; mediaSessionIdentity: string }
-          }
-          nodeSeekUserId={nodeSeekUserId}
-          onImagePreviewDescriptors={onImagePreviewDescriptors}
-          read={read}
-          session={sessionOverride || session}
-          location={location || (targetReply ? { kind: 'reply', target: targetReply } : undefined)}
-          locationRequestId={targetReplyRequestId}
-          topicScrollRef={topicScrollRef}
-        />
+        <NavigationBackdropProvider>
+          <TopicScreen
+            active={active}
+            composerRouteFocused={composerRouteFocused}
+            actions={actions}
+            article={{
+              busy: topicBusy,
+              error: topicError,
+              topic: preparedTopicDetail,
+              yaohuoBookmarked: yaohuoVisualBookmarked ?? preparedTopicDetail?.bookmarked
+            }}
+            chrome={{
+              back: jest.fn(),
+              favorite: topicFavorite,
+              getDiscourseEmojiUrls,
+              openOriginal: jest.fn(),
+              openReadingSettings: jest.fn(),
+              openTopic: onOpenTopic,
+              openUser: jest.fn(),
+              refreshReplies: onRefreshReplies,
+              refreshTopic: onRefreshWholeTopic,
+              share: jest.fn(),
+              toggleFavorite: onToggleFavorite,
+              verifyLinuxDo: onVerifyLinuxDo,
+              verifyNodeSeek: onVerifyNodeSeek
+            }}
+            currentNodeSeekUser={undefined}
+            html={
+              {
+                contentWidth: 720,
+                htmlBaseStyle: htmlStyles.htmlBaseStyle,
+                htmlClassesStyles: htmlStyles.htmlClassesStyles,
+                htmlIgnoredStyles: htmlStyles.htmlIgnoredStyles,
+                htmlRenderers: {},
+                htmlRenderersProps: {},
+                htmlTagsStyles: htmlStyles.htmlTagsStyles,
+                mediaContext: {
+                  contentSource: preparedTopicDetail?.source || null,
+                  sessionIdentity: effectiveMediaSessionIdentity
+                },
+                mediaSessionIdentity: effectiveMediaSessionIdentity,
+                nodeSeekMediaUserAgent: undefined
+              } as ReturnType<typeof useHtmlRenderingController> & {
+                contentWidth: number;
+                mediaSessionIdentity: string;
+              }
+            }
+            nodeSeekUserId={nodeSeekUserId}
+            onImagePreviewDescriptors={onImagePreviewDescriptors}
+            read={read}
+            session={sessionOverride || session}
+            location={location || (targetReply ? { kind: 'reply', target: targetReply } : undefined)}
+            locationRequestId={targetReplyRequestId}
+            topicScrollRef={topicScrollRef}
+          />
+        </NavigationBackdropProvider>
         <Text testID="active-filter">{replyFilter}</Text>
         <Text testID="active-order">{replyOrder}</Text>
       </View>
@@ -5637,7 +5643,7 @@ describe('Topic reply filters', () => {
     }
   });
 
-  it('shows the cached source emoji catalog in Topic reactions without another request', async () => {
+  it('keeps cached Topic reaction icons while backgrounded and on return without another request', async () => {
     const linuxDoTopic: TopicDetail = {
       ...topic,
       source: 'linuxdo',
@@ -5650,17 +5656,21 @@ describe('Topic reply filters', () => {
       heart: 'https://linux.do/cached-heart.png'
     });
     try {
-      const view = await render(
+      const tree = (active: boolean) => (
         <TopicFilterHarness
+          active={active}
           getDiscourseEmojiUrls={getDiscourseEmojiUrls}
           selectedTopic={linuxDoTopic}
           topicDetail={linuxDoTopic}
         />
       );
+      const view = await render(tree(true));
 
-      await waitFor(() => {
-        expect(view.getByTestId('reaction-heart').props.children).toContain('https://linux.do/cached-heart.png');
-      });
+      expect(view.getByTestId('reaction-heart').props.children).toContain('https://linux.do/cached-heart.png');
+      await view.rerender(tree(false));
+      expect(view.getByTestId('reaction-heart').props.children).toContain('https://linux.do/cached-heart.png');
+      await view.rerender(tree(true));
+      expect(view.getByTestId('reaction-heart').props.children).toContain('https://linux.do/cached-heart.png');
       expect(getDiscourseEmojiUrls).not.toHaveBeenCalled();
     } finally {
       appQueryClient.removeQueries({ queryKey, exact: true });
@@ -6340,12 +6350,12 @@ describe('Topic reply filters', () => {
       expect(view.getByRole('header', { name: topic.title })).toBeVisible();
       expect(view.queryByTestId('topic-detail-loaded')).toBeNull();
       expect(view.queryByLabelText('正在定位阅读位置')).toBeNull();
+      await act(() => jest.advanceTimersByTime(200));
       mockFlashListLayoutReady = true;
       await view.rerender(<TopicFilterHarness topicDetail={detail} />);
       expect(view.getByRole('header', { name: topic.title })).toBeVisible();
       expect(view.getByTestId('topic-detail-loaded')).toBeVisible();
-      await act(() => jest.advanceTimersByTime(400));
-      expect(view.queryByLabelText('正在加载正文')).toBeNull();
+      expect(view.queryByLabelText('正在加载正文', { includeHiddenElements: true })).toBeNull();
     } finally {
       mockFlashListLayoutReady = true;
       jest.useRealTimers();

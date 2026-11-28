@@ -45,11 +45,14 @@ describe('diagnostic event storm at the production writer', () => {
   it.each(['resolve', 'reject'] as const)(
     'bounds 10,000 completed traces behind a stalled writer and accounts for every event after %s',
     async (settlement) => {
-      const { appendDiagnosticLogLine, exportDiagnosticLog } =
+      const { initializeDiagnosticFileLogging, exportDiagnosticLog } =
         await import('@/platform/diagnostics/diagnosticFileStore');
       const { beginDiagnosticTrace, finishDiagnosticTrace, setDiagnosticWriter } =
         await import('@/platform/diagnostics/diagnostics');
       const batches: string[] = [];
+      boundary.append = async () => undefined;
+      initializeDiagnosticFileLogging();
+      await vi.advanceTimersByTimeAsync(0);
       let active = 0;
       let maximumActive = 0;
       let release: () => void = () => undefined;
@@ -67,7 +70,6 @@ describe('diagnostic event storm at the production writer', () => {
           active--;
         }
       };
-      setDiagnosticWriter(appendDiagnosticLogLine);
       try {
         beginDiagnosticTrace('topic', 'open', { source: 'linuxdo' });
         await vi.advanceTimersByTimeAsync(0);

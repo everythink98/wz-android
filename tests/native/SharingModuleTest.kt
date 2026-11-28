@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.Looper
 import androidx.core.content.FileProvider
@@ -20,6 +21,8 @@ import expo.modules.sharing.SharingModule
 import expo.modules.sharing.SharingOptions
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -29,17 +32,21 @@ import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
+import org.robolectric.android.controller.ActivityController
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.Implementation
 import org.robolectric.annotation.Implements
 import org.robolectric.annotation.LooperMode
 import java.io.File
 import java.lang.ref.WeakReference
+import java.util.concurrent.FutureTask
+import java.util.concurrent.TimeUnit
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], manifest = Config.NONE, shadows = [SharingModuleTest.LocalFileProvider::class])
 @LooperMode(LooperMode.Mode.PAUSED)
 class SharingModuleTest {
+    private lateinit var controller: ActivityController<ChooserActivity>
     private lateinit var activity: ChooserActivity
     private lateinit var reactContext: BridgeReactContext
     private lateinit var appContext: AppContext
@@ -48,7 +55,8 @@ class SharingModuleTest {
 
     @Before
     fun setUp() {
-        activity = Robolectric.buildActivity(ChooserActivity::class.java).setup().get()
+        controller = Robolectric.buildActivity(ChooserActivity::class.java).setup()
+        activity = controller.get()
         reactContext = object : BridgeReactContext(RuntimeEnvironment.getApplication()) {
             override fun getCurrentActivity(): Activity = activity
         }
@@ -111,6 +119,87 @@ class SharingModuleTest {
         assertEquals(1, next.resolutions)
     }
 
+    @Test
+    fun rotatingTheHostKeepsTheChooserAndItsLateDuplicateCannotSettleTheNextShare() {
+        val original = RecordingPromise()
+        share(original)
+        val firstCode = requireNotNull(shadowOf(activity).nextStartedActivityForResult).requestCode
+        val previousActivity = activity
+        activity.notifyHostDestroyed = {
+            assertTrue(previousActivity.isChangingConfigurations)
+            holder.post(EventName.ACTIVITY_DESTROYS)
+        }
+        val rotated = Configuration(activity.resources.configuration).apply {
+            orientation = if (orientation == Configuration.ORIENTATION_LANDSCAPE) {
+                Configuration.ORIENTATION_PORTRAIT
+            } else Configuration.ORIENTATION_LANDSCAPE
+        }
+        activity = controller.configurationChange(rotated).get()
+        assertNotSame(previousActivity, activity)
+
+        assertTrue(original.rejections.isEmpty())
+        assertEquals(0, original.resolutions)
+        assertEquals("ERR_SHARING_NOT_STARTED", assertThrows(CodedException::class.java) {
+            share(RecordingPromise())
+        }.code)
+        deliverResult(firstCode)
+        assertEquals(1, original.resolutions)
+
+        val next = RecordingPromise()
+        share(next)
+        val secondCode = requireNotNull(shadowOf(activity).nextStartedActivityForResult).requestCode
+        deliverResult(firstCode)
+        assertEquals(0, next.resolutions)
+        deliverResult(secondCode)
+        assertEquals(1, next.resolutions)
+    }
+
+    @Test
+    fun finishingTheHostReleasesTheOpenedChooserWithoutMarkingItSafeToRetry() {
+        val first = RecordingPromise()
+        share(first)
+        val staleCode = requireNotNull(shadowOf(activity).nextStartedActivityForResult).requestCode
+        activity.finish()
+        holder.post(EventName.ACTIVITY_DESTROYS)
+        assertEquals(listOf("ERR_SHARING_RESULT_UNKNOWN"), first.rejections)
+        assertEquals(0, first.resolutions)
+
+        activity = Robolectric.buildActivity(ChooserActivity::class.java).setup().get()
+        val next = RecordingPromise()
+        share(next)
+        val nextCode = requireNotNull(shadowOf(activity).nextStartedActivityForResult).requestCode
+        deliverResult(staleCode)
+        assertEquals(0, next.resolutions)
+        deliverResult(nextCode)
+        assertEquals(1, next.resolutions)
+        assertTrue(next.rejections.isEmpty())
+    }
+
+    @Test
+    fun destroyingTheModuleAfterLaunchSettlesTheCallerOnceWithAnUnknownOutcome() {
+        val promise = RecordingPromise()
+        share(promise)
+        val code = requireNotNull(shadowOf(activity).nextStartedActivityForResult).requestCode
+        holder.post(EventName.MODULE_DESTROY)
+        deliverResult(code)
+        assertEquals(listOf("ERR_SHARING_RESULT_UNKNOWN"), promise.rejections)
+        assertEquals(0, promise.resolutions)
+    }
+
+    @Test
+    fun destructionBeforeTheMainThreadOpensTheChooserAllowsSafeRecovery() {
+        val promise = RecordingPromise()
+        val prepare = FutureTask { share(promise) }
+        Thread(prepare).start()
+        prepare.get(10, TimeUnit.SECONDS)
+        holder.post(EventName.MODULE_DESTROY)
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(listOf("ERR_SHARING_NOT_STARTED"), promise.rejections)
+        assertEquals(0, promise.resolutions)
+        assertNull(shadowOf(activity).nextStartedActivityForResult)
+    }
+
     private fun share(promise: RecordingPromise) {
         holder.call("shareAsync", arrayOf(Uri.fromFile(file).toString(), SharingOptions("image/png", null, "PNG")), promise)
     }
@@ -122,18 +211,25 @@ class SharingModuleTest {
     private class RecordingPromise : Promise {
         var resolutions = 0
             private set
+        val rejections = mutableListOf<String?>()
 
         override fun resolve(value: Any?) {
             resolutions++
         }
 
         override fun reject(code: String?, message: String?, cause: Throwable?) {
-            throw AssertionError("Unexpected direct rejection: $code $message", cause)
+            rejections.add(code)
         }
     }
 
     class ChooserActivity : Activity() {
         var failNextLaunch = false
+        var notifyHostDestroyed: (() -> Unit)? = null
+
+        override fun onDestroy() {
+            notifyHostDestroyed?.invoke()
+            super.onDestroy()
+        }
 
         override fun startActivityForResult(intent: Intent, requestCode: Int) {
             if (failNextLaunch) {

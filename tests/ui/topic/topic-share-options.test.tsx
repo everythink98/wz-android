@@ -41,6 +41,37 @@ describe('Topic share options', () => {
     expect(actions.onShareImage).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps the copy confirmation visible while a second copy is pending', async () => {
+    const repeat = Promise.withResolvers<void>();
+    const actions = callbacks();
+    actions.onCopyLink
+      .mockResolvedValueOnce(undefined)
+      .mockReturnValueOnce(repeat.promise)
+      .mockRejectedValueOnce(new Error('无法复制链接，请重试。'));
+    const view = await render(<TopicShareOptions topic={topic} {...actions} />);
+    const copy = () => fireEvent.press(view.getByRole('button', { name: '复制链接' }));
+
+    await copy();
+    expect(view.getByText('链接已复制')).toBeTruthy();
+
+    await copy();
+    try {
+      expect(actions.onCopyLink).toHaveBeenCalledTimes(2);
+      expect(view.getByText('链接已复制')).toBeTruthy();
+      expect(view.queryByRole('progressbar')).toBeNull();
+      expect(view.getByRole('button', { name: '分享链接' })).not.toHaveStyle({ opacity: 0.45 });
+      expect(view.getByRole('button', { name: '复制链接' })).toBeDisabled();
+    } finally {
+      await act(async () => repeat.resolve());
+    }
+
+    expect(view.getByText('链接已复制')).toBeTruthy();
+    expect(view.getByRole('button', { name: '复制链接' })).toBeEnabled();
+    await copy();
+    expect(view.queryByText('链接已复制')).toBeNull();
+    expect(view.getByRole('alert')).toHaveTextContent('无法复制链接，请重试。');
+  });
+
   it('keeps link actions available before the opening content is loaded', async () => {
     const actions = callbacks();
     const view = await render(

@@ -237,24 +237,37 @@ function scheduleDiagnosticFlush() {
   }
 }
 
+function appendDiagnosticEvent(event: Record<string, unknown>) {
+  let contextual = event;
+  try {
+    contextual = { ...event, ...diagnosticBuildContext() };
+  } catch {
+    /* Device metadata is optional during bridge shutdown. */
+  }
+  const line = `${JSON.stringify(contextual)}\n`;
+  if (event.isFatal === true) {
+    try {
+      const lastStages = bufferedDiagnosticLines();
+      if (nativeDiagnosticJournal()?.persistCrashSync?.(lastStages + line) === false) writeFailureCount += 1;
+    } catch {
+      writeFailureCount += 1;
+    }
+  }
+  enqueueDiagnosticLine(line);
+}
+
 export function appendDiagnosticLogLine(line: string) {
   try {
-    try {
-      const event = JSON.parse(line) as Record<string, unknown>;
-      if (event.schemaVersion === 1 && typeof event.traceId === 'string') {
-        line = `${JSON.stringify({ ...event, ...diagnosticBuildContext() })}\n`;
-        if (event.isFatal === true) {
-          try {
-            const lastStages = bufferedDiagnosticLines();
-            if (nativeDiagnosticJournal()?.persistCrashSync?.(lastStages + line) === false) writeFailureCount += 1;
-          } catch {
-            writeFailureCount += 1;
-          }
-        }
-      }
-    } catch {
-      /* Compatibility writer callers may provide a damaged legacy line. */
-    }
+    const event = JSON.parse(line) as Record<string, unknown>;
+    if (event?.schemaVersion === 1 && typeof event.traceId === 'string') return appendDiagnosticEvent(event);
+  } catch {
+    /* Compatibility writer callers may provide a damaged legacy line. */
+  }
+  enqueueDiagnosticLine(line);
+}
+
+function enqueueDiagnosticLine(line: string) {
+  try {
     const bytes = encoder.encode(line.endsWith('\n') ? line : `${line}\n`);
     // Keep the JS->Native queue bounded even while native storage is unavailable.
     const limit = nativeDiagnosticJournal()?.appendBatch ? MAX_PENDING_BYTES : 3 * MAX_LOG_BYTES;
@@ -566,7 +579,7 @@ export async function exportDiagnosticLog(metadata: DiagnosticExportMetadata) {
 export function initializeDiagnosticFileLogging() {
   if (!writerInstalled) {
     try {
-      setDiagnosticWriter(appendDiagnosticLogLine);
+      setDiagnosticWriter({ writeEvent: appendDiagnosticEvent });
       writerInstalled = true;
       const trace = beginDiagnosticTrace('app', 'startup');
       finishDiagnosticTrace(trace, 'success');

@@ -169,7 +169,7 @@ class ForumSelectionRecyclerViewProofTest {
       surface.addReactChild(recycler, 0)
       surface.pendingRevision = "recycler-proof-v1"
       surface.pendingRows = rows.indices.map { index ->
-        ForumSelectionRowRecord(
+        ForumSelectionRowDefinition(
           documentId = "floor",
           rowKey = "row-$index",
           nativeId = nativeId(index),

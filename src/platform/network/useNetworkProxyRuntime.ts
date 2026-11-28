@@ -256,7 +256,7 @@ export function useNetworkProxyRuntime({
     (
       update: (current: NetworkProxyState) => NetworkProxyState,
       parentTrace?: DiagnosticTrace,
-      resetInvalid = false
+      options?: { resetInvalid?: boolean; retryActiveId?: string }
     ) => {
       const owner = requireNetworkProxyOwner(ownerRef.current);
       const task = proxySaveQueueRef.current.run(null, async () => {
@@ -268,13 +268,15 @@ export function useNetworkProxyRuntime({
         const unreadable = apply.kind === 'failed' && apply.cause === 'storage';
         const base = unreadable
           ? await readPersistedProxyState().catch((error) => {
-              if (resetInvalid && error instanceof InvalidSavedNetworkProxyStateError) return previous;
+              if (options?.resetInvalid && error instanceof InvalidSavedNetworkProxyStateError) return previous;
               throw error;
             })
           : previous;
         requireNetworkProxyOwner(owner);
         const next = update(base);
-        if (next === base && !unreadable) {
+        const retryActive =
+          apply.kind === 'failed' && options?.retryActiveId != null && base.activeId === options.retryActiveId;
+        if (next === base && !unreadable && !retryActive) {
           return { previous: base, requiresApply: false, state: previous };
         }
         const trace = parentTrace || beginDiagnosticTrace('proxy', 'save', diagnosticProxyState(next));
@@ -329,7 +331,7 @@ export function useNetworkProxyRuntime({
               return { ...state, enabled: mode === 'proxy' };
             },
             trace,
-            mode === 'system'
+            { resetInvalid: mode === 'system' }
           );
           if (!result.requiresApply) {
             finishDiagnosticTrace(trace, 'noop');
@@ -415,15 +417,19 @@ export function useNetworkProxyRuntime({
   const selectProxyProfile = useCallback(
     async (id: string) => {
       const owner = requireNetworkProxyOwner(ownerRef.current);
-      const result = await replaceProxyState((latest) => {
-        if (!latest.profiles.some((profile) => profile.id === id) || latest.activeId === id) {
-          return latest;
-        }
-        return {
-          ...latest,
-          activeId: id
-        };
-      });
+      const result = await replaceProxyState(
+        (latest) => {
+          if (!latest.profiles.some((profile) => profile.id === id) || latest.activeId === id) {
+            return latest;
+          }
+          return {
+            ...latest,
+            activeId: id
+          };
+        },
+        undefined,
+        { retryActiveId: id }
+      );
       requireNetworkProxyOwner(owner);
       if (result.requiresApply) {
         await applyPersistedProxyState(result.state);

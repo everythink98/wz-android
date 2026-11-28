@@ -68,7 +68,8 @@ export function AppRoutes({
   topicRouteRuntime,
   userRouteRuntime,
   onReady,
-  onScreenChange
+  onScreenChange,
+  onBottomTabBarLayout
 }: {
   topicComposerRouteRuntime: TopicComposerRouteRuntimeValue;
   feedRouteRuntime: FeedRouteRuntimeValue;
@@ -84,6 +85,7 @@ export function AppRoutes({
   userRouteRuntime: UserRouteRuntimeValue;
   onReady: NavigatorProps['onReady'];
   onScreenChange: NavigatorProps['onScreenChange'];
+  onBottomTabBarLayout?: NavigatorProps['onBottomTabBarLayout'];
 }) {
   return (
     <TopicComposerRouteRuntimeProvider value={topicComposerRouteRuntime}>
@@ -115,6 +117,7 @@ export function AppRoutes({
                       theme={theme}
                       onReady={onReady}
                       onScreenChange={onScreenChange}
+                      onBottomTabBarLayout={onBottomTabBarLayout}
                     />
                   </NotificationRouteRuntimeProvider>
                 </MoreRouteRuntimeProvider>

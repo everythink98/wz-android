@@ -65,6 +65,11 @@ export interface NotificationMessagePage {
   olderCursor: string | null;
 }
 
+export interface NotificationLaterMessagePage {
+  messages: NotificationMessage[];
+  newerCursor: string | null;
+}
+
 export interface NotificationDetail {
   policy?: DiscoursePostPolicy;
   notification: ForumNotification;
@@ -72,7 +77,8 @@ export interface NotificationDetail {
   contentHtml?: string;
   contentText?: string;
   messages?: NotificationMessage[];
-  messageHistory?: { olderCursor: string | null };
+  messageAnchorId?: NotificationMessage['id'];
+  messageHistory?: { olderCursor: string | null; newerCursor?: string | null };
   reply?: {
     format: 'markdown' | 'plain-text';
     disabledReason?: string;

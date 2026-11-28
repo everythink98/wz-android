@@ -58,6 +58,20 @@ export type ComposerSnapshot = {
   pendingNodeSeekPolls: PendingNodeSeekPoll[];
 };
 
+/** Keep a copyable record of local polls whose Markdown contains only an editor placeholder. */
+export function replyEditRecoveryText(markdown: string, polls: PendingNodeSeekPoll[]) {
+  if (!polls.length) return markdown;
+  return [
+    markdown,
+    ...polls.map((poll) =>
+      [
+        `${poll.title}（${poll.multiple ? '多选' : '单选'}，${poll.isPublic ? '公开投票人' : '匿名'}）`,
+        ...poll.options
+      ].join('\n')
+    )
+  ].join('\n\n');
+}
+
 export type NodeSeekStardustReceive = {
   receiverMemberId: string;
   amount: number;

@@ -420,55 +420,44 @@ describe('Account site panels', () => {
     expect(onCheckIn).toHaveBeenCalledTimes(2);
   });
 
+  it('keeps a settled NodeSeek login settled across history changes', async () => {
+    const onSetLoading = jest.fn();
+    const view = await render(<SiteLoginHost {...nodeSeekProps({ visible: true, onSetLoading })} />);
+    const url = 'https://www.nodeseek.com/';
+    await act(() => mockLoginWebViewProps.onLoadEnd({ nativeEvent: { url } }));
+    onSetLoading.mockClear();
+    await act(() => mockLoginWebViewProps.onLoadStart?.({ nativeEvent: { url: url + '#here', loading: false } }));
+    expect(view.getByTestId('nodeseek-login-webview-settled')).toBeTruthy();
+    expect(onSetLoading).not.toHaveBeenCalled();
+  });
+
   it.each(['nodeseek', 'yaohuo'] as const)(
-    'keeps the latest %s error when a failed load ends in the same batch',
+    'keeps an early %s load error until a new main document starts',
     async (site) => {
       const onWebViewState = jest.fn();
-      const onCheck = jest.fn();
       const view = await render(
         site === 'nodeseek' ? (
-          <SiteLoginHost {...nodeSeekProps({ visible: true, onWebViewState, onCheck, recoveryPending: true })} />
+          <SiteLoginHost {...nodeSeekProps({ visible: true, onWebViewState })} />
         ) : (
           <SiteLoginHost {...yaohuoProps({ onWebViewState })} />
         )
       );
       const events = mockLoginWebViewProps;
-      const url = 'https://www.nodeseek.com/';
-      if (site === 'nodeseek') {
-        await act(() => events.onLoadStart({ nativeEvent: { url } }));
-        onWebViewState.mockClear();
-      }
+      const url = events.source.uri;
       await act(() => {
-        events.onError({ nativeEvent: { description: '本次连接失败' } });
-        events.onLoadEnd({ nativeEvent: { code: -2 } });
+        events.onError({ nativeEvent: { url, description: '本次连接失败' } });
+        events.onMainFrameLoadStart({ nativeEvent: { url } });
+        events.onLoadStart?.({ nativeEvent: { url, loading: false } });
+        events.onLoadEnd({ nativeEvent: { url } });
       });
-      expect(view.getByText(`${site === 'nodeseek' ? 'NodeSeek ' : '妖火'}页面加载失败：本次连接失败`)).toBeTruthy();
+      expect(view.getByText(/页面加载失败：本次连接失败/)).toBeTruthy();
       expect(onWebViewState.mock.calls.map(([state]) => state)).toEqual(['error']);
-      await act(() => mockLoginWebViewProps.onLoadEnd({ nativeEvent: {} }));
+      await act(() => {
+        mockLoginWebViewProps.onMainFrameLoadStart({ nativeEvent: { url } });
+        mockLoginWebViewProps.onLoadEnd({ nativeEvent: { url } });
+      });
       expect(view.queryByText(/本次连接失败/)).toBeNull();
-      expect(onWebViewState.mock.calls.map(([state]) => state)).toEqual(['error', 'ready']);
-      if (site === 'nodeseek') {
-        const message = {
-          nativeEvent: {
-            url,
-            data: JSON.stringify({
-              type: 'nodeseek-login',
-              documentKey: url + ':1234',
-              status: 'logged-in',
-              hasChallengeMarker: false
-            })
-          }
-        };
-        await act(() => mockLoginWebViewProps.onMessage(message));
-        expect(onCheck).not.toHaveBeenCalled();
-        onWebViewState.mockImplementation((state) => {
-          if (state === 'error') mockLoginWebViewProps.onLoadStart({ nativeEvent: { url, loading: true } });
-        });
-        await act(() => mockLoginWebViewProps.onError({ nativeEvent: { description: '重新进入的失败' } }));
-        expect(view.getByText('NodeSeek 页面加载失败：重新进入的失败')).toBeTruthy();
-        await act(() => mockLoginWebViewProps.onMessage(message));
-        expect(onCheck).toHaveBeenCalledTimes(1);
-      }
+      expect(onWebViewState.mock.calls.map(([state]) => state)).toEqual(['error', 'start', 'ready']);
     }
   );
 
@@ -1248,7 +1237,7 @@ describe('Account site panels', () => {
     await act(async () => mockLoginWebViewProps.onLoadEnd({ nativeEvent: { url: 'https://www.nodeseek.com/' } }));
     expect(inject).not.toHaveBeenCalled();
     const url = mockLoginWebViewProps.source.uri;
-    await act(async () => mockLoginWebViewProps.onLoadStart({ nativeEvent: { url, loading: true } }));
+    await act(async () => mockLoginWebViewProps.onMainFrameLoadStart({ nativeEvent: { url, loading: true } }));
     await act(async () => mockLoginWebViewProps.onLoadEnd({ nativeEvent: { url } }));
     expect(inject).toHaveBeenCalledTimes(1);
   });
@@ -1413,7 +1402,7 @@ describe('Account site panels', () => {
       const view = await render(<SiteLoginHost {...props} />);
       const url = site === 'nodeseek' ? 'https://www.nodeseek.com/' : 'https://www.yaohuo.me/wapindex.aspx?sid=-2';
       await act(() => {
-        mockLoginWebViewProps.onLoadStart({ nativeEvent: { url, loading: true } });
+        mockLoginWebViewProps.onMainFrameLoadStart({ nativeEvent: { url, loading: true } });
         mockLoginWebViewProps.onLoadEnd({ nativeEvent: { url } });
         mockLoginWebViewProps.onMessage({
           nativeEvent: {
@@ -1455,7 +1444,7 @@ describe('Account site panels', () => {
         }
       };
       await act(() => {
-        mockLoginWebViewProps.onLoadStart({ nativeEvent: { url, loading: true } });
+        mockLoginWebViewProps.onMainFrameLoadStart({ nativeEvent: { url, loading: true } });
         mockLoginWebViewProps.onLoadEnd({ nativeEvent: { url } });
       });
       expect(onCheck).not.toHaveBeenCalled();
@@ -1481,7 +1470,7 @@ describe('Account site panels', () => {
           else old.onRenderProcessGone();
         });
         expect(view.queryByTestId('mock-login-webview')).toBeNull();
-        await act(() => old.onLoadStart({ nativeEvent: { url: 'https://www.yaohuo.me/', loading: true } }));
+        await act(() => old.onMainFrameLoadStart({ nativeEvent: { url: 'https://www.yaohuo.me/', loading: true } }));
         expect(view.queryByTestId('mock-login-webview')).toBeNull();
         await fireEvent.press(view.getByLabelText('重新打开登录页'));
         expect(view.getByTestId('mock-login-webview')).toBeTruthy();
@@ -1502,7 +1491,7 @@ describe('Account site panels', () => {
       status: 'logged-in',
       hasChallengeMarker: false
     };
-    await act(() => mockLoginWebViewProps.onLoadStart({ nativeEvent: { url } }));
+    await act(() => mockLoginWebViewProps.onMainFrameLoadStart({ nativeEvent: { url } }));
     for (const payload of [
       { ...hint, documentKey: `${url}:0` },
       { ...hint, documentKey: 'https://evil.example/:1234' },
@@ -1537,7 +1526,7 @@ describe('Account site panels', () => {
       await view.rerender(<SiteLoginHost {...props} visible={false} />);
       await view.rerender(<SiteLoginHost {...props} />);
       await act(() => {
-        old.onLoadStart({ nativeEvent: { url } });
+        old.onMainFrameLoadStart({ nativeEvent: { url } });
         old.onMessage({
           nativeEvent: {
             url,
@@ -1563,7 +1552,7 @@ describe('Account site panels', () => {
     const view = await render(<SiteLoginHost {...nodeSeekProps({ visible: true, onCheck, recoveryPending: true })} />);
     const url = 'https://www.nodeseek.com/';
     await act(() => {
-      mockLoginWebViewProps.onLoadStart({ nativeEvent: { url } });
+      mockLoginWebViewProps.onMainFrameLoadStart({ nativeEvent: { url } });
       mockLoginWebViewProps.onLoadEnd({ nativeEvent: { url } });
     });
     expect(onCheck).not.toHaveBeenCalled();
@@ -1608,13 +1597,13 @@ describe('Account site panels', () => {
         }
       };
       await act(() => {
-        mockLoginWebViewProps.onLoadStart({ nativeEvent: { url } });
+        mockLoginWebViewProps.onMainFrameLoadStart({ nativeEvent: { url } });
         mockLoginWebViewProps.onError({ nativeEvent: { description: '断网' } });
         mockLoginWebViewProps.onMessage(hint);
       });
       expect(onCheck).not.toHaveBeenCalled();
       await act(() => {
-        mockLoginWebViewProps.onLoadStart({ nativeEvent: { url } });
+        mockLoginWebViewProps.onMainFrameLoadStart({ nativeEvent: { url } });
         listeners.forEach((listener) => listener('background'));
         listeners.forEach((listener) => listener('active'));
         mockLoginWebViewProps.onMessage(hint);

@@ -27,6 +27,10 @@ import { buildHtmlRenderingStyles } from '@/ui/content/forumHtmlStyles';
 import { resolveReaderStyleSettings, createTheme, READER_APP_FONT_FAMILY } from '@/ui/theme/tokens';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
+import {
+  TopicBodyMediaCoordinatorProvider,
+  TopicBodyMediaRowBoundary
+} from '@/features/topic/media/TopicBodyMediaCoordinator';
 import type { Reply, TopicDetail } from '@/domain/forum/models';
 import { act, fireEvent, render, within } from '../render';
 import { TopicRouteBackBoundary } from '@/features/topic/useTopicRouteBeforeRemove';
@@ -236,12 +240,16 @@ const selectionTopic: TopicDetail = {
 };
 
 function ProductionRichTextRow({
+  contentWidth = 320,
   html,
+  settings = selectionReaderData.settings,
   topic = selectionTopic,
   onOpenTopic = () => undefined,
   onOpenUser = () => undefined
 }: {
+  contentWidth?: number;
   html: string;
+  settings?: ReaderSettings;
   topic?: TopicDetail;
   onOpenTopic?: Parameters<typeof useHtmlRenderingController>[0]['onOpenTopic'];
   onOpenUser?: Parameters<typeof useHtmlRenderingController>[0]['onOpenUser'];
@@ -253,7 +261,7 @@ function ProductionRichTextRow({
     onOpenTopic,
     onOpenUser,
     selectedTopic: topic,
-    settings: selectionReaderData.settings,
+    settings,
     theme: selectionTheme,
     topicDetail: topic,
     webViewBlockMessage: ''
@@ -262,8 +270,8 @@ function ProductionRichTextRow({
     <RenderHTML
       baseStyle={controller.htmlBaseStyle}
       classesStyles={controller.htmlClassesStyles}
-      contentWidth={320}
-      customHTMLElementModels={createHtmlCustomElementModels(selectionReaderData.settings.lineHeight)}
+      contentWidth={contentWidth}
+      customHTMLElementModels={createHtmlCustomElementModels(settings.lineHeight)}
       defaultTextProps={{ selectable: true }}
       ignoredStyles={controller.htmlIgnoredStyles}
       renderers={controller.htmlRenderers}
@@ -273,6 +281,77 @@ function ProductionRichTextRow({
     />
   );
 }
+
+it.each([
+  { sizing: '', width: 320, expectedWidth: 320 },
+  { sizing: '', width: 260, expectedWidth: 260 },
+  { sizing: ' style="max-width: 180px"', width: 320, expectedWidth: 180 },
+  { sizing: ' style="max-width: 180px"', width: 160, expectedWidth: 160 }
+])(
+  'keeps the image row at the same physical height through admission at $width dp with $sizing',
+  async ({ sizing, width, expectedWidth }) => {
+    const uri = `https://img.example.com/standalone-admission-geometry-${width}.png`;
+    const html = `<img src="${uri}" width="1000" height="505"${sizing}>`;
+    const image = <ProductionRichTextRow contentWidth={width} html={html} />;
+    const row = (paused: boolean) => (
+      <TopicBodyMediaCoordinatorProvider active paused={paused} viewportRowKeys={['geometry']}>
+        <TopicBodyMediaRowBoundary rowKey="geometry">{image}</TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+    const screen = await render(row(true));
+    const idle = StyleSheet.flatten(screen.getByTestId('topic-image-idle').props.style);
+    await screen.rerender(row(false));
+    const admitted = StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style);
+    expect(admitted.width).toBe(expectedWidth);
+    expect(admitted.height).toBeCloseTo((expectedWidth * 505) / 1000);
+    expect(Math.round(idle.height * 3)).toBe(Math.round(admitted.height * 3));
+  }
+);
+
+it('applies decoded image dimensions when the reader width and font scale change', async () => {
+  const uri = 'https://img.example.com/reader-size-and-decoded-ratio.png';
+  const html = `<img src="${uri}" width="1000" height="505">`;
+  const row = (width: number, fontScale: number, active: boolean) => (
+    <TopicBodyMediaCoordinatorProvider active={active} paused={false} viewportRowKeys={['sizing']}>
+      <TopicBodyMediaRowBoundary rowKey="sizing">
+        <ProductionRichTextRow
+          contentWidth={width}
+          html={html}
+          settings={{ ...selectionReaderData.settings, fontScale }}
+        />
+      </TopicBodyMediaRowBoundary>
+    </TopicBodyMediaCoordinatorProvider>
+  );
+  const screen = await render(row(320, 1, true));
+  const height = (id: string) => StyleSheet.flatten(screen.getByTestId(id).props.style).height;
+  expect(height('topic-image-frame')).toBeCloseTo((320 * 505) / 1000);
+  const image = mockReadingImages.get(uri);
+  expect(image).toBeDefined();
+  await act(async () => {
+    image!.onLoad?.({ source: { width: 1000, height: 1000 } });
+    image!.onDisplay?.();
+  });
+  expect(height('topic-image-frame')).toBe(320);
+  await screen.rerender(row(260, 1.4, true));
+  expect(height('topic-image-frame')).toBe(260);
+  await screen.rerender(row(260, 1.4, false));
+  expect(height('topic-image-idle')).toBe(260);
+});
+
+it('loads a single image when the displayed URL and original URL match', async () => {
+  const uri = 'https://img.example.com/equal-display-and-original.png';
+  const view = await render(
+    <ProductionRichTextRow html={`<img src="${uri}" data-original="${uri}" width="320" height="160">`} />
+  );
+  const base = mockReadingImages.get(uri);
+  expect(base).toBeDefined();
+  await act(async () => {
+    base!.onLoad?.({ source: { width: 320, height: 160 } });
+    base!.onDisplay?.();
+  });
+  expect(view.queryByTestId('topic-image-original')).toBeNull();
+  expect(mockReadingImageMounts.get(uri)).toBe(1);
+});
 
 it('opens the V2EX user from a mention and the exact reply from its compiled inline floor', async () => {
   const onOpenTopic = jest.fn<Parameters<typeof useHtmlRenderingController>[0]['onOpenTopic']>();

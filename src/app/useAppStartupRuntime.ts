@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import * as SplashScreen from 'expo-splash-screen';
+import { preloadSearchHistory } from '@/features/search/searchHistoryStorage';
 import { beginDiagnosticTrace, finishDiagnosticTrace, recordDiagnosticError } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
 import { recordStartupPhase } from '@/platform/diagnostics/startupTiming';
@@ -81,6 +82,7 @@ export function useAppStartupRuntime(onNavigationReady?: () => void, getCurrentR
           if (mount.current !== owner) return;
           delete owner.idleTask;
           maintainExports();
+          preloadSearchHistory();
         });
       } catch (error) {
         recordDiagnosticError('app', 'startup', error);

@@ -404,7 +404,7 @@ object DiagnosticJournal {
       "proxyType" to setOf("direct", "http", "socks"),
       "tlsVersion" to setOf("TLSv1.3", "TLSv1.2", "TLSv1.1", "TLSv1", "SSLv3", "unknown"),
       "outcome" to setOf("success", "failure", "canceled", "noop", "rollback", "retired"),
-      "imageConsumer" to setOf("fresco", "glide", "svg-probe"),
+      "imageConsumer" to setOf("fresco", "glide", "svg-probe", "save-image"),
       "imageFailure" to setOf("executor_rejected", "timeout", "canceled", "http_error", "read_error", "decode_error", "tls_error", "dns_error", "network_error", "unknown"),
       "imageContentType" to setOf("image", "svg", "html", "other", "unknown")
     )

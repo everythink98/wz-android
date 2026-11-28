@@ -9,7 +9,7 @@ import { userKey } from '@/domain/reader/readerData';
 import { openHttpUrl } from '@/ui/navigation/openHttpUrl';
 
 import { ContentSourceDisabledState } from '@/ui/controls/FeedbackStates';
-import { goBackFromFocusedRoute } from '@/ui/navigation/appRouteActions';
+import { dispatchTopicRoute, goBackFromFocusedRoute } from '@/ui/navigation/appRouteActions';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { UserScreen } from './UserScreen';
 import { useUserController } from './useUserController';
@@ -70,7 +70,7 @@ function EnabledUserRoute({ navigation, route, runtime }: UserRouteProps & { run
   );
   const openTopic = useCallback(
     (topic: Topic) => {
-      if (navigation.isFocused()) navigation.push('Topic', { topic });
+      if (navigation.isFocused()) dispatchTopicRoute(() => navigation.push('Topic', { topic }));
     },
     [navigation]
   );

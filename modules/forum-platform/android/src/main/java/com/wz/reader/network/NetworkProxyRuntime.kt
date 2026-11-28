@@ -159,7 +159,8 @@ private object MediaRequestCookieContext {
 
 internal class ForumMediaRequestInterceptor(
   private val sourceForUrl: (HttpUrl) -> String? = ::managedCookieSource,
-  private val defaultUserAgent: () -> String = { NetworkProxyRuntime.readDefaultMediaUserAgent() }
+  private val defaultUserAgent: () -> String = { NetworkProxyRuntime.readDefaultMediaUserAgent() },
+  private val cookieResponses: ManagedCookieResponses = LinuxDoCookieResponses.store
 ) : Interceptor {
   override fun intercept(chain: Interceptor.Chain): okhttp3.Response {
     val request = chain.request()
@@ -177,6 +178,9 @@ internal class ForumMediaRequestInterceptor(
       )
     val kind = request.header(FORUM_MEDIA_KIND_HEADER)?.takeIf { value -> value == "video" }
     val firstTargetSource = sourceForUrl(request.url)
+    if (source == "linuxdo" && firstTargetSource == source &&
+      !isPublicLinuxDoMedia(request.url.encodedPath) && cookieResponses.isMediaRechecking()
+    ) throw java.io.InterruptedIOException("Forum media is paused during account verification")
     val policy = MediaRequestCookiePolicy(source.takeIf { it == firstTargetSource })
     val sanitized = request.newBuilder()
       .removeHeader(FORUM_MEDIA_SOURCE_HEADER)
@@ -246,18 +250,42 @@ internal class ForumReadClearancePolicy(source: String?, origin: HttpUrl) {
   }
 }
 
+private class YaohuoHistoryRedirect(var location: String? = null)
+
+private fun isYaohuoHistoryRead(request: Request): Boolean =
+  request.header("Accept") == "application/json" && when (request.url.toString()) {
+    "https://www.yaohuo.me/bbs/messagelist_del.aspx?action=csrftoken" -> request.method == "GET"
+    "https://www.yaohuo.me/bbs/messagelist_view.aspx" -> request.method == "POST"
+    else -> false
+  }
+
+// RN's XHR transport ignores fetch.redirect. Hide Location during OkHttp's follow-up
+// decision, then return the original header to the history adapter.
+private object HoldYaohuoHistoryRedirect : Interceptor {
+  override fun intercept(chain: Interceptor.Chain): Response {
+    val request = chain.request()
+    val response = chain.proceed(request)
+    val redirect = request.tag(YaohuoHistoryRedirect::class.java) ?: return response
+    if (!response.isRedirect) return response
+    redirect.location = response.header("Location") ?: return response
+    return response.newBuilder().removeHeader("Location").build()
+  }
+}
+
 internal class ForumReadRequestInterceptor : Interceptor {
   override fun intercept(chain: Interceptor.Chain): okhttp3.Response {
     val request = chain.request()
     val source = request.header(FORUM_READ_SOURCE_HEADER)
     val cancelClass = request.header(FORUM_READ_CANCEL_CLASS_HEADER)
     val cookiePolicy = request.header(FORUM_READ_COOKIE_POLICY_HEADER)
-    if (source == null && cancelClass == null && cookiePolicy == null) return chain.proceed(request)
+    val historyRedirect = if (isYaohuoHistoryRead(request)) YaohuoHistoryRedirect() else null
+    if (source == null && cancelClass == null && cookiePolicy == null && historyRedirect == null) return chain.proceed(request)
     val sanitized = request.newBuilder()
       .removeHeader(FORUM_READ_SOURCE_HEADER)
       .removeHeader(FORUM_READ_CANCEL_CLASS_HEADER)
       .removeHeader(FORUM_READ_COOKIE_POLICY_HEADER)
       .apply {
+        if (historyRedirect != null) tag(YaohuoHistoryRedirect::class.java, historyRedirect)
         if (cookiePolicy != null) {
           removeHeader("Cookie")
           tag(ForumReadClearancePolicy::class.java, ForumReadClearancePolicy(
@@ -274,7 +302,8 @@ internal class ForumReadRequestInterceptor : Interceptor {
         }
       }
       .build()
-    return chain.proceed(sanitized)
+    val response = chain.proceed(sanitized)
+    return historyRedirect?.location?.let { response.newBuilder().header("Location", it).build() } ?: response
   }
 }
 
@@ -291,7 +320,10 @@ internal class ForumReadClearanceInterceptor(
     policy.observe(request, sourceForUrl)
     val sanitized = request.newBuilder().removeHeader("Cookie")
     if (policy.allowsCookies) {
-      cfClearanceValue(cookieReader(url.toString()))?.let { sanitized.header("Cookie", "cf_clearance=$it") }
+      val clearance = cfClearanceValues(cookieReader(url.toString())).filter { it.isNotBlank() }
+      if (clearance.isNotEmpty()) {
+        sanitized.header("Cookie", clearance.joinToString("; ") { "cf_clearance=$it" })
+      }
     }
     // Clearance-only reads never own authenticated response-cookie writes or fallback.
     responses.observed(url.toString(), null, null)
@@ -357,6 +389,47 @@ private val imageCancellationExecutor by lazy {
   }
 }
 
+private class GlideResponseStream(private val body: ResponseBody) : InputStream() {
+  private val stream = ContentLengthInputStream.obtain(body.byteStream(), body.contentLength())
+  private val lock = Any()
+  private var activeReads = 0
+  private var closeRequested = false
+
+  // Okio recycles buffered segments on close. Glide can cancel even from a read's progress callback.
+  private inline fun <T> consume(block: () -> T): T {
+    synchronized(lock) {
+      if (closeRequested) throw IOException("Image response stream is closed")
+      activeReads++
+    }
+    try {
+      return block()
+    } finally {
+      val shouldClose = synchronized(lock) {
+        activeReads--
+        activeReads == 0 && closeRequested
+      }
+      if (shouldClose) body.close()
+    }
+  }
+
+  override fun read(): Int = consume { stream.read() }
+  override fun read(bytes: ByteArray, offset: Int, length: Int): Int = consume { stream.read(bytes, offset, length) }
+  override fun skip(count: Long): Long = consume { stream.skip(count) }
+  override fun available(): Int = consume { stream.available() }
+  override fun markSupported(): Boolean = stream.markSupported()
+  override fun mark(readLimit: Int) { if (markSupported()) consume { stream.mark(readLimit) } }
+  override fun reset() = consume { stream.reset() }
+
+  override fun close() {
+    val shouldClose = synchronized(lock) {
+      if (closeRequested) return
+      closeRequested = true
+      activeReads == 0
+    }
+    if (shouldClose) body.close()
+  }
+}
+
 internal class CloseSafeGlideStreamFetcher(
   private val callFactory: Call.Factory,
   private val glideUrl: GlideUrl,
@@ -372,7 +445,7 @@ internal class CloseSafeGlideStreamFetcher(
     data class Streaming(
       override val call: Call?,
       override val callback: DataFetcher.DataCallback<in InputStream>?,
-      val body: ResponseBody
+      val stream: GlideResponseStream
     ) : Active
     data class Cleaned(val call: Call?) : State
     data object Cancelled : State
@@ -392,7 +465,7 @@ internal class CloseSafeGlideStreamFetcher(
     val shouldEnqueue = synchronized(lock) {
       when (val current = state) {
         is State.Open -> { state = State.Open(nextCall, callback); true }
-        is State.Streaming -> { state = State.Streaming(nextCall, callback, current.body); true }
+        is State.Streaming -> { state = State.Streaming(nextCall, callback, current.stream); true }
         is State.Cleaned, State.Cancelled -> false
       }
     }
@@ -425,7 +498,7 @@ internal class CloseSafeGlideStreamFetcher(
     var transformedBody = originalBody
     val nextStream = try {
       transformedBody = transformBody(originalBody)
-      ContentLengthInputStream.obtain(transformedBody.byteStream(), transformedBody.contentLength())
+      GlideResponseStream(transformedBody)
     } catch (error: Exception) {
       transformedBody.close()
       fail(error)
@@ -434,29 +507,29 @@ internal class CloseSafeGlideStreamFetcher(
     val callback = synchronized(lock) {
       val current = state as? State.Active ?: return@synchronized null
       val listener = current.callback ?: return@synchronized null
-      state = State.Streaming(current.call, listener, transformedBody)
+      state = State.Streaming(current.call, listener, nextStream)
       listener
     }
-    if (callback == null) transformedBody.close() else callback.onDataReady(nextStream)
+    if (callback == null) nextStream.close() else callback.onDataReady(nextStream)
   }
 
   override fun cleanup() {
-    val body = synchronized(lock) {
+    val stream = synchronized(lock) {
       val current = state as? State.Active ?: return
       state = State.Cleaned(current.call)
       when (current) {
         is State.Open -> null
-        is State.Streaming -> current.body
+        is State.Streaming -> current.stream
       }
     }
-    body?.close()
+    stream?.close()
   }
 
   override fun cancel() {
     val owned = synchronized(lock) {
       when (val current = state) {
         is State.Open -> { state = State.Cancelled; current.call to null }
-        is State.Streaming -> { state = State.Cancelled; current.call to current.body }
+        is State.Streaming -> { state = State.Cancelled; current.call to current.stream }
         is State.Cleaned -> { state = State.Cancelled; current.call to null }
         State.Cancelled -> return
       }
@@ -762,14 +835,28 @@ internal class ReadOnlyWebViewCookieHandler(
       responses.observed(uri.toString(), null, null)
       return null
     }
+    val linuxDoMedia = mediaPolicy != null && source == "linuxdo"
+    val publicMedia = linuxDoMedia && isPublicLinuxDoMedia(uri.rawPath)
+    if (linuxDoMedia && !publicMedia && responses.isMediaRechecking()) {
+      responses.observed(uri.toString(), null, null)
+      return null
+    }
     return try {
-      cookieReader(uri.toString()).also { responses.observed(uri.toString(), source, it) }
+      val header = cookieReader(uri.toString())
+      responses.observed(uri.toString(), source.takeIf { mediaPolicy == null }, header)
+      if (publicMedia) {
+        cfClearanceValues(header).filter(String::isNotBlank).joinToString("; ") { "cf_clearance=$it" }
+      } else header
     } catch (error: Exception) {
       responses.observed(uri.toString(), null, null)
       if (mediaPolicy == null) throw error else null
     }
   }
 }
+
+private fun isPublicLinuxDoMedia(path: String?): Boolean =
+  path != null && (path.startsWith("/user_avatar/") ||
+    path.startsWith("/letter_avatar_proxy/") || path.startsWith("/images/emoji/"))
 
 internal class ReadOnlyCookieJarContainer(
   private val delegate: CookieJar
@@ -1628,8 +1715,10 @@ private class ReadNetworkRuntimeGeneration(
     builder.interceptors().removeAll { it is CookieResponseContextInterceptor }
     builder.networkInterceptors().removeAll { it is CookieResponseInterceptor }
     builder.networkInterceptors().removeAll { it is ForumReadClearanceInterceptor }
+    builder.networkInterceptors().removeAll { it === HoldYaohuoHistoryRedirect }
     builder.addInterceptor(CookieResponseContextInterceptor(LinuxDoCookieResponses.store))
     builder.addNetworkInterceptor(ForumReadClearanceInterceptor())
+    if (lane == "forum") builder.addNetworkInterceptor(HoldYaohuoHistoryRedirect)
     builder.addNetworkInterceptor(CookieResponseInterceptor(LinuxDoCookieResponses.store))
     builder.networkInterceptors().removeAll { it is ImageRuntimeGuardInterceptor }
     if (lane == "media") builder.addNetworkInterceptor(ImageRuntimeGuardInterceptor(this))

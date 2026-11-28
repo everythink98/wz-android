@@ -1,13 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SplashScreen from 'expo-splash-screen';
 import { act, cleanup, fireEvent, renderHook } from '@testing-library/react-native';
 import { useAppStartupRuntime } from '@/app/useAppStartupRuntime';
+import { peekPreloadedSearchHistory, readStoredSearchHistory } from '@/features/search/searchHistoryStorage';
 import { setStartupTimingRecorder, type StartupPhase } from '@/platform/diagnostics/startupTiming';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import type { DiagnosticEvent } from '@/platform/diagnostics/diagnosticPolicy';
 import { StatusBar, Text } from 'react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { AppComposition, AppFrame } from '@/app/AppComposition';
+import { Portal } from '@gorhom/portal';
 import { AppRoutes } from '@/app/AppRoutes';
 import { createAppStyles } from '@/app/styles';
 import { useAppRuntime } from '@/app/useAppRuntime';
@@ -16,11 +19,18 @@ import { render } from '../render';
 import { NavigationContext, NavigationRouteContext } from '@react-navigation/native';
 import { StartupPageLayoutProvider, useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import type { ComponentProps, ReactNode } from 'react';
+import type { ReadGateway } from '@/sources/readGateway';
 import { pruneDiagnosticExports } from '@/platform/diagnostics/diagnosticExportFiles';
 import { RecoverableEmptyState } from '@/ui/controls/FeedbackStates';
 
 jest.mock('@/app/AppRoutes', () => ({ AppRoutes: jest.fn(() => null) }));
-jest.mock('@/app/useAppRuntime', () => ({ useAppRuntime: jest.fn() }));
+jest.mock('@/app/useForumCatalogRuntime', () => ({
+  useForumCatalogRuntime: () => ({ categories: [], settled: true })
+}));
+jest.mock('@/app/useAppRuntime', () => ({
+  ...jest.requireActual<typeof import('@/app/useAppRuntime')>('@/app/useAppRuntime'),
+  useAppRuntime: jest.fn()
+}));
 jest.mock('@/platform/diagnostics/diagnosticExportFiles', () => ({ pruneDiagnosticExports: jest.fn() }));
 jest.mock('expo-splash-screen', () => ({
   preventAutoHideAsync: jest.fn(async () => true),
@@ -35,6 +45,7 @@ jest.mock('react-native-safe-area-context', () => ({
 }));
 
 describe('App composition bootstrap', () => {
+  const forumCatalog = { active: false, enabledFeedSources: [], readGateway: {} as ReadGateway };
   const originalRequestIdleCallback = globalThis.requestIdleCallback;
   const originalCancelIdleCallback = globalThis.cancelIdleCallback;
   let idleCallback: Parameters<typeof globalThis.requestIdleCallback>[0] | undefined;
@@ -72,17 +83,20 @@ describe('App composition bootstrap', () => {
     }
   });
 
-  it('keeps navigation delivery stable across root updates and uses a replaced handler', async () => {
+  function mockNavigationRuntime() {
     const settings = createEmptyReaderData().settings;
     const theme = createTheme(settings);
     const onScreenChange = jest.fn<ComponentProps<typeof AppRoutes>['onScreenChange']>();
     // AppRoutes is replaced at this boundary; only its navigation callbacks and badge are consumed here.
     const routes = {
+      feedRouteRuntime: {},
+      searchRouteRuntime: {},
       onScreenChange,
       onReady: jest.fn<() => void>(),
       moreBadgeState: 'messages'
     } as unknown as NonNullable<ReturnType<typeof useAppRuntime>['routes']>;
-    const runtime: ReturnType<typeof useAppRuntime> = {
+    const runtime = {
+      forumCatalog,
       onUserInteraction: jest.fn(),
       accountHost: (<Text>账号</Text>) as ReturnType<typeof useAppRuntime>['accountHost'],
       appStyles: createAppStyles(theme),
@@ -91,8 +105,13 @@ describe('App composition bootstrap', () => {
       routes,
       sessionEpochs: { linuxdo: 0, nodeseek: 0, yaohuo: 0 },
       theme
-    };
+    } satisfies ReturnType<typeof useAppRuntime>;
     jest.mocked(useAppRuntime).mockReturnValue(runtime);
+    return { runtime, routes, onScreenChange };
+  }
+
+  it('keeps navigation delivery stable across root updates and uses a replaced handler', async () => {
+    const { runtime, routes, onScreenChange } = mockNavigationRuntime();
     const view = await render(<AppComposition />);
     const initial = jest.mocked(AppRoutes).mock.calls.at(-1)![0].onScreenChange;
     for (let index = 0; index < 10; index++) {
@@ -110,6 +129,17 @@ describe('App composition bootstrap', () => {
     await act(async () => jest.mocked(AppRoutes).mock.calls.at(-1)![0].onScreenChange('feed', 'feed-route'));
     expect(next).toHaveBeenCalledWith('feed', 'feed-route');
     expect(onScreenChange).toHaveBeenCalledTimes(1);
+  });
+
+  it('draws the account verification above a route sheet mounted in the root portal', async () => {
+    mockNavigationRuntime();
+    jest.mocked(AppRoutes).mockImplementationOnce(() => (
+      <Portal>
+        <Text>回复浮层</Text>
+      </Portal>
+    ));
+    const view = await render(<AppComposition />);
+    expect(view.getAllByText(/回复浮层|账号/).map((node) => node.props.children)).toEqual(['回复浮层', '账号']);
   });
 
   it('accepts layout only from a currently focused page with its own route key', async () => {
@@ -141,7 +171,8 @@ describe('App composition bootstrap', () => {
     jest.restoreAllMocks();
   });
 
-  it('maintains expired diagnostic exports only during idle time after the visible route is ready', async () => {
+  it('primes search history and maintains diagnostic exports during idle time after page ready', async () => {
+    const read = jest.spyOn(AsyncStorage, 'getItem').mockResolvedValueOnce('[" Cached ","cached"]');
     const events: DiagnosticEvent[] = [];
     setDiagnosticWriter((line) => {
       events.push(JSON.parse(line));
@@ -155,12 +186,17 @@ describe('App composition bootstrap', () => {
     expect(SplashScreen.hide).toHaveBeenCalledTimes(1);
     expect(globalThis.requestIdleCallback).toHaveBeenCalledTimes(1);
     expect(pruneDiagnosticExports).not.toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalledWith('reader-search-history');
     expect(idleCallback).toBeDefined();
     jest.mocked(pruneDiagnosticExports).mockImplementationOnce(() => {
       throw new Error('cleanup denied');
     });
     await act(async () => expect(() => idleCallback?.({ didTimeout: false, timeRemaining: () => 5 })).not.toThrow());
     expect(pruneDiagnosticExports).toHaveBeenCalledTimes(1);
+    expect(read.mock.calls.filter(([key]) => key === 'reader-search-history')).toHaveLength(1);
+    expect(peekPreloadedSearchHistory()).toEqual(['Cached']);
+    await expect(readStoredSearchHistory()).resolves.toEqual(['Cached']);
+    expect(read.mock.calls.filter(([key]) => key === 'reader-search-history')).toHaveLength(1);
     expect(events).toContainEqual(
       expect.objectContaining({ area: 'diagnostic', operation: 'export-cleanup', phase: 'finish', outcome: 'failure' })
     );
@@ -186,6 +222,7 @@ describe('App composition bootstrap', () => {
     setStartupTimingRecorder((phase) => phases.push(phase));
     const retry = jest.fn();
     const runtime = {
+      forumCatalog,
       onUserInteraction: jest.fn(),
       accountHost: (<Text>账号</Text>) as ReturnType<typeof useAppRuntime>['accountHost'],
       appStyles: createAppStyles(theme),
@@ -237,6 +274,7 @@ describe('App composition bootstrap', () => {
     const theme = createTheme(settings);
     const onInteraction = jest.fn();
     jest.mocked(useAppRuntime).mockReturnValue({
+      forumCatalog,
       onUserInteraction: onInteraction,
       accountHost: (<Text>账号 WebView 已阻止</Text>) as ReturnType<typeof useAppRuntime>['accountHost'],
       appStyles: createAppStyles(theme),

@@ -50,7 +50,6 @@ import {
 import { discourseReplyReceipt, nodeSeekReplyReceipt, type ReplyWriteReceipt } from '@/sources/replyReceipt';
 import { loadLinuxDoReplyEditSource, runLinuxDoAction } from '@/sources/linuxdo/actionClient';
 import { linuxDoEditedReplyFromAction } from '@/sources/linuxdo/reader';
-import { LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
 import { fetchNodeSeekVoteInfo, isConfirmedNodeSeekAction, runNodeSeekAction } from '@/sources/nodeseek/actionClient';
 import { runYaohuoAction } from '@/sources/yaohuo/actionClient';
 import {
@@ -70,7 +69,7 @@ import {
   discourseReactionPreview,
   type DiscourseInteractionPatch
 } from '@/domain/forum/discourseInteractions';
-import { discoursePostFields } from '@/sources/discourse/model';
+import { discoursePostFields, discourseVoteReceipt } from '@/sources/discourse/model';
 import { linuxDoBoostFromData } from '@/sources/linuxdo/boosts';
 import type { DiscoursePostPolicy } from '@/domain/forum/discoursePolicy';
 import { setLinuxDoPolicyAcceptance } from '@/sources/linuxdo/policy';
@@ -136,8 +135,11 @@ import {
   forumWriteReceiptKeys
 } from '@/platform/query/serverState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import type { LinuxDoVerificationRequest } from '@/platform/query/readRecovery';
+import { resumeExactQuery } from '@/platform/query/useFirstPageInfiniteQuery';
 import type { RequestAccountRecheck } from '@/domain/session/sessionContracts';
-import { errorRequiresAccountRecheck } from '@/sources/sourceErrors';
+import { isLinuxDoCloudflareError } from '@/sources/errors';
+import { errorRequiresAccountRecheck, sourceReadRecoveryOutcome } from '@/sources/sourceErrors';
 import {
   canSubmitReplyToTopic,
   canVotePollOnTopic,
@@ -430,7 +432,7 @@ type TopicActionsRuntime = {
   isRouteFocused?: () => boolean;
   sessionEpochs: ForumSessionEpochs;
   linuxDoUserAgent: () => string;
-  showLinuxDoVerification: (message?: string) => void;
+  showLinuxDoVerification: (message?: string, request?: LinuxDoVerificationRequest) => void;
   ensureNodeImageApiKey: () => Promise<string | null>;
   ensureWritableSession: (source: SessionSite) => Promise<WritableSessionTicket>;
   fetcher: Fetcher;
@@ -672,28 +674,21 @@ function useTopicPollActions({
                 if (!poll.postId || !poll.name) {
                   throw new HandledMutationError('当前投票信息不完整，刷新主题后再试。', 'blocked', 'not_ready');
                 }
-                await runLinuxDoRequest(
-                  {
-                    type: 'vote',
-                    postId: poll.postId,
-                    pollName: poll.name,
-                    optionIds
-                  },
-                  trace,
-                  ticket
-                );
-              } else {
-                await runYaohuoRequest(
-                  () =>
-                    buildYaohuoVoteRequest({
-                      topicId: actionTopic.id,
-                      classId: actionTopic.categoryId || YAOHUO_DEFAULT_CLASS_ID,
-                      voteIds: optionIds
-                    }),
-                  trace,
-                  ticket
-                );
+                const target = { postId: poll.postId, pollName: poll.name };
+                const receipt = await runLinuxDoRequest({ type: 'vote', ...target, optionIds }, trace, ticket);
+                const confirmedPoll = discourseVoteReceipt(receipt, target);
+                return { confirmedPoll, refreshFailed: !confirmedPoll };
               }
+              await runYaohuoRequest(
+                () =>
+                  buildYaohuoVoteRequest({
+                    topicId: actionTopic.id,
+                    classId: actionTopic.categoryId || YAOHUO_DEFAULT_CLASS_ID,
+                    voteIds: optionIds
+                  }),
+                trace,
+                ticket
+              );
               return { confirmedPoll: undefined, refreshFailed: false };
             })();
             return {
@@ -937,7 +932,11 @@ function useTopicReplyActions({
       } catch (error) {
         if (!ownsRequest()) return;
         if (ticket?.source === 'linuxdo' && isWritableSessionTicketCurrent(ticket)) {
-          if (error instanceof LinuxDoCloudflareError || isLoginRequiredError(error)) {
+          if (isLinuxDoCloudflareError(error) && ownsFocus) {
+            showLinuxDoVerification(errorMessage(error), { kind: 'website', isCurrent: ownsFocus });
+            return;
+          }
+          if (isLoginRequiredError(error)) {
             showLinuxDoVerification(errorMessage(error));
             return;
           }
@@ -1165,7 +1164,7 @@ function useTopicReplyActions({
                   ) {
                     return;
                   }
-                  detachReplyEdit();
+                  detachReplyEdit(editTarget);
                   notify(STALE_REPLY_EDIT_MESSAGE);
                   throw new HandledMutationError(STALE_REPLY_EDIT_MESSAGE, 'blocked', 'permission_denied');
                 }
@@ -1295,6 +1294,7 @@ function useTopicReplyActions({
               uncertainReplies.current.add(key);
               const message = '回复可能已发送，草稿已保留。请先刷新原帖核对，避免重复回复。';
               if (ownsConfirmation()) notify(message);
+              if (isLinuxDoCloudflareError(error)) throw error;
               throw new HandledMutationError(message, 'failure', 'unconfirmed');
             }
             if (error instanceof HandledMutationError && error.outcome === 'failure' && ownsConfirmation())
@@ -1503,7 +1503,7 @@ function useTopicReplyActions({
       !isWritableSessionTicketCurrent(target.ticket) ||
       !topicReplies.some((reply) => reply.commentId === target.commentId && reply.canEdit === true)
     ) {
-      detachReplyEdit();
+      detachReplyEdit(target);
     }
   }, [
     isWritableSessionTicketCurrent,
@@ -1565,13 +1565,17 @@ export function useTopicActionsController({
     [actionSource, fetcher]
   );
   const reportAccountError = useCallback(
-    (error: unknown, ticket: WritableSessionTicket | undefined, trace: DiagnosticTrace) => {
+    (error: unknown, ticket: WritableSessionTicket | undefined, trace: DiagnosticTrace, ownsRoute?: () => boolean) => {
       if (!ticket || !activeRef.current || !writableTicketCurrentRef.current(ticket)) return;
       if (isRawUnauthorized(error)) onSessionExpired(ticket.source, ticket.sessionEpoch);
-      else if (ticket.source === 'linuxdo' && errorRequiresAccountRecheck(error))
-        requestAccountRecheck(ticket.source, ticket.sessionEpoch, trace.traceId);
+      else if (ticket.source === 'linuxdo') {
+        if (errorRequiresAccountRecheck(error))
+          requestAccountRecheck(ticket.source, ticket.sessionEpoch, trace.traceId);
+        else if (isLinuxDoCloudflareError(error) && ownsRoute?.())
+          showLinuxDoVerification(errorMessage(error), { kind: 'website', isCurrent: ownsRoute });
+      }
     },
-    [activeRef, writableTicketCurrentRef, onSessionExpired, requestAccountRecheck]
+    [activeRef, writableTicketCurrentRef, onSessionExpired, requestAccountRecheck, showLinuxDoVerification]
   );
   const nodeSeekUserId = nodeSeekUserIdForSession(siteSessionViewModels.nodeseek);
   const [stardustPayments] = useState(createStardustPayments);
@@ -1749,7 +1753,7 @@ export function useTopicActionsController({
           queryClient.getQueryData<ReplyCache>(variables.repliesKey)
         )
       ) {
-        detachReplyEdit();
+        detachReplyEdit(variables.editTarget);
         notify(STALE_REPLY_EDIT_MESSAGE);
         throw new HandledMutationError(STALE_REPLY_EDIT_MESSAGE, 'blocked', 'permission_denied');
       }
@@ -1825,9 +1829,11 @@ export function useTopicActionsController({
       });
     },
     onError: (error, variables) => {
-      const failure = mutationFailure(error);
+      const verificationRequired = isLinuxDoCloudflareError(error);
+      const failure = mutationFailure(error, verificationRequired ? 'blocked' : 'failure');
       const credentialIsCurrent = isWritableSessionTicketCurrent(variables.ticket) && variables.isCurrent?.() !== false;
-      if (credentialIsCurrent && !(error instanceof HandledMutationError)) notify(failure.message);
+      if (credentialIsCurrent && !verificationRequired && !(error instanceof HandledMutationError))
+        notify(failure.message);
       finishDiagnosticTrace(variables.trace, credentialIsCurrent ? failure.outcome : 'stale', {
         source: variables.source,
         reason: credentialIsCurrent ? failure.reason : 'stale',
@@ -1974,6 +1980,7 @@ export function useTopicActionsController({
 
   const executeMutation = useCallback(
     async (actionTopic: TopicDetail, variables: MutationInput) => {
+      const ownsConfirmation = captureConfirmation();
       if (variables.isCurrent?.() === false) {
         finishDiagnosticTrace(variables.trace, 'canceled', { source: actionTopic.source, reason: 'canceled' });
         return false;
@@ -2042,7 +2049,7 @@ export function useTopicActionsController({
               queryClient.getQueryData<ReplyCache>(keys.repliesKey)
             )
           ) {
-            detachReplyEdit();
+            detachReplyEdit(variables.editTarget);
             notify(STALE_REPLY_EDIT_MESSAGE);
             finishDiagnosticTrace(variables.trace, 'blocked', {
               source: actionTopic.source,
@@ -2065,6 +2072,14 @@ export function useTopicActionsController({
           finishDiagnosticTrace(variables.trace, 'canceled', { source: actionTopic.source, reason: 'canceled' });
         } else if (error instanceof HandledMutationError) {
           // Mutation callbacks already own diagnostics and user feedback.
+        } else if (isLinuxDoCloudflareError(error)) {
+          const isCurrent = () => ownsConfirmation() && variables.isCurrent?.() !== false;
+          const current = isCurrent();
+          finishDiagnosticTrace(variables.trace, current ? 'blocked' : 'stale', {
+            source: actionTopic.source,
+            reason: current ? 'verification_required' : 'stale'
+          });
+          if (current) showLinuxDoVerification(errorMessage(error), { kind: 'website', isCurrent });
         } else if (error instanceof WritableSessionBlockedError) {
           notify(error.message);
           finishDiagnosticTrace(variables.trace, 'blocked', {
@@ -2085,13 +2100,15 @@ export function useTopicActionsController({
     },
     [
       cacheKeys,
+      captureConfirmation,
       decisionForRef,
       detachReplyEdit,
       ensureWritableSession,
       mutation.mutateAsync,
       notify,
       policyContentRef,
-      queryClient
+      queryClient,
+      showLinuxDoVerification
     ]
   );
 
@@ -2309,7 +2326,8 @@ export function useTopicActionsController({
         return result ?? true;
       } catch (error) {
         if (error instanceof HandledMutationError) throw error;
-        if (isRawUnauthorized(error) || errorRequiresAccountRecheck(error)) throw error;
+        if (isRawUnauthorized(error) || errorRequiresAccountRecheck(error) || isLinuxDoCloudflareError(error))
+          throw error;
         const message = errorMessage(error);
         if (isLoginRequiredError(error)) {
           showLinuxDoVerification(message);
@@ -2363,17 +2381,43 @@ export function useTopicActionsController({
     [queryClient]
   );
   const linuxDoInteractionConfigQuery = useMemo(
-    () =>
-      queryOptions({
-        queryKey: forumQueryKeys.interactionConfig(sessionEpochs.linuxdo),
-        staleTime: 5 * 60_000,
-        queryFn: ({ signal }) => readGateway.getLinuxDoInteractionConfig({ signal })
-      }),
+    () => ({
+      queryKey: forumQueryKeys.interactionConfig(sessionEpochs.linuxdo),
+      staleTime: 5 * 60_000,
+      queryFn: ({ signal }: { signal: AbortSignal }) => readGateway.getLinuxDoInteractionConfig({ signal })
+    }),
     [readGateway, sessionEpochs.linuxdo]
   );
+  const verifyLinuxDoInteractionConfig = useCallback(
+    (message: string, isCurrent = captureConfirmation()) => {
+      if (!isCurrent()) return false;
+      showLinuxDoVerification(message, {
+        queryKey: linuxDoInteractionConfigQuery.queryKey,
+        explicit: true,
+        isCurrent,
+        resume: async (signal) => {
+          const result = await resumeExactQuery(queryClient, linuxDoInteractionConfigQuery, isCurrent, signal);
+          if (result.kind === 'failed') return sourceReadRecoveryOutcome('linuxdo', result.error);
+          return result.kind === 'success' ? 'completed' : 'stale';
+        }
+      });
+      return true;
+    },
+    [captureConfirmation, linuxDoInteractionConfigQuery, queryClient, showLinuxDoVerification]
+  );
   const loadLinuxDoInteractionConfig = useCallback(
-    () => queryClient.fetchQuery(linuxDoInteractionConfigQuery),
-    [queryClient, linuxDoInteractionConfigQuery]
+    async (ownsAction: () => boolean) => {
+      try {
+        return await queryClient.fetchQuery(linuxDoInteractionConfigQuery);
+      } catch (error) {
+        if (!isLinuxDoCloudflareError(error)) throw error;
+        const message = errorMessage(error);
+        if (!verifyLinuxDoInteractionConfig(message, () => ownsAction() && isRouteFocused?.() !== false))
+          throw new HandledMutationError('操作已取消', 'canceled', 'canceled');
+        throw new HandledMutationError(message, 'blocked', 'verification_required');
+      }
+    },
+    [isRouteFocused, linuxDoInteractionConfigQuery, queryClient, verifyLinuxDoInteractionConfig]
   );
   const interactionReadsRef = useRef(new Map<number, { controller: AbortController; promise: Promise<boolean> }>());
   const getLinuxDoPost = useCallback(
@@ -2429,9 +2473,11 @@ export function useTopicActionsController({
       }
       const controller = new AbortController();
       const scope = policyScopeRef.current;
+      const ownsRoute = captureConfirmation();
       const promise = (async () => {
+        let ticket = suppliedTicket;
         try {
-          const ticket = await (suppliedTicket || ensureWritableSession('linuxdo'));
+          ticket ??= await ensureWritableSession('linuxdo');
           if (!activeRef.current || scope !== policyScopeRef.current || controller.signal.aborted)
             throw new HandledMutationError('操作已取消', 'canceled', 'canceled');
           assertWritableTicket(ticket);
@@ -2474,6 +2520,8 @@ export function useTopicActionsController({
           finishDiagnosticTrace(trace, 'success', { source: 'linuxdo', floor, state: 'confirmed', localApplied: true });
           return true;
         } catch (error) {
+          if (!suppliedTicket && !controller.signal.aborted && isLinuxDoCloudflareError(error))
+            reportAccountError(error, ticket, trace, ownsRoute);
           const failure = mutationFailure(error);
           finishDiagnosticTrace(trace, controller.signal.aborted ? 'canceled' : failure.outcome, {
             source: 'linuxdo',
@@ -2493,12 +2541,14 @@ export function useTopicActionsController({
       activeRef,
       assertWritableTicket,
       cacheKeys,
+      captureConfirmation,
       ensureWritableSession,
       getLinuxDoPost,
       patchLinuxDoPost,
       policyContentRef,
       policyScopeRef,
-      readGateway
+      readGateway,
+      reportAccountError
     ]
   );
 
@@ -2555,8 +2605,9 @@ export function useTopicActionsController({
           let request: DiscourseAction;
           let rollback: DiscourseInteractionPatch | undefined;
           const keys = cacheKeys(opening, ticket);
+          const ownsConfigRead = () => isCurrent() && currentWritableTicket(ticket);
           if (intent.kind === 'reaction') {
-            const config = await loadLinuxDoInteractionConfig();
+            const config = await loadLinuxDoInteractionConfig(ownsConfigRead);
             assertWritableTicket(ticket);
             if (!isCurrent()) throw new HandledMutationError('操作已取消', 'canceled', 'canceled');
             const latest = getLinuxDoPost(postId)?.target;
@@ -2594,7 +2645,7 @@ export function useTopicActionsController({
             });
           } else if (intent.kind === 'create-boost') {
             const [config, emojis] = await Promise.all([
-              loadLinuxDoInteractionConfig(),
+              loadLinuxDoInteractionConfig(ownsConfigRead),
               readGateway.getEmojiUrls({ source: 'linuxdo' })
             ]);
             assertWritableTicket(ticket);
@@ -2742,6 +2793,7 @@ export function useTopicActionsController({
       activeRef,
       assertWritableTicket,
       cacheKeys,
+      currentWritableTicket,
       executeMutation,
       getLinuxDoPost,
       loadLinuxDoInteractionConfig,
@@ -2768,7 +2820,9 @@ export function useTopicActionsController({
       return { ...current, content };
     });
   }, []);
-  const closeBoostComposer = useCallback(() => setBoostComposer(null), []);
+  const closeBoostComposer = useCallback((postId?: number) => {
+    setBoostComposer((current) => (postId === undefined || current?.postId === postId ? null : current));
+  }, []);
   const submitBoost = useCallback(
     () =>
       boostComposer
@@ -2794,7 +2848,7 @@ export function useTopicActionsController({
       return;
     }
     const editTarget = replyComposerIntent.kind === 'edit' ? replyComposerIntent.target : null;
-    if (!actionTopic || !canSubmitReplyToTopic(actionTopic)) {
+    if (!actionTopic || (!editTarget && !canSubmitReplyToTopic(actionTopic))) {
       finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
       return;
     }
@@ -2831,7 +2885,7 @@ export function useTopicActionsController({
           ) {
             return;
           }
-          detachReplyEdit();
+          detachReplyEdit(editTarget);
           notify(STALE_REPLY_EDIT_MESSAGE);
           throw new HandledMutationError(STALE_REPLY_EDIT_MESSAGE, 'blocked', 'permission_denied', serverConfirmed);
         };
@@ -2933,8 +2987,9 @@ export function useTopicActionsController({
   ]);
 
   const uploadReplyImage = useCallback(async () => {
+    const revision = topicComposer.getDraftRevision();
     const markup = await uploadReplyImageMarkup();
-    if (markup) topicComposer.appendMarkup(markup);
+    if (markup) topicComposer.appendMarkup(markup, revision);
     return markup;
   }, [topicComposer, uploadReplyImageMarkup]);
 
@@ -3294,6 +3349,7 @@ export function useTopicActionsController({
       const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
       if (actionTopic?.source !== 'linuxdo') throw new Error('当前入口不支持图片地址解析');
       const trace = beginDiagnosticTrace('reply', 'image-load', { source: 'linuxdo' });
+      const ownsRoute = captureConfirmation();
       let ticket: WritableSessionTicket | undefined;
       try {
         ticket = await ensureWritableSession('linuxdo');
@@ -3310,7 +3366,7 @@ export function useTopicActionsController({
         finishDiagnosticTrace(trace, 'success');
         return url;
       } catch (error) {
-        reportAccountError(error, ticket, trace);
+        reportAccountError(error, ticket, trace, ownsRoute);
         finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
         throw error;
       }
@@ -3321,6 +3377,7 @@ export function useTopicActionsController({
       ensureWritableSession,
       assertWritableTicket,
       authenticatedFetcher,
+      captureConfirmation,
       linuxDoUserAgent,
       reportAccountError
     ]
@@ -3340,6 +3397,7 @@ export function useTopicActionsController({
         finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
         throw new Error(`当前入口不支持 LinuxDo ${operation === 'load-templates' ? '模板' : '投票配置'}`);
       }
+      const ownsRoute = captureConfirmation();
       let ticket: WritableSessionTicket | undefined;
       try {
         ticket = await ensureWritableSession('linuxdo');
@@ -3355,8 +3413,8 @@ export function useTopicActionsController({
         finishDiagnosticTrace(trace, 'success', { source: 'linuxdo', itemCount: itemCount(result) });
         return result;
       } catch (error) {
-        reportAccountError(error, ticket, trace);
-        if (isLoginRequiredError(error)) showLinuxDoVerification(errorMessage(error));
+        reportAccountError(error, ticket, trace, ownsRoute);
+        if (isLoginRequiredError(error) && ownsRoute()) showLinuxDoVerification(errorMessage(error));
         finishDiagnosticTrace(trace, 'failure', { source: 'linuxdo', reason: normalizeDiagnosticReason(error) });
         throw error;
       }
@@ -3364,6 +3422,7 @@ export function useTopicActionsController({
     [
       assertWritableTicket,
       authenticatedFetcher,
+      captureConfirmation,
       linuxDoUserAgent,
       reportAccountError,
       showLinuxDoVerification,
@@ -3391,6 +3450,7 @@ export function useTopicActionsController({
         finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
         throw new Error('当前入口不支持 LinuxDo 模板');
       }
+      const ownsRoute = captureConfirmation();
       let ticket: WritableSessionTicket | undefined;
       try {
         ticket = await ensureWritableSession('linuxdo');
@@ -3406,9 +3466,9 @@ export function useTopicActionsController({
         assertWritableTicket(ticket, true);
         finishDiagnosticTrace(trace, 'success', { source: 'linuxdo', serverConfirmed: true });
       } catch (error) {
-        reportAccountError(error, ticket, trace);
+        reportAccountError(error, ticket, trace, ownsRoute);
         const message = errorMessage(error);
-        if (isLoginRequiredError(error)) {
+        if (isLoginRequiredError(error) && ownsRoute()) {
           showLinuxDoVerification(message);
         }
         finishDiagnosticTrace(trace, 'failure', { source: 'linuxdo', reason: normalizeDiagnosticReason(error) });
@@ -3418,6 +3478,7 @@ export function useTopicActionsController({
     [
       assertWritableTicket,
       authenticatedFetcher,
+      captureConfirmation,
       linuxDoUserAgent,
       reportAccountError,
       showLinuxDoVerification,
@@ -3541,7 +3602,8 @@ export function useTopicActionsController({
               if (
                 error instanceof HandledMutationError ||
                 isRawUnauthorized(error) ||
-                errorRequiresAccountRecheck(error)
+                errorRequiresAccountRecheck(error) ||
+                isLinuxDoCloudflareError(error)
               )
                 throw error;
               const message = errorMessage(error);
@@ -3628,8 +3690,8 @@ export function useTopicActionsController({
     deleteBoost,
     reactToPost,
     recheckLinuxDoPost,
-    loadLinuxDoInteractionConfig,
-    linuxDoInteractionConfigQuery,
+    verifyLinuxDoInteractionConfig,
+    linuxDoInteractionConfigQuery: queryOptions(linuxDoInteractionConfigQuery),
     replyImageUploading,
     bookmarkOnDiscourseSite,
     collectOnNodeSeekSite,

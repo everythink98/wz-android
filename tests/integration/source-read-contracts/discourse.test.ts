@@ -2021,6 +2021,63 @@ describe('Android local sources', () => {
     expect(searchCalls.map((url) => url.searchParams.get('page'))).toEqual(['1', '1']);
   });
 
+  it('keeps the matched reply author separate from the topic author in linux.do search', async () => {
+    const match = { username: 'reply-author', avatar_template: '/user_avatar/linux.do/reply-author/{size}/1.png' };
+    const fetcher = routeFetcher([
+      [
+        'linux.do/search?',
+        jsonResponse({
+          topics: [
+            {
+              id: 510,
+              title: 'AI discussion',
+              slug: 'ai-discussion',
+              created_at: '2026-11-25T00:00:00.000Z',
+              posts_count: 50
+            },
+            {
+              id: 511,
+              title: 'AI topic with a known author',
+              slug: 'ai-topic',
+              created_at: '2026-11-25T00:00:00.000Z',
+              posts_count: 2,
+              posters: [{ user_id: 7, description: 'Original Poster' }]
+            }
+          ],
+          posts: [
+            { ...match, topic_id: 510, post_number: 50, blurb: 'matching reply' },
+            { ...match, topic_id: 511, post_number: 2, name: '回帖佬' }
+          ],
+          users: [{ id: 7, username: 'op', name: '楼主' }]
+        })
+      ]
+    ]);
+
+    const result = await searchTopics({ source: 'linuxdo', query: 'AI', fetcher, discourseAuth: testLinuxDoAccess() });
+
+    expect(result.items).toEqual([
+      expect.objectContaining({
+        id: '510',
+        excerpt: 'matching reply',
+        author: '',
+        authorAvatar: undefined,
+        matchedReplyAuthor: {
+          author: 'reply-author',
+          authorAvatar: 'https://linux.do/user_avatar/linux.do/reply-author/96/1.png'
+        }
+      }),
+      expect.objectContaining({
+        id: '511',
+        author: '楼主',
+        authorId: 'op',
+        matchedReplyAuthor: {
+          author: '回帖佬',
+          authorAvatar: 'https://linux.do/user_avatar/linux.do/reply-author/96/1.png'
+        }
+      })
+    ]);
+  });
+
   it('does not treat Cloudflare marker text inside Discourse JSON as a challenge', async () => {
     const fetcher = routeFetcher([
       ['linux.do/session/csrf.json', jsonResponse({ csrf: 'csrf-token' })],
@@ -2590,7 +2647,16 @@ describe('Android local sources', () => {
             posts_count: 2
           }
         ],
-        posts: [{ topic_id: 88, blurb: '[!important]+ semantic match' }],
+        posts: [
+          {
+            topic_id: 88,
+            post_number: 2,
+            username: 'reply-author',
+            name: '语义搜索回帖者',
+            avatar_template: '/user_avatar/linux.do/reply-author/{size}/1.png',
+            blurb: '[!important]+ semantic match'
+          }
+        ],
         users: []
       })
     );
@@ -2601,7 +2667,16 @@ describe('Android local sources', () => {
     });
 
     expect(result.items).toEqual([
-      expect.objectContaining({ id: '88', excerpt: 'semantic match', isAiGenerated: true })
+      expect.objectContaining({
+        id: '88',
+        excerpt: 'semantic match',
+        isAiGenerated: true,
+        author: '',
+        matchedReplyAuthor: {
+          author: '语义搜索回帖者',
+          authorAvatar: 'https://linux.do/user_avatar/linux.do/reply-author/96/1.png'
+        }
+      })
     ]);
     expect(result.hasMore).toBe(false);
     expect(result.nextPage).toBeNull();

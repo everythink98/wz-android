@@ -30,7 +30,7 @@ jest.mock('@/ui/topic/TopicCard', () => {
   const { Pressable: NativePressable, Text: NativeText } = require('react-native') as typeof import('react-native');
   return {
     ...jest.requireActual<typeof import('@/ui/topic/TopicCard')>('@/ui/topic/TopicCard'),
-    MemoizedTopicCard: ({
+    TopicListCard: ({
       onOpenTopic,
       topic,
       testID

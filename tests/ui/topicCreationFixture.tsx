@@ -39,7 +39,7 @@ const lateEditBody = '另一页在旧回执返回前保存的新正文';
 export type TopicProofObservation = {
   ready: boolean;
   route: string;
-  drafts: Partial<Record<TopicCreationSource, { exists: boolean; retained: boolean; empty: boolean }>>;
+  drafts: Partial<Record<TopicCreationSource, { exists: boolean; retained: boolean; empty: boolean; body?: string }>>;
   attempts: Partial<Record<TopicCreationSource, string>>;
   writes: number;
   uploads: number;
@@ -342,6 +342,7 @@ export function TopicCreationFixture({
             const attempt = await readTopicSubmissionAttempt(site, identity);
             value.drafts[site] = {
               exists: Boolean(draft),
+              ...(kind === 'pinyin' && site === source ? { body: draft?.body } : {}),
               retained: draft?.title === topicProofTitle(site) && draft.body === topicProofBody(site),
               empty: !draft || (!draft.title && !draft.body)
             };

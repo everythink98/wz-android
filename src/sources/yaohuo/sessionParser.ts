@@ -70,7 +70,7 @@ export function yaohuoLoginRequirementReason(html: string, responseUrl = '') {
     : ('verification' as const);
 }
 
-function loginRequiredError(reason = 'expired') {
+export function yaohuoLoginRequiredError(reason = 'expired') {
   const error = new Error(
     reason === 'missing_cookie'
       ? '请先登录妖火'
@@ -90,7 +90,7 @@ function loginRequiredError(reason = 'expired') {
 export function ensureYaohuoHtmlLoggedIn(html: string, responseUrl = '') {
   const reason = yaohuoLoginRequirementReason(html, responseUrl);
   if (reason) {
-    throw loginRequiredError(reason);
+    throw yaohuoLoginRequiredError(reason);
   }
 }
 

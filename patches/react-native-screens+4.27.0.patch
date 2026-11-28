@@ -1,0 +1,154 @@
+diff --git a/node_modules/react-native-screens/android/src/main/java/com/swmansion/rnscreens/ScreenStack.kt b/node_modules/react-native-screens/android/src/main/java/com/swmansion/rnscreens/ScreenStack.kt
+index 9f9f864..08303dd 100644
+--- a/node_modules/react-native-screens/android/src/main/java/com/swmansion/rnscreens/ScreenStack.kt
++++ b/node_modules/react-native-screens/android/src/main/java/com/swmansion/rnscreens/ScreenStack.kt
+@@ -215,6 +215,19 @@
+             stackAnimation = topScreenWrapper?.screen?.stackAnimation
+         }
+ 
++        if (topScreenWillChange) {
++            val leaving = topScreenWrapper?.fragment as? ScreenStackFragment
++            val arriving = newTop?.fragment as? ScreenStackFragment
++            // A replace, multi-pop or nested return must keep FragmentManager's original animation.
++            val standardPop = newTopAlreadyInStack && !shouldUseOpenAnimation &&
++                stackAnimation == StackAnimation.SLIDE_FROM_RIGHT && stack.size == 2 &&
++                stack[0] === newTop && stack[1] === topScreenWrapper
++            val feedPop = if (leaving != null && arriving != null) {
++                FeedPopAnimation.select(standardPop, leaving.screen.screenId, arriving.screen.screenId, arriving.screen, width)
++            } else null
++            leaving?.feedPopAnimation = feedPop
++            arriving?.feedPopAnimation = feedPop
++        }
+         goingForward = shouldUseOpenAnimation
+ 
+         if (shouldUseOpenAnimation &&
+diff --git a/node_modules/react-native-screens/android/src/main/java/com/swmansion/rnscreens/ScreenStackFragment.kt b/node_modules/react-native-screens/android/src/main/java/com/swmansion/rnscreens/ScreenStackFragment.kt
+index 10b64cf..a471e53 100644
+--- a/node_modules/react-native-screens/android/src/main/java/com/swmansion/rnscreens/ScreenStackFragment.kt
++++ b/node_modules/react-native-screens/android/src/main/java/com/swmansion/rnscreens/ScreenStackFragment.kt
+@@ -54,6 +54,7 @@
+ class ScreenStackFragment :
+     ScreenFragment,
+     ScreenStackFragmentWrapper {
++    internal var feedPopAnimation: FeedPopAnimation? = null
+     private var appBarLayout: AppBarLayout? = null
+     private var toolbar: Toolbar? = null
+     private var isToolbarShadowHidden = false
+@@ -352,8 +353,10 @@
+         enter: Boolean,
+         nextAnim: Int,
+     ): Animation? {
+-        // Ensure onCreateAnimator is called
+-        return null
++        val feedPop = feedPopAnimation
++        feedPopAnimation = null
++        // A null result preserves FragmentManager's standard animation or animator.
++        return feedPop?.load(requireContext(), enter, nextAnim)
+     }
+ 
+     override fun onCreateAnimator(
+diff --git a/node_modules/react-native-screens/android/src/main/java/com/swmansion/rnscreens/FeedPopAnimation.java b/node_modules/react-native-screens/android/src/main/java/com/swmansion/rnscreens/FeedPopAnimation.java
+new file mode 100644
+index 0000000..304a0bf
+--- /dev/null
++++ b/node_modules/react-native-screens/android/src/main/java/com/swmansion/rnscreens/FeedPopAnimation.java
+@@ -0,0 +1,99 @@
++package com.swmansion.rnscreens;
++
++import android.content.Context;
++import android.content.res.XmlResourceParser;
++import android.graphics.Matrix;
++import android.util.Xml;
++import android.view.View;
++import android.view.ViewParent;
++import android.view.animation.Animation;
++import android.view.animation.Transformation;
++import android.view.animation.TranslateAnimation;
++import com.facebook.react.uimanager.util.ReactFindViewUtil;
++import java.io.IOException;
++import org.xmlpull.v1.XmlPullParser;
++import org.xmlpull.v1.XmlPullParserException;
++
++/** Keeps the two screens one viewport apart while the retained Feed's text moves across the display. */
++public final class FeedPopAnimation {
++    private final int viewportWidth;
++    private final float[] values = new float[9];
++    private boolean supported = true;
++    private long drawingTime = Long.MIN_VALUE;
++    private int displacement;
++
++    private FeedPopAnimation(int viewportWidth) {
++        this.viewportWidth = viewportWidth;
++    }
++
++    static FeedPopAnimation select(boolean standardPop, String from, String to, View root, int width) {
++        if (!standardPop || width < 1 || from == null || !from.startsWith("Topic-") ||
++                to == null || !to.startsWith("MainTabs-")) return null;
++        View feed = ReactFindViewUtil.findView(root, "wz-retained-feed-scroll");
++        // A detached MainTabs fragment can still own the screen. Check only its local ancestor chain.
++        while (feed != null && feed != root) {
++            if (feed.getVisibility() != View.VISIBLE) return null;
++            ViewParent parent = feed.getParent();
++            feed = parent instanceof View ? (View) parent : null;
++        }
++        return feed == null ? null : new FeedPopAnimation(width);
++    }
++
++    Animation load(Context context, boolean entering, int resource) {
++        if (!supported) return null;
++        int expected = entering ? R.anim.rns_slide_in_from_left : R.anim.rns_slide_out_to_right;
++        if (resource == expected) {
++            try (XmlResourceParser parser = context.getResources().getAnimation(resource)) {
++                while (parser.getEventType() != XmlPullParser.START_TAG &&
++                        parser.getEventType() != XmlPullParser.END_DOCUMENT) parser.next();
++                if ("translate".equals(parser.getName())) {
++                    return new TranslateAnimation(context, Xml.asAttributeSet(parser)) {
++                        private long frame = Long.MIN_VALUE;
++
++                        @Override public void initialize(int width, int height, int parentWidth, int parentHeight) {
++                            if (width != viewportWidth) supported = false;
++                            super.initialize(width, height, parentWidth, parentHeight);
++                        }
++
++                        @Override public boolean getTransformation(long currentTime, Transformation out) {
++                            frame = currentTime;
++                            return super.getTransformation(currentTime, out);
++                        }
++
++                        @Override protected void applyTransformation(float time, Transformation out) {
++                            super.applyTransformation(time, out);
++                            if (supported && frame != Long.MIN_VALUE) align(entering, frame, out.getMatrix());
++                        }
++                    };
++                }
++            } catch (XmlPullParserException | IOException ignored) {
++                // FragmentManager retains ownership of resource loading when the XML cannot be reused.
++            }
++        }
++        supported = false;
++        return null;
++    }
++
++    private void align(boolean entering, long frame, Matrix matrix) {
++        matrix.getValues(values);
++        if (values[Matrix.MSCALE_X] != 1f || values[Matrix.MSCALE_Y] != 1f ||
++                values[Matrix.MSKEW_X] != 0f || values[Matrix.MSKEW_Y] != 0f || values[Matrix.MTRANS_Y] != 0f ||
++                values[Matrix.MPERSP_0] != 0f || values[Matrix.MPERSP_1] != 0f || values[Matrix.MPERSP_2] != 1f) {
++            supported = false;
++            return;
++        }
++        float raw = values[Matrix.MTRANS_X];
++        int origin = entering ? viewportWidth : 0;
++        int nearest = Math.round(raw + origin);
++        if (drawingTime != frame) {
++            drawingTime = frame;
++            displacement = nearest;
++        }
++        float aligned = displacement - origin;
++        if (nearest != displacement || Math.abs(aligned - raw) > 0.5f) {
++            supported = false;
++        } else if (raw != aligned) {
++            matrix.setTranslate(aligned, 0f);
++        }
++    }
++}

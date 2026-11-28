@@ -1162,19 +1162,25 @@ export function useTopicComposerController({
     const ownsFocus = captureConfirmationFocus();
     const linuxDoEpoch = runtimeRef.current.sessionEpochs.linuxdo;
     return (value: TopicDraft, message: string, ticket?: WritableSessionTicket) => {
-      if (
-        value.source !== 'linuxdo' ||
-        !ownsFocus() ||
-        runtimeRef.current.sessionEpochs.linuxdo !== linuxDoEpoch ||
-        !runtimeRef.current.sessions.linuxdo.canWrite
-      )
-        return;
-      try {
-        assertOwner(value, ticket);
-      } catch {
-        return;
-      }
-      void (async () => runtimeRef.current.openAccount('linuxdo', message))().catch(() => undefined);
+      const isCurrent = () => {
+        if (
+          value.source !== 'linuxdo' ||
+          !ownsFocus() ||
+          runtimeRef.current.sessionEpochs.linuxdo !== linuxDoEpoch ||
+          !runtimeRef.current.sessions.linuxdo.canWrite
+        )
+          return false;
+        try {
+          assertOwner(value, ticket);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      if (isCurrent())
+        void (async () => runtimeRef.current.openAccount('linuxdo', message, { kind: 'website', isCurrent }))().catch(
+          () => undefined
+        );
     };
   }, [assertOwner, captureConfirmationFocus, runtimeRef]);
 
@@ -1946,23 +1952,27 @@ export function useTopicComposerController({
     [assertOwner, requestAccess, readWithVerification]
   );
 
-  const editorServices = {
-    useTemplate: async (id: string) => {
-      const value = draftRef.current;
-      if (!value || value.source !== 'linuxdo') throw new Error('当前站点不支持模板');
-      const access = await requestAccess(value);
-      await recordLinuxDoTemplateUse({ ...access, id });
-    },
-    loadTemplates: async () => {
-      const value = draftRef.current;
-      if (!value || value.source !== 'linuxdo') throw new Error('当前站点不支持模板');
-      return fetchLinuxDoTemplates(await requestAccess(value));
-    },
-    resolveUpload: async (shortUrl: string) => {
-      const value = draftRef.current;
-      if (!value || value.source !== 'linuxdo') throw new Error('当前站点不支持该附件');
-      return resolveLinuxDoUpload({ ...(await requestAccess(value)), shortUrl });
+  const runLinuxDoEditorService = async <T>(
+    run: (access: Awaited<ReturnType<typeof requestAccess>>) => Promise<T>,
+    unavailable = '当前站点不支持模板'
+  ) => {
+    const value = draftRef.current;
+    if (!value || value.source !== 'linuxdo') throw new Error(unavailable);
+    const showVerification = captureLinuxDoVerification();
+    const access = await requestAccess(value);
+    try {
+      return await run(access);
+    } catch (cause) {
+      if (sourceErrorFromUnknown('linuxdo', cause).kind === 'verification-required')
+        showVerification(value, errorMessage(cause), access.ticket);
+      throw cause;
     }
+  };
+  const editorServices = {
+    useTemplate: (id: string) => runLinuxDoEditorService((access) => recordLinuxDoTemplateUse({ ...access, id })),
+    loadTemplates: () => runLinuxDoEditorService(fetchLinuxDoTemplates),
+    resolveUpload: (shortUrl: string) =>
+      runLinuxDoEditorService((access) => resolveLinuxDoUpload({ ...access, shortUrl }), '当前站点不支持该附件')
   };
   const replacementDocument: Pick<RemoteEditReplacement, 'draft' | 'onReady'> | undefined = remoteLift?.request;
   return {

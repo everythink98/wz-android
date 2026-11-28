@@ -216,6 +216,17 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       fontFamily: appFontFamily,
       ...textSizeStyle(fontSize(13), fontSize(20))
     },
+    updateNotesHeading: {
+      ...textSizeStyle(fontSize(14), fontSize(20)),
+      fontWeight: '600',
+      marginTop: 6,
+      marginBottom: 6
+    },
+    updateNotesParagraph: { marginTop: 0, marginBottom: 8 },
+    updateNotesList: { marginTop: 0, marginBottom: 8, paddingLeft: 16 },
+    updateNotesListItem: { marginBottom: 4 },
+    updateNotesLink: { color: theme.dark ? theme.primary : theme.primaryStrong },
+    updateNotesCode: { backgroundColor: theme.surface2 },
     updateIntegratedBar: {
       backgroundColor: theme.primarySoft,
       borderRadius: readerRadii.control,

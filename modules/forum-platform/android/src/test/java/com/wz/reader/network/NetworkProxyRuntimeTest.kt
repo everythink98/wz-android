@@ -249,7 +249,7 @@ class NetworkProxyRuntimeTest {
         server.soTimeout = 5000
         val executor = Executors.newSingleThreadExecutor()
         val requests = executor.submit<List<Map<String, String>>> {
-          (0..2).map {
+          (0..3).map {
             server.accept().use { socket ->
               val reader = socket.getInputStream().bufferedReader()
               reader.readLine()
@@ -286,8 +286,13 @@ class NetworkProxyRuntimeTest {
           client.newCall(request).execute().use { assertEquals(200, it.code) }
           stored = "cf_clearance=rejected; session=account"
           client.newCall(request).execute().use { assertEquals(403, it.code) }
+          stored = "cf_clearance=; cf_clearance=first; _t=account; cf_clearance=second"
+          client.newCall(request).execute().use { assertEquals(403, it.code) }
           val sent = requests.get(5, TimeUnit.SECONDS)
-          assertEquals(listOf(null, "cf_clearance=fresh", "cf_clearance=rejected"), sent.map { it["cookie"] })
+          assertEquals(
+            listOf(null, "cf_clearance=fresh", "cf_clearance=rejected", "cf_clearance=first; cf_clearance=second"),
+            sent.map { it["cookie"] }
+          )
           assertTrue(sent.all { headers -> headers.keys.none { it.startsWith("x-wz-") } })
         } finally {
           server.close()
@@ -799,6 +804,71 @@ class NetworkProxyRuntimeTest {
   }
 
   @Test
+  fun glideCancelDoesNotCloseTheBodyWhileDecodeIsReading() {
+    val factory = ControllableGlideCallFactory()
+    val fetcher = closeSafeGlideFetcher(factory)
+    val callback = RecordingGlideCallback()
+    val readStarted = CountDownLatch(1)
+    val finishRead = CountDownLatch(1)
+    val closes = AtomicInteger()
+    val body = object : okhttp3.ResponseBody() {
+      private val bytes = object : ForwardingSource(Buffer().writeUtf8("image")) {
+        override fun read(sink: Buffer, byteCount: Long): Long {
+          readStarted.countDown()
+          check(finishRead.await(5, TimeUnit.SECONDS))
+          return super.read(sink, byteCount)
+        }
+        override fun close() { closes.incrementAndGet(); super.close() }
+      }.buffer()
+      override fun source() = bytes
+      override fun contentLength() = 5L
+      override fun contentType() = null
+    }
+    val pool = Executors.newFixedThreadPool(2)
+    try {
+      fetcher.loadData(Priority.NORMAL, callback)
+      factory.latest.respond(200, body)
+      val read = pool.submit<Int> { requireNotNull(callback.data).read() }
+      assertTrue(readStarted.await(2, TimeUnit.SECONDS))
+      pool.submit { fetcher.cancel() }.get(2, TimeUnit.SECONDS)
+      assertTrue("cancelling must interrupt the network call while the decoder is reading", factory.latest.isCanceled())
+      assertEquals("a decoder still reading the response must retain its Okio buffer", 0, closes.get())
+      finishRead.countDown()
+      read.get(2, TimeUnit.SECONDS)
+      assertEquals("the last active reader returns the cancelled body before Glide cleanup", 1, closes.get())
+      fetcher.cleanup()
+      fetcher.cancel()
+      assertEquals(1, closes.get())
+    } finally {
+      finishRead.countDown()
+      pool.shutdownNow()
+    }
+  }
+
+  @Test
+  fun glideProgressCallbackCanCancelItsOwnRead() {
+    val factory = ControllableGlideCallFactory()
+    val body = CloseCountingResponseBody("image")
+    val closedDuringProgress = AtomicInteger(-1)
+    val callback = RecordingGlideCallback()
+    lateinit var fetcher: DataFetcher<InputStream>
+    fetcher = CloseSafeGlideUrlWrapperLoader(factory) { _, _, _, _ ->
+      fetcher.cancel()
+      closedDuringProgress.set(body.closeCount.get())
+    }.buildLoadData(GlideUrlWrapper(testGlideUrl()), 100, 100, Options()).fetcher
+    fetcher.loadData(Priority.NORMAL, callback)
+    factory.latest.respond(200, body)
+
+    requireNotNull(callback.data).read(ByteArray(5))
+
+    assertTrue(factory.latest.isCanceled())
+    assertEquals("the progress listener runs inside the decoder's read", 0, closedDuringProgress.get())
+    assertEquals(1, body.closeCount.get())
+    fetcher.cleanup()
+    assertEquals(1, body.closeCount.get())
+  }
+
+  @Test
   fun responseCallbackCanCleanupAndCancelWithoutRevivingTheFetcher() {
     val factory = ControllableGlideCallFactory()
     val fetcher = closeSafeGlideFetcher(factory)
@@ -1157,6 +1227,76 @@ class NetworkProxyRuntimeTest {
   }
 
   @Test
+  fun customGlideKeysKeepFetchIdentitySymmetricAndDiskIdentityCompatible() {
+    val priorAgent = System.setProperty("http.agent", "test-agent")
+    try {
+      assertGlideRequestIdentity()
+    } finally {
+      if (priorAgent == null) System.clearProperty("http.agent") else System.setProperty("http.agent", priorAgent)
+    }
+  }
+
+  private fun assertGlideRequestIdentity() {
+    val url = "https://fixture.example/image?version=1"
+    val plain = GlideUrl(url)
+    val custom = GlideUrlWithCustomCacheKey(url, Headers.DEFAULT, "scope1:image")
+    val otherScope = GlideUrlWithCustomCacheKey(url, Headers.DEFAULT, "scope2:image")
+    val updatedUrl = GlideUrlWithCustomCacheKey("https://fixture.example/image?version=2", Headers.DEFAULT, "scope1:image")
+    val sameRequest = GlideUrlWithCustomCacheKey(url, Headers.DEFAULT, "scope1:image", diagnosticHeaders = mapOf("trace" to "fixture"))
+    assertEquals(plain.equals(custom), custom.equals(plain))
+    assertFalse(custom.equals(otherScope))
+    assertFalse(custom.equals(updatedUrl))
+    assertEquals(custom, sameRequest)
+    assertEquals(custom.hashCode(), sameRequest.hashCode())
+    fun digest(model: GlideUrl): List<Byte> =
+      java.security.MessageDigest.getInstance("SHA-256").let { hash ->
+        model.updateDiskCacheKey(hash)
+        hash.digest().toList()
+      }
+    assertEquals(digest(GlideUrl("scope1:image")), digest(custom))
+    assertEquals(digest(custom), digest(updatedUrl))
+  }
+
+  @Test
+  fun authenticatedMediaUsesExistingCookiesWithoutPersistingTheResponse() {
+    val writes = mutableListOf<String>()
+    val store = ManagedCookieResponses(
+      { "_t=fixture" },
+      { _, cookies ->
+        writes.addAll(cookies)
+        CookieResponseBatch(cookies.size).also { batch -> cookies.indices.forEach { batch.complete(true, it) } }
+      }
+    )
+    val handler = ReadOnlyWebViewCookieHandler(store, { "linuxdo" }) { "_t=fixture" }
+    okhttp3.mockwebserver.MockWebServer().use { server ->
+      server.enqueue(okhttp3.mockwebserver.MockResponse().setHeader("Set-Cookie", "_t=fixture-rotated"))
+      val client = OkHttpClient.Builder()
+        .cookieJar(JavaNetCookieJar(handler))
+        .addInterceptor(ForumMediaRequestInterceptor({ "linuxdo" }, { "fixture-agent" }, store))
+        .addInterceptor(CookieResponseContextInterceptor(store))
+        .addNetworkInterceptor(CookieResponseInterceptor(store))
+        .build()
+      val request = Request.Builder()
+        .url(server.url("/secure-uploads/fixture"))
+        .header(FORUM_MEDIA_SOURCE_HEADER, "linuxdo")
+        .build()
+      client.newCall(request).execute().use { assertEquals(200, it.code) }
+      assertEquals("_t=fixture", server.takeRequest(3, TimeUnit.SECONDS)?.getHeader("Cookie"))
+      assertTrue("A media response has no authority to write authentication cookies", writes.isEmpty())
+
+      store.setMediaRecheck("epoch-one", true)
+      store.setMediaRecheck("epoch-two", true)
+      store.setMediaRecheck("epoch-one", false)
+      assertThrows(java.io.InterruptedIOException::class.java) { client.newCall(request).execute().close() }
+      assertNull(server.takeRequest(150, TimeUnit.MILLISECONDS))
+
+      store.setMediaRecheck(String("epoch-two".toCharArray()), false)
+      server.enqueue(okhttp3.mockwebserver.MockResponse())
+      client.newCall(request).execute().use { assertEquals(200, it.code) }
+    }
+  }
+
+  @Test
   fun nestedMediaCookiePoliciesRestoreTheOuterGrantAfterFailure() {
     for (downgradeOuter in listOf(false, true)) {
       val target = java.net.URI("https://same.test/media.png")
@@ -1471,6 +1611,46 @@ class NetworkProxyRuntimeTest {
 
     assertThrows(IllegalStateException::class.java) {
       jar.loadForRequest("https://www.nodeseek.com/private".toHttpUrl())
+    }
+  }
+
+  @Test
+  fun yaohuoHistoryReportsTheOriginalRedirectWithoutFollowingIt() {
+    val login = "/waplogin.aspx?siteid=1000"
+    okhttp3.mockwebserver.MockWebServer().use { server ->
+      server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+        override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest) =
+          if (request.path == login) okhttp3.mockwebserver.MockResponse().setBody("login")
+          else okhttp3.mockwebserver.MockResponse().setResponseCode(302).setHeader("Location", login)
+      }
+      val local = server.url("/")
+      val client = NetworkProxyRuntime.configureManagedClient(OkHttpClient.Builder())
+        .proxy(Proxy.NO_PROXY)
+        .cookieJar(okhttp3.CookieJar.NO_COOKIES)
+        .eventListener(okhttp3.EventListener.NONE)
+        .addInterceptor { chain ->
+          val request = chain.request()
+          val fixtureUrl = request.url.newBuilder().scheme(local.scheme).host(local.host).port(local.port).build()
+          chain.proceed(request.newBuilder().url(fixtureUrl).build())
+        }
+        .build()
+      val origin = "https://www.yaohuo.me"
+      for ((url, isPost, expectsRedirect) in listOf(
+        Triple("$origin/bbs/messagelist_del.aspx?action=csrftoken", false, true),
+        Triple("$origin/bbs/messagelist_view.aspx", true, true),
+        Triple("$origin/bbs/messagelist_view.aspx?id=41", false, false),
+        Triple("https://example.test/bbs/messagelist_view.aspx", true, false)
+      )) {
+        val before = server.requestCount
+        val request = Request.Builder().url(url).header("Accept", "application/json").apply {
+          if (isPost) post("action=loadMore".toRequestBody())
+        }.build()
+        client.newCall(request).execute().use { response ->
+          assertEquals(if (expectsRedirect) 302 else 200, response.code)
+          assertEquals(if (expectsRedirect) login else null, response.header("Location"))
+        }
+        assertEquals(if (expectsRedirect) 1 else 2, server.requestCount - before)
+      }
     }
   }
 
